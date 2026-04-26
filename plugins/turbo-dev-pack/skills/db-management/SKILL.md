@@ -43,8 +43,9 @@ user-invocable: true
 - Folder template: `sql files/<environment>/<work-item-or-topic>/`
 - Valid environment values: `local-db`, `test-db`, `main-db`
 - Work-item-or-topic naming rule:
-	- If the user provides a work item id, use it directly, for example `115-A008`.
-	- If there is no work item id, use a short kebab-case topic folder, for example `account-sync`.
+	- If the current work is on a `bugfix/` or `feature/` branch, use the branch slug as the folder name so that `finish-dev` can detect and archive it automatically. Example: on branch `feature/ElderDisplayFix`, use `sql files/local-db/ElderDisplayFix/`.
+	- If the user provides a work item id and there is no associated branch slug, use the work item id directly, for example `115-A008`.
+	- If there is no branch slug and no work item id, use a short kebab-case topic folder, for example `account-sync`.
 	- Use the same folder name across `local-db`, `test-db`, and `main-db` for the same logical change.
 - File template: `<order>-<database>-<purpose>.sql`
 - File naming rule:

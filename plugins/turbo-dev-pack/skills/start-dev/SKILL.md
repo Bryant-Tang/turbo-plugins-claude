@@ -27,6 +27,7 @@ user-invocable: true
 - The slug after the prefix may contain English letters (upper and lower case), digits, and hyphens only. Spaces and other special characters are not allowed. Examples: `feature/ElderDisplayFix`, `bugfix/fix-login-error`.
 - `bugfix/<slug>` maps to `specs/bugfix/<slug>/`.
 - `feature/<slug>` maps to `specs/feature/<slug>/`.
+- SQL work-item folders for this branch must use the same `<slug>`: `sql files/local-db/<slug>/`, `sql files/test-db/<slug>/`, and `sql files/main-db/<slug>/`. This allows `finish-dev` to detect and archive them automatically when the work is complete.
 - Do not mix unrelated requirements in one branch or one specs folder.
 
 ## Procedure
