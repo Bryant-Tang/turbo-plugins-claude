@@ -38,8 +38,10 @@ FRONTEND_DIR_NAME="$(basename "$FRONTEND_DIR")"
 if [[ -n "${BUILD_NODE_VERSION:-}" ]]; then
   CURRENT_NODE="$(node -v 2>/dev/null || true)"
   echo "Active Node version: $CURRENT_NODE"
-  if [[ "$CURRENT_NODE" != *"$BUILD_NODE_VERSION"* ]]; then
-    echo "Unexpected Node version. Required: $BUILD_NODE_VERSION" >&2
+  CURRENT_MAJOR="$(echo "$CURRENT_NODE" | sed 's/^v//' | cut -d. -f1)"
+  REQUIRED_MAJOR="$(echo "$BUILD_NODE_VERSION" | sed 's/^v//' | cut -d. -f1)"
+  if [[ "$CURRENT_MAJOR" != "$REQUIRED_MAJOR" ]]; then
+    echo "Unexpected Node version. Current: $CURRENT_NODE, Required major: $BUILD_NODE_VERSION" >&2
     exit 1
   fi
 fi

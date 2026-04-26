@@ -90,6 +90,7 @@ user-invocable: true
 - If the request implies a write but the exact target objects are still unclear, inspect first and then author the SQL script.
 - If the user has not provided a work-item or folder name for `sql files/`, ask before creating the script so the output can follow the repo convention.
 - If the change is only for local testing, validation, or temporary data setup that should be rolled back, create scripts only in `sql files/local-db/`.
+- If the change is only for the test environment and will not go to production, create scripts only in `sql files/test-db/`.
 - If the change must go live in production, create corresponding scripts in `sql files/local-db/`, `sql files/test-db/`, and `sql files/main-db/`.
 - If the request is clearly not local-only but still does not say whether test-db only or test-db plus main-db is required, ask the user to confirm the intended environment matrix before drafting SQL.
 - If local findings may not match test or production object definitions, stop assuming parity and ask the user for a minimal verification query result from that target environment before finalizing the script.

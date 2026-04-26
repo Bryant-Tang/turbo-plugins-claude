@@ -39,16 +39,22 @@ user-invocable: true
    - `sql files/test-db/<slug>/`
    - `sql files/main-db/<slug>/`
 4. If none of the above exist, tell the user there is nothing to archive and stop.
-5. Show a confirmation summary using `AskUserQuestion`: list every path that will be moved and its destination. Do not make any changes until the user confirms.
-6. Create any missing archive parent directories. Run each `mkdir` as a separate step; do not chain with `&&`.
+5. Check whether any archive destination already exists:
+   - `specs/archives/<type>/<slug>/`
+   - `sql files/archives/local-db/<slug>/`
+   - `sql files/archives/test-db/<slug>/`
+   - `sql files/archives/main-db/<slug>/`
+   - If any destination already exists, include a conflict warning in the confirmation summary and ask whether to skip or overwrite before proceeding.
+6. Show a confirmation summary using `AskUserQuestion`: list every path that will be moved and its destination, including any conflict warnings. Do not make any changes until the user confirms.
+7. Create any missing archive parent directories. Run each `mkdir` as a separate step; do not chain with `&&`.
    - `specs/archives/<type>/` if it does not exist
    - For each SQL env whose source folder exists: `sql files/archives/<env>/` if it does not exist
-7. Move each source folder that exists. Run each move as a separate step; do not chain with `&&`.
+8. Move each source folder that exists. Run each move as a separate step; do not chain with `&&`.
    - Move `specs/<type>/<slug>/` to `specs/archives/<type>/<slug>/` if the source exists.
    - Move `sql files/local-db/<slug>/` to `sql files/archives/local-db/<slug>/` if the source exists.
    - Move `sql files/test-db/<slug>/` to `sql files/archives/test-db/<slug>/` if the source exists.
    - Move `sql files/main-db/<slug>/` to `sql files/archives/main-db/<slug>/` if the source exists.
-8. Report which paths were moved and which were not found.
+9. Report which paths were moved and which were not found.
 
 ## Decision Rules
 - Do not delete the git branch; branch lifecycle is outside the scope of this skill.

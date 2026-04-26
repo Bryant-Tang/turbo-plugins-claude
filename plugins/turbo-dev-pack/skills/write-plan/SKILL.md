@@ -33,7 +33,7 @@ user-invocable: true
 	- Performance, Resource Usage, and User Experience: obvious inefficient loops, queries, repeated I/O, memory pressure, unnecessary remote calls, UI wording, interaction flow, empty/error states, responsive behavior, and accessibility when the task is user-facing.
 
 ## Mandatory Static Review Baseline
-- Every implementation task AC must explicitly include all of the following static checks inside the appropriate AC categories.
+- Every implementation task AC must explicitly include all of the following static checks inside the appropriate AC categories. These are **in addition to** the code formatting and indentation check required by Core Rules — both must appear in the AC.
 - Correctness, Security, and Integration must statically check whether the changed code may introduce compile errors, missing references, broken signatures, type mismatches, or obvious compatibility and integration regressions.
 - Maintainability, Testability, and Observability must statically check whether changed C# code follows the `csharp-comment` skill, including member XML documentation coverage, method `<param>` definitions, and needed single-line or multi-line explanatory comments for non-obvious logic.
 - Maintainability, Testability, and Observability must statically check whether changed non-C# logic has sufficiently detailed Traditional Chinese comments when comments are needed for understanding.

@@ -32,5 +32,7 @@ fi
 
 while IFS= read -r PID; do
   [[ -z "$PID" ]] && continue
-  taskkill //PID "$PID" //F 2>/dev/null || true
+  if ! taskkill //PID "$PID" //F 2>/dev/null; then
+    echo "Warning: Failed to kill PID $PID" >&2
+  fi
 done <<< "$PIDS"

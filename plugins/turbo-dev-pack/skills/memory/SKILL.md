@@ -54,9 +54,11 @@ user-invocable: true
 ## Combined Procedure
 1. Check whether the task needs prior memory context before acting.
 2. If needed, read the most relevant MCP memory entity or search for the relevant observations first.
+   - If the MCP memory server is unavailable or returns a connection error, record a warning in the response and continue the task without the memory context. Do not stop.
 3. Complete the task using the recalled facts.
 4. Decide whether the current turn produced any new durable project knowledge.
 5. If yes, store that knowledge as concise factual observations in the appropriate entity.
+   - If the memory server is unavailable, note in the response that the fact was not stored and should be retried later. Do not stop.
 6. Tell the user what was stored when the write was user-requested or materially affects future work.
 
 ## Decision Rules

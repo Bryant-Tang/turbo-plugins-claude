@@ -37,8 +37,6 @@ try {
         throw "git apply -R failed with exit code $LASTEXITCODE"
     }
 
-    Remove-Item -LiteralPath $stateFile -Force
-
     $statusOutput = (& git status --porcelain | Out-String).TrimEnd()
 
     if (-not [string]::IsNullOrWhiteSpace($statusOutput)) {
@@ -47,6 +45,7 @@ try {
         exit 1
     }
 
+    Remove-Item -LiteralPath $stateFile -Force
     Write-Output "Reverted local test stash: $stashRef"
 }
 catch {

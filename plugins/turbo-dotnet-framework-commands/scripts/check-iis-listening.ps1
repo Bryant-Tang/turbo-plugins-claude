@@ -5,18 +5,18 @@ $ErrorActionPreference = 'Stop'
 
 try {
     $settings = Resolve-IisSettings
-    $matches = @((& netstat -ano | Select-String -Pattern ":$($settings.IisPort)" | ForEach-Object { $_.Line }))
+    $portMatches = @((& netstat -ano | Select-String -Pattern ":$($settings.IisPort)" | ForEach-Object { $_.Line }))
 
-    if ($matches.Count -eq 0) {
+    if ($portMatches.Count -eq 0) {
         Write-Output "No listening socket found for IISUrl port: $($settings.IisPort)"
         exit 1
     }
 
-    $listeningMatches = @($matches | Where-Object { $_ -match 'LISTENING' })
+    $listeningMatches = @($portMatches | Where-Object { $_ -match 'LISTENING' })
 
     if ($listeningMatches.Count -eq 0) {
         Write-Output "Port is present but not LISTENING for IISUrl port: $($settings.IisPort)"
-        $matches | ForEach-Object { Write-Output $_ }
+        $portMatches | ForEach-Object { Write-Output $_ }
         exit 1
     }
 

@@ -68,4 +68,7 @@ if [[ ! -f "$PACK_CONTENT_SCRIPT" ]]; then
   exit 0
 fi
 
-bash "$PACK_CONTENT_SCRIPT"
+if ! bash "$PACK_CONTENT_SCRIPT"; then
+  echo "Frontend packaging failed." >&2
+  exit 1
+fi

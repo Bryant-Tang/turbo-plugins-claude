@@ -24,7 +24,7 @@ user-invocable: true
 - Select and execute the build method appropriate for the detected project type whenever server-backed verification may need fresh binaries. Do not substitute a different build tool than the one the project is configured for.
 - Select and execute the server startup and shutdown method appropriate for the detected project type. Do not substitute different ports or foreground server startup.
 - Determine the browser target URL from the project configuration based on project type. For .NET Framework IIS projects, read the `IISUrl` property from the target `.csproj` file.
-- If `.claude/scripts.local.psd1` key `TEST_LOCAL_STASH_SHA` is configured, apply that local-only git stash before each server-backed verification task.
+- If the env var `TEST_LOCAL_STASH_SHA` is configured in `.claude/settings.local.json`, apply that local-only git stash before each server-backed verification task.
 - If `TEST_LOCAL_STASH_SHA` is configured, stop the local server and revert those local-only changes after each server-backed verification task so the repository returns to its prior state.
 - If `TEST_LOCAL_STASH_SHA` is not configured, skip the local-test stash apply and revert steps.
 - If a verification task depends on any SQL script that would write to a database, the agent must not execute that SQL. The agent must ask the user to run the script manually and wait for confirmation before continuing.
@@ -48,6 +48,7 @@ Produce a proof package driven by `test-plan.md`, including:
 - Replace every `test-n` placeholder with the actual verification task number in file names and visible document text.
 
 ## Exact Procedure
+0. Verify prerequisites: check that the required env vars (`BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH`, `RUN_IIS_EXPRESS_PATH`) are present in `.claude/settings.local.json` for .NET Framework projects. If any required var is missing, stop and ask the user to run `/tnf:setup` first.
 1. Determine which `test-plan.md` to use. If the target is not clear from the current branch or the user request, ask the user.
 2. Read `test-plan.md` and enumerate the referenced `test-n.md` files in order, with `n` replaced by the actual verification task number.
 3. Inspect the workspace to determine the project type and identify the appropriate build command and run command.

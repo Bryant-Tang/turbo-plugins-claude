@@ -53,7 +53,7 @@ try {
         exit 1
     }
 
-    & git stash show -p --include-untracked $stashSha | Out-Null
+    & git stash show -p --include-untracked "$stashSha" | Out-Null
 
     if ($LASTEXITCODE -ne 0) {
         Write-Output "Configured stash SHA is not a valid stash entry: $stashSha"
@@ -66,13 +66,13 @@ try {
         New-Item -ItemType Directory -Path $stateDir | Out-Null
     }
 
-    Set-Content -LiteralPath $stateFile -Value $stashSha
     & git stash apply $stashSha
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
 
+    Set-Content -LiteralPath $stateFile -Value $stashSha
     Write-Output "Applied local test stash: $stashSha"
 }
 catch {

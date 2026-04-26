@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(pwd)"
-
-GIT_DIR="$(git rev-parse --git-path . | xargs -I{} realpath "{}" 2>/dev/null || git rev-parse --absolute-git-dir)"
+GIT_DIR="$(git rev-parse --absolute-git-dir)"
 STATE_FILE="$GIT_DIR/testing-and-proof.applied-stash-ref"
 STASH_SHA="${TEST_LOCAL_STASH_SHA:-}"
 
@@ -39,6 +36,6 @@ if ! git stash show -p --include-untracked "$STASH_SHA" >/dev/null 2>&1; then
 fi
 
 mkdir -p "$(dirname "$STATE_FILE")"
-echo "$STASH_SHA" > "$STATE_FILE"
 git stash apply "$STASH_SHA"
+echo "$STASH_SHA" > "$STATE_FILE"
 echo "Applied local test stash: $STASH_SHA"

@@ -76,8 +76,10 @@ try {
         $nodeCurrentOutput = (& $nodeCommand -v 2>&1 | Out-String).Trim()
         Write-Output "Active Node version: $nodeCurrentOutput"
 
-        if ($nodeCurrentOutput -notlike "*$requiredNodeVersion*") {
-            throw "Unexpected Node version. Required: $requiredNodeVersion"
+        $currentMajor = ($nodeCurrentOutput -replace '^v', '').Split('.')[0]
+        $requiredMajor = ($requiredNodeVersion -replace '^v', '').Split('.')[0]
+        if ($currentMajor -ne $requiredMajor) {
+            throw "Unexpected Node version. Current: $nodeCurrentOutput, Required major: $requiredNodeVersion"
         }
     }
 

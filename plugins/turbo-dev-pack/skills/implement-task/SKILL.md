@@ -73,5 +73,8 @@ user-invocable: true
 - The final build review report shows that the repository-standard build passed.
 - No final verification tasks were executed in this skill.
 
+## Handoff
+After all tasks are marked `COMPLETE`, if end-to-end verification is needed, invoke `/tdp:testing-and-proof` next to execute `test-plan.md`.
+
 ## Template
 - [task review template](./assets/task-review.template.md)
