@@ -30,10 +30,10 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
    - If already set to a real value, ask the user via `AskUserQuestion` whether to keep or replace it. If the user chooses to keep it, skip to the next variable.
 4. Write the updated `env` block back to `.claude/settings.local.json`, merging into any existing content so settings outside the `env` block are preserved.
 5. For each companion file whose path was just configured, check whether that file or directory exists:
-   - `DBHUB_TOML_FILE_PATH` — if the file does not exist, copy the template from `${CLAUDE_PLUGIN_ROOT}/default-config-files/.claude/dbhub.example.local.toml` to the configured path, then tell the user to edit the connection strings inside it.
+   - `DBHUB_TOML_FILE_PATH` — if the file does not exist, copy the template from `${CLAUDE_PLUGIN_ROOT}/default-files/.claude/dbhub.example.local.toml` to the configured path, then tell the user to edit the connection strings inside it.
    - `MEMORY_SERVER_JSONL_FILE_PATH` — if the file does not exist, create an empty file at that path.
    - `MARKITDOWN_WORKDIR_PATH` — if the directory does not exist, create it.
-   - `.claude/frontend-standard.local.md` — if the file does not exist in the workspace root, copy the template from `${CLAUDE_PLUGIN_ROOT}/default-config-files/.claude/frontend-standard.example.local.md`.
+   - `.claude/frontend-standard.local.md` — if the file does not exist in the workspace root, copy the template from `${CLAUDE_PLUGIN_ROOT}/default-files/.claude/frontend-standard.example.local.md`.
    - `sql files/` directory structure — if the DB area was configured in this run, create each of `sql files/local-db/`, `sql files/test-db/`, `sql files/main-db/`, `sql files/archives/local-db/`, `sql files/archives/test-db/`, and `sql files/archives/main-db/` that does not already exist. Create each directory as a separate step; do not chain with `&&`.
    - `specs/` directory structure — regardless of which areas were configured, create `specs/bugfix/`, `specs/feature/`, `specs/archives/bugfix/`, and `specs/archives/feature/` if they do not already exist. Create each directory as a separate step; do not chain with `&&`.
 6. Report what was created or updated, and call out any companion files the user still needs to edit manually.
