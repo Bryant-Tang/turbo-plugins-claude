@@ -13,7 +13,8 @@ Skills and scripts for web project development workflows, testing and proof, and
             "extraKnownMarketplaces": {
                 "turbo-plugins-claude": {
                     "source": {
-                        
+                        "source": "git",
+                        "url": "https://github.com/Bryant-Tang/turbo-plugins-claude.git"
                     }
                 }
             },

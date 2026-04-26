@@ -13,7 +13,8 @@ Commands and scripts for .NET Framework web project build with MSBuild and IIS E
             "extraKnownMarketplaces": {
                 "turbo-plugins-claude": {
                     "source": {
-                        
+                        "source": "git",
+                        "url": "https://github.com/Bryant-Tang/turbo-plugins-claude.git"
                     }
                 }
             },
