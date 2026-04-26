@@ -35,7 +35,7 @@ user-invocable: true
 | `sql files/main-db/` | Production deployment scripts |
 
 - If `sql files/` or one of the required environment folders does not exist in the current writable worktree, create the needed folder before adding scripts.
-- Existing repository convention may still use a work-item or topic subfolder under the environment folder, such as `sql files/local-db/115-A008/` or `sql files/local-db/account-sync/`.
+- Existing repository convention may still use a work-item or topic subfolder under the environment folder, such as `sql files/local-db/WI-001/` or `sql files/local-db/account-sync/`.
 - If a script is only for local verification and should be rolled back after testing, place it only under `sql files/local-db/`.
 - If the final released version also requires the database change in production, prepare matching scripts in all 3 locations: `sql files/local-db/`, `sql files/test-db/`, and `sql files/main-db/`.
 
@@ -43,8 +43,8 @@ user-invocable: true
 - Folder template: `sql files/<environment>/<work-item-or-topic>/`
 - Valid environment values: `local-db`, `test-db`, `main-db`
 - Work-item-or-topic naming rule:
-	- If the current work is on a `bugfix/` or `feature/` branch, use the branch slug as the folder name so that `finish-dev` can detect and archive it automatically. Example: on branch `feature/ElderDisplayFix`, use `sql files/local-db/ElderDisplayFix/`.
-	- If the user provides a work item id and there is no associated branch slug, use the work item id directly, for example `115-A008`.
+	- If the current work is on a `bugfix/` or `feature/` branch, use the branch slug as the folder name so that `finish-dev` can detect and archive it automatically. Example: on branch `feature/FeatureFix`, use `sql files/local-db/FeatureFix/`.
+	- If the user provides a work item id and there is no associated branch slug, use the work item id directly, for example `WI-001`.
 	- If there is no branch slug and no work item id, use a short kebab-case topic folder, for example `account-sync`.
 	- Use the same folder name across `local-db`, `test-db`, and `main-db` for the same logical change.
 - File template: `<order>-<database>-<purpose>.sql`
@@ -54,9 +54,9 @@ user-invocable: true
 	- Use a short descriptive purpose, preferably Traditional Chinese, such as `補資料`, `新增欄位`, `重建索引`, or `建立測試資料`.
 	- Keep the same file name across environments when the files represent the same deployment step.
 - Example folder and file combinations:
-	- `sql files/local-db/115-A008/01-AppDb-建立測試資料.sql`
-	- `sql files/test-db/115-A008/01-AppDb-新增欄位.sql`
-	- `sql files/main-db/115-A008/01-AppDb-新增欄位.sql`
+	- `sql files/local-db/WI-001/01-AppDb-建立測試資料.sql`
+	- `sql files/test-db/WI-001/01-AppDb-新增欄位.sql`
+	- `sql files/main-db/WI-001/01-AppDb-新增欄位.sql`
 	- `sql files/local-db/account-sync/01-AuthDb-驗證登入資料.sql`
 
 ## SQL Template

@@ -1,10 +1,10 @@
 /*
 用途: <請填寫這支 SQL 的目的>
-工單或主題: <例如 115-A008 或 student-elder-display>
-資料庫: <TRAINING | SETSUser | WdaElder | WdaRestart>
+工單或主題: <例如 WI-001 或 feature-name>
+資料庫: <DbName1 | DbName2 | ...>
 目標環境: <local-db | test-db | main-db>
 執行順序: <01 | 02 | 03>
-檔名: <例如 01-TRAINING-新增欄位.sql>
+檔名: <例如 01-AppDb-新增欄位.sql>
 是否需要回滾: <是 | 否>
 SQL Server 版本需求: 2012+（本模板使用 THROW 語法）
 對應環境檔案:

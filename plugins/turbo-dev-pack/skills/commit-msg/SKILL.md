@@ -19,7 +19,6 @@ user-invocable: true
 - Keep the workflow and decision rules unless the target project needs different commit policy.
 
 ## Project Format Profile
-- Project label: Wda.Restart
 - Primary format: `<type>: <摘要>`
 - Optional scoped format: `<type>(<scope>): <摘要>`
 - Preferred language: Traditional Chinese by default, but follow user or project preference when clearly specified
