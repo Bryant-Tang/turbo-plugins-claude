@@ -1,0 +1,8 @@
+{
+  "env": {
+    "DBHUB_TOML_FILE_PATH": "C:/ABSOLUTE/PATH/TO/YOUR/DBHUB/TOML/CONFIG/FILE/dbhub.example.local.toml",
+    "MEMORY_SERVER_JSONL_FILE_PATH": "C:/ABSOLUTE/PATH/TO/YOUR/MEMORY/SERVER/FILE/memory-server.example.local.jsonl",
+    "MARKITDOWN_WORKDIR_PATH": "C:/ABSOLUTE/PATH/TO/YOUR/MARKITDOWN/TEMP/DIR/FOR/CONVERTING/.markitdown.example/workdir",
+    "TEST_LOCAL_STASH_SHA": "OPTIONAL/STASH-SHA/shashashashashashashashashashashashasha"
+  }
+}

@@ -1,0 +1,50 @@
+# DBHub MCP Server 連線設定範例
+# 說明：
+#   id        = 資料庫識別名稱，可自訂，對應 [[tools]] 的 source 欄位
+#   dsn       = 連線字串，格式：sqlserver://<帳號>:<密碼>@<主機或IP>:<埠>/<資料庫名稱>
+#               預設埠為 1433；若使用預設埠可省略（但建議明確填入）
+#   readonly  = true 表示此工具只允許唯讀操作，不可執行 INSERT/UPDATE/DELETE
+#
+# 此檔案包含資料庫認證，請勿提交至版控。
+# 複製此範例並重命名為 dbhub.local.toml，再填入實際連線資訊。
+#
+# 範例（填寫後請移除這些注解行中的尖括號）：
+#
+#   [[sources]]
+#   id = "AppDb"
+#   dsn = "sqlserver://sa:MyPassword@192.168.1.100:1433/AppDb"
+#
+#   [[tools]]
+#   name = "execute_sql"
+#   source = "AppDb"
+#   readonly = true
+#
+#   [[tools]]
+#   name = "search_objects"
+#   source = "AppDb"
+
+[[sources]]
+id = "<DB_NAME>"
+dsn = "sqlserver://<ACCOUNT>:<PASSWORD>@<DOMAIN>:<PORT>/<DB_NAME>"
+
+[[tools]]
+name = "execute_sql"
+source = "<DB_NAME>"
+readonly = true
+
+[[tools]]
+name = "search_objects"
+source = "<DB_NAME>"
+
+[[sources]]
+id = "<DB_NAME_2>"
+dsn = "sqlserver://<ACCOUNT_2>:<PASSWORD_2>@<DOMAIN>:<PORT>/<DB_NAME_2>"
+
+[[tools]]
+name = "execute_sql"
+source = "<DB_NAME_2>"
+readonly = true
+
+[[tools]]
+name = "search_objects"
+source = "<DB_NAME_2>"
