@@ -30,7 +30,7 @@ function Resolve-RepoPath {
 }
 
 try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $scriptDir = $PSScriptRoot
     $contentPackScript = Join-Path $scriptDir 'pack-content.ps1'
     $repoRoot = (Get-Location).Path
     $projectPathRel = $env:BUILD_PROJECT_PATH

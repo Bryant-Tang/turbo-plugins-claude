@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 
 try {
     $settings = Resolve-IisSettings
-    $portMatches = @((& netstat -ano | Select-String -Pattern ":$($settings.IisPort)" | ForEach-Object { $_.Line }))
+    $portMatches = @((& netstat -ano | Select-String -Pattern ":$($settings.IisPort)[^0-9]" | ForEach-Object { $_.Line }))
 
     if ($portMatches.Count -eq 0) {
         Write-Output "No listening socket found for IISUrl port: $($settings.IisPort)"

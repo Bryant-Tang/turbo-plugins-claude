@@ -3,8 +3,9 @@
 # IIS_SCHEME, IIS_PORT, SITE_ROOT, IIS_EXPRESS_PATH,
 # APPLICATIONHOST_CONFIG_FILE, IIS_CONFIG_SITE_NAME
 #
-# Requires GNU grep (grep -P / -oiP). Not portable to macOS or Alpine.
-# On Git Bash for Windows this is provided by the bundled GNU grep.
+# Requires GNU grep (grep -P / -oiP) and GNU awk (gawk) for three-argument match().
+# Not portable to macOS or Alpine.
+# On Git Bash for Windows both are provided by the bundled GNU utilities.
 
 resolve_repo_path() {
   local repo_root="$1"
@@ -79,7 +80,7 @@ resolve_iis_settings() {
     # Match site by project folder name first, then fall back to port binding
     IIS_CONFIG_SITE_NAME="$(awk '
       /<site / { match($0, /name="([^"]+)"/, arr); current = arr[1] }
-      $0 ~ ("name=\"" project_dir "\"") { found = current }
+      index($0, "name=\"" project_dir "\"") > 0 { found = current }
       END { if (found) print found }
     ' project_dir="$project_dir_name" "$APPLICATIONHOST_CONFIG_FILE" || true)"
 

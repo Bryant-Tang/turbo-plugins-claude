@@ -23,13 +23,13 @@ try {
     $iisExpressPath = Normalize-PathString -PathValue $settings.IisExpressPath
 
     if ([string]::IsNullOrWhiteSpace($iisExpressPath)) {
-        throw 'Missing RUN_IIS_EXPRESS_PATH in .claude/scripts.local.psd1'
+        throw 'Missing RUN_IIS_EXPRESS_PATH in .claude/settings.local.json'
     }
 
     $processName = [System.IO.Path]::GetFileNameWithoutExtension($iisExpressPath)
 
     if ([string]::IsNullOrWhiteSpace($processName)) {
-        throw 'Missing RUN_IIS_EXPRESS_PATH in .claude/scripts.local.psd1'
+        throw 'Missing RUN_IIS_EXPRESS_PATH in .claude/settings.local.json'
     }
 
     $processes = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = '$($processName).exe'" -ErrorAction SilentlyContinue)

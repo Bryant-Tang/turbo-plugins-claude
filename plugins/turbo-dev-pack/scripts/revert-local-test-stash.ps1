@@ -21,7 +21,6 @@ function Get-GitPath {
 }
 
 try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $repoRoot = (Get-Location).Path
     $stateFile = Get-GitPath -RepoRoot $repoRoot -GitPathName 'testing-and-proof.applied-stash-ref'
 
@@ -31,10 +30,19 @@ try {
     }
 
     $stashRef = (Get-Content -LiteralPath $stateFile -Raw).Trim()
-    git stash show -p --include-untracked $stashRef | git apply -R
+    $tmpPatch = [System.IO.Path]::GetTempFileName()
+    try {
+        & git stash show -p --include-untracked $stashRef | Out-File -FilePath $tmpPatch -Encoding UTF8
+        & git apply -R $tmpPatch
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "git apply -R failed with exit code $LASTEXITCODE"
+        if ($LASTEXITCODE -ne 0) {
+            throw "git apply -R failed with exit code $LASTEXITCODE"
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $tmpPatch) {
+            Remove-Item -LiteralPath $tmpPatch -Force
+        }
     }
 
     $statusOutput = (& git status --porcelain | Out-String).TrimEnd()

@@ -21,7 +21,6 @@ function Get-GitPath {
 }
 
 try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $repoRoot = (Get-Location).Path
     $stateFile = Get-GitPath -RepoRoot $repoRoot -GitPathName 'testing-and-proof.applied-stash-ref'
     $stashSha = $env:TEST_LOCAL_STASH_SHA

@@ -61,13 +61,13 @@ Produce a proof package driven by `test-plan.md`, including:
    - If the user does not execute it, treat the task as blocked and write that status into the corresponding `test-n.md`.
 7. For each server-backed browser task whose prerequisites are already satisfied, run this sequence as separate steps:
    - If `TEST_LOCAL_STASH_SHA` is configured, verify the git working tree is safe for local test stash apply.
-   - If `TEST_LOCAL_STASH_SHA` is configured, apply the named local-test stash with `${CLAUDE_PLUGIN_ROOT}/scripts/apply-local-test-stash.ps1`.
+   - If `TEST_LOCAL_STASH_SHA` is configured, apply the named local-test stash with `${CLAUDE_PLUGIN_ROOT}/scripts/apply-local-test-stash.ps1` (PowerShell) or `${CLAUDE_PLUGIN_ROOT}/scripts/apply-local-test-stash.sh` (Bash).
    - Execute the appropriate build workflow for the detected project type if fresh binaries may be needed. For .NET Framework projects, use the `tnf` plugin's `build-project` command.
    - Execute the appropriate server startup workflow for the detected project type. For .NET Framework projects, use the `tnf` plugin's `run-project` command to start IIS Express on the port parsed from the target web csproj `IISUrl`.
    - Resolve the exact browser target URL from the project configuration. For .NET Framework IIS projects, read the `IISUrl` property from the target `.csproj` file.
    - Invoke the Agent tool for that one verification task only. The subagent must execute the verification, save screenshot files under `screenshots/`, and write or overwrite the corresponding `test-n.md`.
    - Stop the local server using the appropriate workflow for the detected project type. For .NET Framework projects, use the `tnf` plugin's `run-project` stop workflow.
-   - If `TEST_LOCAL_STASH_SHA` is configured, revert the local-test stash changes with `${CLAUDE_PLUGIN_ROOT}/scripts/revert-local-test-stash.ps1`.
+   - If `TEST_LOCAL_STASH_SHA` is configured, revert the local-test stash changes with `${CLAUDE_PLUGIN_ROOT}/scripts/revert-local-test-stash.ps1` (PowerShell) or `${CLAUDE_PLUGIN_ROOT}/scripts/revert-local-test-stash.sh` (Bash).
 8. For each non-browser task whose prerequisites are already satisfied, invoke the Agent tool for that one verification task only. The subagent must write or overwrite the corresponding `test-n.md` with file plus line evidence.
 9. Continue in order until all requested verification tasks are complete or blocked.
 10. Summarize which `test-n.md` tasks passed, which are blocked, which ones are waiting on user-executed SQL, and what evidence was produced.

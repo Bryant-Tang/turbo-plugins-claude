@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/resolve-iis-settings.sh"
 resolve_iis_settings "$SCRIPT_DIR" || exit 1
 
-MATCHES="$(netstat -ano | grep ":${IIS_PORT}" || true)"
+MATCHES="$(netstat -ano | grep -P ":${IIS_PORT}[^0-9]" || true)"
 
 if [[ -z "$MATCHES" ]]; then
   echo "No listening socket found for IISUrl port: $IIS_PORT"

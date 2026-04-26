@@ -37,7 +37,6 @@ function Find-CommandPath {
 }
 
 try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $repoRoot = (Get-Location).Path
     $frontendPathRel = $env:BUILD_FRONTEND_DIR_PATH
 
