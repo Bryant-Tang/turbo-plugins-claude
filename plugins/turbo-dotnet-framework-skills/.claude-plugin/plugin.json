@@ -1,9 +1,0 @@
-{
-  "name": "tnf",
-  "description": "Skills and scripts for .NET Framework web project development, IIS Express startup, testing and proof, and team workflows.",
-  "version": "0.2.0",
-  "license": "MIT",
-  "author": {
-    "name": "Bryant Tang"
-  }
-}

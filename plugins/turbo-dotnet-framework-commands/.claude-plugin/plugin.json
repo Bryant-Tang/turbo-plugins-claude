@@ -1,0 +1,9 @@
+{
+  "name": "tnf",
+  "description": "Commands and scripts for .NET Framework web project build with MSBuild and IIS Express startup.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "Bryant Tang"
+  }
+}

@@ -1,7 +1,7 @@
 ---
 name: setup
-description: 'Set up or update plugin configuration in .claude/settings.local.json and create required companion files. Use when installing the plugin for the first time or when adding or adjusting environment variables and config files for build, run, db-management, memory, or markitdown skills.'
-argument-hint: 'Optional: build | run | db | memory | markitdown | all'
+description: 'Set up or update plugin configuration in .claude/settings.local.json and create required companion files. Use when installing the plugin for the first time or when adding or adjusting environment variables and config files for db-management, memory, markitdown, or testing-and-proof skills.'
+argument-hint: 'Optional: test | db | memory | markitdown | all'
 user-invocable: true
 ---
 
@@ -15,9 +15,6 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 
 | Area | Env Vars | Companion File | Required For |
 |---|---|---|---|
-| Build | `BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH` | — | `build-project` command |
-| Build frontend | `BUILD_FRONTEND_DIR_PATH`, `BUILD_NODE_VERSION`, `BUILD_FRONTEND_INSTALL_COMMAND`, `BUILD_FRONTEND_BUILD_COMMAND` | — | `build-project` (optional) |
-| Run | `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` | — | `run-project` command |
 | Test stash | `TEST_LOCAL_STASH_SHA` | — | `testing-and-proof` (optional) |
 | DB | `DBHUB_TOML_FILE_PATH` | `.claude/dbhub.local.toml` | `db-management` |
 | Memory | `MEMORY_SERVER_JSONL_FILE_PATH` | `.claude/memory-server.local.jsonl` | `memory` |
@@ -44,11 +41,6 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 - If a plugin-managed key already has a real value (not a placeholder), confirm with the user before replacing it. If the user chooses to keep the existing value, leave it unchanged.
 - If `.claude/settings.json` also exists with an `env` block, keep this plugin's local values in `settings.local.json` so they stay out of version control.
 - If the user passes `all`, configure every area in the table above.
-- `BUILD_PROJECT_PATH` is a relative path from the workspace root to the `.csproj` file.
-- `BUILD_MSBUILD_PATH` and `RUN_IIS_EXPRESS_PATH` are absolute paths to executable files on the machine.
-- When collecting `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`, ask the user which `applicationhost.config` they want to use before prompting for a path:
-  - **Visual Studio auto-generated (recommended, project-level)** — located at `.vs\{SolutionName}\config\applicationhost.config` inside the workspace. This file is generated per-solution and keeps site bindings in version control proximity.
-  - **User-level** — located at `%USERPROFILE%\Documents\IISExpress\config\applicationhost.config`. This is the global fallback used when no project-level config is present.
 - `DBHUB_TOML_FILE_PATH` and `MEMORY_SERVER_JSONL_FILE_PATH` are absolute paths to files that the Docker containers can read via volume mount.
 - `MARKITDOWN_WORKDIR_PATH` is an absolute path to a directory that the Docker container mounts as `/workdir`.
 - Never overwrite an existing companion file that has been customized. Only create companion files if they are absent.

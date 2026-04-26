@@ -1,8 +1,8 @@
-# Turbo .NET Framework Skills for Claude
+# Turbo Dev Pack for Claude
 
-**t**urbo dot**n**et **f**ramework skills 簡稱 tnf
+**t**urbo **d**ev **p**ack 簡稱 tdp
 
-Skills and scripts for .NET Framework web project development, IIS Express startup, testing and proof, and team workflows.
+Skills and scripts for web project development workflows, testing and proof, and team collaboration.
 
 ## 安裝
 
@@ -18,7 +18,7 @@ Skills and scripts for .NET Framework web project development, IIS Express start
                 }
             },
             "enabledPlugins": {
-                "dotnet-framework-skills@turbo-plugins-claude": true
+                "turbo-dev-pack@turbo-plugins-claude": true
             }
         ```
-1. 安裝完之後在 claude 聊天視窗使用 `/tb-dnf:setup` 設定環境變數與必要的設定檔案
+1. 安裝完之後在 claude 聊天視窗使用 `/tdp:setup` 設定環境變數與必要的設定檔案
