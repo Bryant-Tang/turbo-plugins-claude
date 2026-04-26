@@ -18,6 +18,8 @@ user-invocable: true
 - One matching specs folder exists under `specs/bugfix/` or `specs/feature/`.
 - A `goal.md` exists and reflects the currently agreed requirement.
 - The work is ready for `write-plan`.
+- Each goal in **修正或開發目標** is independently deliverable without depending on any other incomplete goal.
+- Each goal is scoped small enough to plan and implement in a single chat session using plan mode.
 
 ## Naming And Path Rules
 - Every requirement gets exactly one dedicated branch.
@@ -33,7 +35,10 @@ user-invocable: true
 3. Confirm the intended branch name. If the user asked to start the work and the working tree is safe, create or switch to that branch. If the working tree is not safe, stop and explain the blocker instead of forcing a branch change.
 4. Create the matching specs folder if it does not exist.
 5. Create `goal.md` from the [goal template](./assets/goal.template.md).
-6. Discuss the requirement with the user and keep editing `goal.md` until scope, expected behavior, constraints, impact, and validation direction are clear enough for planning.
+6. Discuss the requirement with the user and keep editing `goal.md` until scope, expected behavior, constraints, impact, and validation direction are clear enough for planning. While defining goals in **修正或開發目標**, validate each one:
+   - **Independently deliverable**: the goal can be merged or demonstrated on its own without relying on other incomplete goals.
+   - **Session-scoped**: small enough to plan and fully implement in a single chat session using plan mode; if not, split it further.
+   If a goal is too broad, break it into smaller goals. If goals must run in sequence, record the dependency in each goal's 依賴關係 field.
 7. Stop after `goal.md` is ready. Do not create `plan.md`, `test-plan.md`, `test-n.md`, or review reports in this skill; hand off to `write-plan`. When `test-n.md` is created later, replace `n` with the actual verification task number.
 
 ## Decision Rules
@@ -41,12 +46,24 @@ user-invocable: true
 - If an existing branch name or specs path does not match the requirement, ask whether to create a new one instead of silently reusing the wrong location.
 - If the user is still changing scope, keep refining `goal.md`; do not jump ahead to implementation planning.
 - Record confirmed facts, confirmed expectations, and open questions that materially affect implementation or verification.
+- If a goal in **修正或開發目標** spans more than one major subsystem or involves unrelated changes, split it into two or more smaller goals.
+- If goals have ordering dependencies, state them explicitly so that the user knows which goal to implement first.
 
 ## Completion Checks
 - Branch name follows the prefix rule.
 - Specs folder matches the branch slug.
 - `goal.md` exists in that specs folder.
 - `goal.md` is ready to drive `write-plan`.
+- Each goal in **修正或開發目標** is independently deliverable.
+- Each goal is scoped for one plan mode session.
+
+## Handoff
+
+After `goal.md` is confirmed, tell the user:
+
+> `goal.md` 已完成。你可以：
+> - 選一個目標，開新的 chat session 並使用 **plan mode** 來規劃與實作（建議從沒有依賴關係的目標開始）。
+> - 如果目標範圍或細節還需要調整，繼續在這裡討論並修正 `goal.md`，再進入 plan mode。
 
 ## Template
 - [goal template](./assets/goal.template.md)
