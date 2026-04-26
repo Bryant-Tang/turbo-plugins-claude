@@ -12,6 +12,7 @@ user-invocable: true
 - The next step is to execute implementation tasks in order.
 - Each task must be reviewed against its AC before moving on.
 - Final verification from `test-plan.md` should not run yet.
+- Skip this skill and use Claude Code's plan mode directly if you did not create `plan.md` or prefer a single-session implementation without subagent review loops.
 
 ## Outcome
 - One target `plan.md` is identified.

@@ -17,7 +17,7 @@ user-invocable: true
 - One dedicated branch name is confirmed.
 - One matching specs folder exists under `specs/bugfix/` or `specs/feature/`.
 - A `goal.md` exists and reflects the currently agreed requirement.
-- The work is ready for `write-plan`.
+- The work is ready for the next phase.
 - Each goal in **修正或開發目標** is independently deliverable without depending on any other incomplete goal.
 - Each goal is scoped small enough to plan and implement in a single chat session using plan mode.
 
@@ -40,7 +40,7 @@ user-invocable: true
    - **Independently deliverable**: the goal can be merged or demonstrated on its own without relying on other incomplete goals.
    - **Session-scoped**: small enough to plan and fully implement in a single chat session using plan mode; if not, split it further.
    If a goal is too broad, break it into smaller goals. If goals must run in sequence, record the dependency in each goal's 依賴關係 field.
-7. Stop after `goal.md` is ready. Do not create `plan.md`, `test-plan.md`, `test-n.md`, or review reports in this skill; hand off to `write-plan`. When `test-n.md` is created later, replace `n` with the actual verification task number.
+7. Stop after `goal.md` is ready. Do not create `plan.md`, `test-plan.md`, `test-n.md`, or review reports in this skill. Do not hand off to any specific next skill. When `test-n.md` is created later, replace `n` with the actual verification task number.
 
 ## Decision Rules
 - If the user bundled more than one independent requirement together, split them into separate branches and separate specs folders instead of sharing one `goal.md`.
@@ -54,7 +54,7 @@ user-invocable: true
 - Branch name follows the prefix rule.
 - Specs folder matches the branch slug.
 - `goal.md` exists in that specs folder.
-- `goal.md` is ready to drive `write-plan`.
+- `goal.md` is ready for the next phase.
 - Each goal in **修正或開發目標** is independently deliverable.
 - Each goal is scoped for one plan mode session.
 
@@ -62,9 +62,21 @@ user-invocable: true
 
 After `goal.md` is confirmed, tell the user:
 
-> `goal.md` 已完成。你可以：
-> - 選一個目標，開新的 chat session 並使用 **plan mode** 來規劃與實作（建議從沒有依賴關係的目標開始）。
-> - 如果目標範圍或細節還需要調整，繼續在這裡討論並修正 `goal.md`，再進入 plan mode。
+> `goal.md` 已完成。你可以選擇以下任一路線：
+>
+> **路線 A：直接使用 plan mode（推薦）**
+> 開新的 chat session，選一個目標使用 **plan mode** 直接規劃與實作（建議從沒有依賴關係的目標開始）。
+> 實作完成後，自行決定：
+> - 開新的 chat session，使用 **plan mode** 規劃測試計畫並執行測試
+> - 或改以人工 review 代替
+>
+> **路線 B：TDP 完整流程**
+> 適合需要詳細規劃文件、分類 AC、subagent 評審的需求。
+> 1. `/tdp:write-plan` — 建立 `plan.md`、`test-plan.md`、`test-n.md`
+> 2. `/tdp:implement-task` — 透過 subagent 逐步實作並評審
+> 3. （可選）`/tdp:testing-and-proof` — 執行驗證並產出截圖或非 browser 證據
+>
+> 如果目標範圍或細節還需要調整，繼續在這裡討論並修正 `goal.md`，再進入下一步。
 
 ## Template
 - [goal template](./assets/goal.template.md)

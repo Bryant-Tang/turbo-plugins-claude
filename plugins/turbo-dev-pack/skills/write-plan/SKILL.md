@@ -12,6 +12,7 @@ user-invocable: true
 - The next step is to create `plan.md`.
 - Final verification needs to be split into `test-plan.md` plus multiple `test-n.md` files.
 - The work needs explicit AC and evidence rules before implementation starts.
+- Skip this skill and use Claude Code's plan mode directly if you prefer to plan and implement without `plan.md` or `test-plan.md`.
 
 ## Outcome
 - One target `goal.md` is identified.

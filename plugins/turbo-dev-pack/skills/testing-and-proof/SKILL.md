@@ -12,6 +12,7 @@ user-invocable: true
 - The user asks for ordered verification instead of only build or startup logs.
 - The user asks for screenshots, browser proof, or non-browser evidence to be written back into the spec folder.
 - The user wants cleanup after each server-backed verification task.
+- Skip this skill if you prefer to validate the implementation through manual review, or to use Claude Code's plan mode to plan and run tests instead.
 
 ## Prerequisites
 - The appropriate build and run setup must have been completed and confirmed working before running this skill.
