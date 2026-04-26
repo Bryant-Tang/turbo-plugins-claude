@@ -16,10 +16,10 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 | Area | Env Vars | Companion File | Required For |
 |---|---|---|---|
 | Test stash | `TEST_LOCAL_STASH_SHA` | — | `testing-and-proof` (optional) |
-| DB | `DBHUB_TOML_FILE_PATH` | `.claude/dbhub.local.toml`<br>`sql files/local-db/`<br>`sql files/test-db/`<br>`sql files/main-db/` | `db-management` |
+| DB | `DBHUB_TOML_FILE_PATH` | `.claude/dbhub.local.toml`<br>`sql files/local-db/`<br>`sql files/test-db/`<br>`sql files/main-db/`<br>`sql files/archives/local-db/`<br>`sql files/archives/test-db/`<br>`sql files/archives/main-db/` | `db-management` |
 | Memory | `MEMORY_SERVER_JSONL_FILE_PATH` | `.claude/memory-server.local.jsonl` | `memory` |
 | MarkItDown | `MARKITDOWN_WORKDIR_PATH` | workdir directory | `markitdown` |
-| Specs | — | `specs/bugfix/`<br>`specs/feature/` | `start-dev`, `write-plan` |
+| Specs | — | `specs/bugfix/`<br>`specs/feature/`<br>`specs/archives/bugfix/`<br>`specs/archives/feature/` | `start-dev`, `write-plan`, `finish-dev` |
 
 ## Procedure
 
@@ -34,8 +34,8 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
    - `MEMORY_SERVER_JSONL_FILE_PATH` — if the file does not exist, create an empty file at that path.
    - `MARKITDOWN_WORKDIR_PATH` — if the directory does not exist, create it.
    - `.claude/frontend-standard.local.md` — if the file does not exist in the workspace root, copy the template from `${CLAUDE_PLUGIN_ROOT}/default-config-files/.claude/frontend-standard.example.local.md`.
-   - `sql files/` directory structure — if the DB area was configured in this run, create each of `sql files/local-db/`, `sql files/test-db/`, and `sql files/main-db/` that does not already exist. Create each directory as a separate step; do not chain with `&&`.
-   - `specs/` directory structure — regardless of which areas were configured, create `specs/bugfix/` and `specs/feature/` if they do not already exist. Create each directory as a separate step; do not chain with `&&`.
+   - `sql files/` directory structure — if the DB area was configured in this run, create each of `sql files/local-db/`, `sql files/test-db/`, `sql files/main-db/`, `sql files/archives/local-db/`, `sql files/archives/test-db/`, and `sql files/archives/main-db/` that does not already exist. Create each directory as a separate step; do not chain with `&&`.
+   - `specs/` directory structure — regardless of which areas were configured, create `specs/bugfix/`, `specs/feature/`, `specs/archives/bugfix/`, and `specs/archives/feature/` if they do not already exist. Create each directory as a separate step; do not chain with `&&`.
 6. Report what was created or updated, and call out any companion files the user still needs to edit manually.
 
 ## Decision Rules
@@ -47,8 +47,8 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 - `DBHUB_TOML_FILE_PATH` and `MEMORY_SERVER_JSONL_FILE_PATH` are absolute paths to files that the Docker containers can read via volume mount.
 - `MARKITDOWN_WORKDIR_PATH` is an absolute path to a directory that the Docker container mounts as `/workdir`.
 - Never overwrite an existing companion file that has been customized. Only create companion files if they are absent.
-- `sql files/local-db/`, `sql files/test-db/`, and `sql files/main-db/` are only created when the DB area is configured in the current run. If the DB area is skipped, do not touch `sql files/`.
-- `specs/bugfix/` and `specs/feature/` are always created regardless of which areas the user chose to configure. If either directory already exists, skip it silently.
+- `sql files/local-db/`, `sql files/test-db/`, `sql files/main-db/`, `sql files/archives/local-db/`, `sql files/archives/test-db/`, and `sql files/archives/main-db/` are only created when the DB area is configured in the current run. If the DB area is skipped, do not touch `sql files/`.
+- `specs/bugfix/`, `specs/feature/`, `specs/archives/bugfix/`, and `specs/archives/feature/` are always created regardless of which areas the user chose to configure. If any of these directories already exist, skip them silently.
 - Do not store credentials or connection strings in `.claude/settings.local.json`. The DBHub TOML file holds the actual database credentials; only the path to that file goes in the env block.
 - When creating directories or files as separate shell steps, do not chain commands with `&&`.
 - `DBHUB_TOML_FILE_PATH`, `MEMORY_SERVER_JSONL_FILE_PATH`, and `MARKITDOWN_WORKDIR_PATH` are passed directly to Docker volume mounts without any path normalization. Provide an absolute path appropriate for the host OS: Windows absolute with backslash (`C:\...`) or forward slash (`C:/...`), or Unix/macOS absolute (`/path/...`). Write the value as-is.
@@ -58,7 +58,7 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 
 - `.claude/settings.local.json` exists and the `env` block contains all configured keys with real, non-placeholder values.
 - Every companion file or directory referenced by the configured env vars exists at the specified path.
-- If the DB area was configured: `sql files/local-db/`, `sql files/test-db/`, and `sql files/main-db/` all exist.
-- `specs/bugfix/` and `specs/feature/` both exist.
+- If the DB area was configured: `sql files/local-db/`, `sql files/test-db/`, `sql files/main-db/`, `sql files/archives/local-db/`, `sql files/archives/test-db/`, and `sql files/archives/main-db/` all exist.
+- `specs/bugfix/`, `specs/feature/`, `specs/archives/bugfix/`, and `specs/archives/feature/` all exist.
 - The user was told which companion files still require manual editing (DBHub connection strings, frontend standards).
 - No credentials or secrets were written into `.claude/settings.local.json`.
