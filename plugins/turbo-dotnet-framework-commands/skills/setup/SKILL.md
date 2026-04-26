@@ -42,6 +42,8 @@ Configure `.claude/settings.local.json` with the environment variables required 
   - **User-level** — located at `%USERPROFILE%\Documents\IISExpress\config\applicationhost.config`. This is the global fallback used when no project-level config is present.
 - Never overwrite existing keys set by other plugins. Only manage the `BUILD_*` and `RUN_*` keys listed in the table above.
 - When creating files as separate shell steps, do not chain commands with `&&`.
+- Path variables (`BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH`, `BUILD_FRONTEND_DIR_PATH`, `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`) accept any path format the user provides — Windows absolute with backslash (`C:\...`) or forward slash (`C:/...`), Unix absolute (`/path/...`), Git Bash drive format (`/c/...`), or relative with or without `./` prefix. Write the value as-is to `settings.local.json`; the underlying scripts (both bash and PowerShell) normalize all these formats automatically.
+- Do not accept or suggest paths using the `.\` prefix (Windows-style dot-backslash relative, e.g. `.\src\Web.csproj`). The bash script's path resolver does not strip `.\`. Prefer `relative/path` or `./relative/path` format for relative paths.
 
 ## Completion Checks
 

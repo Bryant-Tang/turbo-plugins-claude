@@ -46,6 +46,8 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 - Never overwrite an existing companion file that has been customized. Only create companion files if they are absent.
 - Do not store credentials or connection strings in `.claude/settings.local.json`. The DBHub TOML file holds the actual database credentials; only the path to that file goes in the env block.
 - When creating directories or files as separate shell steps, do not chain commands with `&&`.
+- `DBHUB_TOML_FILE_PATH`, `MEMORY_SERVER_JSONL_FILE_PATH`, and `MARKITDOWN_WORKDIR_PATH` are passed directly to Docker volume mounts without any path normalization. Provide an absolute path appropriate for the host OS: Windows absolute with backslash (`C:\...`) or forward slash (`C:/...`), or Unix/macOS absolute (`/path/...`). Write the value as-is.
+- On Windows only: if the user provides a Git Bash-style drive path (e.g. `/c/Users/...`), convert it to Windows format (`C:/Users/...`) before writing to `settings.local.json`, since that format is not reliably supported by Docker Desktop on Windows.
 
 ## Completion Checks
 
