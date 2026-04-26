@@ -1,0 +1,13 @@
+{
+  "name": "turbo-plugins-claude",
+  "owner": {
+    "name": "Bryant Tang"
+  },
+  "plugins": [
+    {
+      "name": "turbo-dotnet-framework-skills",
+      "description": "Skills and scripts for .NET Framework web project development, IIS Express startup, testing and proof, and team workflows.",
+      "source": "./plugins/turbo-dotnet-framework-skills"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+    "mcpServers": {
+        "dbhub": {
+            "type": "stdio",
+            "command": "docker",
+            "args": [
+                "run",
+                "-i",
+                "--rm",
+                "--init",
+                "-v",
+                "${DBHUB_TOML_FILE_PATH}:/dbhub.toml",
+                "bytebase/dbhub:latest",
+                "--transport",
+                "stdio",
+                "--config",
+                "/dbhub.toml"
+            ],
+            "env": {}
+        },
+        "memory-server": {
+            "type": "stdio",
+            "command": "docker",
+            "args": [
+                "run",
+                "-i",
+                "--rm",
+                "-v",
+                "${MEMORY_SERVER_JSONL_FILE_PATH}:/memory-server.jsonl",
+                "-e",
+                "MEMORY_FILE_PATH=/memory-server.jsonl",
+                "mcp/memory:latest"
+            ],
+            "env": {}
+        },
+        "markitdown": {
+            "type": "stdio",
+            "command": "docker",
+            "args": [
+                "run",
+                "-i",
+                "--rm",
+                "-v",
+                "${MARKITDOWN_WORKDIR_PATH}:/workdir",
+                "mcp/markitdown:latest"
+            ],
+            "env": {}
+        }
+    }
+}
