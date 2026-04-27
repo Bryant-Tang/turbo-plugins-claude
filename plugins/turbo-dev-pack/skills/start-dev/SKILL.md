@@ -62,19 +62,16 @@ user-invocable: true
 
 After `goal.md` is confirmed, tell the user:
 
-> `goal.md` 已完成。你可以選擇以下任一路線：
+> `goal.md` 已完成。接下來按目標逐一執行，完成一個目標後再進行下一個（建議從沒有依賴關係的目標開始）：
 >
-> **路線 A：直接使用 plan mode（推薦）**
-> 開新的 chat session，選一個目標使用 **plan mode** 直接規劃與實作（建議從沒有依賴關係的目標開始）。
-> 實作完成後，自行決定：
-> - 開新的 chat session，使用 **plan mode** 規劃測試計畫並執行測試
-> - 或改以人工 review 代替
+> **每個目標重複以下步驟：**
+> 1. 開新的 chat session，使用 **plan mode** 規劃該目標的實作方式
+> 2. `/tdp:write-plan` — 將計畫寫入 `plan.md`、`test-plan.md`、`test-n.md`
+> 3. `/tdp:implement-task` — 透過 subagent 逐步實作並評審
+> 4. `/tdp:testing-and-proof`（可選）— 執行驗證並產出截圖或非 browser 證據，或改以人工 review 代替
 >
-> **路線 B：TDP 完整流程**
-> 適合需要詳細規劃文件、分類 AC、subagent 評審的需求。
-> 1. `/tdp:write-plan` — 建立 `plan.md`、`test-plan.md`、`test-n.md`
-> 2. `/tdp:implement-task` — 透過 subagent 逐步實作並評審
-> 3. （可選）`/tdp:testing-and-proof` — 執行驗證並產出截圖或非 browser 證據
+> **所有目標完成後：**
+> `/tdp:finish-dev` — 歸檔規格資料夾，完成開發
 >
 > 如果目標範圍或細節還需要調整，繼續在這裡討論並修正 `goal.md`，再進入下一步。
 
