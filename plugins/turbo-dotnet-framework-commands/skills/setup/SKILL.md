@@ -1,7 +1,7 @@
 ---
 name: setup
-description: 'Set up or update .NET Framework build and run configuration in .claude/settings.local.json. Use when installing the tnf plugin for the first time or when adjusting MSBuild path, IIS Express path, or csproj settings.'
-argument-hint: 'Optional: build | run | all'
+description: 'Set up or update .NET Framework build, run, and publish configuration in .claude/settings.local.json. Use when installing the tnf plugin for the first time or when adjusting MSBuild path, IIS Express path, publish profile, or csproj settings.'
+argument-hint: 'Optional: build | run | publish | all'
 user-invocable: true
 ---
 
@@ -9,7 +9,7 @@ user-invocable: true
 
 ## Purpose
 
-Configure `.claude/settings.local.json` with the environment variables required by the `build-project` and `run-project` commands so they can run in the current workspace.
+Configure `.claude/settings.local.json` with the environment variables required by the `build-project`, `run-project`, and `publish-project` commands so they can run in the current workspace.
 
 ## What This Skill Configures
 
@@ -19,6 +19,7 @@ Configure `.claude/settings.local.json` with the environment variables required 
 | Build defaults | `BUILD_DEFAULT_CONFIGURATION`, `BUILD_DEFAULT_PLATFORM` | — | `build-project` (optional) |
 | Build frontend | `BUILD_FRONTEND_DIR_PATH`, `BUILD_NODE_VERSION`, `BUILD_FRONTEND_INSTALL_COMMAND`, `BUILD_FRONTEND_BUILD_COMMAND` | — | `build-project` (optional) |
 | Run | `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` | — | `run-project` command |
+| Publish | `PUBLISH_PUBXML_PATH` | — | `publish-project` command |
 
 ## Procedure
 
@@ -37,17 +38,18 @@ Configure `.claude/settings.local.json` with the environment variables required 
 - If `.claude/settings.json` also exists with an `env` block, keep this plugin's local values in `settings.local.json` so they stay out of version control.
 - If the user passes `all`, configure every area in the table above.
 - `BUILD_PROJECT_PATH` is a relative path from the workspace root to the `.csproj` file.
+- `PUBLISH_PUBXML_PATH` is the path to a `.pubxml` publish profile file. It may be absolute or relative to the workspace root. This variable is optional when `--profile` is supplied at invocation time.
 - `BUILD_MSBUILD_PATH` and `RUN_IIS_EXPRESS_PATH` are absolute paths to executable files on the machine.
 - `BUILD_DEFAULT_CONFIGURATION` and `BUILD_DEFAULT_PLATFORM` are optional. If omitted, builds use `Debug` and `AnyCPU` by default. Accepted values are any valid MSBuild configuration or platform string (e.g. `Debug`, `Release`, `AnyCPU`, `x86`, `x64`). These defaults can always be overridden at invocation time by passing `--configuration` / `--platform` arguments to the build command.
 - When collecting `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`, ask the user which `applicationhost.config` they want to use before prompting for a path:
   - **Visual Studio auto-generated (recommended, project-level)** — located at `.vs\{SolutionName}\config\applicationhost.config` inside the workspace. This file is generated per-solution and keeps site bindings in version control proximity.
   - **User-level** — located at `%USERPROFILE%\Documents\IISExpress\config\applicationhost.config`. This is the global fallback used when no project-level config is present.
-- Never overwrite existing keys set by other plugins. Only manage the `BUILD_*` and `RUN_*` keys listed in the table above.
+- Never overwrite existing keys set by other plugins. Only manage the `BUILD_*`, `RUN_*`, and `PUBLISH_*` keys listed in the table above.
 - When creating files as separate shell steps, do not chain commands with `&&`.
-- Path variables (`BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH`, `BUILD_FRONTEND_DIR_PATH`, `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`) accept any path format the user provides — Windows absolute with backslash (`C:\...`) or forward slash (`C:/...`), Unix absolute (`/path/...`), Git Bash drive format (`/c/...`), or relative with or without `./` prefix. Write the value as-is to `settings.local.json`; the underlying scripts (both bash and PowerShell) normalize all these formats automatically.
+- Path variables (`BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH`, `BUILD_FRONTEND_DIR_PATH`, `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`, `PUBLISH_PUBXML_PATH`) accept any path format the user provides — Windows absolute with backslash (`C:\...`) or forward slash (`C:/...`), Unix absolute (`/path/...`), Git Bash drive format (`/c/...`), or relative with or without `./` prefix. Write the value as-is to `settings.local.json`; the underlying scripts (both bash and PowerShell) normalize all these formats automatically.
 - Do not accept or suggest paths using the `.\` prefix (Windows-style dot-backslash relative, e.g. `.\src\Web.csproj`). The bash script's path resolver does not strip `.\`. Prefer `relative/path` or `./relative/path` format for relative paths.
 
 ## Completion Checks
 
-- `.claude/settings.local.json` exists and the `env` block contains all configured `BUILD_*` and `RUN_*` keys with real, non-placeholder values.
+- `.claude/settings.local.json` exists and the `env` block contains all configured `BUILD_*`, `RUN_*`, and `PUBLISH_*` keys with real, non-placeholder values.
 - No credentials or secrets were written into `.claude/settings.local.json`.
