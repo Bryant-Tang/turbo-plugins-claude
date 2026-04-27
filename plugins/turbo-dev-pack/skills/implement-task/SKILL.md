@@ -47,7 +47,7 @@ user-invocable: true
 
 ## Procedure
 1. Identify the target `plan.md`. If ambiguous, ask the user.
-2. Read `plan.md` and the sibling `goal.md`.
+2. Read `plan.md` and `goal.md`. If `plan.md` is inside a `goal-N/` subdirectory, `goal.md` is in the parent directory.
 3. Determine the ordered implementation tasks, identify the final build task, and extract the categorized AC for each task.
 4. For each non-build task, invoke an implementation subagent with the task scope, files, categorized AC, an explicit instruction not to touch later tasks, and an explicit instruction that any changed C# code must follow the `csharp-comment` skill.
 5. After the implementation attempt completes, invoke parallel review subagents for the current non-build task, one subagent per AC category. Each review subagent must check only its assigned category against the current task scope and AC and must write or overwrite its own review report from the [task review template](./assets/task-review.template.md).
