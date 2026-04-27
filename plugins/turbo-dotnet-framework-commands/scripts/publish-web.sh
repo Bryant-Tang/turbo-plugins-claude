@@ -8,7 +8,7 @@ REPO_ROOT="$(pwd)"
 PUBXML_PATH=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --profile) PUBXML_PATH="$2"; shift 2 ;;
+    --profile) [[ $# -ge 2 ]] || { echo "Error: --profile requires a value" >&2; exit 1; }; PUBXML_PATH="$2"; shift 2 ;;
     *) echo "Unknown argument: '$1'. Supported: --profile <path>." >&2; exit 1 ;;
   esac
 done

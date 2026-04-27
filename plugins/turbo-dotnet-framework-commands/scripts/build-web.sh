@@ -10,8 +10,8 @@ BUILD_CONFIGURATION=""
 BUILD_PLATFORM=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --configuration) BUILD_CONFIGURATION="$2"; shift 2 ;;
-    --platform)      BUILD_PLATFORM="$2";      shift 2 ;;
+    --configuration) [[ $# -ge 2 ]] || { echo "Error: --configuration requires a value" >&2; exit 1; }; BUILD_CONFIGURATION="$2"; shift 2 ;;
+    --platform)      [[ $# -ge 2 ]] || { echo "Error: --platform requires a value" >&2; exit 1; };      BUILD_PLATFORM="$2";      shift 2 ;;
     *) echo "Unknown argument: '$1'. Supported: --configuration <value>, --platform <value>." >&2; exit 1 ;;
   esac
 done

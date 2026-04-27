@@ -64,7 +64,7 @@ function Resolve-IisSettings {
         throw "Unable to parse scheme from IISUrl in project file: $iisUrl"
     }
 
-    if ($iisUri.Port -lt 1) {
+    if ($iisUri.Port -lt 1 -or $iisUri.Port -gt 65535) {
         throw "Unable to parse port from IISUrl in project file: $iisUrl"
     }
 

@@ -10,7 +10,7 @@ if [[ ! -f "$STATE_FILE" ]]; then
 fi
 
 STASH_REF="$(cat "$STATE_FILE")"
-git stash show -p --include-untracked "$STASH_REF" | git apply -R
+git stash show -p "$STASH_REF" | git apply -R
 
 STATUS_OUTPUT="$(git status --porcelain)"
 
