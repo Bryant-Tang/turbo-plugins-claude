@@ -1,6 +1,8 @@
 param(
-    # Pass 'release-build' to build with Configuration=Release. Defaults to Debug.
-    [string]$BuildArgument = ''
+    # MSBuild Configuration (e.g. Debug, Release). Falls back to BUILD_DEFAULT_CONFIGURATION env var, then 'Debug'.
+    [string]$Configuration = '',
+    # MSBuild Platform (e.g. AnyCPU, x86, x64). Falls back to BUILD_DEFAULT_PLATFORM env var, then 'AnyCPU'.
+    [string]$Platform = ''
 )
 
 Set-StrictMode -Version Latest
@@ -36,12 +38,12 @@ try {
     $projectPathRel = $env:BUILD_PROJECT_PATH
     $msbuildPath = $env:BUILD_MSBUILD_PATH
 
-    $buildConfiguration = 'Debug'
-    if ($BuildArgument -eq 'release-build') {
-        $buildConfiguration = 'Release'
-    } elseif (-not [string]::IsNullOrWhiteSpace($BuildArgument)) {
-        throw "Unknown build argument: '$BuildArgument'. Supported values: 'release-build'."
-    }
+    $buildConfiguration = if (-not [string]::IsNullOrWhiteSpace($Configuration)) { $Configuration }
+                          elseif (-not [string]::IsNullOrWhiteSpace($env:BUILD_DEFAULT_CONFIGURATION)) { $env:BUILD_DEFAULT_CONFIGURATION }
+                          else { 'Debug' }
+    $buildPlatform = if (-not [string]::IsNullOrWhiteSpace($Platform)) { $Platform }
+                     elseif (-not [string]::IsNullOrWhiteSpace($env:BUILD_DEFAULT_PLATFORM)) { $env:BUILD_DEFAULT_PLATFORM }
+                     else { 'AnyCPU' }
 
     if ([string]::IsNullOrWhiteSpace($projectPathRel)) {
         throw 'Missing BUILD_PROJECT_PATH environment variable'
@@ -64,8 +66,8 @@ try {
 
     $solutionDir = $repoRoot.TrimEnd('\') + '\'
 
-    Write-Output "Running MSBuild for $projectPathRel (Configuration: $buildConfiguration)"
-    & $msbuildPath $projectFile /restore /t:Build "/p:SolutionDir=$solutionDir" /p:RestorePackagesConfig=true "/p:Configuration=$buildConfiguration" /p:Platform=AnyCPU
+    Write-Output "Running MSBuild for $projectPathRel (Configuration: $buildConfiguration, Platform: $buildPlatform)"
+    & $msbuildPath $projectFile /restore /t:Build "/p:SolutionDir=$solutionDir" /p:RestorePackagesConfig=true "/p:Configuration=$buildConfiguration" "/p:Platform=$buildPlatform"
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE

@@ -16,6 +16,7 @@ Configure `.claude/settings.local.json` with the environment variables required 
 | Area | Env Vars | Companion File | Required For |
 |---|---|---|---|
 | Build | `BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH` | — | `build-project` command |
+| Build defaults | `BUILD_DEFAULT_CONFIGURATION`, `BUILD_DEFAULT_PLATFORM` | — | `build-project` (optional) |
 | Build frontend | `BUILD_FRONTEND_DIR_PATH`, `BUILD_NODE_VERSION`, `BUILD_FRONTEND_INSTALL_COMMAND`, `BUILD_FRONTEND_BUILD_COMMAND` | — | `build-project` (optional) |
 | Run | `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` | — | `run-project` command |
 
@@ -37,6 +38,7 @@ Configure `.claude/settings.local.json` with the environment variables required 
 - If the user passes `all`, configure every area in the table above.
 - `BUILD_PROJECT_PATH` is a relative path from the workspace root to the `.csproj` file.
 - `BUILD_MSBUILD_PATH` and `RUN_IIS_EXPRESS_PATH` are absolute paths to executable files on the machine.
+- `BUILD_DEFAULT_CONFIGURATION` and `BUILD_DEFAULT_PLATFORM` are optional. If omitted, builds use `Debug` and `AnyCPU` by default. Accepted values are any valid MSBuild configuration or platform string (e.g. `Debug`, `Release`, `AnyCPU`, `x86`, `x64`). These defaults can always be overridden at invocation time by passing `--configuration` / `--platform` arguments to the build command.
 - When collecting `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`, ask the user which `applicationhost.config` they want to use before prompting for a path:
   - **Visual Studio auto-generated (recommended, project-level)** — located at `.vs\{SolutionName}\config\applicationhost.config` inside the workspace. This file is generated per-solution and keeps site bindings in version control proximity.
   - **User-level** — located at `%USERPROFILE%\Documents\IISExpress\config\applicationhost.config`. This is the global fallback used when no project-level config is present.

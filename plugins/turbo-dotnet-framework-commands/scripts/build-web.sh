@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Usage: build-web.sh [release-build]
-# Pass 'release-build' to build with Configuration=Release. Defaults to Debug.
+# Usage: build-web.sh [--configuration <value>] [--platform <value>]
+# Env var defaults: BUILD_DEFAULT_CONFIGURATION (default: Debug), BUILD_DEFAULT_PLATFORM (default: AnyCPU)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(pwd)"
 
-BUILD_CONFIGURATION="Debug"
-if [[ "${1:-}" == "release-build" ]]; then
-  BUILD_CONFIGURATION="Release"
-elif [[ -n "${1:-}" ]]; then
-  echo "Unknown build argument: '${1}'. Supported values: 'release-build'." >&2
-  exit 1
-fi
+BUILD_CONFIGURATION=""
+BUILD_PLATFORM=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --configuration) BUILD_CONFIGURATION="$2"; shift 2 ;;
+    --platform)      BUILD_PLATFORM="$2";      shift 2 ;;
+    *) echo "Unknown argument: '$1'. Supported: --configuration <value>, --platform <value>." >&2; exit 1 ;;
+  esac
+done
+BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-${BUILD_DEFAULT_CONFIGURATION:-Debug}}"
+BUILD_PLATFORM="${BUILD_PLATFORM:-${BUILD_DEFAULT_PLATFORM:-AnyCPU}}"
 
 resolve_repo_path() {
   local repo_root="$1"
@@ -59,7 +63,7 @@ echo "Running MSBuild for $BUILD_PROJECT_PATH (Configuration: $BUILD_CONFIGURATI
   "-p:SolutionDir=$SOLUTION_DIR_WIN" \
   -p:RestorePackagesConfig=true \
   "-p:Configuration=$BUILD_CONFIGURATION" \
-  -p:Platform=AnyCPU
+  "-p:Platform=$BUILD_PLATFORM"
 
 PACK_CONTENT_SCRIPT="$SCRIPT_DIR/pack-content.sh"
 
