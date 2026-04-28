@@ -13,13 +13,13 @@ Commands and scripts for .NET Framework web project build with MSBuild and IIS E
     "extraKnownMarketplaces": {
       "turbo-plugins-claude": {
         "source": {
-              "source": "git",
-              "url": "https://github.com/Bryant-Tang/turbo-plugins-claude.git"
+          "source": "git",
+          "url": "https://github.com/Bryant-Tang/turbo-plugins-claude.git"
         }
       }
     },
     "enabledPlugins": {
-      "turbo-dotnet-framework-commands@turbo-plugins-claude": true
+      "tnf@turbo-plugins-claude": true
     }
     ```
 1. 安裝完之後在 claude 聊天視窗使用 `/tnf:setup` 設定 MSBuild 與 IIS Express 相關環境變數

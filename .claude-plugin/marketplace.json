@@ -5,12 +5,12 @@
   },
   "plugins": [
     {
-      "name": "turbo-dev-pack",
+      "name": "tdp",
       "description": "Skills and scripts for web project development workflows, testing and proof, and team collaboration.",
       "source": "./plugins/turbo-dev-pack"
     },
     {
-      "name": "turbo-dotnet-framework-commands",
+      "name": "tnf",
       "description": "Commands and scripts for .NET Framework web project build with MSBuild and IIS Express startup.",
       "source": "./plugins/turbo-dotnet-framework-commands"
     }
