@@ -6,7 +6,7 @@ allowed-tools: Bash, PowerShell
 
 Start the configured web project under IIS Express in the background and verify the port is listening.
 
-Run `build-project` first when the latest web binaries may not exist or may be stale.
+Run `build-web` first when the latest web binaries may not exist or may be stale.
 
 ## Config
 

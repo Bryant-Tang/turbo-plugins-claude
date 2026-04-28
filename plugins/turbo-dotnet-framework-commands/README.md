@@ -26,5 +26,5 @@ Commands and scripts for .NET Framework web project build with MSBuild and IIS E
 
 ## 提供的命令
 
-- **`build-project`** — 使用 MSBuild 建置 ASP.NET web 專案，可選打包前端資產
-- **`run-project`** — 在背景啟動 IIS Express，驗證埠監聽狀態
+- **`build-web`** — 使用 MSBuild 建置 ASP.NET web 專案，可選打包前端資產
+- **`run-web`** — 在背景啟動 IIS Express，驗證埠監聽狀態

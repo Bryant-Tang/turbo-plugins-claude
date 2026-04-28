@@ -9,17 +9,17 @@ user-invocable: true
 
 ## Purpose
 
-Configure `.claude/settings.local.json` with the environment variables required by the `build-project`, `run-project`, and `publish-project` commands so they can run in the current workspace.
+Configure `.claude/settings.local.json` with the environment variables required by the `build-web`, `run-web`, and `publish-web` commands so they can run in the current workspace.
 
 ## What This Skill Configures
 
 | Area | Env Vars | Companion File | Required For |
 |---|---|---|---|
-| Build | `BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH` | — | `build-project` command |
-| Build defaults | `BUILD_DEFAULT_CONFIGURATION`, `BUILD_DEFAULT_PLATFORM` | — | `build-project` (optional) |
-| Build frontend | `BUILD_FRONTEND_DIR_PATH`, `BUILD_NODE_VERSION`, `BUILD_FRONTEND_INSTALL_COMMAND`, `BUILD_FRONTEND_BUILD_COMMAND` | — | `build-project` (optional) |
-| Run | `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` | — | `run-project` command |
-| Publish | `PUBLISH_PUBXML_PATH` | — | `publish-project` command |
+| Build | `BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH` | — | `build-web` command |
+| Build defaults | `BUILD_DEFAULT_CONFIGURATION`, `BUILD_DEFAULT_PLATFORM` | — | `build-web` (optional) |
+| Build frontend | `BUILD_FRONTEND_DIR_PATH`, `BUILD_NODE_VERSION`, `BUILD_FRONTEND_INSTALL_COMMAND`, `BUILD_FRONTEND_BUILD_COMMAND` | — | `build-web` (optional) |
+| Run | `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` | — | `run-web` command |
+| Publish | `PUBLISH_PUBXML_PATH` | — | `publish-web` command |
 
 ## Procedure
 
