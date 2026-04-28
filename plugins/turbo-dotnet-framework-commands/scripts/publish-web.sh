@@ -69,5 +69,5 @@ echo "Running MSBuild Publish for $BUILD_PROJECT_PATH"
 echo "  Publish profile: $PUBXML_WIN"
 
 "$BUILD_MSBUILD_PATH" "$PROJECT_FILE_WIN" \
-  -t:Publish \
-  "-p:PublishProfile=$PUBXML_WIN"
+  "-p:DeployOnBuild=true" \
+  "-p:PublishProfileFullPath=$PUBXML_WIN"

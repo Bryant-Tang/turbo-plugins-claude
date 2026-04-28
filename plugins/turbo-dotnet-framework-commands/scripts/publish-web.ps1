@@ -69,7 +69,7 @@ try {
     Write-Output "Running MSBuild Publish for $projectPathRel"
     Write-Output "  Publish profile: $pubxmlAbsPath"
 
-    & $msbuildPath $projectFile /t:Publish "/p:PublishProfile=$pubxmlAbsPath"
+    & $msbuildPath $projectFile /p:DeployOnBuild=true "/p:PublishProfileFullPath=$pubxmlAbsPath"
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
