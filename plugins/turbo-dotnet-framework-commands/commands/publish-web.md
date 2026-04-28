@@ -47,3 +47,5 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh" --profile "C:/path/to/Publis
 ```
 
 `--profile` / `-Profile` is optional. When supplied, it takes precedence over `PUBLISH_PUBXML_PATH`. The path may be absolute or relative to the workspace root; Windows and Unix path formats are both accepted.
+
+Internally the script invokes MSBuild with `/p:PublishProfile=<basename>` plus `/p:PublishProfileRootFolder=<dir>` derived from the supplied path, instead of `/p:PublishProfileFullPath`. The former is imported by `Microsoft.WebApplication.targets` before the deploy default targets are computed, so `WebPublishMethod` and `PublishUrl` declared in the `.pubxml` are honored (e.g. a `FileSystem` profile actually deploys to `PublishUrl` rather than being overridden into a `Package`/zip output).

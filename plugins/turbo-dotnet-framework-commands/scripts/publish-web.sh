@@ -61,13 +61,16 @@ if [[ ! -f "$PUBXML_UNIX" ]]; then
   exit 1
 fi
 
-# MSBuild requires Windows paths. Use - prefix to prevent MSYS2 path conversion.
+# MSBuild requires Windows paths.
 PROJECT_FILE_WIN="$(cygpath -w "$PROJECT_FILE")"
-PUBXML_WIN="$(cygpath -w "$PUBXML_UNIX")"
+PUBLISH_PROFILE_NAME="$(basename "$PUBXML_UNIX" .pubxml)"
+PUBLISH_PROFILE_DIR_WIN="$(cygpath -w "$(dirname "$PUBXML_UNIX")")"
 
 echo "Running MSBuild Publish for $BUILD_PROJECT_PATH"
-echo "  Publish profile: $PUBXML_WIN"
+echo "  Publish profile: $PUBLISH_PROFILE_NAME"
+echo "  Profile root:    $PUBLISH_PROFILE_DIR_WIN"
 
 "$BUILD_MSBUILD_PATH" "$PROJECT_FILE_WIN" \
   "-p:DeployOnBuild=true" \
-  "-p:PublishProfileFullPath=$PUBXML_WIN"
+  "-p:PublishProfile=$PUBLISH_PROFILE_NAME" \
+  "-p:PublishProfileRootFolder=$PUBLISH_PROFILE_DIR_WIN"

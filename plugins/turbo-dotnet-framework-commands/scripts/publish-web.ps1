@@ -66,10 +66,17 @@ try {
         throw "Publish profile does not exist: $pubxmlAbsPath"
     }
 
-    Write-Output "Running MSBuild Publish for $projectPathRel"
-    Write-Output "  Publish profile: $pubxmlAbsPath"
+    $publishProfileName = [System.IO.Path]::GetFileNameWithoutExtension($pubxmlAbsPath)
+    $publishProfileDir  = [System.IO.Path]::GetDirectoryName($pubxmlAbsPath)
 
-    & $msbuildPath $projectFile /p:DeployOnBuild=true "/p:PublishProfileFullPath=$pubxmlAbsPath"
+    Write-Output "Running MSBuild Publish for $projectPathRel"
+    Write-Output "  Publish profile: $publishProfileName"
+    Write-Output "  Profile root:    $publishProfileDir"
+
+    & $msbuildPath $projectFile `
+        /p:DeployOnBuild=true `
+        "/p:PublishProfile=$publishProfileName" `
+        "/p:PublishProfileRootFolder=$publishProfileDir"
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
