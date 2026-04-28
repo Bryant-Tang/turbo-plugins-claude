@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
-# Usage: publish-web.sh [--profile <path-to.pubxml>]
-# Env var default: PUBLISH_PUBXML_PATH
+# Usage: publish-web.sh [--profile <path-to.pubxml>] [--configuration <value>] [--platform <value>]
+# Env var defaults: PUBLISH_PUBXML_PATH, PUBLISH_DEFAULT_CONFIGURATION (default: Release), PUBLISH_DEFAULT_PLATFORM (default: AnyCPU)
 set -euo pipefail
 
 REPO_ROOT="$(pwd)"
 
 PUBXML_PATH=""
+PUBLISH_CONFIGURATION=""
+PUBLISH_PLATFORM=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --profile) [[ $# -ge 2 ]] || { echo "Error: --profile requires a value" >&2; exit 1; }; PUBXML_PATH="$2"; shift 2 ;;
-    *) echo "Unknown argument: '$1'. Supported: --profile <path>." >&2; exit 1 ;;
+    --profile)       [[ $# -ge 2 ]] || { echo "Error: --profile requires a value" >&2; exit 1; };       PUBXML_PATH="$2";           shift 2 ;;
+    --configuration) [[ $# -ge 2 ]] || { echo "Error: --configuration requires a value" >&2; exit 1; }; PUBLISH_CONFIGURATION="$2"; shift 2 ;;
+    --platform)      [[ $# -ge 2 ]] || { echo "Error: --platform requires a value" >&2; exit 1; };      PUBLISH_PLATFORM="$2";      shift 2 ;;
+    *) echo "Unknown argument: '$1'. Supported: --profile <path>, --configuration <value>, --platform <value>." >&2; exit 1 ;;
   esac
 done
 
 if [[ -z "$PUBXML_PATH" ]]; then
   PUBXML_PATH="${PUBLISH_PUBXML_PATH:-}"
 fi
+PUBLISH_CONFIGURATION="${PUBLISH_CONFIGURATION:-${PUBLISH_DEFAULT_CONFIGURATION:-Release}}"
+PUBLISH_PLATFORM="${PUBLISH_PLATFORM:-${PUBLISH_DEFAULT_PLATFORM:-AnyCPU}}"
 
 resolve_repo_path() {
   local repo_root="$1"
@@ -66,11 +72,13 @@ PROJECT_FILE_WIN="$(cygpath -w "$PROJECT_FILE")"
 PUBLISH_PROFILE_NAME="$(basename "$PUBXML_UNIX" .pubxml)"
 PUBLISH_PROFILE_DIR_WIN="$(cygpath -w "$(dirname "$PUBXML_UNIX")")"
 
-echo "Running MSBuild Publish for $BUILD_PROJECT_PATH"
+echo "Running MSBuild Publish for $BUILD_PROJECT_PATH (Configuration: $PUBLISH_CONFIGURATION, Platform: $PUBLISH_PLATFORM)"
 echo "  Publish profile: $PUBLISH_PROFILE_NAME"
 echo "  Profile root:    $PUBLISH_PROFILE_DIR_WIN"
 
 "$BUILD_MSBUILD_PATH" "$PROJECT_FILE_WIN" \
   "-p:DeployOnBuild=true" \
   "-p:PublishProfile=$PUBLISH_PROFILE_NAME" \
-  "-p:PublishProfileRootFolder=$PUBLISH_PROFILE_DIR_WIN"
+  "-p:PublishProfileRootFolder=$PUBLISH_PROFILE_DIR_WIN" \
+  "-p:Configuration=$PUBLISH_CONFIGURATION" \
+  "-p:Platform=$PUBLISH_PLATFORM"

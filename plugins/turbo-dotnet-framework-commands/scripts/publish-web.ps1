@@ -1,6 +1,10 @@
 param(
     # Path to the .pubxml publish profile. Falls back to PUBLISH_PUBXML_PATH env var.
-    [string]$Profile = ''
+    [string]$Profile = '',
+    # MSBuild Configuration (e.g. Debug, Release). Falls back to PUBLISH_DEFAULT_CONFIGURATION env var, then 'Release'.
+    [string]$Configuration = '',
+    # MSBuild Platform (e.g. AnyCPU, x86, x64). Falls back to PUBLISH_DEFAULT_PLATFORM env var, then 'AnyCPU'.
+    [string]$Platform = ''
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +42,13 @@ try {
                      elseif (-not [string]::IsNullOrWhiteSpace($env:PUBLISH_PUBXML_PATH)) { $env:PUBLISH_PUBXML_PATH }
                      else { '' }
 
+    $publishConfiguration = if (-not [string]::IsNullOrWhiteSpace($Configuration)) { $Configuration }
+                            elseif (-not [string]::IsNullOrWhiteSpace($env:PUBLISH_DEFAULT_CONFIGURATION)) { $env:PUBLISH_DEFAULT_CONFIGURATION }
+                            else { 'Release' }
+    $publishPlatform = if (-not [string]::IsNullOrWhiteSpace($Platform)) { $Platform }
+                       elseif (-not [string]::IsNullOrWhiteSpace($env:PUBLISH_DEFAULT_PLATFORM)) { $env:PUBLISH_DEFAULT_PLATFORM }
+                       else { 'AnyCPU' }
+
     if ([string]::IsNullOrWhiteSpace($projectPathRel)) {
         throw 'Missing BUILD_PROJECT_PATH environment variable'
     }
@@ -69,14 +80,16 @@ try {
     $publishProfileName = [System.IO.Path]::GetFileNameWithoutExtension($pubxmlAbsPath)
     $publishProfileDir  = [System.IO.Path]::GetDirectoryName($pubxmlAbsPath)
 
-    Write-Output "Running MSBuild Publish for $projectPathRel"
+    Write-Output "Running MSBuild Publish for $projectPathRel (Configuration: $publishConfiguration, Platform: $publishPlatform)"
     Write-Output "  Publish profile: $publishProfileName"
     Write-Output "  Profile root:    $publishProfileDir"
 
     & $msbuildPath $projectFile `
         /p:DeployOnBuild=true `
         "/p:PublishProfile=$publishProfileName" `
-        "/p:PublishProfileRootFolder=$publishProfileDir"
+        "/p:PublishProfileRootFolder=$publishProfileDir" `
+        "/p:Configuration=$publishConfiguration" `
+        "/p:Platform=$publishPlatform"
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE

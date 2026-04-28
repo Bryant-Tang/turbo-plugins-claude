@@ -20,6 +20,7 @@ Configure `.claude/settings.local.json` with the environment variables required 
 | Build frontend | `BUILD_FRONTEND_DIR_PATH`, `BUILD_NODE_VERSION`, `BUILD_FRONTEND_INSTALL_COMMAND`, `BUILD_FRONTEND_BUILD_COMMAND` | — | `build-web` (optional) |
 | Run | `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` | — | `run-web` command |
 | Publish | `PUBLISH_PUBXML_PATH` | — | `publish-web` command |
+| Publish defaults | `PUBLISH_DEFAULT_CONFIGURATION`, `PUBLISH_DEFAULT_PLATFORM` | — | `publish-web` (optional) |
 
 ## Procedure
 
@@ -41,6 +42,7 @@ Configure `.claude/settings.local.json` with the environment variables required 
 - `PUBLISH_PUBXML_PATH` is the path to a `.pubxml` publish profile file. It may be absolute or relative to the workspace root. This variable is optional when `--profile` is supplied at invocation time.
 - `BUILD_MSBUILD_PATH` and `RUN_IIS_EXPRESS_PATH` are absolute paths to executable files on the machine.
 - `BUILD_DEFAULT_CONFIGURATION` and `BUILD_DEFAULT_PLATFORM` are optional. If omitted, builds use `Debug` and `AnyCPU` by default. Accepted values are any valid MSBuild configuration or platform string (e.g. `Debug`, `Release`, `AnyCPU`, `x86`, `x64`). These defaults can always be overridden at invocation time by passing `--configuration` / `--platform` arguments to the build command.
+- `PUBLISH_DEFAULT_CONFIGURATION` and `PUBLISH_DEFAULT_PLATFORM` are optional. If omitted, publishes use `Release` and `AnyCPU` by default (deliberately different from the build defaults). Accepted values follow the same rules as the build defaults. These can be overridden at invocation time by passing `--configuration` / `--platform` arguments to the `publish-web` command.
 - When collecting `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`, ask the user which `applicationhost.config` they want to use before prompting for a path:
   - **Visual Studio auto-generated (recommended, project-level)** — located at `.vs\{SolutionName}\config\applicationhost.config` inside the workspace. This file is generated per-solution and keeps site bindings in version control proximity.
   - **User-level** — located at `%USERPROFILE%\Documents\IISExpress\config\applicationhost.config`. This is the global fallback used when no project-level config is present.

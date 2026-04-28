@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-28
+
+### Added
+
+- `publish-web` 支援 `--configuration` / `-Configuration` 與 `--platform` / `-Platform` 引數，可由新環境變數 `PUBLISH_DEFAULT_CONFIGURATION`、`PUBLISH_DEFAULT_PLATFORM` 設定預設值；皆未提供時預設為 `Release` + `AnyCPU`
+- `setup` skill 表格與 Decision Rules 加入 `PUBLISH_DEFAULT_*` 對應的設定流程說明
+
+### Changed
+
+- `publish-web` 改為呼叫 MSBuild 時一律傳入 `/p:Configuration` 與 `/p:Platform`，會覆寫 `.pubxml` 中對應的 `<Configuration>` / `<Platform>` 元素（`WebPublishMethod` / `PublishUrl` 等其他設定仍由 `.pubxml` 主導）
+
 ## [0.2.0] - 2026-04-28
 
 ### Added
