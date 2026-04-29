@@ -1,7 +1,7 @@
 {
   "name": "tdp",
   "description": "Skills and scripts for web project development workflows, testing and proof, and team collaboration.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "license": "MIT",
   "author": {
     "name": "Bryant Tang"

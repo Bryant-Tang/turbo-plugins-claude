@@ -1,7 +1,7 @@
 ---
 name: setup
 description: 'Set up or update plugin configuration in .claude/settings.local.json and create required companion files. Use when installing the plugin for the first time or when adding or adjusting environment variables and config files for db-management, memory, markitdown, or testing-and-proof skills.'
-argument-hint: 'Optional: test | db | memory | markitdown | all'
+argument-hint: 'Optional: test | db | memory | markitdown | reviewers | all'
 user-invocable: true
 ---
 
@@ -19,6 +19,7 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 | DB | `DBHUB_TOML_FILE_PATH` | `.claude/dbhub.local.toml`<br>`sql files/local-db/`<br>`sql files/test-db/`<br>`sql files/main-db/`<br>`sql files/archives/local-db/`<br>`sql files/archives/test-db/`<br>`sql files/archives/main-db/` | `db-management` |
 | Memory | `MEMORY_SERVER_JSONL_FILE_PATH` | `.claude/memory-server.local.jsonl` | `memory` |
 | MarkItDown | `MARKITDOWN_WORKDIR_PATH` | workdir directory | `markitdown` |
+| Reviewers | `TDP_IMPLEMENT_TASK_REVIEWERS` | — | `implement-task` (optional) |
 | Specs | — | `specs/bugfix/`<br>`specs/feature/`<br>`specs/archives/bugfix/`<br>`specs/archives/feature/` | `start-dev`, `write-goal`, `write-plan`, `finish-dev` |
 
 ## Procedure
@@ -44,6 +45,7 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 - If a plugin-managed key already has a real value (not a placeholder), confirm with the user before replacing it. If the user chooses to keep the existing value, leave it unchanged.
 - If `.claude/settings.json` also exists with an `env` block, keep this plugin's local values in `settings.local.json` so they stay out of version control.
 - If the user passes `all`, configure every area in the table above.
+- `TDP_IMPLEMENT_TASK_REVIEWERS` is optional. If the user does not want to override the default reviewer count (3), leave it unset. If set, validate that the value is an integer in 1..7 before writing it; if the user provides an out-of-range value, ask again.
 - `DBHUB_TOML_FILE_PATH` and `MEMORY_SERVER_JSONL_FILE_PATH` are absolute paths to files that the Docker containers can read via volume mount.
 - `MARKITDOWN_WORKDIR_PATH` is an absolute path to a directory that the Docker container mounts as `/workdir`.
 - Never overwrite an existing companion file that has been customized. Only create companion files if they are absent.

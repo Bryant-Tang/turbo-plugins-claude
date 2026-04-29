@@ -1,13 +1,13 @@
 # Task N Category Review
 
-> 將標題中的 `Task N`、檔名與本文所有的 `task-n` 都替換成實際任務編號，例如標題改為 `Task 1 Correctness Security Integration Review`，檔名改為 `task-1-correctness-security-integration-review.md` 或 `task-3-build-review.md`。
+> 將標題中的 `Task N`、檔名與本文所有的 `task-n` 都替換成實際任務編號。檔名依 Review Report Location Rule 決定，例如 `task-1-review-correctness+security+integration-compatibility.md`（N=3 reviewer 1）或 `task-1-review-1-of-3.md`（fallback）或 `task-3-build-review.md`（建置任務）。
 
-> 本文件只記錄單一 review subAgent 負責的單一分類結果；父 agent 只讀取各份 review 報告，不負責彙整改寫。
+> 本文件只記錄單一 review subAgent 負責的指派分類（一或多個）的結果；父 agent 只讀取各份 review 報告，不負責彙整改寫。
 
 ## 範圍
 
 - 任務：<plan.md 中的任務名稱>
-- 分類：<correctness-security-integration / maintainability-testability-observability / performance-resource-ux / build>
+- 分類：<逗號分隔的指派分類 slug 清單，例如 correctness, security, integration-compatibility；建置任務固定為 build>
 - 檢查依據：<相對路徑到 plan.md>、<相對路徑到 goal.md>、本批 AC
 - 檢查檔案：
   - <檔案 1>
@@ -34,8 +34,8 @@
 
 | 分類 | AC | 結果 | 說明 |
 | - | - | - | - |
-| <本報告分類> | <AC 1> | PASS / FAIL | <說明> |
-| <本報告分類> | <AC 2> | PASS / FAIL | <說明> |
+| <該 AC 所屬分類 slug> | <AC 1> | PASS / FAIL | <說明> |
+| <該 AC 所屬分類 slug> | <AC 2> | PASS / FAIL | <說明> |
 
 ## Blocking Findings
 

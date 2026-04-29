@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-04-29
+
+### Added
+
+- `implement-task` 新增 `--reviewers=N` skill argument 與 `TDP_IMPLEMENT_TASK_REVIEWERS` 環境變數，讓使用者控制每個非建置任務的平行 review subagent 數量（1..7，預設 3）；解析優先順序：argument > 環境變數 > 預設值
+- `implement-task` SKILL.md 新增 `Reviewer Count Resolution` 與 `AC-to-Reviewer Mapping` 章節，定義 N=1..7 對 7 個 AC 分類的固定分群表
+
+### Changed
+
+- `write-plan` AC 分類由 3 類擴展為 7 類：「正確性」「安全性」「整合性與相容性」「可維護性與程式碼品質」「可測試性與可觀測性」「效能與資源使用」「使用者體驗」
+- `write-plan` Mandatory Static Review Baseline 同步重新分配：編譯風險檢查移至「整合性與相容性」、csharp-comment / 中文註解 / 邏輯重用 / 程式碼格式檢查歸入「可維護性與程式碼品質」、診斷訊號檢查歸入「可測試性與可觀測性」
+- `plan.template.md` 三個任務範例（含最後建置任務）同步改為 7 類 AC heading 與對應靜態檢查條目
+- `implement-task` review subagent 數量解耦於 AC 分類數：父 agent 依解析後 N 啟動平行 reviewer，每個 reviewer 依固定分群表負責一或多個 AC 分類，所有分類仍會被覆蓋
+- `implement-task` review report 檔名由 `task-n-<category>-review.md` 改為 `task-<n>-review-<slugs>.md`（slug 拼接），長度超過 60 字元時 fallback 為 `task-<n>-review-<i>-of-<N>.md`；建置任務的 `task-n-build-review.md` 維持不變
+- `implement-task` 新增規則：父 agent 在啟動新一輪 review 前須清除上一輪同任務的 review report，避免分群佈局變動時留下過期報告
+- `implement-task` 不再相容 pre-v0.2.4 格式的舊 plan.md：偵測到 AC 分類數不為 7 時停止並要求使用者以 v0.2.4 `write-plan` 重新生成
+- `task-review.template.md` 「分類」欄位由單一 enum 改為支援逗號分隔多分類；「AC 檢查結果」表格的「分類」欄改為記錄該 AC 所屬分類 slug
+- `setup` skill 新增 `reviewers` 配置區域，用於設定 `TDP_IMPLEMENT_TASK_REVIEWERS` 環境變數；若使用者不需要覆蓋預設值（3）可留白跳過
+
 ## [0.2.3] - 2026-04-29
 
 ### Added
