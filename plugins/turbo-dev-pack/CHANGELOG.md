@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-29
+
+### Added
+
+- 新增 `write-test-plan` skill：負責規劃整體最終驗證任務（涵蓋 `goal.md` 中所有目標），產出 `test-plan.md` 與 `test-n.md`，存放於 spec 資料夾根目錄
+- `goal.md` 目標編號支援「數字 + 可選字母字尾」格式（例如 `1`、`2a`、`2b`、`3`）：相同數字的目標群組合起來必須獨立可交付，但每個個別子目標只需能在單一 chat session 內完成；plan mode 規劃時若發現目標太大，可回到 `start-dev` 將其拆分為更多同數字子目標並重新編號
+
+### Changed
+
+- `write-plan` 改為僅產出 `goal-<id>/plan.md`（其中 `<id>` 為目標編號，例如 `goal-1/`、`goal-2a/`、`goal-2b/`），不再產出 `test-plan.md` 與 `test-n.md`；移除驗證模式判斷、證據規則與相關步驟
+- 開發流程調整：每個目標 `plan mode → write-plan → implement-task` 循環；所有目標完成後可選擇性走 `plan mode → write-test-plan → testing-and-proof`
+- `start-dev` 規範與 Handoff 文字、`goal.template.md`、`implement-task` 內 `### 進度總覽` 比對與 checkbox 邏輯均更新以支援帶字母字尾的目標編號
+- `testing-and-proof` 將 `test-plan.md` 預設位置改為 spec 資料夾根目錄；`screenshots/` 也改放於 spec 資料夾根目錄
+
 ## [0.2.1] - 2026-04-29
 
 ### Added

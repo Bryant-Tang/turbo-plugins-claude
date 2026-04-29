@@ -1,6 +1,6 @@
 ---
 name: testing-and-proof
-description: 'Execute a requirement test-plan.md and write proof back into each test-n.md. Use when a bugfix or feature already has test-plan.md and the user wants ordered verification, browser screenshots, or non-browser evidence. This skill must determine the appropriate build command and run command based on the current project type, apply and restore the local test stash around each server-backed verification task, and delegate each verification task to a subagent that writes the corresponding test-n.md. Replace the n in every test-n file name with the actual task number.'
+description: 'Execute a requirement test-plan.md and write proof back into each test-n.md. Use when a bugfix or feature already has test-plan.md (planned by write-test-plan, located at the spec folder root) and the user wants ordered verification, browser screenshots, or non-browser evidence. This skill must determine the appropriate build command and run command based on the current project type, apply and restore the local test stash around each server-backed verification task, and delegate each verification task to a subagent that writes the corresponding test-n.md. Replace the n in every test-n file name with the actual task number.'
 argument-hint: 'Optional: path/to/test-plan.md'
 user-invocable: true
 ---
@@ -8,7 +8,7 @@ user-invocable: true
 # Testing and Proof
 
 ## When to Use
-- A requirement already has `test-plan.md` and `test-n.md` files, with `n` replaced by the actual verification task number.
+- A requirement already has `test-plan.md` and `test-n.md` files at the spec folder root (produced by `write-test-plan`), with `n` replaced by the actual verification task number.
 - The user asks for ordered verification instead of only build or startup logs.
 - The user asks for screenshots, browser proof, or non-browser evidence to be written back into the spec folder.
 - The user wants cleanup after each server-backed verification task.
@@ -49,7 +49,7 @@ Produce a proof package driven by `test-plan.md`, including:
 
 ## Exact Procedure
 0. Verify prerequisites: check that the required env vars (`BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH`, `RUN_IIS_EXPRESS_PATH`) are present in `.claude/settings.local.json` for .NET Framework projects. If any required var is missing, stop and ask the user to run `/tnf:setup` first.
-1. Determine which `test-plan.md` to use. If the target is not clear from the current branch or the user request, ask the user.
+1. Determine which `test-plan.md` to use. The default location is the spec folder root (e.g. `specs/<type>/<slug>/test-plan.md`), produced by `write-test-plan`. If the target is not clear from the current branch or the user request, ask the user. If `test-plan.md` does not exist at the spec folder root, stop and ask whether `write-test-plan` should be run first.
 2. Read `test-plan.md` and enumerate the referenced `test-n.md` files in order, with `n` replaced by the actual verification task number.
 3. Inspect the workspace to determine the project type and identify the appropriate build command and run command.
 4. For each verification task, read the corresponding `test-n.md` and decide whether it is server-backed browser verification or non-browser verification.
@@ -65,7 +65,7 @@ Produce a proof package driven by `test-plan.md`, including:
    - Execute the appropriate build workflow for the detected project type if fresh binaries may be needed. For .NET Framework projects, use the `tnf` plugin's `build-web` command.
    - Execute the appropriate server startup workflow for the detected project type. For .NET Framework projects, use the `tnf` plugin's `run-web` command to start IIS Express on the port parsed from the target web csproj `IISUrl`.
    - Resolve the exact browser target URL from the project configuration. For .NET Framework IIS projects, read the `IISUrl` property from the target `.csproj` file.
-   - Invoke the Agent tool for that one verification task only. The subagent must execute the verification, save screenshot files under `screenshots/`, and write or overwrite the corresponding `test-n.md`.
+   - Invoke the Agent tool for that one verification task only. The subagent must execute the verification, save screenshot files under `screenshots/` at the spec folder root, and write or overwrite the corresponding `test-n.md` at the spec folder root.
    - Stop the local server using the appropriate workflow for the detected project type. For .NET Framework projects, use the `tnf` plugin's `run-web` stop workflow.
    - If `TEST_LOCAL_STASH_SHA` is configured, revert the local-test stash changes with `${CLAUDE_PLUGIN_ROOT}/scripts/revert-local-test-stash.ps1` (PowerShell) or `${CLAUDE_PLUGIN_ROOT}/scripts/revert-local-test-stash.sh` (Bash).
 8. For each non-browser task whose prerequisites are already satisfied, invoke the Agent tool for that one verification task only. The subagent must write or overwrite the corresponding `test-n.md` with file plus line evidence.
@@ -85,7 +85,7 @@ Produce a proof package driven by `test-plan.md`, including:
 ## Decision Rules
 - Browser verification is the default for user-facing flows that can be exercised locally.
 - Use non-browser evidence for backend-only logic, static audits, or flows that cannot be safely or reliably proven through the browser.
-- If `test-plan.md` is missing or the listed `test-n.md` files do not exist, stop and ask whether `write-plan` should be run first.
+- If `test-plan.md` is missing at the spec folder root or the listed `test-n.md` files do not exist, stop and ask whether `write-test-plan` should be run first.
 - If a task requires running a `.sql` file that performs `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `ALTER`, `DROP`, or any other write-side database action, do not execute it yourself. Instruct the user to run it manually and wait for confirmation before continuing.
 - If the required write SQL has not been run by the user, stop that task and record it as blocked instead of trying to approximate the result with stale data, API output, or code inspection.
 - If `TEST_LOCAL_STASH_SHA` is configured and the working tree is not clean before a server-backed task, stop and report that applying or reverting the local-test stash would be unsafe.

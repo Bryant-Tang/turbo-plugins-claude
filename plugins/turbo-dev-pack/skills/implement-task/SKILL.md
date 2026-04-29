@@ -20,7 +20,7 @@ user-invocable: true
 - Each non-build task has one review report per AC category written or overwritten by the corresponding review subagent, with `n` replaced by the actual task number.
 - The final build task has its own build review report written or overwritten by the build review subagent.
 - The loop stops only when the current task review says `COMPLETE`.
-- After all tasks for the current goal are `COMPLETE`, the user is asked whether to confirm the goal as done. If confirmed, the corresponding `- [ ]` line in `goal.md`'s `### 進度總覽` is changed to `- [x]`. If the user defers confirmation, or any task ended as `BLOCKED`, the checkbox is left unchanged.
+- After all tasks for the current goal are `COMPLETE`, the user is asked whether to confirm the goal as done. If confirmed, the corresponding `- [ ] 目標 <編號>：<標題>` line in `goal.md`'s `### 進度總覽` is changed to `- [x]` (where `<編號>` may include a letter suffix such as `2a`). If the user defers confirmation, or any task ended as `BLOCKED`, the checkbox is left unchanged.
 
 ## Core Rules
 - First determine which `plan.md` to use. If more than one candidate fits, ask the user instead of guessing.
@@ -48,7 +48,7 @@ user-invocable: true
 
 ## Procedure
 1. Identify the target `plan.md`. If ambiguous, ask the user.
-2. Read `plan.md` and `goal.md`. If `plan.md` is inside a `goal-N/` subdirectory, `goal.md` is in the parent directory.
+2. Read `plan.md` and `goal.md`. If `plan.md` is inside a `goal-<id>/` subdirectory (e.g. `goal-1/`, `goal-2a/`, `goal-2b/`), `goal.md` is in the parent directory.
 3. Determine the ordered implementation tasks, identify the final build task, and extract the categorized AC for each task.
 4. For each non-build task, invoke an implementation subagent with the task scope, files, categorized AC, an explicit instruction not to touch later tasks, and an explicit instruction that any changed C# code must follow the `csharp-comment` skill.
 5. After the implementation attempt completes, invoke parallel review subagents for the current non-build task, one subagent per AC category. Each review subagent must check only its assigned category against the current task scope and AC and must write or overwrite its own review report from the [task review template](./assets/task-review.template.md).
@@ -58,7 +58,7 @@ user-invocable: true
 9. The parent agent reads the build review report only. If the build review for the final task is not `COMPLETE`, invoke an implementation subagent limited to fixing the reported build failures, then rerun the build-focused review subagent and let it overwrite the same build review report.
 10. Repeat until the current task review reports say `COMPLETE`, then continue.
 11. Stop after the planned implementation tasks are complete. Do not execute `test-plan.md` here.
-12. Once every planned implementation task for the current goal is `COMPLETE` (no `BLOCKED` task remaining), use `AskUserQuestion` to ask the user whether to confirm this goal as done. If the user confirms, read `goal.md`, locate the `- [ ] 目標 N：<標題>` line in `### 進度總覽` matching the goal that was just implemented, and use Edit to change `[ ]` to `[x]`. If the user defers confirmation, leave the checkbox unchanged and tell the user it stays unchecked until they confirm later. If any task ended as `BLOCKED`, skip the question entirely, leave the checkbox unchanged, and surface the blocking findings.
+12. Once every planned implementation task for the current goal is `COMPLETE` (no `BLOCKED` task remaining), use `AskUserQuestion` to ask the user whether to confirm this goal as done. If the user confirms, read `goal.md`, locate the `- [ ] 目標 <編號>：<標題>` line in `### 進度總覽` matching the goal that was just implemented (the `<編號>` must match exactly, including any letter suffix such as `2a`), and use Edit to change `[ ]` to `[x]`. If the user defers confirmation, leave the checkbox unchanged and tell the user it stays unchecked until they confirm later. If any task ended as `BLOCKED`, skip the question entirely, leave the checkbox unchanged, and surface the blocking findings.
 
 ## Decision Rules
 - If a task is too large for a single chat session, stop and revise `plan.md` first instead of silently doing a mega-task.
@@ -79,7 +79,7 @@ user-invocable: true
 - The user has been asked to confirm the current goal as done (unless any task ended as `BLOCKED`), and `goal.md`'s `### 進度總覽` checkbox for that goal has been updated to `[x]` when the user confirmed, or left unchanged when the user deferred or the goal was blocked.
 
 ## Handoff
-After all tasks are marked `COMPLETE`, if end-to-end verification is needed, invoke `/tdp:testing-and-proof` next to execute `test-plan.md`.
+After all tasks are marked `COMPLETE` for the current goal, continue with the next goal's plan mode → `/tdp:write-plan` → `/tdp:implement-task` cycle. Once **every** goal in `goal.md` is implemented, end-to-end verification is optional: enter plan mode for the overall verification strategy, then call `/tdp:write-test-plan` to materialize `test-plan.md` and `test-n.md` at the spec folder root, and finally invoke `/tdp:testing-and-proof` to execute it. Skip these steps if the user prefers manual review.
 
 ## Template
 - [task review template](./assets/task-review.template.md)
