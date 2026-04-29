@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-29
+
+### Added
+
+- `goal.md` 在「修正或開發目標」下方新增 `### 進度總覽` 子章節，列出所有目標的 checkbox 清單
+- `implement-task` 結束時會詢問使用者是否確認該目標完成，確認後自動將 `goal.md` 進度總覽中對應的 `- [ ]` 改為 `- [x]`
+
+### Changed
+
+- `start-dev` 要求新增、移除或調整目標時必須同步更新 `### 進度總覽` checkbox，並加入對應的 Completion Check
+- `start-dev` Handoff 文字補充說明 `implement-task` 結束會詢問並勾選進度總覽
+- `implement-task` 增訂規則：任務 `BLOCKED` 時跳過 checkbox 詢問，且不得在未經使用者確認的情況下勾選 checkbox
+
 ## [0.2.0] - 2026-04-28
 
 ### Added

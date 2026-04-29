@@ -39,7 +39,7 @@ user-invocable: true
 6. Discuss the requirement with the user and keep editing `goal.md` until scope, expected behavior, constraints, impact, and validation direction are clear enough for planning. While defining goals in **修正或開發目標**, validate each one:
    - **Independently deliverable**: the goal can be merged or demonstrated on its own without relying on other incomplete goals.
    - **Session-scoped**: small enough to plan and fully implement in a single chat session using plan mode; if not, split it further.
-   If a goal is too broad, break it into smaller goals. If goals must run in sequence, record the dependency in each goal's 依賴關係 field.
+   If a goal is too broad, break it into smaller goals. If goals must run in sequence, record the dependency in each goal's 依賴關係 field. Whenever goals are added, removed, renamed, or reordered, immediately update the `### 進度總覽` checklist at the top of **修正或開發目標** so that each `- [ ] 目標 N：<標題>` line matches a `### 目標 N：<簡短標題>` heading exactly. Initial checkbox state is `- [ ]`; do not pre-mark goals as completed in this skill.
 7. Stop after `goal.md` is ready. Do not create `plan.md`, `test-plan.md`, `test-n.md`, or review reports in this skill. Do not hand off to any specific next skill. When `test-n.md` is created later, replace `n` with the actual verification task number.
 
 ## Decision Rules
@@ -57,6 +57,7 @@ user-invocable: true
 - `goal.md` is ready for the next phase.
 - Each goal in **修正或開發目標** is independently deliverable.
 - Each goal is scoped for one plan mode session.
+- The `### 進度總覽` checklist exists at the top of **修正或開發目標**, has exactly one `- [ ] 目標 N：<標題>` entry per goal, and every entry's title text matches its corresponding `### 目標 N：<簡短標題>` heading exactly.
 
 ## Handoff
 
@@ -67,7 +68,7 @@ After `goal.md` is confirmed, tell the user:
 > **每個目標重複以下步驟：**
 > 1. 開新的 chat session，使用 **plan mode** 規劃該目標的實作方式
 > 2. `/tdp:write-plan` — 將計畫寫入 `plan.md`、`test-plan.md`、`test-n.md`
-> 3. `/tdp:implement-task` — 透過 subagent 逐步實作並評審
+> 3. `/tdp:implement-task` — 透過 subagent 逐步實作並評審；所有 task 完成後會詢問你是否確認該目標完成，若是則自動把 `goal.md` 進度總覽中對應的 `- [ ]` 改為 `- [x]`
 > 4. `/tdp:testing-and-proof`（可選）— 執行驗證並產出截圖或非 browser 證據，或改以人工 review 代替
 >
 > **所有目標完成後：**
