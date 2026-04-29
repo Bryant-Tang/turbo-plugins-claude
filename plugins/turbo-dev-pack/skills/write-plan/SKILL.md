@@ -48,24 +48,29 @@ user-invocable: true
 - The final implementation task in `plan.md` must always be a dedicated build task.
 - The final build task must require running the repository-standard build, capturing build failures, and fixing build errors until the build succeeds.
 - Do not produce `test-plan.md`, `test-n.md`, or any final verification files in this skill. Final verification is planned separately via `write-test-plan` after every goal is implemented.
+- The implementation plan for the selected goal must first be designed by invoking the Plan subagent (`Agent` tool with `subagent_type: "Plan"`); the parent agent only writes the resulting design into `goal-<id>/plan.md` using the plan template.
 
 ## Procedure
 1. Identify the target `goal.md`. If the branch name and specs path clearly point to one file, use it. Otherwise ask the user.
 2. Determine which specific goal id (e.g. `1`, `2a`, `2b`, `3`) to plan for this session. If the user passed a goal id as the skill argument, use it. If `goal.md` contains more than one goal and no goal id was given, ask the user which goal to plan before continuing.
 3. Read `goal.md` and extract the scope, constraints, impact, and expected validation style for the selected goal only.
-4. Create a `goal-<id>/` subdirectory beside `goal.md` (where `<id>` is the goal id determined in step 2, e.g. `goal-1/`, `goal-2a/`, `goal-2b/`). Create `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md).
-5. Split the implementation into ordered tasks. Keep each task narrow enough for a single chat session.
-6. For each non-build implementation task, write goal, scope, AC grouped by the full AC category catalog, and completion criteria.
-7. In every implementation task AC section, include an explicit acceptance criterion under `Maintainability, Testability, and Observability` that code formatting and indentation must be checked and must match the repository's existing style.
-8. In every implementation task AC section, explicitly include the mandatory static review baseline so the task later checks possible compile errors, `csharp-comment` compliance for C# changes, necessary Traditional Chinese comments for non-C# logic, and duplicate-logic reuse.
-9. Append one final implementation task dedicated to build execution. This task must be the last task in `plan.md` and must define the repository-standard build scope, expected success condition, and how build failures are to be fixed.
-10. Surface any ambiguous assumptions that still need user confirmation.
+4. Create a `goal-<id>/` subdirectory beside `goal.md` (where `<id>` is the goal id determined in step 2, e.g. `goal-1/`, `goal-2a/`, `goal-2b/`).
+5. Invoke the Plan subagent (`Agent` tool with `subagent_type: "Plan"`) to design the implementation plan for the selected goal. The Plan subagent prompt must include:
+   - The full goal scope, constraints, impact, and expected validation style extracted from `goal.md`.
+   - The full AC Category Catalog from this skill (verbatim list of three categories).
+   - The Mandatory Static Review Baseline from this skill (verbatim list of static checks).
+   - The single-chat-session sizing constraint for each implementation task.
+   - The requirement that the final task is a dedicated build task with the repository-standard build, build-failure capture, and fix loop.
+   - An explicit instruction that the Plan subagent returns a structured task list (each task = goal + scope + AC by full category catalog + completion criteria) but does not write any files.
+6. Read the Plan subagent's returned design. If it is missing any AC category, missing the static review baseline, or missing the final build task, re-invoke the Plan subagent with the gap explicitly called out instead of patching it silently.
+7. Create `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Plan subagent's design. Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
+8. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
 
 ## Decision Rules
 - Keep implementation tasks aligned with the selected goal scope and do not let them drift into final verification planning.
 - Keep the build task separate from feature tasks so `implement-task` can treat it as the final gate.
 - If the user asks for verification tasks here, redirect them to `write-test-plan` and complete only the implementation plan in this skill.
-- If the selected goal cannot reasonably fit one chat session even after reasonable task splitting, stop and direct the user back to `start-dev` (or to edit `goal.md` directly) to split the goal into more lettered sub-goals under the same number (e.g. split `2a` into a new `2a` + `2b`, renaming the original `2b` to `2c`) and update `### 進度總覽` accordingly. Do not produce an oversized `plan.md`.
+- If the selected goal cannot reasonably fit one chat session even after reasonable task splitting, stop and direct the user back to `write-goal` (or to edit `goal.md` directly) to split the goal into more lettered sub-goals under the same number (e.g. split `2a` into a new `2a` + `2b`, renaming the original `2b` to `2c`) and update `### 進度總覽` accordingly. Do not produce an oversized `plan.md`.
 
 ## Completion Checks
 - `plan.md` exists inside `goal-<id>/` and all implementation tasks have AC.

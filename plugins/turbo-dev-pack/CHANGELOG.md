@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-04-29
+
+### Added
+
+- 新增 `write-goal` skill：負責 `goal.md` 的完整生命週期 — 從 template 建立、與使用者討論並反覆編輯需求、目標編號規範（`<number>[<letter>]`）、目標分割與重編號、依賴關係、`### 進度總覽` checklist 維護
+- `goal.template.md` 移至 `write-goal/assets/`
+
+### Changed
+
+- `start-dev` 改為僅負責 branch 與 specs folder 的建立或切換，不再建立或編輯 `goal.md`，不再引用 goal template；Handoff 文字精簡為指向 `/tdp:write-goal`
+- `write-goal` 取代原 `start-dev` 的 goal.md 相關 Outcome、Procedure、Decision Rules、Completion Checks 與長 Handoff 文字（涵蓋整個後續循環流程）
+- 開發流程調整為：`start-dev` → `write-goal` → 每個目標 `plan mode → write-plan → implement-task` 循環 → 所有目標完成後可選擇性走 `plan mode → write-test-plan → testing-and-proof` → `finish-dev`
+- `write-plan` Procedure 改為先呼叫 Plan subagent（`Agent` tool with `subagent_type: "Plan"`）規劃實作任務、AC 分類與最終建置任務，再由主 agent 將設計落地到 `goal-<id>/plan.md`；Core Rules 新增對應規則
+- `write-test-plan` Procedure 改為先呼叫 Plan subagent 規劃整體驗證策略（含 browser/非 browser 模式分流、共用前置、任務拆分、執行順序、各任務證據規則），再由主 agent 將設計落地到 `test-plan.md` 與每個 `test-n.md`；Core Rules 新增對應規則
+- `write-plan` Decision Rules 與 `plan.template.md` 中「目標太大時回到 start-dev」改為「回到 write-goal」
+- `goal.template.md` 第 34 行說明同步更新為「回到 write-goal」
+- `setup` skill 中 `specs/` 結構的 Required For 欄位增加 `write-goal`
+
 ## [0.2.2] - 2026-04-29
 
 ### Added

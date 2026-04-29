@@ -19,7 +19,7 @@ Configure `.claude/settings.local.json` and companion files so this plugin's ski
 | DB | `DBHUB_TOML_FILE_PATH` | `.claude/dbhub.local.toml`<br>`sql files/local-db/`<br>`sql files/test-db/`<br>`sql files/main-db/`<br>`sql files/archives/local-db/`<br>`sql files/archives/test-db/`<br>`sql files/archives/main-db/` | `db-management` |
 | Memory | `MEMORY_SERVER_JSONL_FILE_PATH` | `.claude/memory-server.local.jsonl` | `memory` |
 | MarkItDown | `MARKITDOWN_WORKDIR_PATH` | workdir directory | `markitdown` |
-| Specs | — | `specs/bugfix/`<br>`specs/feature/`<br>`specs/archives/bugfix/`<br>`specs/archives/feature/` | `start-dev`, `write-plan`, `finish-dev` |
+| Specs | — | `specs/bugfix/`<br>`specs/feature/`<br>`specs/archives/bugfix/`<br>`specs/archives/feature/` | `start-dev`, `write-goal`, `write-plan`, `finish-dev` |
 
 ## Procedure
 

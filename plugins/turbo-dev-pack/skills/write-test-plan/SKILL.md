@@ -37,15 +37,22 @@ user-invocable: true
 - Browser-verifiable tasks must use actual system screenshots embedded directly in `test-n.md` with Markdown image syntax.
 - Screenshot evidence must show the real system page only. Do not use annotated, synthetic, or manually edited images.
 - Non-browser tasks must use file plus line links as evidence.
+- The overall verification strategy must first be designed by invoking the Plan subagent (`Agent` tool with `subagent_type: "Plan"`); the parent agent only writes the resulting design into `test-plan.md` and each `test-n.md` using the templates.
 
 ## Procedure
 1. Identify the target `goal.md`. If the branch name and specs path clearly point to one file, use it. Otherwise ask the user.
 2. Read `goal.md` (and any related `goal-<id>/plan.md` files for context) to understand the full delivered scope across all goals.
-3. Create `test-plan.md` at the spec folder root from the [test-plan template](./assets/test-plan.template.md). The plan must cover all goals.
-4. Split the final verification into ordered `test-n.md` tasks, replacing `n` with the actual verification task number. Do not collapse everything into one large final verification document.
-5. Create one `test-n.md` file per verification task at the spec folder root from the [test-n template](./assets/test-n.template.md), and replace `n` with the actual verification task number.
-6. If any verification task needs browser screenshots, ensure `screenshots/` is ready at the spec folder root to hold screenshot files when `testing-and-proof` runs.
-7. Surface any ambiguous assumptions that still need user confirmation.
+3. Invoke the Plan subagent (`Agent` tool with `subagent_type: "Plan"`) to design the overall final verification strategy. The Plan subagent prompt must include:
+   - The full delivered scope summarized from `goal.md` and all `goal-<id>/plan.md` files.
+   - The Verification Mode Rules from this skill (browser default, non-browser conditions, mixed mode allowed).
+   - The Core Rules constraints (verification scope must cover all goals; files written at spec folder root; each task fits one chat session; every task defines evidence; browser tasks use real screenshots; non-browser tasks use file plus line links).
+   - An explicit instruction that the Plan subagent returns: (a) the test-plan structure (purpose, mode split, shared prerequisites, task list, recommended order, completion criteria) and (b) for each verification task, the fields needed by the test-n template (task name, evidence type, scope, prerequisites, steps, expected result, blockers).
+   - An explicit instruction that the Plan subagent does not write any files.
+4. Read the Plan subagent's returned design. If it leaves any goal uncovered, mixes browser and non-browser evidence inappropriately, or skips evidence rules, re-invoke the Plan subagent with the gap explicitly called out.
+5. Create `test-plan.md` at the spec folder root from the [test-plan template](./assets/test-plan.template.md) and fill it in using the Plan subagent's strategy. Replace every `test-n` placeholder with the actual verification task number.
+6. For each verification task in the design, create one `test-n.md` at the spec folder root from the [test-n template](./assets/test-n.template.md), replacing `n` with the actual verification task number, and fill in the fields the Plan subagent provided.
+7. If any verification task needs browser screenshots, ensure `screenshots/` is ready at the spec folder root to hold screenshot files when `testing-and-proof` runs.
+8. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
 
 ## Decision Rules
 - If nearby spec folders already show an accepted browser-backed verification style for the same repository workflow, reuse that style instead of inventing a new one.
