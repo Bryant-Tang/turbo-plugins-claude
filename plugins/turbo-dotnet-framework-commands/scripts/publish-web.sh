@@ -82,3 +82,51 @@ echo "  Profile root:    $PUBLISH_PROFILE_DIR_WIN"
   "-p:PublishProfileRootFolder=$PUBLISH_PROFILE_DIR_WIN" \
   "-p:Configuration=$PUBLISH_CONFIGURATION" \
   "-p:Platform=$PUBLISH_PLATFORM"
+
+echo "Publish succeeded."
+
+export TNF_PUBXML_PATH="$(cygpath -w "$PUBXML_UNIX")"
+export TNF_PROJECT_FILE="$PROJECT_FILE_WIN"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command '
+$pubxmlPath  = $env:TNF_PUBXML_PATH
+$projectFile = $env:TNF_PROJECT_FILE
+try {
+    $pubxml = [xml](Get-Content -LiteralPath $pubxmlPath -Raw)
+} catch {
+    [Console]::Error.WriteLine("Warning: failed to parse publish profile XML; output path unknown. ($($_.Exception.Message))")
+    exit 0
+}
+$publishUrlNodes = $pubxml.SelectNodes("//*[local-name()=`"PublishUrl`"]")
+$methodNodes     = $pubxml.SelectNodes("//*[local-name()=`"WebPublishMethod`"]")
+$method = if ($null -ne $methodNodes -and $methodNodes.Count -gt 0) { $methodNodes[$methodNodes.Count - 1].InnerText.Trim() } else { "" }
+if ([string]::IsNullOrWhiteSpace($method)) { $method = "FileSystem" }
+Write-Output "Method: $method"
+if ($null -eq $publishUrlNodes -or $publishUrlNodes.Count -eq 0) {
+    [Console]::Error.WriteLine("Warning: <PublishUrl> not found in profile; output path unknown.")
+    exit 0
+}
+$publishUrlRaw = $publishUrlNodes[$publishUrlNodes.Count - 1].InnerText.Trim()
+if ([string]::IsNullOrWhiteSpace($publishUrlRaw)) {
+    [Console]::Error.WriteLine("Warning: <PublishUrl> is empty; output path unknown.")
+    exit 0
+}
+if ($publishUrlRaw.Contains("`$(")) {
+    [Console]::Error.WriteLine("Warning: <PublishUrl> contains MSBuild properties; cannot resolve statically.")
+    Write-Output "Published to: $publishUrlRaw"
+    exit 0
+}
+if ($method -eq "FileSystem") {
+    if ([System.IO.Path]::IsPathRooted($publishUrlRaw)) {
+        $resolved = [System.IO.Path]::GetFullPath($publishUrlRaw)
+    } else {
+        $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
+        $resolved = [System.IO.Path]::GetFullPath((Join-Path $projectDir $publishUrlRaw))
+    }
+    $resolved = $resolved.TrimEnd("\")
+} else {
+    $resolved = $publishUrlRaw
+}
+Write-Output "Published to: $resolved"
+Write-Output "PUBLISH_OUTPUT_PATH=$resolved"
+'

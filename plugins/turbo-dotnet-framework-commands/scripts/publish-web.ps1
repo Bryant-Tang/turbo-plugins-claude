@@ -94,6 +94,57 @@ try {
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
+
+    Write-Output 'Publish succeeded.'
+
+    try {
+        $pubxml = [xml](Get-Content -LiteralPath $pubxmlAbsPath -Raw)
+    }
+    catch {
+        [Console]::Error.WriteLine("Warning: failed to parse publish profile XML; output path unknown. ($($_.Exception.Message))")
+        return
+    }
+
+    $publishUrlNodes = $pubxml.SelectNodes('//*[local-name()="PublishUrl"]')
+    $methodNodes     = $pubxml.SelectNodes('//*[local-name()="WebPublishMethod"]')
+
+    $method = if ($methodNodes -and $methodNodes.Count -gt 0) { $methodNodes[$methodNodes.Count - 1].InnerText.Trim() } else { '' }
+    if ([string]::IsNullOrWhiteSpace($method)) { $method = 'FileSystem' }
+    Write-Output "Method: $method"
+
+    if (-not $publishUrlNodes -or $publishUrlNodes.Count -eq 0) {
+        [Console]::Error.WriteLine('Warning: <PublishUrl> not found in profile; output path unknown.')
+        return
+    }
+
+    $publishUrlRaw = $publishUrlNodes[$publishUrlNodes.Count - 1].InnerText.Trim()
+    if ([string]::IsNullOrWhiteSpace($publishUrlRaw)) {
+        [Console]::Error.WriteLine('Warning: <PublishUrl> is empty; output path unknown.')
+        return
+    }
+
+    if ($publishUrlRaw -match '\$\(') {
+        [Console]::Error.WriteLine('Warning: <PublishUrl> contains MSBuild properties; cannot resolve statically.')
+        Write-Output "Published to: $publishUrlRaw"
+        return
+    }
+
+    if ($method -eq 'FileSystem') {
+        if ([System.IO.Path]::IsPathRooted($publishUrlRaw)) {
+            $resolved = [System.IO.Path]::GetFullPath($publishUrlRaw)
+        }
+        else {
+            $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
+            $resolved = [System.IO.Path]::GetFullPath((Join-Path $projectDir $publishUrlRaw))
+        }
+        $resolved = $resolved.TrimEnd('\')
+    }
+    else {
+        $resolved = $publishUrlRaw
+    }
+
+    Write-Output "Published to: $resolved"
+    Write-Output "PUBLISH_OUTPUT_PATH=$resolved"
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

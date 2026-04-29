@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-28
+
+### Added
+
+- `publish-web` 在 MSBuild 發佈成功後輸出發佈路徑：人讀的 `Published to:` 行 + 機讀的 `PUBLISH_OUTPUT_PATH=` 行（永遠是最後一行）
+- 路徑取自 `.pubxml` 的 `<PublishUrl>`，相對路徑會以 `.csproj` 目錄為基準轉為絕對路徑（對齊 MSBuild `Microsoft.WebApplication.targets` 行為）
+
+### Notes
+
+- 目前針對 `WebPublishMethod=FileSystem` 最佳化；其他 method（Package、MSDeploy、FTP）會輸出 `<PublishUrl>` 原值與 method 名稱供參考
+- 若 `<PublishUrl>` 缺失、為空、或含 MSBuild property（如 `$(SolutionDir)`），會在 stderr 寫警告並跳過 `PUBLISH_OUTPUT_PATH=` 機讀行，但發佈本身仍視為成功（exit 0）
+
 ## [0.2.1] - 2026-04-28
 
 ### Added

@@ -1,5 +1,5 @@
 ---
-description: 'Publish the ASP.NET web project with MSBuild using a publish profile (.pubxml)'
+description: 'Publish the ASP.NET web project with MSBuild using a publish profile (.pubxml). On success the resolved output path is reported via a final PUBLISH_OUTPUT_PATH=<path> line.'
 argument-hint: 'Optional: --profile <absolute-or-relative-path-to.pubxml> --configuration <Debug|Release|...> --platform <AnyCPU|x86|x64|...>'
 allowed-tools: Bash, PowerShell
 ---
@@ -67,3 +67,20 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh" --configuration Release --pl
 Internally the script invokes MSBuild with `/p:PublishProfile=<basename>` plus `/p:PublishProfileRootFolder=<dir>` derived from the supplied path, instead of `/p:PublishProfileFullPath`. The former is imported by `Microsoft.WebApplication.targets` before the deploy default targets are computed, so `WebPublishMethod` and `PublishUrl` declared in the `.pubxml` are honored (e.g. a `FileSystem` profile actually deploys to `PublishUrl` rather than being overridden into a `Package`/zip output).
 
 The script also passes `/p:Configuration=<value>` and `/p:Platform=<value>` as MSBuild global properties. These take precedence over any `<Configuration>` / `<Platform>` element in the `.pubxml`, so the resolved CLI / env var value is always the source of truth for build configuration. `WebPublishMethod`, `PublishUrl`, and other publish-specific settings remain driven by the `.pubxml`.
+
+## Output
+
+After MSBuild publishes successfully, the script prints four trailing lines:
+
+```
+Publish succeeded.
+Method: <FileSystem|Package|MSDeploy|FTP|...>
+Published to: <absolute path or PublishUrl value>
+PUBLISH_OUTPUT_PATH=<same path as above>
+```
+
+The `PUBLISH_OUTPUT_PATH=` line is always the last line of stdout, intended for downstream tooling (e.g. tail-grep) to capture the resolved output path without parsing surrounding text.
+
+The output path is read from the `<PublishUrl>` element of the `.pubxml` (taking the last occurrence when multiple are declared, matching MSBuild's "later wins" semantics). When `WebPublishMethod` is `FileSystem`, relative paths are resolved against the `.csproj` directory (matching MSBuild's `MSBuildProjectDirectory`-based normalization in `Microsoft.WebApplication.targets`) and a trailing backslash is trimmed. For other publish methods the raw `<PublishUrl>` value is reported as-is.
+
+If `<PublishUrl>` is missing, empty, or contains MSBuild properties (e.g. `$(SolutionDir)bin\publish`) that cannot be resolved statically, a warning is written to stderr and the `PUBLISH_OUTPUT_PATH=` line is skipped, but the command still exits 0 because the underlying publish has already succeeded.
