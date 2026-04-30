@@ -15,19 +15,19 @@ Skills and scripts for web project development workflows, testing and proof, and
       1. 選擇 `tdp`
       1. 選擇你想要的 scope (user / project / local) 並安裝
     - 或是手動編輯 `.claude/settings.json`
-    ```json
-    "extraKnownMarketplaces": {
-      "turbo-plugins-claude": {
-        "source": {
-          "source": "git",
-          "url": "https://github.com/Bryant-Tang/turbo-plugins-claude.git"
+      ```json
+      "extraKnownMarketplaces": {
+        "turbo-plugins-claude": {
+          "source": {
+            "source": "git",
+            "url": "https://github.com/Bryant-Tang/turbo-plugins-claude.git"
+          }
         }
+      },
+      "enabledPlugins": {
+        "tdp@turbo-plugins-claude": true
       }
-    },
-    "enabledPlugins": {
-      "tdp@turbo-plugins-claude": true
-    }
-    ```
+      ```
 1. 安裝完之後在 claude 聊天視窗使用 `/tdp:setup` 設定環境變數與必要的設定檔案
 
 ## 更新
