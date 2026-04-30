@@ -13,6 +13,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "$SVN_URL" ]]; then
+  echo "Error: --svn-url is required" >&2; exit 1
+fi
+
 COMMON_GIT_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
 if [[ -z "$COMMON_GIT_DIR" ]]; then
   echo "Error: not inside a git repository." >&2; exit 1
@@ -69,24 +73,22 @@ git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$INIT_COMMIT"
 git -C "$MAIN_WORKTREE" branch "$TEST_BRANCH" 'main'
 git -C "$MAIN_WORKTREE" worktree add "$REMOTE_WORKTREE_PATH" "$REMOTE_BRANCH"
 
-if [[ -n "$SVN_URL" ]]; then
-  # Check if the SVN URL already exists; if not, create it via svn copy from remote-main
-  if svn info "$SVN_URL" > /dev/null 2>&1; then
-    echo "SVN path exists, will checkout: $SVN_URL"
-  else
-    REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-main"
-    MAIN_SVN_URL="$(svn info --show-item url "$REMOTE_MAIN_PATH")"
-    echo "SVN path '$SVN_URL' does not exist. Creating from '$MAIN_SVN_URL'..."
-    svn copy "$MAIN_SVN_URL" "$SVN_URL" -m "create $TEST_BRANCH branch"
-  fi
-  echo "Running: svn checkout $SVN_URL $REMOTE_WORKTREE_PATH"
-  svn checkout "$SVN_URL" "$REMOTE_WORKTREE_PATH"
-
-  # Set svn:ignore so git metadata files are never accidentally committed to SVN
-  (cd "$REMOTE_WORKTREE_PATH" && \
-    printf '.git\n.gitignore\n' | svn propset svn:ignore --file - . && \
-    svn commit -m 'svn:ignore git metadata')
+# Check if the SVN URL already exists; if not, create it via svn copy from remote-main
+if svn info "$SVN_URL" > /dev/null 2>&1; then
+  echo "SVN path exists, will checkout: $SVN_URL"
+else
+  REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-main"
+  MAIN_SVN_URL="$(svn info --show-item url "$REMOTE_MAIN_PATH")"
+  echo "SVN path '$SVN_URL' does not exist. Creating from '$MAIN_SVN_URL'..."
+  svn copy "$MAIN_SVN_URL" "$SVN_URL" -m "create $TEST_BRANCH branch"
 fi
+echo "Running: svn checkout $SVN_URL $REMOTE_WORKTREE_PATH"
+svn checkout "$SVN_URL" "$REMOTE_WORKTREE_PATH"
+
+# Set svn:ignore so git metadata files are never accidentally committed to SVN
+(cd "$REMOTE_WORKTREE_PATH" && \
+  printf '.git\n.gitignore\n' | svn propset svn:ignore --file - . && \
+  svn commit -m 'svn:ignore git metadata')
 
 CLOSE_LINE="$(grep -n $'^\t\],' "$WORKSPACE_FILE" | cut -d: -f1)"
 if [[ -z "$CLOSE_LINE" ]]; then
@@ -105,16 +107,8 @@ echo "Test environment $IDX created."
 echo "  Branch        : $TEST_BRANCH  (use 'git checkout $TEST_BRANCH' in main worktree)"
 echo "  SVN worktree  : $REMOTE_WORKTREE_PATH"
 
-if [[ -z "$SVN_URL" ]]; then
-  echo ""
-  echo "No SVN URL provided. To link SVN manually:"
-  echo "  cd '$REMOTE_WORKTREE_PATH'"
-  echo "  svn checkout <url> ."
-  echo "Then run '/tgs:pull-from-svn --branch $TEST_BRANCH' to complete the sync."
-else
-  echo ""
-  echo "Next step: run '/tgs:pull-from-svn --branch $TEST_BRANCH' to complete the initial SVN sync."
-fi
+echo ""
+echo "Next step: run '/tgs:pull-from-svn --branch $TEST_BRANCH' to complete the initial SVN sync."
 echo ""
 echo "Recommended: open Claude Code in the main worktree and run /tgs:setup to configure"
 echo "  tgs environment variable defaults. Main worktree: $MAIN_WORKTREE"

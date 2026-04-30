@@ -30,6 +30,8 @@ function Update-Workspace {
 }
 
 try {
+    if ([string]::IsNullOrWhiteSpace($SvnUrl)) { throw '-SvnUrl is required' }
+
     $mainWorktree = Get-MainWorktree
     $projName = [System.IO.Path]::GetFileName($mainWorktree)
     $worktreesDir = Join-Path ([System.IO.Path]::GetDirectoryName($mainWorktree)) "$projName.worktrees"
@@ -79,38 +81,36 @@ try {
     & git -C $mainWorktree worktree add $remoteWorktreePath $remoteBranch
     if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
 
-    if (-not [string]::IsNullOrWhiteSpace($SvnUrl)) {
-        # Check if the SVN URL already exists; if not, create it via svn copy from remote-main
-        $prevEAP = $ErrorActionPreference
-        $ErrorActionPreference = 'SilentlyContinue'
-        & svn info $SvnUrl 2>&1 | Out-Null
-        $svnExists = ($LASTEXITCODE -eq 0)
-        $ErrorActionPreference = $prevEAP
+    # Check if the SVN URL already exists; if not, create it via svn copy from remote-main
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    & svn info $SvnUrl 2>&1 | Out-Null
+    $svnExists = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEAP
 
-        if (-not $svnExists) {
-            $remotemainPath = Join-Path $worktreesDir 'remote-main'
-            $mainSvnUrl = (& svn info --show-item url $remotemainPath | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0) { throw "Could not get main SVN URL from remote-main worktree." }
-            Write-Output "SVN path '$SvnUrl' does not exist. Creating from '$mainSvnUrl'..."
-            & svn copy $mainSvnUrl $SvnUrl -m "create $testBranch branch"
-            if ($LASTEXITCODE -ne 0) { throw "svn copy failed" }
-        } else {
-            Write-Output "SVN path exists, will checkout: $SvnUrl"
-        }
-        Write-Output "Running: svn checkout $SvnUrl $remoteWorktreePath"
-        & svn checkout $SvnUrl $remoteWorktreePath
-        if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
+    if (-not $svnExists) {
+        $remotemainPath = Join-Path $worktreesDir 'remote-main'
+        $mainSvnUrl = (& svn info --show-item url $remotemainPath | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Could not get main SVN URL from remote-main worktree." }
+        Write-Output "SVN path '$SvnUrl' does not exist. Creating from '$mainSvnUrl'..."
+        & svn copy $mainSvnUrl $SvnUrl -m "create $testBranch branch"
+        if ($LASTEXITCODE -ne 0) { throw "svn copy failed" }
+    } else {
+        Write-Output "SVN path exists, will checkout: $SvnUrl"
+    }
+    Write-Output "Running: svn checkout $SvnUrl $remoteWorktreePath"
+    & svn checkout $SvnUrl $remoteWorktreePath
+    if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
 
-        # Set svn:ignore so git metadata files are never accidentally committed to SVN
-        Push-Location $remoteWorktreePath
-        try {
-            & svn propset svn:ignore ".git`n.gitignore" '.'
-            if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
-            & svn commit -m 'svn:ignore git metadata'
-            if ($LASTEXITCODE -ne 0) { throw 'svn commit svn:ignore failed' }
-        } finally {
-            Pop-Location
-        }
+    # Set svn:ignore so git metadata files are never accidentally committed to SVN
+    Push-Location $remoteWorktreePath
+    try {
+        & svn propset svn:ignore ".git`n.gitignore" '.'
+        if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
+        & svn commit -m 'svn:ignore git metadata'
+        if ($LASTEXITCODE -ne 0) { throw 'svn commit svn:ignore failed' }
+    } finally {
+        Pop-Location
     }
 
     Update-Workspace -WorkspaceFile $workspaceFile -FolderName $remoteWorktreeName -FolderPath "$projName.worktrees/$remoteWorktreeName"
@@ -120,16 +120,8 @@ try {
     Write-Output "  Branch        : $testBranch  (use 'git checkout $testBranch' in main worktree)"
     Write-Output "  SVN worktree  : $remoteWorktreePath"
 
-    if ([string]::IsNullOrWhiteSpace($SvnUrl)) {
-        Write-Output ""
-        Write-Output "No SVN URL provided. To link SVN manually:"
-        Write-Output "  cd '$remoteWorktreePath'"
-        Write-Output "  svn checkout <url> ."
-        Write-Output "Then run '/tgs:pull-from-svn --branch $testBranch' to complete the sync."
-    } else {
-        Write-Output ""
-        Write-Output "Next step: run '/tgs:pull-from-svn --branch $testBranch' to complete the initial SVN sync."
-    }
+    Write-Output ""
+    Write-Output "Next step: run '/tgs:pull-from-svn --branch $testBranch' to complete the initial SVN sync."
     Write-Output ""
     Write-Output "Recommended: open Claude Code in the main worktree and run /tgs:setup to configure"
     Write-Output "  tgs environment variable defaults. Main worktree: $mainWorktree"

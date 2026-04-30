@@ -39,14 +39,68 @@ Commands and skills for git project workflows bridging a remote SVN repository.
 1. 選擇 `tgs`
 1. 選擇 `Update now`
 
-## 提供的命令
+## 用法
 
-- **`create-project`** — 在指定位置建立 git + SVN 混合專案初始結構
-- **`create-remote-test`** — 建立測試分支與對應的 SVN 同步 worktree
-- **`create-dev-worktree`** — 建立個人開發隔離 worktree
-- **`pull-from-svn`** — 從 SVN 拉取最新內容並 merge 進 git 工作分支
-- **`push-to-svn`** — 將 git 工作分支的變更送交到 SVN
-- **`svn-log`** — 顯示指定 branch 對應 remote worktree 的 SVN 歷史紀錄
+### Worktree 結構
+
+tgs 用多個 git worktree 分隔職責，讓 SVN 同步與個人開發互不干擾：
+
+```
+<proj>/                              ← main worktree（main / test-<n> 分支切換）
+<proj>.worktrees/
+  ├─ remote-main/                    ← SVN trunk 同步，branch: remote/main
+  ├─ remote-test-<n>/                ← SVN test 分支同步，branch: remote/test-<n>
+  └─ dev-<n>/                        ← 個人開發隔離 worktree
+<proj>.code-workspace                ← VS Code workspace（自動維護）
+```
+
+- `remote-*` worktree 是 git/SVN 的橋樑，通常不直接在裡面編輯檔案
+- `main` 與 `test-<n>` 共用 main worktree（切 branch），不另開目錄
+- 任一 worktree 開 Claude Code 都能呼叫 tgs 指令（自動定位主目錄）
+
+### 建立新專案
+
+第一次建立專案時依序執行：
+
+1. `/tgs:create-project --svn-url <SVN trunk URL>` — 建立目錄結構、初始化 git、checkout SVN
+2. `/tgs:pull-from-svn --branch main` — 把 SVN 內容 commit 進 `remote/main` 並 merge 到 `main`
+3. 在新專案目錄開啟 Claude Code，執行 `/tgs:setup` 設定環境變數預設值
+
+### 建立測試分支環境
+
+需要測試環境（test-`<n>`）時：
+
+- `/tgs:create-remote-test --svn-url <SVN test branch URL>` — 自動取下個編號，建立 git 端分支並連結 SVN 測試分支（URL 不存在時會以 `svn copy` 從 main 建立）；完成後執行 `/tgs:pull-from-svn --branch test-<n>` 完成首次同步
+
+### 開始個人開發
+
+1. `/tgs:create-dev-worktree --branch <branch>` — 建立 `dev-<n>` 隔離 worktree，避免影響 main worktree 的 branch 狀態
+2. 在 `dev-<n>` 目錄開啟 Claude Code，執行 `/tgs:setup`（每個 worktree 設定各自獨立）
+3. 開發完成後，在 main worktree 把分支 merge 進 `main` 或 `test-<n>`，再用以下 push 流程送上 SVN
+
+### 日常 SVN 同步
+
+| 動作 | 指令 |
+|---|---|
+| 拉 SVN 最新內容進 git | `/tgs:pull-from-svn --branch <main\|test-<n>>` |
+| 把 git 變更送上 SVN | `/tgs:push-to-svn --branch <main\|test-<n>>` |
+| 查看 SVN 歷史紀錄 | `/tgs:svn-log --branch <main\|test-<n>> [--limit N] [--verbose]` |
+
+- 設定 `TGS_DEFAULT_WORKING_BRANCH` 後可省略 `--branch`（透過 `/tgs:setup` 設定）
+- **pull** 流程：自動把 main worktree 切到目標 branch、merge、再切回原 branch；發生衝突時停在目標 branch 等使用者解決
+- **push** 流程：列出待送 commit，AI 建議 SVN commit message 標題，確認後送出
+
+## 提供的命令與 skill
+
+| 名稱 | 類型 | 用途 |
+|---|---|---|
+| `create-project` | command | 建立 tgs 專案初始結構 |
+| `create-remote-test` | command | 新增 `test-<n>` 環境（git + SVN） |
+| `create-dev-worktree` | command | 新增 `dev-<n>` 個人開發 worktree |
+| `pull-from-svn` | skill | SVN → git（透過 `remote-*` worktree） |
+| `push-to-svn` | skill | git → SVN（透過 `remote-*` worktree） |
+| `svn-log` | command | 唯讀查看 SVN 歷史 |
+| `setup` | skill | 互動式設定 tgs 環境變數 |
 
 ## 設定
 
