@@ -1,3 +1,4 @@
+[CmdletBinding()]
 param(
     [string]$SvnUrl = '',
     [string]$Path = '',

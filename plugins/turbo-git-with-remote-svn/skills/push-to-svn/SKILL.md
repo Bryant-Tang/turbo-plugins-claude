@@ -67,6 +67,22 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/push-to-svn-commit.sh" --branch "main" --mes
 
 8. Report the SVN revision from the commit script output.
 
+9. Use `AskUserQuestion` to ask the user whether to add a release tag on this push:
+   - Option A: Yes, create a release tag
+   - Option B: No, skip tagging
+
+10. If the user chose to create a release tag, call the tag-release script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.ps1" -Branch "main"
+```
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.sh" --branch "main"
+```
+
+    Report the created tag name from the script output to the user.
+
 ## Decision Rules
 
 - Only `main` and `test-<n>` are valid branch names. Reject others.
@@ -79,3 +95,4 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/push-to-svn-commit.sh" --branch "main" --mes
 - The commit script outputs "Pushed to SVN r\<new-rev\>".
 - The `remote/*` branch contains a merge commit "Merge branch '\<branch\>' into remote/\<branch\>".
 - SVN HEAD revision has increased.
+- If the user chose to create a release tag: `git tag -l "<branch>-release-*"` shows the new tag, and `git rev-parse <tag-name>` equals `git rev-parse remote/<branch>`.

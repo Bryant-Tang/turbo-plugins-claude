@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-30
+
+### Added
+
+- `push-to-svn` skill：push 完成後詢問是否建立 release tag；tag 格式為 `<branch>-release-YYYY-MM-DD-<serial>`（例如 `main-release-2026-04-30-001`），serial 為該分支單日流水號
+- `tag-release` 腳本（`.sh` / `.ps1`）：計算當天流水號並在 `remote/<branch>` 上建立 git tag
+
+### Fixed
+
+- 所有 PowerShell 腳本新增 `[CmdletBinding()]`，傳入未知參數時現在會立即報錯而非靜默忽略
+
 ## [0.1.0] - 2026-04-30
 
 ### Added
