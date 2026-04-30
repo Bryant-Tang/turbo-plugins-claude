@@ -1,0 +1,9 @@
+{
+  "name": "tgs",
+  "description": "Commands and skills for git project workflows bridging a remote SVN repository.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "Bryant Tang"
+  }
+}

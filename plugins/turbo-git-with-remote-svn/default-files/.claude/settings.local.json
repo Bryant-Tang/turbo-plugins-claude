@@ -1,0 +1,8 @@
+{
+  "env": {
+    "TGS_SVN_LOG_DEFAULT_BRANCH": "main",
+    "TGS_SVN_LOG_DEFAULT_LIMIT": "50",
+    "TGS_SVN_LOG_DEFAULT_VERBOSE": "",
+    "TGS_DEFAULT_WORKING_BRANCH": ""
+  }
+}

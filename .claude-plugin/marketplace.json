@@ -13,6 +13,11 @@
       "name": "tnf",
       "description": "Commands and scripts for .NET Framework web project build with MSBuild and IIS Express startup.",
       "source": "./plugins/turbo-dotnet-framework-commands"
+    },
+    {
+      "name": "tgs",
+      "description": "Commands and skills for git project workflows bridging a remote SVN repository.",
+      "source": "./plugins/turbo-git-with-remote-svn"
     }
   ]
 }
