@@ -6,17 +6,17 @@
   "plugins": [
     {
       "name": "tdp",
-      "description": "Skills and scripts for web project development workflows, testing and proof, and team collaboration.",
+      "description": "Web project development workflows.",
       "source": "./plugins/turbo-dev-pack"
     },
     {
       "name": "tnf",
-      "description": "Commands and scripts for .NET Framework web project build with MSBuild and IIS Express startup.",
+      "description": ".NET Framework web build/run/publish commands.",
       "source": "./plugins/turbo-dotnet-framework-commands"
     },
     {
       "name": "tgs",
-      "description": "Commands and skills for git project workflows bridging a remote SVN repository.",
+      "description": "Git workflows bridging a remote SVN repository.",
       "source": "./plugins/turbo-git-with-remote-svn"
     }
   ]

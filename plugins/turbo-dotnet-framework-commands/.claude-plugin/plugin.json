@@ -1,6 +1,6 @@
 {
   "name": "tnf",
-  "description": "Commands and scripts for .NET Framework web project build with MSBuild and IIS Express startup.",
+  "description": ".NET Framework web build/run/publish commands.",
   "version": "0.2.2",
   "license": "MIT",
   "author": {
