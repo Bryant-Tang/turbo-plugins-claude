@@ -18,6 +18,11 @@
       "name": "tgs",
       "description": "Git workflows bridging a remote SVN repository.",
       "source": "./plugins/turbo-git-with-remote-svn"
+    },
+    {
+      "name": "tpi",
+      "description": "Cross-plugin intergraton.",
+      "source": "./plugins/turbo-plugins-integration"
     }
   ]
 }
