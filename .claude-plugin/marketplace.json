@@ -21,7 +21,7 @@
     },
     {
       "name": "tpi",
-      "description": "Cross-plugin intergraton.",
+      "description": "Cross-plugin integration.",
       "source": "./plugins/turbo-plugins-integration"
     }
   ]

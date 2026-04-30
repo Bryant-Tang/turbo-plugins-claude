@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-30
+
+### Added
+
+- `setup-all` skill 支援多 worktree 一次性 setup：偵測 `git worktree list` 後，把當下 worktree 互動產生的 env 值複製到使用者勾選的其他 worktree，並支援 per-worktree per-key override；單 worktree 專案行為與 v0.1.0 相同
+- `scripts/merge-settings-env.sh` 與 `scripts/merge-settings-env.ps1`：把 env key/value 集合 atomic 合併進指定 `.claude/settings.local.json`，僅動 `env` 區塊
+
 ## [0.1.0] - 2026-04-30
 
 ### Added

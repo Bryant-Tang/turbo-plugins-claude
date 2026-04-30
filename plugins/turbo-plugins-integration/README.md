@@ -52,8 +52,17 @@ Cross-plugin orchestration skills for turbo-plugins-claude: set up all installed
 執行後 tpi 會：
 1. 讀取已安裝的 turbo-plugins-claude plugin 清單
 2. 讓使用者勾選要執行 setup 的 plugin（預設全選）
-3. 依固定順序（tdp → tnf → tgs → 其他）依序呼叫每個 plugin 的 setup skill
-4. 顯示彙總結果，失敗的 plugin 提供重試指令
+3. 偵測同一專案底下的其他 worktree，讓使用者勾選要一起套用 env 設定的 peer worktree（預設全選）
+4. 在當下 worktree 依固定順序（tdp → tnf → tgs → 其他）依序呼叫每個 plugin 的 setup skill
+5. 把 setup 產生的 env 設定複製到步驟 3 選取的 peer worktree；可針對特定 worktree 的特定 env 指定不同值
+6. 顯示彙總結果（plugin setup 段 + propagation 段），失敗的項目提供重試指令
+
+#### 多 worktree 行為
+
+- 呼叫 setup-all 的 worktree 即為 **primary**；互動問答（env var 設定）只在 primary 跑一次。
+- Peer worktree 只接收結果：env 區塊被合併更新，companion 目錄（`specs/` 等）補建。
+- 若要讓某個 peer 的特定 env 值與 primary 不同（例如 dev-1 的 `TGS_DEFAULT_WORKING_BRANCH` 用 `test-3` 而非 `main`），在 Stage A 勾選該 peer 並在後續步驟指定。
+- 單 worktree 專案（或非 git 目錄）偵測不到多個 worktree 時，行為與 v0.1.0 相同。
 
 也可以傳入 alias 清單，只跑指定的 plugin：
 

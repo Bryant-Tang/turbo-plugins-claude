@@ -1,7 +1,7 @@
 {
   "name": "tpi",
-  "description": "Cross-plugin intergraton.",
-  "version": "0.1.0",
+  "description": "Cross-plugin integration.",
+  "version": "0.2.0",
   "license": "MIT",
   "author": {
     "name": "Bryant Tang"
