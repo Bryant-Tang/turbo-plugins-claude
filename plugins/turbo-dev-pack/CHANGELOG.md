@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-02
+
+### Added
+
+- 新增 `scripts/get-default-reviewer-count.sh` 與 `scripts/get-default-reviewer-count.ps1`：讀取 `TDP_IMPLEMENT_TASK_REVIEWERS` 環境變數，未設定時輸出 `3`，取代 `implement-task` skill 內寫死的預設值
+
+### Changed
+
+- `implement-task` Reviewer Count Resolution：step 3「Default: 3」改為「執行 `scripts/get-default-reviewer-count.sh/.ps1`」，預設值由 script 負責
+- `implement-task` 的 C# 註解規則從「follow the csharp-comment skill」改為「invoke `/tdp:csharp-comment`」；review subagent 須驗證 csharp-comment 合規性
+- `csharp-comment` 明確說明日期不受「不得提及當前任務脈絡」規則限制
+
 ## [0.2.4] - 2026-04-29
 
 ### Added

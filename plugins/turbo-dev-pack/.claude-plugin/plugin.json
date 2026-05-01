@@ -1,7 +1,7 @@
 {
   "name": "tdp",
   "description": "Web project development workflows.",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "license": "MIT",
   "author": {
     "name": "Bryant Tang"

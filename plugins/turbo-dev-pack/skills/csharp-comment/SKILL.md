@@ -19,7 +19,7 @@ user-invocable: true
 
 ## Core Rules
 - Use the comment form that best fits the code: XML documentation comments with `///` for types and members that need API-style documentation, and single-line or multi-line comments for non-obvious logic, constraints, side effects, or workflow details inside the implementation.
-- Do not mention the current request, goal, plan, task, test, temporary workaround, or chat context in the comments.
+- Do not mention the current request, goal, plan, task, test, temporary workaround, or chat context in the comments. Dates are not subject to this restriction.
 - Write comments so they still make sense months later when the original requirement context is gone.
 - Document the type itself and every member on any class that is in scope, including fields, properties, constructors, and methods.
 - Method documentation must define every parameter with `<param name="...">`.
