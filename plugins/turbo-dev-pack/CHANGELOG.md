@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-02
+
+### Fixed
+
+- `implement-task` Reviewer Count Resolution：`get-default-reviewer-count` 腳本路徑從相對路徑 `scripts/` 改為 `${CLAUDE_PLUGIN_ROOT}/scripts/`，修正在目標 repo 根目錄找不到腳本的問題
+
 ## [0.2.5] - 2026-05-02
 
 ### Added

@@ -45,7 +45,7 @@ user-invocable: true
 Resolve the parallel reviewer count `N` for non-build tasks using this priority order:
 
 1. Skill argument `--reviewers=N` parsed from the user's invocation (e.g. `/tdp:implement-task --reviewers=4 path/to/plan.md`). `N` must be an integer in 1..7.
-2. Run `scripts/get-default-reviewer-count.sh` (or `scripts/get-default-reviewer-count.ps1` on Windows) from the repository root. The script reads `TDP_IMPLEMENT_TASK_REVIEWERS` and outputs `3` when the variable is not set.
+2. Run `${CLAUDE_PLUGIN_ROOT}/scripts/get-default-reviewer-count.sh` (or `${CLAUDE_PLUGIN_ROOT}/scripts/get-default-reviewer-count.ps1` on Windows) from the repository root. The script reads `TDP_IMPLEMENT_TASK_REVIEWERS` and outputs `3` when the variable is not set.
 
 If a resolved value is outside 1..7 or is not an integer, stop and ask the user for a valid value before proceeding.
 
