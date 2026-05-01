@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-02
+
+### Added
+
+- `suggest-ignore` skill：管理 git/SVN ignore 的單一入口
+  - **直接模式**：`--add-git` / `--remove-git` 直接操作 `.gitignore`（並 git commit）；`--add-svn` / `--remove-svn` 同步所有 remote worktrees 的 `svn:ignore`（支援 `--path`）
+  - **分析模式**（不帶直接操作旗標）：互動式分析，推薦並設定 `.gitignore` 與 `svn:ignore`；處理 4 類情境：(A) 新增 git ignore、(B) 新增 svn:ignore、(C) 修正 SVN 追蹤但 git 忽略的不一致、(D) 從 git 和/或 SVN 停止追蹤
+
+### Changed
+
+- `create-remote-test`：新 remote worktree 的 `svn:ignore` 從 remote-main 複製現有設定（含使用者自訂 pattern），而非硬編碼 `.git`/`.gitignore`
+
+### Fixed
+
+- `push-to-svn-commit`：改用 explicit commit list，`?`/`!`/`M` 狀態的 git-ignored 項目不再被加入 / 刪除 / 提交到 SVN；本地檔案完整保留（不執行 svn revert）
+- `create-remote-test`：`svn propget svn:ignore` 移除多餘的 `'.'` 路徑參數，避免從非 SVN 工作目錄呼叫時因 CWD 不是 SVN WC 而報錯
+- `svn-log`：移除與 `[CmdletBinding()]` common parameter 衝突的 `[switch]$Verbose`，改用 `$VerbosePreference` 偵測 `-Verbose` 旗標
+
 ## [0.1.1] - 2026-04-30
 
 ### Added

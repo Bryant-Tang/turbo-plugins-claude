@@ -103,12 +103,18 @@ try {
     & svn checkout $SvnUrl $remoteWorktreePath
     if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
 
-    # Set svn:ignore so git metadata files are never accidentally committed to SVN
+    # Copy svn:ignore from remote-main (inherits all project-wide patterns including .git/.gitignore)
+    $remotemainPath = Join-Path $worktreesDir 'remote-main'
+    $ignoreToApply = '.git' + [System.Environment]::NewLine + '.gitignore'
+    if (Test-Path -LiteralPath $remotemainPath -PathType Container) {
+        $inherited = (& svn propget svn:ignore $remotemainPath 2>&1 | Out-String).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($inherited)) { $ignoreToApply = $inherited }
+    }
     Push-Location $remoteWorktreePath
     try {
-        & svn propset svn:ignore ".git`n.gitignore" '.'
+        & svn propset svn:ignore $ignoreToApply '.'
         if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
-        & svn commit -m 'svn:ignore git metadata'
+        & svn commit -m 'svn:ignore: copy from remote-main'
         if ($LASTEXITCODE -ne 0) { throw 'svn commit svn:ignore failed' }
     } finally {
         Pop-Location

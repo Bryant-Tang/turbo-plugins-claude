@@ -66,32 +66,65 @@ if ! git -C "$REMOTE_WORKTREE_PATH" merge "$BRANCH" --no-ff -m "Merge branch '$B
   exit 1
 fi
 
-# Handle SVN untracked and missing files, then commit
+# Handle SVN status items: filter git-ignored ones, build explicit commit list
 (
   cd "$REMOTE_WORKTREE_PATH"
 
   TO_ADD=()
   TO_DEL=()
+  MODIFIED_TO_COMMIT=()
+
   while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
     status="${line:0:1}"
     filepath="${line:8}"
-    if [[ "$status" == '?' ]]; then TO_ADD+=("$filepath")
-    elif [[ "$status" == '!' ]]; then TO_DEL+=("$filepath")
+    [[ -z "$filepath" ]] && continue
+    [[ "$status" != '?' && "$status" != '!' && "$status" != 'M' ]] && continue
+
+    # Skip git-ignored items: preserves local files, prevents accidental SVN commits
+    if git -C "$REMOTE_WORKTREE_PATH" check-ignore -q "$filepath" 2>/dev/null; then
+      echo "Skipping git-ignored ($status): $filepath"
+      continue
     fi
+
+    case "$status" in
+      '?') TO_ADD+=("$filepath") ;;
+      '!') TO_DEL+=("$filepath") ;;
+      'M') MODIFIED_TO_COMMIT+=("$filepath") ;;
+    esac
   done < <(svn status | tr -d '\r')
 
   if [[ ${#TO_ADD[@]} -gt 0 ]]; then
     echo "SVN adding ${#TO_ADD[@]} new file(s)..."
     svn add --parents "${TO_ADD[@]}"
   fi
-
   if [[ ${#TO_DEL[@]} -gt 0 ]]; then
     echo "SVN deleting ${#TO_DEL[@]} removed file(s)..."
     svn delete "${TO_DEL[@]}"
   fi
 
+  # Build explicit commit list: A/D items (from svn add/delete above) + non-ignored M items
+  COMMIT_TARGETS=()
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    status="${line:0:1}"
+    filepath="${line:8}"
+    if [[ "$status" == 'A' || "$status" == 'D' ]]; then
+      COMMIT_TARGETS+=("$filepath")
+    fi
+  done < <(svn status | tr -d '\r')
+  if [[ ${#MODIFIED_TO_COMMIT[@]} -gt 0 ]]; then
+    COMMIT_TARGETS+=("${MODIFIED_TO_COMMIT[@]}")
+  fi
+
+  if [[ ${#COMMIT_TARGETS[@]} -eq 0 ]]; then
+    echo "No changes to commit to SVN (all pending changes are git-ignored)"
+    svn update > /dev/null
+    exit 0
+  fi
+
   echo "Committing to SVN..."
-  COMMIT_OUT="$(svn commit -m "$MESSAGE")"
+  COMMIT_OUT="$(svn commit "${COMMIT_TARGETS[@]}" -m "$MESSAGE")"
   printf '%s\n' "$COMMIT_OUT"
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'

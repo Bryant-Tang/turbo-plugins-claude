@@ -1,8 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Branch = '',
-    [string]$Limit = '',
-    [switch]$Verbose
+    [string]$Limit = ''
 )
 
 Set-StrictMode -Version Latest
@@ -40,7 +39,7 @@ try {
         throw "Limit must be a positive integer (got '$resolvedLimitStr')."
     }
 
-    $verboseMode = $Verbose.IsPresent -or ($env:TGS_SVN_LOG_DEFAULT_VERBOSE -ieq '1') -or ($env:TGS_SVN_LOG_DEFAULT_VERBOSE -ieq 'true')
+    $verboseMode = ($VerbosePreference -eq 'Continue') -or ($env:TGS_SVN_LOG_DEFAULT_VERBOSE -ieq '1') -or ($env:TGS_SVN_LOG_DEFAULT_VERBOSE -ieq 'true')
 
     $mainWorktree = Get-MainWorktree
     $projName = [System.IO.Path]::GetFileName($mainWorktree)

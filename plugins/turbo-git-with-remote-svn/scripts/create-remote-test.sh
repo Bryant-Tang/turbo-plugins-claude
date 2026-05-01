@@ -85,10 +85,19 @@ fi
 echo "Running: svn checkout $SVN_URL $REMOTE_WORKTREE_PATH"
 svn checkout "$SVN_URL" "$REMOTE_WORKTREE_PATH"
 
-# Set svn:ignore so git metadata files are never accidentally committed to SVN
+# Copy svn:ignore from remote-main (inherits all project-wide patterns including .git/.gitignore)
+REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-main"
+IGNORE_TO_APPLY=".git
+.gitignore"
+if [[ -d "$REMOTE_MAIN_PATH" ]]; then
+  INHERITED="$(svn propget svn:ignore "$REMOTE_MAIN_PATH" 2>/dev/null || true)"
+  if [[ -n "$INHERITED" ]]; then
+    IGNORE_TO_APPLY="$INHERITED"
+  fi
+fi
 (cd "$REMOTE_WORKTREE_PATH" && \
-  printf '.git\n.gitignore\n' | svn propset svn:ignore --file - . && \
-  svn commit -m 'svn:ignore git metadata')
+  printf '%s\n' "$IGNORE_TO_APPLY" | svn propset svn:ignore --file - . && \
+  svn commit -m 'svn:ignore: copy from remote-main')
 
 CLOSE_LINE="$(grep -n $'^\t\],' "$WORKSPACE_FILE" | cut -d: -f1)"
 if [[ -z "$CLOSE_LINE" ]]; then

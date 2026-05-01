@@ -62,16 +62,36 @@ try {
         throw "Merge conflict in remote worktree. Resolve the following files in '$($remote.Name)', then retry:`n$conflicts"
     }
 
-    # Handle SVN untracked and missing files
+    # Handle SVN status items: filter git-ignored ones, build explicit commit list
+    $newRev = '?'
+    $noCommit = $false
     Push-Location $remote.Path
     try {
         $svnStatusLines = & svn status
         $toAdd = @()
         $toDel = @()
+        $modifiedToCommit = @()
+
         foreach ($line in $svnStatusLines) {
-            if ($line -match '^\?\s+(.+)$') { $toAdd += $Matches[1].Trim() }
-            if ($line -match '^!\s+(.+)$')  { $toDel += $Matches[1].Trim() }
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            if (-not ($line -match '^([?!M])\s+(.+)$')) { continue }
+            $statusChar = $Matches[1]
+            $filePath   = $Matches[2].Trim()
+
+            # Skip git-ignored items: preserves local files, prevents accidental SVN commits
+            & git -C $remote.Path check-ignore -q $filePath 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Output "Skipping git-ignored ($statusChar): $filePath"
+                continue
+            }
+
+            switch ($statusChar) {
+                '?' { $toAdd += $filePath }
+                '!' { $toDel += $filePath }
+                'M' { $modifiedToCommit += $filePath }
+            }
         }
+
         if ($toAdd.Count -gt 0) {
             Write-Output "SVN adding $($toAdd.Count) new file(s)..."
             & svn add --parents $toAdd
@@ -83,15 +103,26 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'svn delete failed' }
         }
 
-        Write-Output "Committing to SVN..."
-        $commitLines = & svn commit -m $Message
-        if ($LASTEXITCODE -ne 0) { throw 'svn commit failed' }
-        $commitLines | ForEach-Object { Write-Output $_ }
-        $newRevLine = $commitLines | Where-Object { $_ -match 'Committed revision (\d+)\.' } | Select-Object -Last 1
-        if ($newRevLine -and $newRevLine -match 'Committed revision (\d+)\.') {
-            $newRev = $Matches[1]
+        # Build explicit commit list: A/D items (from svn add/delete above) + non-ignored M items
+        $commitTargets = @()
+        foreach ($line in (& svn status)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            if ($line -match '^([AD])\s+(.+)$') { $commitTargets += $Matches[2].Trim() }
+        }
+        $commitTargets += $modifiedToCommit
+
+        if ($commitTargets.Count -eq 0) {
+            Write-Output "No changes to commit to SVN (all pending changes are git-ignored)"
+            $noCommit = $true
         } else {
-            $newRev = '?'
+            Write-Output "Committing to SVN..."
+            $commitLines = & svn commit $commitTargets -m $Message
+            if ($LASTEXITCODE -ne 0) { throw 'svn commit failed' }
+            $commitLines | ForEach-Object { Write-Output $_ }
+            $newRevLine = $commitLines | Where-Object { $_ -match 'Committed revision (\d+)\.' } | Select-Object -Last 1
+            if ($newRevLine -and $newRevLine -match 'Committed revision (\d+)\.') {
+                $newRev = $Matches[1]
+            }
         }
         # Update working copy revision so subsequent prepare checks see the correct local revision
         & svn update | Out-Null
@@ -99,6 +130,7 @@ try {
         Pop-Location
     }
 
+    if ($noCommit) { exit 0 }
     Write-Output "Pushed to SVN r$newRev"
 }
 catch {

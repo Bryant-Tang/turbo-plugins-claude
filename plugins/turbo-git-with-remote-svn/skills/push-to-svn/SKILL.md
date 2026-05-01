@@ -65,7 +65,9 @@ powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/push-to-
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/push-to-svn-commit.sh" --branch "main" --message "the full commit message here"
 ```
 
-8. Report the SVN revision from the commit script output.
+8. Interpret the commit script output:
+   - **"Pushed to SVN r\<rev\>"** → Report success with the new SVN revision. Proceed to step 9.
+   - **"No changes to commit to SVN (all pending changes are git-ignored)"** → Report to user that all pending SVN changes are git-ignored and nothing was committed to SVN. Skip step 9 (no release tag needed).
 
 9. Use `AskUserQuestion` to ask the user whether to add a release tag on this push:
    - Option A: Yes, create a release tag

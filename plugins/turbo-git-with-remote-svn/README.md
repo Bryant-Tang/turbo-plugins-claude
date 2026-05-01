@@ -85,6 +85,8 @@ tgs 用多個 git worktree 分隔職責，讓 SVN 同步與個人開發互不干
 | 拉 SVN 最新內容進 git | `/tgs:pull-from-svn --branch <main\|test-<n>>` |
 | 把 git 變更送上 SVN | `/tgs:push-to-svn --branch <main\|test-<n>>` |
 | 查看 SVN 歷史紀錄 | `/tgs:svn-log --branch <main\|test-<n>> [--limit N] [--verbose]` |
+| 管理 git/SVN ignore 設定 | `/tgs:suggest-ignore [--add-git\|--add-svn\|--remove-git\|--remove-svn <pattern>]` |
+| 互動式分析並修正 git/SVN ignore 不一致 | `/tgs:suggest-ignore [--branch <branch>]` |
 
 - 設定 `TGS_DEFAULT_WORKING_BRANCH` 後可省略 `--branch`（透過 `/tgs:setup` 設定）
 - **pull** 流程：自動把 main worktree 切到目標 branch、merge、再切回原 branch；發生衝突時停在目標 branch 等使用者解決
@@ -100,6 +102,7 @@ tgs 用多個 git worktree 分隔職責，讓 SVN 同步與個人開發互不干
 | `pull-from-svn` | skill | SVN → git（透過 `remote-*` worktree） |
 | `push-to-svn` | skill | git → SVN（透過 `remote-*` worktree） |
 | `svn-log` | command | 唯讀查看 SVN 歷史 |
+| `suggest-ignore` | skill | 管理 git/SVN ignore：直接新增或移除 `.gitignore` / `svn:ignore` pattern，或互動式分析並修正 git/SVN 不一致 |
 | `setup` | skill | 互動式設定 tgs 環境變數 |
 
 ## 設定
