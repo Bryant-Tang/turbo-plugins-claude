@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-02
+
+### Added
+
+- `merge-main-into-all` command：將 `main` branch merge 進所有非 `remote/*` 的 branch（`test-<n>`、`dev-<n>` 等）；每個 branch 獨立報告 `OK` / `SKIP`（dirty worktree）/ `CONFLICT`（merge 已 abort）
+- `pull-from-svn` skill：成功 pull 進 `main` 後推薦執行 `/tgs:merge-main-into-all`
+
 ## [0.2.0] - 2026-05-02
 
 ### Added

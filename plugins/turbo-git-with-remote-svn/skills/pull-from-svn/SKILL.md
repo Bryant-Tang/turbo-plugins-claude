@@ -50,3 +50,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pull-from-svn.sh" --branch "main"
 - The `remote/*` branch contains a new "sync: svn r\<rev\>" commit.
 - The working branch (`main` or `test-<n>`) contains a merge commit "Merge branch 'remote/\<branch\>' into \<branch\>".
 - The main worktree is on the same branch it was on before the command ran (or on `<branch>` if a merge conflict occurred).
+
+## Post-Pull Suggestion
+
+If the pull succeeded (not "Already up to date") and the target branch was `main`, suggest:
+
+> "All other working branches are now behind main. Run `/tgs:merge-main-into-all` to merge the update into every test-\<n\> and dev-\<n\> branch at once."
