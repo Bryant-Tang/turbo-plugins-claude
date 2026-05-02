@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-02
+
+### Added
+
+- 新增 `js-comment` skill：為 JS/TS 模組、類別、函式、介面、型別別名、列舉撰寫 JSDoc 文件及說明注解，標準與 `csharp-comment` 對稱；覆蓋獨立 `.js`/`.ts` 檔案以及 `.vue`/`.cshtml`/`.html` 中的 `<script>` 區塊
+
+### Changed
+
+- `implement-task`：JS/TS 檔案有異動時，implementation subagent 須呼叫 `/tdp:js-comment`；Maintainability & Code Quality reviewer 須驗證 `js-comment` 合規性
+- `write-plan`：AC Category Catalog、Mandatory Static Review Baseline、Core Rules、Completion Checks 同步加入 `js-comment` 規範要求
+- `plan.template.md`：三個任務區塊的「可維護性與程式碼品質」AC 新增 JS/TS js-comment 靜態檢查行；原則區段同步更新
+
 ## [0.2.7] - 2026-05-02
 
 ### Changed

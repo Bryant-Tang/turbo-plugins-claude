@@ -27,7 +27,7 @@ user-invocable: true
 	- Correctness（正確性）: business logic, data consistency, edge cases, null handling, and deterministic behavior.
 	- Security（安全性）: authentication, authorization, input validation, injection risk, data exposure, and permission boundaries.
 	- Integration & Compatibility（整合性與相容性）: dependency wiring, contract compatibility, existing API behavior, database/schema/config integration, and downstream impact.
-	- Maintainability & Code Quality（可維護性與程式碼品質）: naming, structure, separation of concerns, reuse of existing logic instead of duplicating similar code, code formatting and indentation consistency, `csharp-comment` compliance for C# code including XML documentation comments and needed inline/block explanations, and sufficiently clear Traditional Chinese comments where non-C# logic needs explanation.
+	- Maintainability & Code Quality（可維護性與程式碼品質）: naming, structure, separation of concerns, reuse of existing logic instead of duplicating similar code, code formatting and indentation consistency, `csharp-comment` compliance for C# code including XML documentation comments and needed inline/block explanations, `js-comment` compliance for JS/TS code (including `<script>` sections in `.vue`, `.cshtml`, and `.html` files) including JSDoc coverage and needed inline explanations, and sufficiently clear Traditional Chinese comments where neither C# nor JS/TS logic needs explanation.
 	- Testability & Observability（可測試性與可觀測性）: deterministic verification points, logs, error messages, diagnosability, and whether the change can be statically or locally checked.
 	- Performance & Resource Usage（效能與資源使用）: obvious inefficient loops, queries, repeated I/O, memory pressure, unnecessary remote calls, and CPU hotspots.
 	- User Experience（使用者體驗）: UI wording, interaction flow, empty/error states, responsive behavior, and accessibility when the task is user-facing.
@@ -36,7 +36,8 @@ user-invocable: true
 - Every implementation task AC must explicitly include all of the following static checks inside the appropriate AC categories. These are **in addition to** the code formatting and indentation check required by Core Rules — both must appear in the AC.
 - Integration & Compatibility must statically check whether the changed code may introduce compile errors, missing references, broken signatures, type mismatches, or obvious compatibility and integration regressions.
 - Maintainability & Code Quality must statically check whether changed C# code follows the `csharp-comment` skill, including member XML documentation coverage, method `<param>` definitions, and needed single-line or multi-line explanatory comments for non-obvious logic.
-- Maintainability & Code Quality must statically check whether changed non-C# logic has sufficiently detailed Traditional Chinese comments when comments are needed for understanding.
+- Maintainability & Code Quality must statically check whether changed JS/TS code (including `<script>` sections in `.vue`, `.cshtml`, and `.html` files) follows the `js-comment` skill, including JSDoc coverage for exported symbols and needed single-line or multi-line explanatory comments for non-obvious logic.
+- Maintainability & Code Quality must statically check whether changed non-C#/non-JS/TS logic has sufficiently detailed Traditional Chinese comments when comments are needed for understanding.
 - Maintainability & Code Quality must statically check whether the same logic already exists and should be reused instead of creating duplicated code.
 - Testability & Observability must statically check whether the planned verification points, logs, or error signals are specific enough to diagnose failures.
 - These static checks are mandatory even when the task will later be validated through runtime verification.
@@ -49,6 +50,7 @@ user-invocable: true
 - Every implementation task AC must be grouped by the full AC category catalog in this skill.
 - Every implementation task AC must include a code formatting and indentation requirement inside `Maintainability & Code Quality` so the finished code matches the repository's existing style and has no obvious formatting drift.
 - Every implementation task that changes C# code must treat the `csharp-comment` skill as the required documentation comment standard.
+- Every implementation task that changes JavaScript or TypeScript code (including `<script>` sections in `.vue`, `.cshtml`, or `.html` files) must treat the `js-comment` skill as the required documentation comment standard.
 - The final implementation task in `plan.md` must always be a dedicated build task.
 - The final build task must require running the repository-standard build, capturing build failures, and fixing build errors until the build succeeds.
 - Do not produce `test-plan.md`, `test-n.md`, or any final verification files in this skill. Final verification is planned separately via `write-test-plan` after every goal is implemented.
@@ -79,7 +81,7 @@ user-invocable: true
 ## Completion Checks
 - `plan.md` exists inside `goal-<id>/` and all implementation tasks have AC.
 - Every implementation task AC is grouped by the full AC category catalog in this skill (all seven categories present, with N/A where not applicable).
-- Every implementation task AC explicitly includes: a compile-error risk check under `Integration & Compatibility`; `csharp-comment` compliance, Traditional Chinese comments, and duplicate-logic reuse checks under `Maintainability & Code Quality`; and a verification-signal adequacy check under `Testability & Observability`.
+- Every implementation task AC explicitly includes: a compile-error risk check under `Integration & Compatibility`; `csharp-comment` compliance, `js-comment` compliance, Traditional Chinese comments, and duplicate-logic reuse checks under `Maintainability & Code Quality`; and a verification-signal adequacy check under `Testability & Observability`.
 - Every implementation task AC explicitly requires code formatting and indentation to be checked under `Maintainability & Code Quality` and aligned with existing repository style.
 - The final implementation task is a dedicated build task.
 - No `test-plan.md` or `test-n.md` files were created in this skill.

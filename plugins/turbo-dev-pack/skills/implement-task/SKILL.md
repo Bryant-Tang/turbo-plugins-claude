@@ -29,6 +29,7 @@ user-invocable: true
 - One implementation task per implementation subagent invocation.
 - One implementation task per review cycle.
 - If the current task changes C# code, the implementation subagent must invoke the `csharp-comment` skill via `/tdp:csharp-comment` after all C# code changes are complete. Each reviewer subagent must also verify `csharp-comment` compliance for any C# files in scope and include the findings in its review report.
+- If the current task changes JavaScript or TypeScript code (including `<script>` sections in `.vue`, `.cshtml`, or `.html` files), the implementation subagent must invoke the `js-comment` skill via `/tdp:js-comment` after all JS/TS code changes are complete. Each reviewer subagent must also verify `js-comment` compliance for any JS/TS files in scope and include the findings in its review report.
 - For non-build tasks, run N parallel reviewer subagents after each implementation attempt, where N is resolved by the Reviewer Count Resolution rule.
 - The AC categories assigned to each reviewer follow the AC-to-Reviewer Mapping table. The parent agent must use the mapping verbatim and must not improvise the grouping.
 - Each review subagent must write or overwrite its own review report file. The parent agent must not consolidate or rewrite those review reports.
@@ -88,7 +89,7 @@ Each reviewer subagent must check only the AC items belonging to its assigned ca
 1. Identify the target `plan.md`. If ambiguous, ask the user.
 2. Read `plan.md` and `goal.md`. If `plan.md` is inside a `goal-<id>/` subdirectory (e.g. `goal-1/`, `goal-2a/`, `goal-2b/`), `goal.md` is in the parent directory.
 3. Determine the ordered implementation tasks, identify the final build task, and extract the categorized AC for each task.
-4. For each non-build task, invoke an implementation subagent with the task scope, files, categorized AC, an explicit instruction not to touch later tasks, and an explicit instruction to invoke `/tdp:csharp-comment` after all C# code changes are complete.
+4. For each non-build task, invoke an implementation subagent with the task scope, files, categorized AC, an explicit instruction not to touch later tasks, an explicit instruction to invoke `/tdp:csharp-comment` after all C# code changes are complete, and an explicit instruction to invoke `/tdp:js-comment` after all JS/TS code changes are complete.
 5. After the implementation attempt completes, invoke N parallel reviewer subagents for the current non-build task (where N is the resolved reviewer count from Reviewer Count Resolution). Assign each reviewer its bucket of AC categories from the AC-to-Reviewer Mapping table. Each reviewer must check only the AC items belonging to its assigned categories against the current task scope and AC, and must write its own review report using the file naming rule from Review Report Location Rule, from the [task review template](./assets/task-review.template.md).
 6. The parent agent reads the category review reports only. If every category review report verdict is `COMPLETE`, move to the next task.
 7. If any category review report verdict is not `COMPLETE`, feed the blocking findings from those report files back into a new implementation subagent for the same non-build task, then rerun the parallel category review subagents and let them overwrite their own report files. Do not exceed 2 additional implementation attempts after the first review (3 total); if still not `COMPLETE`, record the task as `BLOCKED` and stop.
@@ -104,6 +105,7 @@ Each reviewer subagent must check only the AC items belonging to its assigned ca
 - Category reviewers must judge the task only against the current category AC and current scope, not against future tasks.
 - Preserve existing user changes outside the current implementation scope.
 - When C# files are in scope, the implementation subagent must invoke `/tdp:csharp-comment` rather than applying the rules manually. The reviewer subagent covering Maintainability & Code Quality (category 4) must verify `csharp-comment` compliance as part of its review.
+- When JS/TS files (including `<script>` sections in `.vue`, `.cshtml`, or `.html` files) are in scope, the implementation subagent must invoke `/tdp:js-comment` rather than applying the rules manually. The reviewer subagent covering Maintainability & Code Quality (category 4) must verify `js-comment` compliance as part of its review.
 - If a previous category review file already exists but the code changed afterward, the same category review subagent must overwrite it with a fresh review instead of appending stale conclusions.
 - The final build task review may execute build commands, but it must not drift into final `test-plan.md` verification.
 - If any task in the current goal ended as `BLOCKED`, do not ask the user about the progress checkbox and do not modify `goal.md`'s `### 進度總覽`; report the blocking findings instead.
