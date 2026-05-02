@@ -55,6 +55,7 @@ user-invocable: true
 - The final build task must require running the repository-standard build, capturing build failures, and fixing build errors until the build succeeds.
 - Do not produce `test-plan.md`, `test-n.md`, or any final verification files in this skill. Final verification is planned separately via `write-test-plan` after every goal is implemented.
 - The implementation plan for the selected goal must first be designed by invoking the Plan subagent (`Agent` tool with `subagent_type: "Plan"`); the parent agent only writes the resulting design into `goal-<id>/plan.md` using the plan template.
+- Every task in `plan.md` must be an implementation task. Exploratory actions — surveying existing code, searching for relevant files, investigating the current state — are planning work and must be completed during the planning phase (before `plan.md` is written). They must not appear as tasks in `plan.md`.
 
 ## Procedure
 1. Identify the target `goal.md`. If the branch name and specs path clearly point to one file, use it. Otherwise ask the user.
@@ -71,12 +72,15 @@ user-invocable: true
 6. Read the Plan subagent's returned design. If it is missing any AC category, missing the static review baseline, or missing the final build task, re-invoke the Plan subagent with the gap explicitly called out instead of patching it silently.
 7. Create `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Plan subagent's design. Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
 8. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
+9. **(Plan-mode handoff)** If this skill was invoked while plan mode is active, steps 1–8 above constitute the planning phase. After `ExitPlanMode` grants approval:
+   - Write the finalized design into `goal-<id>/plan.md` using the plan template (this is the implementation step).
+   - Then invoke the `implement-task` skill to begin implementation.
 
 ## Decision Rules
 - Keep implementation tasks aligned with the selected goal scope and do not let them drift into final verification planning.
 - Keep the build task separate from feature tasks so `implement-task` can treat it as the final gate.
 - If the user asks for verification tasks here, redirect them to `write-test-plan` and complete only the implementation plan in this skill.
-- If the selected goal cannot reasonably fit one chat session even after reasonable task splitting, stop and direct the user back to `write-goal` (or to edit `goal.md` directly) to split the goal into more lettered sub-goals under the same number (e.g. split `2a` into a new `2a` + `2b`, renaming the original `2b` to `2c`) and update `### 進度總覽` accordingly. Do not produce an oversized `plan.md`.
+- If the selected goal cannot reasonably fit one chat session even after reasonable task splitting, stop and discuss with the user whether to use `write-goal` to split some items into new lettered sub-goals under the same number (e.g. adding `2b` and renaming the original `2b` to `2c`) and update `### 進度總覽` accordingly. Do not unilaterally produce an oversized `plan.md`; wait for the user's decision before proceeding.
 
 ## Completion Checks
 - `plan.md` exists inside `goal-<id>/` and all implementation tasks have AC.

@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-03
+
+### Changed
+
+- `write-plan` Core Rules：新增規則，禁止將探索性行動（盤點、尋找、調查）列為實作任務，這類工作須在規劃期間完成
+- `write-plan` Decision Rules：計畫過大時改為主動與使用者討論是否用 `write-goal` 拆分，不再單方面中止
+- `write-plan` Procedure：新增 Step 9（plan mode 交接）：`ExitPlanMode` 允許後寫入 `plan.md`，再呼叫 `implement-task` skill
+
 ## [0.3.0] - 2026-05-02
 
 ### Added
