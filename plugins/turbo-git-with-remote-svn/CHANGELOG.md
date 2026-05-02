@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-02
+
+### Added
+
+- `init-from-existing` skill：分析既有 git 專案結構與 tgs 標準的落差，並互動式地執行遷移（建立 `remote/main` orphan 分支、`<proj>.worktrees/remote-main` worktree、SVN checkout、`.code-workspace`，以及初始 SVN sync）；已符合 tgs 結構的元件自動跳過（冪等）
+
 ## [0.3.0] - 2026-05-02
 
 ### Added
