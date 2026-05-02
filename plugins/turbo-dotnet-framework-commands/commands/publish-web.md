@@ -75,11 +75,11 @@ After MSBuild publishes successfully, the script prints four trailing lines:
 ```
 Publish succeeded.
 Method: <FileSystem|Package|MSDeploy|FTP|...>
-Published to: <absolute path or PublishUrl value>
-PUBLISH_OUTPUT_PATH=<same path as above>
+Published to: <file:/// URI or PublishUrl value>
+PUBLISH_OUTPUT_PATH=<Windows absolute path or PublishUrl value>
 ```
 
-The `PUBLISH_OUTPUT_PATH=` line is always the last line of stdout, intended for downstream tooling (e.g. tail-grep) to capture the resolved output path without parsing surrounding text.
+The `PUBLISH_OUTPUT_PATH=` line is always the last line of stdout, intended for downstream tooling (e.g. tail-grep) to capture the resolved output path without parsing surrounding text. For `FileSystem` publishes it contains the Windows absolute path (backslash separators). The `Published to:` line above it shows a `file:///` URI (forward-slash separators) so the path is directly clickable in terminals such as VS Code.
 
 The output path is read from the `<PublishUrl>` element of the `.pubxml` (taking the last occurrence when multiple are declared, matching MSBuild's "later wins" semantics). When `WebPublishMethod` is `FileSystem`, relative paths are resolved against the `.csproj` directory (matching MSBuild's `MSBuildProjectDirectory`-based normalization in `Microsoft.WebApplication.targets`) and a trailing backslash is trimmed. For other publish methods the raw `<PublishUrl>` value is reported as-is.
 

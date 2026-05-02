@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-02
+
+### Changed
+
+- `publish-web` FileSystem 發佈的 `Published to:` 行改輸出 `file:///` URI，讓使用者可在終端機直接點擊開啟目錄（`PUBLISH_OUTPUT_PATH=` 仍維持 Windows 路徑）
+
 ## [0.2.2] - 2026-04-28
 
 ### Added

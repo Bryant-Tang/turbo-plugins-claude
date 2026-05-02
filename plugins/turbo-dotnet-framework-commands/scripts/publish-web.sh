@@ -124,9 +124,11 @@ if ($method -eq "FileSystem") {
         $resolved = [System.IO.Path]::GetFullPath((Join-Path $projectDir $publishUrlRaw))
     }
     $resolved = $resolved.TrimEnd("\")
+    $displayPath = "file:///" + ($resolved -replace "\\", "/")
 } else {
     $resolved = $publishUrlRaw
+    $displayPath = $resolved
 }
-Write-Output "Published to: $resolved"
+Write-Output "Published to: $displayPath"
 Write-Output "PUBLISH_OUTPUT_PATH=$resolved"
 '
