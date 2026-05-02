@@ -67,9 +67,35 @@ For each alias the user selected in D2, in sorted order:
 
 Continue on error — a FAILED alias does not abort the remaining aliases.
 
-**If in single-worktree mode** or **user selected zero peers in D4**: after all aliases complete, skip P3–P5 and go directly to P6.
+**If in single-worktree mode** or **user selected zero peers in D4**: after all aliases complete, skip P2.5–P5 and go directly to P6.
 
-**If `propagationSet` is empty** after all aliases complete (e.g. every alias was SKIPPED, or the user kept all existing values unchanged): skip P3–P5, print P6 summary with only the plugin section.
+**If `propagationSet` is empty** after all aliases complete (e.g. every alias was SKIPPED, or the user kept all existing values unchanged): skip P2.5–P5, print P6 summary with only the plugin section.
+
+### P2.5 — Smart key handling
+
+Before entering the override discovery funnel, handle the two keys that have intelligent per-worktree defaults. Run each sub-step only when the corresponding key is in `propagationSet` and at least one peer was selected in D4.
+
+**P2.5-A — MARKITDOWN_WORKDIR_PATH**
+
+Use `AskUserQuestion` (single select):
+- Question: `"MARKITDOWN_WORKDIR_PATH is set to '<primary-value>'. How should this be distributed to peer worktrees?"`
+- Header: `"MarkItDown workdir"`
+- Options:
+  1. **"Per-worktree (Recommended)"** — description: `"Each peer gets its own path: <peer>/.markdown/workdir. Directories will be created automatically."` → set flag `autoMarkdownWorkdir = true`
+  2. **"Same for all"** — description: `"Copy primary's value to every peer as-is."` → set flag `autoMarkdownWorkdir = false`
+
+If user selects **"Per-worktree"**: remove `MARKITDOWN_WORKDIR_PATH` from `propagationSet` (it will not appear in the P3 key list; per-worktree values are injected directly in P4).
+
+**P2.5-B — RUN_IIS_APPLICATIONHOST_CONFIG_PATH**
+
+Use `AskUserQuestion` (single select):
+- Question: `"RUN_IIS_APPLICATIONHOST_CONFIG_PATH is set to '<primary-value>'. How should applicationhost.config be handled in peer worktrees?"`
+- Header: `"applicationhost.config"`
+- Options:
+  1. **"Per-worktree physicalPath (Recommended)"** — description: `"Same relative path propagated to all peers; copy the config file to peers that lack it, then update each peer's physicalPath to point to that worktree's web project directory."` → set flag `autoApplicationHostConfig = true`
+  2. **"Propagate as-is"** — description: `"Copy the env value to all peers without any file operations."` → set flag `autoApplicationHostConfig = false`
+
+If user selects **"Per-worktree physicalPath"**: keep `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` in `propagationSet` unchanged (the same relative path is propagated to all peers); file operations are handled in P4.5. Immediately after selection, scan the primary worktree and all selected peer worktrees for `<worktree>/<primary-value>`. If none of them contain the file, warn the user: "applicationhost.config not found in any worktree — please open the solution in Visual Studio first to auto-generate the file, then re-run /tpi:setup-all." (Continue regardless; P4.5 will record individual results per peer.)
 
 ### P3 — Override discovery (three-stage funnel)
 
@@ -99,13 +125,39 @@ If user selects no peers → skip Stages B and C; proceed to P4 with `propagatio
 For each selected peer worktree (from D4), in order:
 
 1. Check that the peer's directory exists on disk. If not → mark peer FAILED with reason "worktree directory missing on disk"; continue to next peer.
-2. Compute `peerEnv = { ...propagationSet, ...(overrides[peerPath] ?? {}) }`.
+2. Compute `peerEnv = { ...propagationSet, ...(overrides[peerPath] ?? {}) }`. Then, if `autoMarkdownWorkdir == true`, inject `MARKITDOWN_WORKDIR_PATH = <peer-abs-path>/.markdown/workdir` (forward slashes, e.g. `C:/Projects/MyProj-dev2/.markdown/workdir` on Windows) as the final value for that key — this overrides anything from propagationSet or overrides.
 3. Invoke the appropriate helper script to merge `peerEnv` into `<peer>/.claude/settings.local.json`:
    - **Windows (PowerShell)**: `& "<CLAUDE_PLUGIN_ROOT>/scripts/merge-settings-env.ps1" -SettingsFile "<peer>/.claude/settings.local.json" -EnvJson '<peerEnv-as-JSON>'`
    - **Other (bash)**: `bash "<CLAUDE_PLUGIN_ROOT>/scripts/merge-settings-env.sh" "<peer>/.claude/settings.local.json" '<peerEnv-as-JSON>'`
    - `CLAUDE_PLUGIN_ROOT` is the directory of this plugin's `plugin.json`.
 4. If the script exits 0 → mark peer DONE. Record how many keys were merged and how many were overrides.
 5. If the script exits non-zero → mark peer FAILED with the stderr text as reason; continue.
+
+### P4.5 — applicationhost.config sync
+
+Run this step only if `autoApplicationHostConfig == true`.
+
+1. Let `configRelPath` = the value of `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` from `propagationSet` (a relative path such as `.vs/MySolution/config/applicationhost.config`).
+2. **Find a source**: scan the primary worktree and all selected peer worktrees in order; use the first one where `<worktree>/<configRelPath>` exists on disk as `sourceWorktree`. If none found, `sourceWorktree = null`.
+3. For each peer worktree that was marked DONE in P4:
+   a. **If `<peer>/<configRelPath>` does not exist**:
+      - If `sourceWorktree != null`: create parent directories (as a separate step), then copy the file. Record: "copied from `<sourceWorktree-basename>`".
+      - If `sourceWorktree == null`: record "applicationhost.config not found in any worktree — skipped". Skip physicalPath correction for this peer.
+   b. **physicalPath correction** (run when the file exists at `<peer>/<configRelPath>`):
+      - Read `<peer>/.claude/settings.local.json` and extract `env.BUILD_PROJECT_PATH`. If missing, record "BUILD_PROJECT_PATH not set — physicalPath not verified" and skip.
+      - Compute `expectedPhysicalPath` = `<peer-abs-path>\<dirname(BUILD_PROJECT_PATH)>` in Windows backslash format (e.g. `C:\Projects\MyProj-dev2\src\Web`).
+      - Read the XML content of `<peer>/<configRelPath>`.
+      - **Locate the matching site**: first try matching `<site name="<X>">` where X equals `basename(dirname(BUILD_PROJECT_PATH))`; if not found, try matching a site whose `<binding bindingInformation="...">` has a port equal to the port in `<IISUrl>` from the `.csproj` file. If no match, record "unable to match site in applicationhost.config" and skip.
+      - Compare the `physicalPath` attribute of that site's `<virtualDirectory path="/">` element (case-insensitive, normalising backslash/forward-slash):
+        - If it matches `expectedPhysicalPath`: record "physicalPath already correct".
+        - If it differs: use the Edit tool to update only that attribute value to `expectedPhysicalPath`, preserving all other XML content; record "physicalPath updated from `<old>` to `<expectedPhysicalPath>`".
+4. Append an **"applicationhost.config sync"** sub-section beneath Section 2 of the P6 summary (only when this step ran):
+   ```
+   applicationhost.config sync (.vs/.../applicationhost.config)
+     worktree       result
+     remote-main    physicalPath already correct
+     dev-2          copied from main, physicalPath updated
+   ```
 
 ### P5 — Companion files for tdp on peer worktrees
 
@@ -130,6 +182,10 @@ For each peer worktree that was marked DONE in P4:
 Do **not** recreate `.claude/dbhub.local.toml`, `.claude/memory-server.local.jsonl`, the MarkItDown workdir, or `.claude/frontend-standard.local.md` in peer worktrees — these are pointed to by absolute paths shared across worktrees, or are workspace-root-level files that need not be duplicated.
 
 If `tdp` was SKIPPED or FAILED, skip this step entirely for all peers.
+
+Additionally, if `autoMarkdownWorkdir == true`, create the `.markdown/workdir` directory inside each peer worktree that was marked DONE in P4 (regardless of whether `tdp` ran). Create each directory as a separate step; do not chain with `&&`.
+- Windows (PowerShell): `New-Item -ItemType Directory -Force -Path "<peer>/.markdown/workdir"`
+- Other: `mkdir -p "<peer>/.markdown/workdir"`
 
 ### P6 — Summary
 
@@ -173,6 +229,10 @@ After the summary, print retry commands for any failures:
 - **No caching**: re-read `installed_plugins.json` fresh on every invocation.
 - **Security guard**: refuse to propagate any entry whose key or value matches the regex `/password|secret|token|api[_-]?key/i`. Log a warning if such a key is encountered. (In practice the child setup skills do not write such keys, but this is a defence-in-depth guard.)
 
+- **P2.5 smart questions** fire only when the corresponding key is present in `propagationSet` AND at least one peer was selected in D4. If either condition fails for a key, its smart question is silently skipped (no flag is set; the key stays in `propagationSet` and flows through the standard P3 override funnel).
+- **`autoMarkdownWorkdir = true`** removes `MARKITDOWN_WORKDIR_PATH` from `propagationSet`, so that key never appears in P3 Stage B. The per-worktree path is injected directly in P4.
+- **physicalPath comparison** in P4.5 is case-insensitive and treats backslashes and forward slashes as equivalent. Only the `physicalPath` attribute value is changed; no other XML structure is modified.
+
 **Validator table** (used in Stage C to validate override values before accepting them):
 
 | Key | Valid values |
@@ -191,7 +251,9 @@ After the summary, print retry commands for any failures:
 - `tpi` does not appear in the alias execution list.
 - All FAILED entries have an explicit retry hint in the summary.
 - Primary's `.claude/settings.local.json` is valid JSON (verified implicitly by the child setup skills writing to it successfully).
-- For each peer marked DONE: its `.claude/settings.local.json` contains all keys from `propagationSet` (with any overrides applied), and all pre-existing env keys in that file outside the propagation set are still present.
+- For each peer marked DONE: its `.claude/settings.local.json` contains all keys from `propagationSet` (with any overrides applied), and all pre-existing env keys in that file outside the propagation set are still present. If `autoMarkdownWorkdir == true`, the peer's `MARKITDOWN_WORKDIR_PATH` is set to `<peer>/.markdown/workdir` (injected directly in P4, not from propagationSet).
 - If `aliasChanges['tdp']` is non-empty: each DONE peer contains `specs/bugfix/`, `specs/feature/`, `specs/archives/bugfix/`, and `specs/archives/feature/`.
 - No value matching the security-guard regex was written into any peer file.
+- If `autoMarkdownWorkdir == true`: each DONE peer's `.markdown/workdir` directory exists on disk.
+- If `autoApplicationHostConfig == true`: each DONE peer's applicationhost.config file exists (or a skip reason was recorded), and its physicalPath is correct (or the mismatch/skip reason was recorded).
 - The aggregate summary (both sections as applicable) is shown before the skill exits.

@@ -1,7 +1,7 @@
 {
   "name": "tnf",
   "description": ".NET Framework web build/run/publish commands.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "license": "MIT",
   "author": {
     "name": "Bryant Tang"

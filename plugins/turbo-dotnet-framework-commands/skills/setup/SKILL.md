@@ -43,9 +43,23 @@ Configure `.claude/settings.local.json` with the environment variables required 
 - `BUILD_MSBUILD_PATH` and `RUN_IIS_EXPRESS_PATH` are absolute paths to executable files on the machine.
 - `BUILD_DEFAULT_CONFIGURATION` and `BUILD_DEFAULT_PLATFORM` are optional. If omitted, builds use `Debug` and `AnyCPU` by default. Accepted values are any valid MSBuild configuration or platform string (e.g. `Debug`, `Release`, `AnyCPU`, `x86`, `x64`). These defaults can always be overridden at invocation time by passing `--configuration` / `--platform` arguments to the build command.
 - `PUBLISH_DEFAULT_CONFIGURATION` and `PUBLISH_DEFAULT_PLATFORM` are optional. If omitted, publishes use `Release` and `AnyCPU` by default (deliberately different from the build defaults). Accepted values follow the same rules as the build defaults. These can be overridden at invocation time by passing `--configuration` / `--platform` arguments to the `publish-web` command.
-- When collecting `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`, ask the user which `applicationhost.config` they want to use before prompting for a path:
-  - **Visual Studio auto-generated (recommended, project-level)** — located at `.vs\{SolutionName}\config\applicationhost.config` inside the workspace. This file is generated per-solution and keeps site bindings in version control proximity.
-  - **User-level** — located at `%USERPROFILE%\Documents\IISExpress\config\applicationhost.config`. This is the global fallback used when no project-level config is present.
+- When collecting `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`:
+  1. **Detect solution name**: scan the workspace root for `.sln` files. If exactly one is found, let `solutionName` = that file's base name (without the `.sln` extension). If there are multiple or none, `solutionName = null`.
+  2. **Ask the user** via `AskUserQuestion` (single select) which config to use:
+     - If `solutionName != null`: present `.vs/<solutionName>/config/applicationhost.config` as the first option (Recommended), plus the user-level path (`%USERPROFILE%\Documents\IISExpress\config\applicationhost.config`) as a second option, plus "Other…" for free-form input.
+     - If `solutionName == null`: present the VS project-level option (description only, no specific path pre-filled) as the first option (Recommended), the user-level path as a second option, and "Other…" for free-form input.
+  3. **Check if the file exists** (resolve the chosen path to an absolute path first):
+     - If **not found**: run `git worktree list --porcelain` and scan each worktree for the same relative path.
+       - **Found in another worktree**: create parent directories (as a separate step, not chained with `&&`), then copy the file. Announce "Copied applicationhost.config from `<source-worktree-basename>`."
+       - **Not found anywhere**: inform the user that the file does not exist yet and Visual Studio will generate it on the first build or run; advise re-running `/tnf:setup` afterwards to verify physicalPath. Write the path value and skip physicalPath correction.
+  4. **physicalPath correction** (run when the file exists):
+     - Read `BUILD_PROJECT_PATH` from the current `env` block. If not yet set, inform the user and skip this step.
+     - Compute `expectedPhysicalPath` = absolute path of `dirname(BUILD_PROJECT_PATH)` relative to the workspace root, in Windows backslash format (e.g. `C:\Projects\MyProject\src\Web`).
+     - Read the applicationhost.config XML. Locate the matching site: first try `<site name="<X>">` where X equals `basename(dirname(BUILD_PROJECT_PATH))`; if not found, try a site whose `<binding bindingInformation="...">` has a port matching the `<IISUrl>` port from the `.csproj` file.
+     - If no site can be matched, warn the user and skip physicalPath correction.
+     - Compare the `physicalPath` attribute of that site's `<virtualDirectory path="/">` element (case-insensitive, treating backslash and forward-slash as equivalent):
+       - If correct: announce "physicalPath is correct — no changes needed."
+       - If different: use the Edit tool to update only that attribute value to `expectedPhysicalPath` (preserve all other XML content). Announce "physicalPath updated from `<old>` to `<expectedPhysicalPath>`."
 - Never overwrite existing keys set by other plugins. Only manage the `BUILD_*`, `RUN_*`, and `PUBLISH_*` keys listed in the table above.
 - When creating files as separate shell steps, do not chain commands with `&&`.
 - Path variables (`BUILD_PROJECT_PATH`, `BUILD_MSBUILD_PATH`, `BUILD_FRONTEND_DIR_PATH`, `RUN_IIS_EXPRESS_PATH`, `RUN_IIS_APPLICATIONHOST_CONFIG_PATH`, `PUBLISH_PUBXML_PATH`) accept any path format the user provides — Windows absolute with backslash (`C:\...`) or forward slash (`C:/...`), Unix absolute (`/path/...`), Git Bash drive format (`/c/...`), or relative with or without `./` prefix. Write the value as-is to `settings.local.json`; the underlying scripts (both bash and PowerShell) normalize all these formats automatically.
@@ -55,3 +69,4 @@ Configure `.claude/settings.local.json` with the environment variables required 
 
 - `.claude/settings.local.json` exists and the `env` block contains all configured `BUILD_*`, `RUN_*`, and `PUBLISH_*` keys with real, non-placeholder values.
 - No credentials or secrets were written into `.claude/settings.local.json`.
+- If `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` was configured and the corresponding file exists: the applicationhost.config's matching site has a `physicalPath` equal to the workspace root's web project directory in Windows backslash format.

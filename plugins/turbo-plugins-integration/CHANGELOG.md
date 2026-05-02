@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-02
+
+### Added
+
+- `setup-all` 新增 P2.5 smart key handling：當 `MARKITDOWN_WORKDIR_PATH` 在傳播集合中時，詢問使用者是否採用「per-worktree `.markdown/workdir`」模式（預設選項）；選擇後自動為每個 peer 設定各自的 `.markdown/workdir` 絕對路徑並建立目錄
+- `setup-all` 新增 P4.5 applicationhost.config sync：當 `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` 在傳播集合中且使用者選擇「per-worktree physicalPath」模式（預設選項），自動複製缺少 applicationhost.config 的 peer，並校正每個 peer 的 physicalPath 至該 worktree 的 web 專案目錄
+
 ## [0.2.0] - 2026-04-30
 
 ### Added

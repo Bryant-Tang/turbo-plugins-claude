@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-02
+
+### Changed
+
+- `setup` skill 在設定 `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` 時，若偵測到唯一 `.sln` 檔，自動以 `.vs/<SolutionName>/config/applicationhost.config` 為首選推薦選項
+- `setup` skill 若目標 applicationhost.config 不存在，自動掃描其他 worktree 並複製
+- `setup` skill 在 applicationhost.config 確認存在後，自動校正 physicalPath 為當前 workspace 的 web 專案絕對路徑
+
 ## [0.2.3] - 2026-05-02
 
 ### Changed
