@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-05-02
+
+### Changed
+
+- `implement-task`：使用者確認目標完成、`goal.md` 進度總覽 checkbox 更新為 `[x]` 後，父 agent 自動呼叫 `/tdp:commit-msg` skill 推薦一個 commit message
+
 ## [0.2.6] - 2026-05-02
 
 ### Fixed
