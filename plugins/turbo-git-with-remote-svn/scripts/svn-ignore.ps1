@@ -110,8 +110,15 @@ try {
                 }
 
                 $newPatterns = $patterns + $Add
-                & svn propset svn:ignore ($newPatterns -join "`n") $Path
-                if ($LASTEXITCODE -ne 0) { throw "svn propset failed in '$wtName'" }
+                $tmp = [System.IO.Path]::GetTempFileName()
+                try {
+                    $enc = New-Object System.Text.UTF8Encoding($false)
+                    [System.IO.File]::WriteAllText($tmp, ($newPatterns -join "`n"), $enc)
+                    & svn propset svn:ignore --file $tmp $Path
+                    if ($LASTEXITCODE -ne 0) { throw "svn propset failed in '$wtName'" }
+                } finally {
+                    Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+                }
                 & svn commit -m "svn:ignore: add $Add"
                 if ($LASTEXITCODE -ne 0) { throw "svn commit failed in '$wtName'" }
                 Write-Output "Added '$Add' to svn:ignore in '$wtName'"
@@ -148,8 +155,15 @@ try {
                     & svn propdel svn:ignore $Path
                     if ($LASTEXITCODE -ne 0) { throw "svn propdel failed in '$wtName'" }
                 } else {
-                    & svn propset svn:ignore ($newPatterns -join "`n") $Path
-                    if ($LASTEXITCODE -ne 0) { throw "svn propset failed in '$wtName'" }
+                    $tmp = [System.IO.Path]::GetTempFileName()
+                    try {
+                        $enc = New-Object System.Text.UTF8Encoding($false)
+                        [System.IO.File]::WriteAllText($tmp, ($newPatterns -join "`n"), $enc)
+                        & svn propset svn:ignore --file $tmp $Path
+                        if ($LASTEXITCODE -ne 0) { throw "svn propset failed in '$wtName'" }
+                    } finally {
+                        Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+                    }
                 }
                 & svn commit -m "svn:ignore: remove $Remove"
                 if ($LASTEXITCODE -ne 0) { throw "svn commit failed in '$wtName'" }

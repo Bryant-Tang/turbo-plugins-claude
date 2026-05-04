@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-05-04
+
+### Fixed
+
+- `svn-ignore.ps1`：`svn propset svn:ignore` 改用暫存檔搭配 `--file` 傳遞多行 pattern，解決 Windows 上將多行 CLI 引數折疊成單行導致 `svn:ignore` 無法生效的問題（與 sh 腳本的 `--file -` stdin 方式一致）；暫存檔以 UTF-8 無 BOM 寫入，並在 `finally` 中確保清除
+
 ## [0.4.3] - 2026-05-04
 
 ### Fixed
