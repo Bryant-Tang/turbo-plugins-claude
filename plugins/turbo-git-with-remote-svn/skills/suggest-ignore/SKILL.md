@@ -26,8 +26,8 @@ Single entry point for managing ignore settings across both git and SVN in a tgs
 |---|---|
 | `--add-git <pattern>` | Append pattern to `.gitignore` and commit |
 | `--remove-git <pattern>` | Remove pattern from `.gitignore` and commit |
-| `--add-svn <pattern>` | Add pattern to `svn:ignore` on all remote worktrees |
-| `--remove-svn <pattern>` | Remove pattern from `svn:ignore` on all remote worktrees |
+| `--add-svn <pattern> [<pattern>…]` | Add one or more patterns to `svn:ignore` on all remote worktrees in a single SVN commit |
+| `--remove-svn <pattern> [<pattern>…]` | Remove one or more patterns from `svn:ignore` on all remote worktrees in a single SVN commit |
 | `--path <dir>` | Target subdirectory for SVN operations (default: `.`) |
 
 Constraints: only one direct-mode flag per invocation; `--path` is ignored for git operations; `--branch` is ignored in direct mode.
@@ -52,26 +52,26 @@ Constraints: only one direct-mode flag per invocation; `--path` is ignored for g
 4. `git -C <main> add .gitignore && git -C <main> commit -m "chore: update .gitignore"`
 5. Report success.
 
-### `--add-svn <pattern> [--path <dir>]`
+### `--add-svn <pattern> [<pattern>…] [--path <dir>]`
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern>" [-Path "<dir>"]
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…] [-Path "<dir>"]
 ```
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --add "<pattern>" [--path "<dir>"]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --add "<pattern1>" [--add "<pattern2>"…] [--path "<dir>"]
 ```
 
 Forward the script output to the user.
 
-### `--remove-svn <pattern> [--path <dir>]`
+### `--remove-svn <pattern> [<pattern>…] [--path <dir>]`
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Remove "<pattern>" [-Path "<dir>"]
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Remove "<pattern1>" [-Remove "<pattern2>"…] [-Path "<dir>"]
 ```
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --remove "<pattern>" [--path "<dir>"]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --remove "<pattern1>" [--remove "<pattern2>"…] [--path "<dir>"]
 ```
 
 Forward the script output to the user.

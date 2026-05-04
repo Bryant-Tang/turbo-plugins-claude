@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$Add    = '',
-    [string]$Remove = '',
-    [string]$Path   = '.'
+    [string[]]$Add    = @(),
+    [string[]]$Remove = @(),
+    [string]$Path     = '.'
 )
 
 Set-StrictMode -Version Latest
@@ -25,8 +25,21 @@ function Get-SvnIgnorePatterns {
     return @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 }
 
+function Set-SvnIgnorePatterns {
+    param([string[]]$Patterns, [string]$TargetPath, [string]$WorktreeName)
+    $tmp = [System.IO.Path]::GetTempFileName()
+    try {
+        $enc = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($tmp, ($Patterns -join "`r`n"), $enc)
+        & svn propset svn:ignore --file $tmp $TargetPath
+        if ($LASTEXITCODE -ne 0) { throw "svn propset failed in '$WorktreeName'" }
+    } finally {
+        Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+    }
+}
+
 try {
-    if (-not [string]::IsNullOrWhiteSpace($Add) -and -not [string]::IsNullOrWhiteSpace($Remove)) {
+    if ($Add.Count -gt 0 -and $Remove.Count -gt 0) {
         throw 'Use either -Add or -Remove, not both.'
     }
 
@@ -49,7 +62,7 @@ try {
     }
 
     # ── LIST ──────────────────────────────────────────────────────────────────
-    if ([string]::IsNullOrWhiteSpace($Add) -and [string]::IsNullOrWhiteSpace($Remove)) {
+    if ($Add.Count -eq 0 -and $Remove.Count -eq 0) {
         $remotemainPath = Join-Path $worktreesDir 'remote-main'
         if (-not (Test-Path -LiteralPath $remotemainPath -PathType Container)) {
             throw "remote-main worktree not found at: $remotemainPath"
@@ -76,7 +89,7 @@ try {
     }
 
     # ── ADD ───────────────────────────────────────────────────────────────────
-    if (-not [string]::IsNullOrWhiteSpace($Add)) {
+    if ($Add.Count -gt 0) {
         foreach ($wt in $remoteWorktrees) {
             $wtName = [System.IO.Path]::GetFileName($wt)
             Push-Location $wt
@@ -91,37 +104,35 @@ try {
                 }
 
                 $patterns = Get-SvnIgnorePatterns -TargetPath $Path
-                if ($patterns -contains $Add) {
-                    Write-Output "'$wtName': '$Add' already in svn:ignore — skipping"
-                    continue
+                $toAdd    = @($Add | Where-Object { $patterns -notcontains $_ })
+                foreach ($p in @($Add | Where-Object { $patterns -contains $_ })) {
+                    Write-Output "'$wtName': '$p' already in svn:ignore — skipping"
                 }
+                if ($toAdd.Count -eq 0) { continue }
 
-                # Warn if pattern matches already-tracked SVN files (best effort)
+                # Warn if any new pattern matches already-tracked SVN files (best effort)
+                $ea = $ErrorActionPreference
+                $ErrorActionPreference = 'SilentlyContinue'
                 $allTracked = @(& svn list -R $Path 2>$null | Where-Object { $_ -ne $null })
-                $matchingTracked = @($allTracked | Where-Object {
-                    $item = $_.TrimEnd('/')
-                    ($item -like $Add) -or ([System.IO.Path]::GetFileName($item) -like $Add)
-                })
-                if ($matchingTracked.Count -gt 0) {
-                    Write-Output "Warning ('$wtName'): svn:ignore won't affect already-tracked files:"
-                    $matchingTracked | Select-Object -First 5 | ForEach-Object { Write-Output "  $_" }
-                    if ($matchingTracked.Count -gt 5) { Write-Output "  ... ($($matchingTracked.Count) total)" }
-                    Write-Output "  To stop pushing modifications, use 'git rm --cached' + .gitignore instead."
+                $ErrorActionPreference = $ea
+                foreach ($p in $toAdd) {
+                    $matchingTracked = @($allTracked | Where-Object {
+                        $item = $_.TrimEnd('/')
+                        ($item -like $p) -or ([System.IO.Path]::GetFileName($item) -like $p)
+                    })
+                    if ($matchingTracked.Count -gt 0) {
+                        Write-Output "Warning ('$wtName'): svn:ignore won't affect already-tracked files matching '$p':"
+                        $matchingTracked | Select-Object -First 5 | ForEach-Object { Write-Output "  $_" }
+                        if ($matchingTracked.Count -gt 5) { Write-Output "  ... ($($matchingTracked.Count) total)" }
+                        Write-Output "  To stop pushing modifications, use 'git rm --cached' + .gitignore instead."
+                    }
                 }
 
-                $newPatterns = $patterns + $Add
-                $tmp = [System.IO.Path]::GetTempFileName()
-                try {
-                    $enc = New-Object System.Text.UTF8Encoding($false)
-                    [System.IO.File]::WriteAllText($tmp, ($newPatterns -join "`n"), $enc)
-                    & svn propset svn:ignore --file $tmp $Path
-                    if ($LASTEXITCODE -ne 0) { throw "svn propset failed in '$wtName'" }
-                } finally {
-                    Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
-                }
-                & svn commit -m "svn:ignore: add $Add"
+                $newPatterns = $patterns + $toAdd
+                Set-SvnIgnorePatterns -Patterns $newPatterns -TargetPath $Path -WorktreeName $wtName
+                & svn commit -m "svn:ignore: add $($toAdd -join ', ')"
                 if ($LASTEXITCODE -ne 0) { throw "svn commit failed in '$wtName'" }
-                Write-Output "Added '$Add' to svn:ignore in '$wtName'"
+                Write-Output "Added '$($toAdd -join "', '")' to svn:ignore in '$wtName'"
             } finally {
                 Pop-Location
             }
@@ -130,7 +141,7 @@ try {
     }
 
     # ── REMOVE ────────────────────────────────────────────────────────────────
-    if (-not [string]::IsNullOrWhiteSpace($Remove)) {
+    if ($Remove.Count -gt 0) {
         foreach ($wt in $remoteWorktrees) {
             $wtName = [System.IO.Path]::GetFileName($wt)
             Push-Location $wt
@@ -144,30 +155,23 @@ try {
                     continue
                 }
 
-                $patterns = Get-SvnIgnorePatterns -TargetPath $Path
-                if ($patterns -notcontains $Remove) {
-                    Write-Output "'$wtName': '$Remove' not found in svn:ignore — skipping"
-                    continue
+                $patterns  = Get-SvnIgnorePatterns -TargetPath $Path
+                $toRemove  = @($Remove | Where-Object { $patterns -contains $_ })
+                foreach ($p in @($Remove | Where-Object { $patterns -notcontains $_ })) {
+                    Write-Output "'$wtName': '$p' not found in svn:ignore — skipping"
                 }
+                if ($toRemove.Count -eq 0) { continue }
 
-                $newPatterns = @($patterns | Where-Object { $_ -ne $Remove })
+                $newPatterns = @($patterns | Where-Object { $toRemove -notcontains $_ })
                 if ($newPatterns.Count -eq 0) {
                     & svn propdel svn:ignore $Path
                     if ($LASTEXITCODE -ne 0) { throw "svn propdel failed in '$wtName'" }
                 } else {
-                    $tmp = [System.IO.Path]::GetTempFileName()
-                    try {
-                        $enc = New-Object System.Text.UTF8Encoding($false)
-                        [System.IO.File]::WriteAllText($tmp, ($newPatterns -join "`n"), $enc)
-                        & svn propset svn:ignore --file $tmp $Path
-                        if ($LASTEXITCODE -ne 0) { throw "svn propset failed in '$wtName'" }
-                    } finally {
-                        Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
-                    }
+                    Set-SvnIgnorePatterns -Patterns $newPatterns -TargetPath $Path -WorktreeName $wtName
                 }
-                & svn commit -m "svn:ignore: remove $Remove"
+                & svn commit -m "svn:ignore: remove $($toRemove -join ', ')"
                 if ($LASTEXITCODE -ne 0) { throw "svn commit failed in '$wtName'" }
-                Write-Output "Removed '$Remove' from svn:ignore in '$wtName'"
+                Write-Output "Removed '$($toRemove -join "', '")' from svn:ignore in '$wtName'"
             } finally {
                 Pop-Location
             }

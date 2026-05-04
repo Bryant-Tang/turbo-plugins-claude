@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-05-04
+
+### Added
+
+- `svn-ignore`（`.ps1` / `.sh`）：`--add-svn` / `--remove-svn` 支援一次傳入多個 pattern（ps1 用 `-Add p1 -Add p2`，sh 用 `--add p1 --add p2`），所有 pattern 合併為單一 SVN commit；已存在 / 不存在的 pattern 逐一回報並跳過，其餘有效 pattern 照常套用；同時抽出 `Set-SvnIgnorePatterns` helper 消除 ps1 重複的暫存檔邏輯
+
+### Fixed
+
+- `svn-ignore.ps1`：`Set-SvnIgnorePatterns` 暫存檔改用 CRLF（`\r\n`）作為行分隔符，解決 Windows SVN client 以 `--file` 讀入 LF-only 檔案時將所有 pattern 合併成單行的問題
+- `svn-ignore.sh`：`svn propset svn:ignore --file -` 的 stdin pipe 插入 `awk '{printf "%s\r\n", $0}'` 轉為 CRLF，解決 Git Bash on Windows 呼叫 Windows svn.exe 時相同的單行問題；`awk` 比 `sed 's/$/\r/'` 更跨平台（macOS BSD sed 對 `\r` 的處理不一致）；Linux / macOS 原生 SVN 解析 CRLF property 值不受影響
+
 ## [0.4.4] - 2026-05-04
 
 ### Fixed
