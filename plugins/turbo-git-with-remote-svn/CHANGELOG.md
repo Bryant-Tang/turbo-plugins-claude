@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-05-04
+
+### Fixed
+
+- `suggest-ignore` SKILL.md：Step 2 / Category C 的 `git ls-files -i --exclude-standard` 補上 `-o`（→ `git ls-files -o -i --exclude-standard`），原本指令會 fatal：`ls-files -i must be used with either -o or -c`；`-o`（others，未追蹤）正好對應「SVN 加進來但 git 忽略」的 Category C 偵測情境
+
 ## [0.4.8] - 2026-05-04
 
 ### Changed

@@ -97,7 +97,7 @@ git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
 powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1"   # lists svn:ignore from remote-main (canonical)
 # For each remote worktree (remote-main, remote-test-*):
-git -C <remote-worktree> ls-files -i --exclude-standard
+git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
 
 ```bash
@@ -106,7 +106,7 @@ git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh"   # lists svn:ignore from remote-main (canonical)
 # For each remote worktree (remote-main, remote-test-*):
-git -C <remote-worktree> ls-files -i --exclude-standard
+git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
 
 ### Step 3 — Classify candidates
@@ -133,7 +133,7 @@ Use the collected data to build candidate lists for each category. Common "shoul
 - **Warning if already SVN-tracked**: check `svn status <file>` in remote-main — if the file is tracked (blank output, not `?`) warn: "svn:ignore won't affect already-tracked files. To stop pushing modifications, consider D2 flow instead."
 
 **Category C — SVN-tracked but git-ignored (inconsistency)**
-- Source: `git ls-files -i --exclude-standard` in **each** remote worktree (different SVN branches may track different files)
+- Source: `git ls-files -o -i --exclude-standard` in **each** remote worktree (different SVN branches may track different files)
 - Condition: for each found file, run `svn status <file>` in that worktree — if output is blank or `M` (not `?`) the file is SVN-tracked
 - Report which worktree(s) have the inconsistency
 - These files exist in SVN but git ignores them; SVN changes won't propagate through git
