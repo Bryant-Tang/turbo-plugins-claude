@@ -81,7 +81,7 @@ if [[ -n "$ADD" ]]; then
   for wt in "${REMOTE_WORKTREES[@]}"; do
     name="$(basename "$wt")"
 
-    SVN_DIRTY="$(svn status "$wt" 2>/dev/null || true)"
+    SVN_DIRTY="$(svn status "$wt" 2>/dev/null | grep -E '^([MACDR!~]|.[MC])' || true)"
     if [[ -n "$SVN_DIRTY" ]]; then
       echo "Warning: '$name' has pending SVN changes — skipping (commit or revert first)"
       continue
@@ -129,7 +129,7 @@ if [[ -n "$REMOVE" ]]; then
   for wt in "${REMOTE_WORKTREES[@]}"; do
     name="$(basename "$wt")"
 
-    SVN_DIRTY="$(svn status "$wt" 2>/dev/null || true)"
+    SVN_DIRTY="$(svn status "$wt" 2>/dev/null | grep -E '^([MACDR!~]|.[MC])' || true)"
     if [[ -n "$SVN_DIRTY" ]]; then
       echo "Warning: '$name' has pending SVN changes — skipping (commit or revert first)"
       continue

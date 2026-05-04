@@ -77,7 +77,7 @@ try {
             $wtName = [System.IO.Path]::GetFileName($wt)
             Push-Location $wt
             try {
-                $svnDirty = (& svn status | Out-String).Trim()
+                $svnDirty = (& svn status | Where-Object { $_ -match '^([MACDR!~]|.[MC])' } | Out-String).Trim()
                 if ($svnDirty) {
                     Write-Output "Warning: '$wtName' has pending SVN changes — skipping (commit or revert first)"
                     continue
@@ -121,7 +121,7 @@ try {
             $wtName = [System.IO.Path]::GetFileName($wt)
             Push-Location $wt
             try {
-                $svnDirty = (& svn status | Out-String).Trim()
+                $svnDirty = (& svn status | Where-Object { $_ -match '^([MACDR!~]|.[MC])' } | Out-String).Trim()
                 if ($svnDirty) {
                     Write-Output "Warning: '$wtName' has pending SVN changes — skipping (commit or revert first)"
                     continue

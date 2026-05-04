@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-04
+
+### Fixed
+
+- `svn-ignore`（`.ps1` / `.sh`）：dirty 檢查從「`svn status` 有任何輸出即阻擋」改為只攔真正有待處理 SVN 異動的行（column 1 符合 `MACDR!~`，或 column 2 符合 `M`/`C` 的 property 異動），排除 `?`（未版本化）、`I`（已忽略）、`X`（外部未版本化）等不影響 commit 的項目，解決 remote worktree 存在 `.claude/`、`.git` 等未版本化目錄時 `--add-svn` / `--remove-svn` 無法執行的問題
+
 ## [0.4.0] - 2026-05-02
 
 ### Added
