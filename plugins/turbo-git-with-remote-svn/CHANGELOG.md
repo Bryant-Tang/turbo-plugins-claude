@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-05-04
+
+### Fixed
+
+- `suggest-ignore` SKILL.md：更新 Category B 說明為一次批次呼叫所有 pattern（而非逐一呼叫）；同步 Category C-B / D-A 腳本範例語法；`argument-hint` 加上 `…` 標示多 pattern 支援
+
 ## [0.4.5] - 2026-05-04
 
 ### Added

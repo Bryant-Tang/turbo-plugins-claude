@@ -1,7 +1,7 @@
 ---
 name: suggest-ignore
 description: 'Manage git/SVN ignore settings: directly add or remove .gitignore / svn:ignore patterns, or run interactive analysis to detect and fix inconsistencies'
-argument-hint: 'Direct: --add-git|--remove-git|--add-svn|--remove-svn <pattern> [--path <dir>] | Analysis: [--branch <main|test-<n>>]'
+argument-hint: 'Direct: --add-git|--remove-git|--add-svn|--remove-svn <pattern>… [--path <dir>] | Analysis: [--branch <main|test-<n>>]'
 user-invocable: true
 ---
 
@@ -195,12 +195,12 @@ git -C <main-worktree> commit -m "chore: update .gitignore"
 If main worktree has uncommitted changes, report the error and ask user to commit or stash first.
 
 **Category B (add to `svn:ignore`):**
-For each approved pattern:
+Pass all approved patterns in a single call:
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern>"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
 ```
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --add "<pattern>"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --add "<pattern1>" [--add "<pattern2>"…]
 ```
 
 **Category C — Option A (remove from `.gitignore`):**
@@ -211,7 +211,7 @@ In the remote worktree:
 ```powershell
 svn delete "<file>"
 svn commit -m "remove <file> (no longer tracked in git)"
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern>"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
 ```
 
 **Category D — Option A (full cleanup):**
@@ -226,7 +226,7 @@ Then in remote worktree:
 ```powershell
 svn delete "<file>"
 svn commit -m "remove <file>"
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern>"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
 ```
 
 **Category D — Option B (git stops, SVN keeps):**
