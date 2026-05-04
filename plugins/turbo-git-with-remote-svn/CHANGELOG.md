@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-04
+
+### Fixed
+
+- `svn-ignore.ps1`：`Get-SvnIgnorePatterns` 將 `svn propget` 的 stderr 重導從 `2>&1` 改為 `2>$null`，避免 PS 5.1 將 native exe 的 stderr 包成 `ErrorRecord` 注入 pipeline，進而被 `$ErrorActionPreference = 'Stop'` 升格為終止性錯誤（`svn propget` 在目錄尚無 `svn:ignore` 時會對 stderr 輸出警告，觸發此問題）
+
 ## [0.4.1] - 2026-05-04
 
 ### Fixed

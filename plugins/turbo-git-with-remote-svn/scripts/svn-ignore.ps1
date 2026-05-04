@@ -16,7 +16,7 @@ function Get-MainWorktree {
 
 function Get-SvnIgnorePatterns {
     param([string]$TargetPath)
-    $raw = (& svn propget svn:ignore $TargetPath 2>&1 | Out-String)
+    $raw = (& svn propget svn:ignore $TargetPath 2>$null | Out-String)
     if ($LASTEXITCODE -ne 0) { return @() }
     return @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 }
