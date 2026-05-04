@@ -48,7 +48,7 @@ fi
 
 get_patterns() {
   local wt="$1"
-  svn propget svn:ignore "$SVN_PATH" "$wt" 2>/dev/null | grep -v '^$' || true
+  (cd "$wt" && svn propget svn:ignore "$SVN_PATH" 2>/dev/null) | grep -v '^$' || true
 }
 
 # ── LIST ──────────────────────────────────────────────────────────────────────

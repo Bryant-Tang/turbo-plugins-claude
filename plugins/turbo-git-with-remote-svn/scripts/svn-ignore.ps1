@@ -1,12 +1,39 @@
 [CmdletBinding()]
 param(
-    [string[]]$Add    = @(),
-    [string[]]$Remove = @(),
-    [string]$Path     = '.'
+    [Parameter(ValueFromRemainingArguments=$true)]
+    [string[]]$Arguments
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Manual arg parsing so `-Add p1 -Add p2` works when invoked via
+# `powershell -File ...` (which would otherwise stringify an array param).
+$Add    = @()
+$Remove = @()
+$Path   = '.'
+
+$i = 0
+$argList = @()
+if ($null -ne $Arguments) { $argList = @($Arguments) }
+while ($i -lt $argList.Count) {
+    $a = $argList[$i]
+    switch ($a) {
+        '-Add' {
+            if ($i + 1 -ge $argList.Count) { throw "Argument '-Add' requires a value." }
+            $Add += $argList[$i + 1]; $i += 2
+        }
+        '-Remove' {
+            if ($i + 1 -ge $argList.Count) { throw "Argument '-Remove' requires a value." }
+            $Remove += $argList[$i + 1]; $i += 2
+        }
+        '-Path' {
+            if ($i + 1 -ge $argList.Count) { throw "Argument '-Path' requires a value." }
+            $Path = $argList[$i + 1]; $i += 2
+        }
+        default { throw "Unknown argument: '$a'" }
+    }
+}
 
 function Get-MainWorktree {
     $commonGitDir = (& git rev-parse --git-common-dir | Out-String).Trim()
@@ -21,8 +48,8 @@ function Get-SvnIgnorePatterns {
     $raw = (& svn propget svn:ignore $TargetPath 2>$null | Out-String)
     $exit = $LASTEXITCODE
     $ErrorActionPreference = $ea
-    if ($exit -ne 0) { return @() }
-    return @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    if ($exit -ne 0) { return ,@() }
+    return ,@($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 }
 
 function Set-SvnIgnorePatterns {

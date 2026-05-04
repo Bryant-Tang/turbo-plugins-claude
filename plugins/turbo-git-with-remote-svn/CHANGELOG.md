@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-05-04
+
+### Changed
+
+- `svn-ignore.ps1`：參數改用 `[Parameter(ValueFromRemainingArguments=$true)] [string[]]$Arguments` + 手動解析，支援 `-Add p1 -Add p2 -Remove p3 -Path ...` 重複旗標語法（與 `.sh` 對齊）。原本的 `[string[]]$Add` / `[string[]]$Remove` 在 `powershell -File ... -Add "a","b"` 呼叫情境下，外層 PowerShell 會把陣列展開成獨立 process args（`-Add a b`）→ 子 PowerShell 只 bind 第一個值、剩餘變 positional 報錯；採用 `-Add` 旗標重複語法即可避開此 native command 引數展開問題
+
+### Fixed
+
+- `svn-ignore.ps1`：`Get-SvnIgnorePatterns` 改用逗號運算子（`return ,@()`）回傳空陣列；`$argList` 初始化改用獨立 `if` 賦值（不再 `if/else` 回傳 `@()`），避免 PowerShell 在 pipeline 把 `@()` unroll 成 `$null`，導致 LIST 模式（無 `svn:ignore` 屬性、或無傳入參數時）`.Count` 在 `Set-StrictMode -Version Latest` 下拋出「The property 'Count' cannot be found on this object」
+- `svn-ignore.sh`：`get_patterns` 改為 `(cd "$wt" && svn propget svn:ignore "$SVN_PATH")`，原本 `svn propget svn:ignore "$SVN_PATH" "$wt"` 同時傳入兩個路徑會觸發 SVN 的多路徑輸出格式（`<path> - <value>` 前綴），導致 LIST 模式第一個 pattern 顯示成 `C:\…\remote-main - *.tmp`
+
 ## [0.4.7] - 2026-05-04
 
 ### Changed
