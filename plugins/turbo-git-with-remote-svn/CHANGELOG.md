@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-05-04
+
+### Fixed
+
+- `svn-ignore.ps1`：`svn propget`、`svn status`（ADD / REMOVE 兩處）在呼叫前後暫時將 `$ErrorActionPreference` 設為 `'SilentlyContinue'`，解決 PS 5.1 下 `$ErrorActionPreference = 'Stop'` 在 `2>$null` 重導生效之前即攔截 native exe stderr ErrorRecord、拋出終止例外的問題
+
 ## [0.4.2] - 2026-05-04
 
 ### Fixed

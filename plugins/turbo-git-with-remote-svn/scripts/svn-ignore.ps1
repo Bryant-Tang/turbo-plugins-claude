@@ -16,8 +16,12 @@ function Get-MainWorktree {
 
 function Get-SvnIgnorePatterns {
     param([string]$TargetPath)
+    $ea = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
     $raw = (& svn propget svn:ignore $TargetPath 2>$null | Out-String)
-    if ($LASTEXITCODE -ne 0) { return @() }
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = $ea
+    if ($exit -ne 0) { return @() }
     return @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 }
 
@@ -77,7 +81,10 @@ try {
             $wtName = [System.IO.Path]::GetFileName($wt)
             Push-Location $wt
             try {
-                $svnDirty = (& svn status | Where-Object { $_ -match '^([MACDR!~]|.[MC])' } | Out-String).Trim()
+                $ea = $ErrorActionPreference
+                $ErrorActionPreference = 'SilentlyContinue'
+                $svnDirty = (& svn status 2>$null | Where-Object { $_ -match '^([MACDR!~]|.[MC])' } | Out-String).Trim()
+                $ErrorActionPreference = $ea
                 if ($svnDirty) {
                     Write-Output "Warning: '$wtName' has pending SVN changes — skipping (commit or revert first)"
                     continue
@@ -121,7 +128,10 @@ try {
             $wtName = [System.IO.Path]::GetFileName($wt)
             Push-Location $wt
             try {
-                $svnDirty = (& svn status | Where-Object { $_ -match '^([MACDR!~]|.[MC])' } | Out-String).Trim()
+                $ea = $ErrorActionPreference
+                $ErrorActionPreference = 'SilentlyContinue'
+                $svnDirty = (& svn status 2>$null | Where-Object { $_ -match '^([MACDR!~]|.[MC])' } | Out-String).Trim()
+                $ErrorActionPreference = $ea
                 if ($svnDirty) {
                     Write-Output "Warning: '$wtName' has pending SVN changes — skipping (commit or revert first)"
                     continue

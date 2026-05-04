@@ -1,7 +1,7 @@
 {
   "name": "tgs",
   "description": "Git workflows bridging a remote SVN repository.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "license": "MIT",
   "author": {
     "name": "Bryant Tang"
