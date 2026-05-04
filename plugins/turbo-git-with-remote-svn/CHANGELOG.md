@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-05-04
+
+### Changed
+
+- `suggest-ignore` Analysis Mode：移除分支選擇步驟；改為分析**所有** remote worktree（Category C 對每個 worktree 獨立檢查 SVN 追蹤狀態）；svn:ignore 以 `remote-main` 為正本，套用變更時同步所有 remote worktree；移除 `--branch` 參數及 Branch Mapping 表
+
 ## [0.4.6] - 2026-05-04
 
 ### Fixed

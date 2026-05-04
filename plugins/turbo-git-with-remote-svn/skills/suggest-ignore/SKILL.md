@@ -1,7 +1,7 @@
 ---
 name: suggest-ignore
 description: 'Manage git/SVN ignore settings: directly add or remove .gitignore / svn:ignore patterns, or run interactive analysis to detect and fix inconsistencies'
-argument-hint: 'Direct: --add-git|--remove-git|--add-svn|--remove-svn <pattern>… [--path <dir>] | Analysis: [--branch <main|test-<n>>]'
+argument-hint: 'Direct: --add-git|--remove-git|--add-svn|--remove-svn <pattern>… [--path <dir>] | Analysis: (no args)'
 user-invocable: true
 ---
 
@@ -30,7 +30,7 @@ Single entry point for managing ignore settings across both git and SVN in a tgs
 | `--remove-svn <pattern> [<pattern>…]` | Remove one or more patterns from `svn:ignore` on all remote worktrees in a single SVN commit |
 | `--path <dir>` | Target subdirectory for SVN operations (default: `.`) |
 
-Constraints: only one direct-mode flag per invocation; `--path` is ignored for git operations; `--branch` is ignored in direct mode.
+Constraints: only one direct-mode flag per invocation; `--path` is ignored for git operations.
 
 ## Direct Mode Procedure
 
@@ -80,22 +80,12 @@ Forward the script output to the user.
 
 ## Analysis Mode
 
-### Branch Mapping
-
-The `--branch` argument selects which remote worktree to inspect for SVN-side analysis (Categories B, C, D):
-
-| Working branch | Remote worktree |
-|---|---|
-| `main` | `remote-main` |
-| `test-<n>` | `remote-test-<n>` |
-
 ## Procedure
 
-### Step 1 — Resolve branch and paths
+### Step 1 — Resolve paths
 
-1. If `--branch` is not given, check `TGS_DEFAULT_WORKING_BRANCH`. If set and valid, use it. Otherwise use `AskUserQuestion` to ask which branch to analyse.
-2. Resolve main worktree and remote worktree paths from `git rev-parse --git-common-dir`.
-3. If the remote worktree does not exist, skip Categories B, C, D and proceed with Category A only.
+1. Resolve main worktree and all remote worktrees (`remote-main`, `remote-test-*`) from `git rev-parse --git-common-dir`.
+2. If no remote worktrees exist, skip Categories B, C, D and proceed with Category A only.
 
 ### Step 2 — Collect data
 
@@ -105,7 +95,8 @@ Run the following (all read-only):
 git -C <main-worktree> status --short
 git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1"   # lists svn:ignore from remote-main (canonical)
+# For each remote worktree (remote-main, remote-test-*):
 git -C <remote-worktree> ls-files -i --exclude-standard
 ```
 
@@ -113,7 +104,8 @@ git -C <remote-worktree> ls-files -i --exclude-standard
 git -C <main-worktree> status --short
 git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh"   # lists svn:ignore from remote-main (canonical)
+# For each remote worktree (remote-main, remote-test-*):
 git -C <remote-worktree> ls-files -i --exclude-standard
 ```
 
@@ -135,13 +127,15 @@ Use the collected data to build candidate lists for each category. Common "shoul
 
 **Category B — Add to `svn:ignore`**
 - Source: `git ls-files` (git-tracked files)
-- Condition: matches a pattern that belongs in git but not SVN (e.g. `.claude/`, CI configs) AND not already in `svn:ignore`
+- Condition: matches a pattern that belongs in git but not SVN (e.g. `.claude/`, CI configs) AND not already in `svn:ignore` (checked against `remote-main` as canonical)
+- Changes applied to **all remote worktrees** to keep them consistent
 - **Limitation note to show user**: `svn:ignore` is per-directory only, not recursive. For recursive exclusions use `.gitignore`.
-- **Warning if already SVN-tracked**: check `svn status <file>` in remote worktree — if the file is tracked (blank output, not `?`) warn: "svn:ignore won't affect already-tracked files. To stop pushing modifications, consider D2 flow instead."
+- **Warning if already SVN-tracked**: check `svn status <file>` in remote-main — if the file is tracked (blank output, not `?`) warn: "svn:ignore won't affect already-tracked files. To stop pushing modifications, consider D2 flow instead."
 
 **Category C — SVN-tracked but git-ignored (inconsistency)**
-- Source: `git ls-files -i --exclude-standard` in remote worktree
-- Condition: for each found file, run `svn status <file>` — if output is blank or `M` (not `?`) the file is SVN-tracked
+- Source: `git ls-files -i --exclude-standard` in **each** remote worktree (different SVN branches may track different files)
+- Condition: for each found file, run `svn status <file>` in that worktree — if output is blank or `M` (not `?`) the file is SVN-tracked
+- Report which worktree(s) have the inconsistency
 - These files exist in SVN but git ignores them; SVN changes won't propagate through git
 
 **Category D — Tracked by both, should be un-tracked**
