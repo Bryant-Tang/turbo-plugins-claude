@@ -97,9 +97,24 @@ Cross-plugin orchestration skills for turbo-plugins-claude: set up all installed
 /tpi:teach-me workflow:svn-sync
 ```
 
+### dependency-check
+
+安裝 plugin 後執行，確認所有外部依賴都已就緒：
+
+```
+/tpi:dependency-check
+```
+
+執行後 tpi 會：
+1. 讀取已安裝的 turbo-plugins-claude plugin 清單
+2. 針對各 plugin 的外部依賴（`docker`、`svn`、`node`）執行指令確認是否安裝
+3. 檢查推薦的全域工具（`ENABLE_LSP_TOOL=1`、`csharp-ls`、`typescript-language-server`）
+4. 顯示彙總表格；若有必要依賴缺失，以明顯方式提示受影響的功能
+
 ## 提供的 skill
 
 | 名稱 | 類型 | 用途 |
 |---|---|---|
 | `setup-all` | skill | 一次執行所有已安裝 plugin 的 setup |
 | `teach-me` | skill | 根據已安裝 plugin 動態產生整合教學並問答 |
+| `dependency-check` | skill | 檢查已安裝 plugin 的外部依賴與推薦工具，列出安裝狀態 |
