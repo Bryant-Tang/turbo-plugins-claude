@@ -97,7 +97,7 @@ The single combined review subagent covers all 7 categories (equivalent to N=1 i
 - The final build task has a current `task-n-build-review.md` report and its verdict is `COMPLETE`.
 - The final build review report shows that the repository-standard build passed.
 - No final verification tasks were executed in this skill.
-- The user has been asked to confirm the current goal as done, and `goal.md`'s `### 進度總覽` checkbox for that goal has been updated to `[x]` when the user confirmed, or left unchanged when the user deferred.
+- The user has been asked to confirm the current goal as done (only when both `all-tasks-review.md` and the build review verdicts are `COMPLETE`), and `goal.md`'s `### 進度總覽` checkbox for that goal has been updated to `[x]` when the user confirmed, or left unchanged when the user deferred or the review was not `COMPLETE`.
 - After the `goal.md` checkbox was updated to `[x]`, the `/tdp:commit-msg` skill was invoked and a commit message was recommended to the user.
 
 ## Handoff

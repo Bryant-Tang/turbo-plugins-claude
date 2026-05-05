@@ -78,7 +78,7 @@ user-invocable: true
    - The requirement that the final task is a dedicated build task with the repository-standard build, build-failure capture, and fix loop.
    - An explicit instruction that the Plan subagent returns a structured task list (each task = goal + scope + AC by full category catalog + completion criteria) but does not write any files.
 6. Read the Plan subagent's returned design. If it is missing any AC category, missing the static review baseline, or missing the final build task, re-invoke the Plan subagent with the gap explicitly called out instead of patching it silently.
-7. Create `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Plan subagent's design. Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
+7. Draft `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Plan subagent's design (draft only — do not write to disk yet). Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
 8. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
 9. **(Plan-mode handoff)** Steps 1–8 above constitute the planning phase (always run in plan mode; if not already in plan mode, `EnterPlanMode` was called at the start). After `ExitPlanMode` grants approval:
    - Write the finalized design into `goal-<id>/plan.md` using the plan template (this is the implementation step).

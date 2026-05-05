@@ -76,7 +76,7 @@ user-invocable: true
    - The requirement that the final task is a dedicated build task.
    - The task count constraint: at most 9 implementation tasks + 1 build task (10 total).
    - An explicit instruction to return **only** a numbered list of task titles — no AC, no details yet.
-6. Review the Pass 1 task list. If it exceeds 9 implementation tasks (excluding the build task), re-invoke Pass 1 with the excess called out and ask the Plan subagent to consolidate or flag that the goal must be split. If the build task is missing, re-invoke Pass 1 with the gap called out.
+6. Review the Pass 1 task list. If it exceeds 9 implementation tasks (excluding the build task), re-invoke Pass 1 once with the excess called out and ask the Plan subagent to consolidate. If the re-invoked Pass 1 still exceeds 9 implementation tasks, stop immediately and tell the user to use `/tdp:write-goal` to split the goal into smaller sub-goals before retrying. If the build task is missing, re-invoke Pass 1 with the gap called out.
 7. **(Pass 2 — All AC Conditions)** Invoke the Plan subagent again with the confirmed task list from Pass 6 and request the **full AC conditions for every task in one pass**. The Pass 2 prompt must include:
    - The confirmed task title list from Pass 6.
    - The full AC Category Catalog from this skill (verbatim list of seven categories).
@@ -84,11 +84,11 @@ user-invocable: true
    - An explicit instruction to write all AC conditions for all tasks in one response, in order, grouped by the full AC category catalog for each task.
    - An explicit instruction that the Plan subagent returns the full structured task list (each task = title + scope + AC by full category catalog + completion criteria) but does not write any files.
 8. Read the Pass 2 output. If any task is missing an AC category or missing the static review baseline items, re-invoke Pass 2 with the gaps explicitly called out instead of patching them silently.
-9. Create `plan.md` inside `goal-<id>/` from the [plan template](../write-plan/assets/plan.template.md) and fill in each task with the Pass 2 design. Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
+9. Draft `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Pass 2 design (draft only — do not write to disk yet). Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
 10. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
 11. **(Plan-mode handoff)** Steps 1–10 above constitute the planning phase (always run in plan mode; if not already in plan mode, `EnterPlanMode` was called at the start). After `ExitPlanMode` grants approval:
     - Write the finalized design into `goal-<id>/plan.md` using the plan template (this is the implementation step).
-    - Then **stop**. Tell the user: "`plan.md` 已寫入。建議先執行 `/compact` 清理對話脈絡，然後再執行 `/tdp:implement-task-fast` 開始實作。"
+    - Then **stop**. Tell the user: "`plan.md` 已寫入。建議先執行 `/compact` 清理對話脈絡，然後再執行 `/tdp:implement-task` 開始實作。"
 
 ## Decision Rules
 - Keep implementation tasks aligned with the selected goal scope and do not let them drift into final verification planning.
@@ -106,4 +106,4 @@ user-invocable: true
 - No `test-plan.md` or `test-n.md` files were created in this skill.
 
 ## Templates
-- [plan template](../write-plan/assets/plan.template.md)
+- [plan template](./assets/plan.template.md)
