@@ -55,7 +55,7 @@ The AC Category Catalog (defined in `write-plan`) has K=7 categories numbered 1.
 The single combined review subagent covers all 7 categories (equivalent to N=1 in `implement-task`'s mapping table).
 
 ## Review Report Location Rule
-- The combined review report for all non-build tasks must be written to `all-tasks-review.md` inside the same directory as `plan.md` (or in the `reviews/` subfolder if that convention already exists in the spec folder).
+- The combined review report for all non-build tasks must be written or overwritten to `all-tasks-review.md` inside the same directory as `plan.md` (or in the `reviews/` subfolder if that convention already exists in the spec folder). Overwriting is expected on re-runs.
 - For the final build task, the build review subagent must write `task-n-build-review.md`, replacing `n` with the actual task number.
 
 ## Procedure
@@ -101,7 +101,7 @@ The single combined review subagent covers all 7 categories (equivalent to N=1 i
 - After the `goal.md` checkbox was updated to `[x]`, the `/tdp:commit-msg` skill was invoked and a commit message was recommended to the user.
 
 ## Handoff
-After all tasks are marked `COMPLETE` for the current goal, continue with the next goal's plan mode → `/tdp:write-plan` → `/tdp:implement-task-fast` cycle. Once **every** goal in `goal.md` is implemented, end-to-end verification is optional: enter plan mode for the overall verification strategy, then call `/tdp:write-test-plan` to materialize `test-plan.md` and `test-n.md` at the spec folder root, and finally invoke `/tdp:testing-and-proof` to execute it. Skip these steps if the user prefers manual review.
+After all tasks are marked `COMPLETE` for the current goal, continue with the next goal's plan mode → `/tdp:write-plan-fast` → `/tdp:implement-task-fast` cycle. Once **every** goal in `goal.md` is implemented, end-to-end verification is optional: enter plan mode for the overall verification strategy, then call `/tdp:write-test-plan` to materialize `test-plan.md` and `test-n.md` at the spec folder root, and finally invoke `/tdp:testing-and-proof` to execute it. Skip these steps if the user prefers manual review.
 
 ## Template
 - [task review template](../implement-task/assets/task-review.template.md)
