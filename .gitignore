@@ -1,4 +1,5 @@
 .claude/**/*.local.*
+.claude/worktrees/
 
 # OS
 .DS_Store
