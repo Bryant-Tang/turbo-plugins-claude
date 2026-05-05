@@ -39,27 +39,30 @@ try {
         throw "Remote worktree '$($remote.Name)' not found at: $($remote.Path)"
     }
 
-    # Re-validate SVN is up-to-date (guard against race condition)
+    # Verify the merge was prepared (push-to-svn-prepare must have been run)
+    $ea = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    & git -C $remote.Path rev-parse --verify -q MERGE_HEAD 2>$null | Out-Null
+    $hasMergeHead = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $ea
+    if (-not $hasMergeHead) {
+        throw "No pending merge in remote worktree '$($remote.Name)'. Run /tgs:push-to-svn (which calls push-to-svn-prepare first) instead of invoking this script directly."
+    }
+
+    # Re-validate SVN is up-to-date (guard against race condition between prepare and commit)
     $svnUrl = (& svn info --show-item url $remote.Path | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not get SVN URL from '$($remote.Name)'." }
     $localRev = (& svn info --show-item revision $remote.Path | Out-String).Trim()
     $headRev = (& svn info --show-item revision $svnUrl | Out-String).Trim()
     if ($localRev -ne $headRev) {
-        throw "SVN HEAD changed since prepare (local r$localRev, head r$headRev). Run '/tgs:pull-from-svn --branch $Branch' first."
+        throw "SVN HEAD changed since prepare (local r$localRev, head r$headRev). Abort the merge with 'git -C $($remote.Path) merge --abort', then run '/tgs:pull-from-svn --branch $Branch'."
     }
 
-    # Re-validate remote worktree git status
-    $remoteGitStatus = (& git -C $remote.Path status --porcelain | Out-String).Trim()
-    if ($remoteGitStatus) {
-        throw "Remote worktree '$($remote.Name)' has uncommitted changes. Resolve before committing."
-    }
-
-    # Merge working branch into remote branch
-    Write-Output "Merging '$Branch' into '$($remote.Branch)'..."
-    & git -C $remote.Path merge $Branch --no-ff -m "Merge branch '$Branch' into $($remote.Branch)"
+    # Finalise the prepared merge (commit message is in .git/MERGE_MSG, set by prepare)
+    Write-Output "Finalising merge commit..."
+    & git -C $remote.Path commit --no-edit
     if ($LASTEXITCODE -ne 0) {
-        $conflicts = (& git -C $remote.Path diff --name-only --diff-filter=U | Out-String).Trim()
-        throw "Merge conflict in remote worktree. Resolve the following files in '$($remote.Name)', then retry:`n$conflicts"
+        throw "git commit failed when finalising the prepared merge."
     }
 
     # Handle SVN status items: filter git-ignored ones, build explicit commit list

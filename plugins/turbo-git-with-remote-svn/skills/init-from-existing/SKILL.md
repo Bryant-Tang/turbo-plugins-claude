@@ -25,7 +25,7 @@ Run the following commands to collect current state:
 ```powershell
 git rev-parse --show-toplevel
 git rev-parse --git-common-dir
-git worktree list
+git worktree list --porcelain
 git branch -a
 git status --short
 git config --get svn-remote.svn.url
@@ -34,7 +34,7 @@ git config --get svn-remote.svn.url
 ```bash
 git rev-parse --show-toplevel
 git rev-parse --git-common-dir
-git worktree list
+git worktree list --porcelain
 git branch -a
 git status --short
 git config --get svn-remote.svn.url
@@ -47,10 +47,14 @@ Derive:
 - `$worktreesDir` = `$parent/$projName.worktrees`
 - `$workspaceFile` = `$parent/$projName.code-workspace`
 
-Also check:
-- Does `$worktreesDir` directory exist?
-- Does `$workspaceFile` exist?
+Also check and discover:
+- Does `$worktreesDir` directory exist? If so, list its subdirectories.
+- Does `$workspaceFile` exist? If so, read its `folders` array.
 - Does `$mainWorktree/.svn/` exist (pre-existing SVN checkout)?
+- From `git branch -a`, identify all **working branches**: branches that are not `main` and do not start with `remote/`. Classify `test-<n>` branches separately.
+- For each `test-<n>` branch found: check whether `remote/test-<n>` branch exists, whether `$worktreesDir/remote-test-<n>` worktree exists, and whether `.svn/` is present inside it.
+- From `git worktree list --porcelain`, build a map of branch → worktree path. This reveals any `dev-<n>` worktrees that may already exist.
+- If `$workspaceFile` exists, compare its `folders[].path` entries against all existing worktrees (`remote-main`, `remote-test-<n>`, `dev-<n>`) to identify any missing entries.
 
 ## Phase 2 — Gap Analysis
 
@@ -63,9 +67,16 @@ Report findings to the user as a table:
 | `$projName.worktrees/` directory | ✅ exists / ❌ missing |
 | `remote-main` worktree | ✅ exists / ❌ missing |
 | SVN checkout in `remote-main` | ✅ `.svn/` present / ❌ missing |
-| `$projName.code-workspace` | ✅ exists / ❌ missing |
+| `$projName.code-workspace` | ✅ exists & complete / ⚠️ exists but missing entries for: `<list>` / ❌ missing |
 
-If all components are already present → report "Project already matches tgs structure. Nothing to do." and stop.
+For each `test-<n>` branch discovered in Phase 1, append rows:
+
+| `test-<n>` → `remote/test-<n>` branch | ✅ exists / ❌ missing |
+|---|---|
+| `remote-test-<n>` worktree | ✅ exists / ❌ missing |
+| SVN checkout in `remote-test-<n>` | ✅ `.svn/` present / ❌ missing |
+
+If all components are already present and `.code-workspace` is complete → report "Project already matches tgs structure. Nothing to do." and stop.
 
 ## Phase 3 — Interactive Inputs
 
@@ -88,7 +99,13 @@ Ask: "Does this SVN URL already contain your project files, or is it a new empty
 - Option A: Already has files — checkout and sync into git
 - Option B: Empty / not yet populated — set up the connection only; sync later with `/tgs:pull-from-svn`
 
-**3.4 Test environments** (optional, always ask last):
+**3.4 Missing test environments** — if Phase 2 found any `test-<n>` branches that lack `remote/test-<n>` branch or `remote-test-<n>` worktree:
+
+Ask: "Found `test-<n>` branch(es) without the corresponding remote/* setup: `<list>`. Do you want to set them up now?"
+- Option A: Set up now — for each missing one, ask for its SVN URL and call `/tgs:create-remote-test`
+- Option B: Skip — I will run `/tgs:create-remote-test` manually later
+
+**3.5 Test environments** (optional, always ask last if no test branches were found in Phase 1):
 
 Ask: "Do you want to set up `test-<n>` SVN worktrees as well?"
 - Option A: Set them up now (run `/tgs:create-remote-test` at the end)
@@ -174,7 +191,7 @@ The directory is empty at this point, so `svn checkout` succeeds without conflic
 
 ### 5.6 Create `.code-workspace`
 
-Create `$workspaceFile` with the following content (replace `<projName>` with the actual project name):
+If the file does not exist, create `$workspaceFile` with the following content (replace `<projName>` with the actual project name):
 
 ```json
 {
@@ -186,7 +203,13 @@ Create `$workspaceFile` with the following content (replace `<projName>` with th
 }
 ```
 
-If the file already exists, do not overwrite it — skip and note it to the user.
+### 5.7 Update `.code-workspace` if incomplete
+
+If `$workspaceFile` already exists but its `folders` array is missing entries for any existing worktrees (`remote-test-<n>`, `dev-<n>`):
+- Read the existing JSON.
+- Append a `{ "name": "<worktree-name>", "path": "<projName>.worktrees/<worktree-name>" }` entry for each missing worktree.
+- Do not remove or reorder existing entries (idempotent).
+- Write the updated JSON back.
 
 ## Phase 6 — Initial SVN Sync
 
@@ -257,14 +280,15 @@ Report a summary:
 - On merge conflict: list conflicting files, guide the user to resolve them manually; never auto-abort.
 - git-svn detected: warn and require explicit user confirmation before proceeding.
 - Only the `main` remote worktree is created by this skill. Additional `test-<n>` worktrees are handled by `/tgs:create-remote-test`.
-- Never prompt about `.code-workspace` overwrite — if it exists, skip it unconditionally.
+- `.code-workspace` is always updated if incomplete (missing worktree entries) — never prompt about overwrite.
 - If `git rev-parse --git-common-dir` shows the CWD is already a linked worktree (not the main one), resolve all paths from the common git dir and work in the main worktree for branch and worktree operations.
 
 ## Completion Checks
 
 - `git branch -a` includes `remote/main`.
+- For each `test-<n>` branch: `git branch -a` includes `remote/test-<n>` (if Phase 3.4 was executed).
 - `git worktree list` includes `<proj>.worktrees/remote-main`.
 - `<proj>.worktrees/remote-main/.svn/` exists (when SVN URL was provided and reachable).
-- `<proj>.code-workspace` exists with correct folder entries.
+- `<proj>.code-workspace` exists and its `folders` array includes entries for `main`, `remote-main`, and all other existing worktrees.
 - `git status --short` in main worktree is empty (clean).
 - If Phase 6 ran: `git log --oneline main` contains a "chore: connect SVN via tgs" merge commit.

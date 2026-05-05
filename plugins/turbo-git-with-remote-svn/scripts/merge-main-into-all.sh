@@ -23,7 +23,8 @@ done < <(git -C "$MAIN_WORKTREE" worktree list --porcelain)
 mapfile -t TARGET_BRANCHES < <(
   git -C "$MAIN_WORKTREE" branch --format='%(refname:short)' |
   grep -v '^main$' |
-  grep -v '^remote/'
+  grep -v '^remote/' |
+  grep -v '^archives/'
 )
 
 if [[ ${#TARGET_BRANCHES[@]} -eq 0 ]]; then

@@ -32,7 +32,7 @@ try {
     # Collect all local branches except 'main' and 'remote/*'
     $targetBranches = (& git -C $mainWorktree branch --format='%(refname:short)' | Out-String) -split "`n" |
                       ForEach-Object { $_.Trim() } |
-                      Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^remote/' }
+                      Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^remote/' -and $_ -notmatch '^archives/' }
 
     if (-not $targetBranches) {
         Write-Output 'No branches to merge into (only main and remote/* branches exist).'

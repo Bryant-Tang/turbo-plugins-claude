@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-05
+
+### Changed
+
+- `push-to-svn` skill：commit 前新增「檔案清單確認」步驟，並把 merge 從 commit 階段提前到 prepare 階段，以利用 `svn status` 取得真正會送 SVN 的檔案清單（自動套用 svn:ignore 過濾，比 `git diff` 純 git 視角更準）
+  - `push-to-svn-prepare`（`.ps1` / `.sh`）：偵測殘留 MERGE_HEAD（前次未完成的 prepare）→ 阻擋；驗證通過後執行 `git merge --no-ff --no-commit -m "..." <branch>`，把 merge 結果留在工作樹但不生成 commit；接著跑 `svn status` 將 `?` / `!` / `M` 對應到 `A` / `D` / `M`，每個檔案再用 `git check-ignore -q` 標記 `tracked` / `ignored`；輸出兩段 `COMMITS` + `FILES`（格式：`<status>|<tracked|ignored>|<path>`）
+  - `push-to-svn-commit`（`.ps1` / `.sh`）：移除 merge 邏輯；改為先驗證 MERGE_HEAD 存在（否則拒絕執行）→ `git commit --no-edit` 沿用 prepare 留下的 `.git/MERGE_MSG` 完成 merge commit → 既有 svn add/delete + svn commit 流程
+  - SKILL.md：新增 Step 6 顯示檔案清單摘要 + `AskUserQuestion` 確認；**Cancel** → `git -C <remote-worktree> merge --abort` 撤回 staged merge；conflict 時導引使用者手動解決或 abort；後續步驟編號 +2
+- `suggest-ignore` SKILL.md：Analysis Mode 的四個類別從代號（A/B/C/D）改為語意名稱（**Git Ignore** / **SVN Ignore** / **Inconsistency** / **Un-track**），降低閱讀門檻；「D2 warning」改稱「Un-track option B warning」；所有 Category/Round 參照同步更新
+- `merge-main-into-all`（`.ps1` / `.sh`）：新增 `archives/*` 分支排除條件；`archives/` 下的封存分支不會被 merge；command 說明同步更新
+- `init-from-existing` SKILL.md：Phase 1 新增偵測所有 `test-<n>` 分支及對應 `remote/*` / worktree 的存在狀態，並讀取 `.code-workspace` `folders` 清單；Phase 2 Gap Analysis 表格新增每個 `test-<n>` 的 3 列狀態欄；Phase 3 新增步驟 3.4 針對缺少 remote/* 的 test 分支詢問是否補建；Phase 5 新增步驟 5.7 補全 `.code-workspace` 缺少的 worktree 項目；Completion Checks 新增驗證 `.code-workspace` folders 完整性
+
 ## [0.4.9] - 2026-05-04
 
 ### Fixed

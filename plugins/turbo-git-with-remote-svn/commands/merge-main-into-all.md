@@ -4,7 +4,7 @@ argument-hint: 'No arguments'
 allowed-tools: Bash, PowerShell
 ---
 
-Merges `main` into every local branch that is not `main` itself and not a `remote/*` branch. This is the recommended follow-up after a successful `pull-from-svn --branch main` to propagate SVN updates to all working branches (`test-<n>`, `dev-<n>`, etc.).
+Merges `main` into every local branch that is not `main` itself, not a `remote/*` branch, and not an `archives/*` branch. This is the recommended follow-up after a successful `pull-from-svn --branch main` to propagate SVN updates to all working branches (`test-<n>`, `dev-<n>`, etc.). Branches under `archives/` are treated as archived and are always skipped.
 
 Run this command from any worktree belonging to the tgs project.
 

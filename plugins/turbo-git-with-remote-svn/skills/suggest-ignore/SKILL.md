@@ -15,10 +15,10 @@ Single entry point for managing ignore settings across both git and SVN in a tgs
 
 **Analysis mode** — when no direct-mode flag is given: analyse the project and interactively recommend ignore settings. Handles four categories:
 
-- **A** — Files not tracked by git that should be added to `.gitignore`
-- **B** — Files tracked by git that should be added to `svn:ignore` (kept in git, excluded from SVN)
-- **C** — Files tracked by SVN but git-ignored (inconsistency — SVN changes won't propagate through git)
-- **D** — Files tracked by both git and SVN that should be un-tracked
+- **Git Ignore** — Files not tracked by git that should be added to `.gitignore`
+- **SVN Ignore** — Files tracked by git that should be added to `svn:ignore` (kept in git, excluded from SVN)
+- **Inconsistency** — Files tracked by SVN but git-ignored (inconsistency — SVN changes won't propagate through git)
+- **Un-track** — Files tracked by both git and SVN that should be un-tracked
 
 ## Direct Mode Arguments
 
@@ -85,7 +85,7 @@ Forward the script output to the user.
 ### Step 1 — Resolve paths
 
 1. Resolve main worktree and all remote worktrees (`remote-main`, `remote-test-*`) from `git rev-parse --git-common-dir`.
-2. If no remote worktrees exist, skip Categories B, C, D and proceed with Category A only.
+2. If no remote worktrees exist, skip SVN Ignore, Inconsistency, and Un-track, and proceed with Git Ignore only.
 
 ### Step 2 — Collect data
 
@@ -120,28 +120,28 @@ Use the collected data to build candidate lists for each category. Common "shoul
 - Logs / temp: `*.log`, `*.tmp`, `*.cache`
 - Claude Code config: `.claude/`
 
-**Category A — Add to `.gitignore`**
+**Git Ignore — Add to `.gitignore`**
 - Source: `git status --short` entries starting with `??`
 - Condition: matches a common ignore pattern AND not already in `.gitignore`
-- **Guard**: if the file is already git-tracked (`git ls-files` includes it) → move to Category D instead
+- **Guard**: if the file is already git-tracked (`git ls-files` includes it) → move to Un-track instead
 
-**Category B — Add to `svn:ignore`**
+**SVN Ignore — Add to `svn:ignore`**
 - Source: `git ls-files` (git-tracked files)
 - Condition: matches a pattern that belongs in git but not SVN (e.g. `.claude/`, CI configs) AND not already in `svn:ignore` (checked against `remote-main` as canonical)
 - Changes applied to **all remote worktrees** to keep them consistent
 - **Limitation note to show user**: `svn:ignore` is per-directory only, not recursive. For recursive exclusions use `.gitignore`.
-- **Warning if already SVN-tracked**: check `svn status <file>` in remote-main — if the file is tracked (blank output, not `?`) warn: "svn:ignore won't affect already-tracked files. To stop pushing modifications, consider D2 flow instead."
+- **Warning if already SVN-tracked**: check `svn status <file>` in remote-main — if the file is tracked (blank output, not `?`) warn: "svn:ignore won't affect already-tracked files. To stop pushing modifications, consider Un-track option A instead."
 
-**Category C — SVN-tracked but git-ignored (inconsistency)**
+**Inconsistency — SVN-tracked but git-ignored**
 - Source: `git ls-files -o -i --exclude-standard` in **each** remote worktree (different SVN branches may track different files)
 - Condition: for each found file, run `svn status <file>` in that worktree — if output is blank or `M` (not `?`) the file is SVN-tracked
 - Report which worktree(s) have the inconsistency
 - These files exist in SVN but git ignores them; SVN changes won't propagate through git
 
-**Category D — Tracked by both, should be un-tracked**
+**Un-track — Tracked by both, should be un-tracked**
 - Source: `git ls-files` (git-tracked files in main worktree)
 - Condition: matches a common ignore pattern AND not already in `.gitignore`
-- (Note: Category A candidates that are already git-tracked are automatically reclassified here)
+- (Note: Git Ignore candidates that are already git-tracked are automatically reclassified here)
 
 Filter out patterns already present in `.gitignore` or `svn:ignore` before presenting.
 
@@ -149,25 +149,25 @@ Filter out patterns already present in `.gitignore` or `svn:ignore` before prese
 
 If all four categories are empty → report "No ignore issues found" and stop.
 
-**Round A — git ignore:**
+**Git Ignore:**
 
-Use `AskUserQuestion` to present all Category A candidates at once:
+Use `AskUserQuestion` to present all Git Ignore candidates at once:
 - Option A: Add all to `.gitignore`
 - Option B: Confirm one by one
 - Option C: Skip all
 
-**Round B — svn:ignore:**
+**SVN Ignore:**
 
-Same format as Round A. Show the per-directory limitation note in the question description.
+Same format as Git Ignore. Show the per-directory limitation note in the question description.
 
-**Round C — SVN/git inconsistency (one question per file):**
+**Inconsistency — SVN/git (one question per file):**
 
 For each inconsistent file use `AskUserQuestion`:
 - Option A: Remove from `.gitignore` (let git track it — both systems consistent)
 - Option B: Delete from SVN + add to `svn:ignore` (remove from both — **destructive**, confirm once more before executing)
 - Option C: Skip (accept inconsistency)
 
-**Round D — Un-track from both (one question per file):**
+**Un-track — from both (one question per file):**
 
 For each candidate use `AskUserQuestion`:
 - Option A: Stop git tracking + delete from SVN (full cleanup: `git rm --cached` + `.gitignore` + SVN delete + `svn:ignore`)
@@ -176,9 +176,9 @@ For each candidate use `AskUserQuestion`:
 
 ### Step 5 — Execute approved changes
 
-Apply changes in this order: A → B → C → D.
+Apply changes in this order: Git Ignore → SVN Ignore → Inconsistency → Un-track.
 
-**Category A (edit `.gitignore`):**
+**Git Ignore (edit `.gitignore`):**
 1. If `.gitignore` does not exist, create it as an empty file first.
 2. Use the Edit tool to append approved patterns to `<main-worktree>/.gitignore`.
 3. Commit:
@@ -188,7 +188,7 @@ git -C <main-worktree> commit -m "chore: update .gitignore"
 ```
 If main worktree has uncommitted changes, report the error and ask user to commit or stash first.
 
-**Category B (add to `svn:ignore`):**
+**SVN Ignore (add to `svn:ignore`):**
 Pass all approved patterns in a single call:
 ```powershell
 powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
@@ -197,10 +197,10 @@ powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-igno
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --add "<pattern1>" [--add "<pattern2>"…]
 ```
 
-**Category C — Option A (remove from `.gitignore`):**
+**Inconsistency — Option A (remove from `.gitignore`):**
 Use the Edit tool to remove the matching line from `.gitignore`, then commit as above.
 
-**Category C — Option B (delete from SVN):**
+**Inconsistency — Option B (delete from SVN):**
 In the remote worktree:
 ```powershell
 svn delete "<file>"
@@ -208,7 +208,7 @@ svn commit -m "remove <file> (no longer tracked in git)"
 powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
 ```
 
-**Category D — Option A (full cleanup):**
+**Un-track — Option A (full cleanup):**
 In main worktree:
 ```powershell
 git -C <main-worktree> rm --cached "<file>"
@@ -223,7 +223,7 @@ svn commit -m "remove <file>"
 powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
 ```
 
-**Category D — Option B (git stops, SVN keeps):**
+**Un-track — Option B (git stops, SVN keeps):**
 In main worktree only — no SVN changes needed:
 ```powershell
 git -C <main-worktree> rm --cached "<file>"
@@ -240,16 +240,16 @@ List what was changed in each category and what was skipped.
 ## Decision Rules
 
 - If `.gitignore` does not exist, create it before editing.
-- If remote worktree is absent, only Category A is available.
-- **D2 warning is mandatory** — never skip it before proceeding with Option B of Category D.
-- SVN delete (C-B and D-A) is destructive: always ask a second `AskUserQuestion` confirmation before executing.
-- A Category C or D file must be confirmed individually — no "apply all" option.
+- If remote worktree is absent, only Git Ignore is available.
+- **Un-track option B warning is mandatory** — never skip it before proceeding with Un-track Option B.
+- SVN delete (Inconsistency option B and Un-track option A) is destructive: always ask a second `AskUserQuestion` confirmation before executing.
+- An Inconsistency or Un-track file must be confirmed individually — no "apply all" option.
 - On git operation failure (dirty working tree), stop and report; do not proceed to the next step.
 - Script failures should be reported immediately; subsequent items of the same category are skipped.
 
 ## Completion Checks
 
-- Category A: new patterns appear in `.gitignore` and in a new git commit on main branch.
-- Category B: `svn-ignore` (list) shows the new patterns in all remote worktrees.
-- Category C (option B) / D (option A): `svn log` on the remote worktree shows a deletion commit; `svn list` no longer includes the file.
-- Category D (option B): `git ls-files <file>` returns empty in main worktree; `.gitignore` includes the pattern.
+- Git Ignore: new patterns appear in `.gitignore` and in a new git commit on main branch.
+- SVN Ignore: `svn-ignore` (list) shows the new patterns in all remote worktrees.
+- Inconsistency (option B) / Un-track (option A): `svn log` on the remote worktree shows a deletion commit; `svn list` no longer includes the file.
+- Un-track (option B): `git ls-files <file>` returns empty in main worktree; `.gitignore` includes the pattern.

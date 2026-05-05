@@ -43,26 +43,24 @@ if [[ ! -d "$REMOTE_WORKTREE_PATH" ]]; then
   echo "Error: remote worktree '$REMOTE_WORKTREE_NAME' not found at: $REMOTE_WORKTREE_PATH" >&2; exit 1
 fi
 
-# Re-validate SVN (guard against race condition)
+# Verify the merge was prepared (push-to-svn-prepare must have been run)
+if ! git -C "$REMOTE_WORKTREE_PATH" rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1; then
+  echo "Error: no pending merge in remote worktree '$REMOTE_WORKTREE_NAME'. Run /tgs:push-to-svn (which calls push-to-svn-prepare first) instead of invoking this script directly." >&2
+  exit 1
+fi
+
+# Re-validate SVN (guard against race condition between prepare and commit)
 SVN_URL="$(svn info --show-item url "$REMOTE_WORKTREE_PATH")"
 LOCAL_REV="$(svn info --show-item revision "$REMOTE_WORKTREE_PATH")"
 HEAD_REV="$(svn info --show-item revision "$SVN_URL")"
 if [[ "$LOCAL_REV" != "$HEAD_REV" ]]; then
-  echo "Error: SVN HEAD changed since prepare (local r$LOCAL_REV, head r$HEAD_REV). Run pull-from-svn first." >&2; exit 1
+  echo "Error: SVN HEAD changed since prepare (local r$LOCAL_REV, head r$HEAD_REV). Abort the merge with 'git -C $REMOTE_WORKTREE_PATH merge --abort', then run pull-from-svn." >&2; exit 1
 fi
 
-# Re-validate remote git status
-REMOTE_GIT_STATUS="$(git -C "$REMOTE_WORKTREE_PATH" status --porcelain)"
-if [[ -n "$REMOTE_GIT_STATUS" ]]; then
-  echo "Error: remote worktree '$REMOTE_WORKTREE_NAME' has uncommitted changes." >&2; exit 1
-fi
-
-# Merge working branch into remote branch
-echo "Merging '$BRANCH' into '$REMOTE_BRANCH'..."
-if ! git -C "$REMOTE_WORKTREE_PATH" merge "$BRANCH" --no-ff -m "Merge branch '$BRANCH' into $REMOTE_BRANCH"; then
-  CONFLICTS="$(git -C "$REMOTE_WORKTREE_PATH" diff --name-only --diff-filter=U)"
-  echo "Error: merge conflict in remote worktree. Resolve the following files in '$REMOTE_WORKTREE_NAME', then retry:" >&2
-  echo "$CONFLICTS" >&2
+# Finalise the prepared merge (commit message is in .git/MERGE_MSG, set by prepare)
+echo "Finalising merge commit..."
+if ! git -C "$REMOTE_WORKTREE_PATH" commit --no-edit; then
+  echo "Error: git commit failed when finalising the prepared merge." >&2
   exit 1
 fi
 
