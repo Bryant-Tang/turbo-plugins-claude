@@ -1,17 +1,17 @@
 ---
-name: write-plan
-description: 'Write plan.md from an approved goal.md into a goal-<id>/ subdirectory (where <id> is the goal id, e.g. 1, 2a, 2b, 3). Use when a requirement already has goal.md and now needs single-session implementation tasks with categorized AC, mandatory static checks, and a final build task. This skill only plans implementation; it does not produce any test-plan or test-n files — call write-test-plan separately for final verification planning after all goals are implemented.'
+name: write-plan-fast
+description: 'Write plan.md from an approved goal.md into a goal-<id>/ subdirectory using a two-pass approach: first draft all task titles in one pass, then write all AC conditions for every task in a second pass. Use when a requirement already has goal.md and speed is preferred over iterative per-task planning. This skill only plans implementation; it does not produce any test-plan or test-n files — call write-test-plan separately for final verification planning after all goals are implemented.'
 argument-hint: 'Optional: goal id (e.g. 1, 2a, 2b, 3) or path/to/goal.md'
 user-invocable: true
 ---
 
-# Write Plan
+# Write Plan Fast
 
 ## When to Use
 - A requirement already has `goal.md`.
 - The next step is to create `plan.md` for one specific goal.
-- The work needs explicit AC before implementation starts.
-- Call this skill once per goal. Each call creates a `goal-<id>/` subdirectory (where `<id>` is the goal id from `goal.md`'s `### 進度總覽`, e.g. `goal-1/`, `goal-2a/`, `goal-2b/`, `goal-3/`) inside the spec folder and places `plan.md` there. Previous goals' subdirectories are not modified.
+- Speed is preferred: all task titles are drafted first, then all AC conditions are written in a single pass.
+- Call this skill once per goal. Each call creates a `goal-<id>/` subdirectory (where `<id>` is the goal id from `goal.md`'s `### 進度總覽`, e.g. `goal-1/`, `goal-2a/`, `goal-2b/`, `goal-3/`) inside the spec folder and places `plan.md` there.
 - Final verification planning is out of scope here — use `write-test-plan` after every goal is implemented.
 
 ## Outcome
@@ -62,7 +62,7 @@ user-invocable: true
 - The final implementation task in `plan.md` must always be a dedicated build task.
 - The final build task must require running the repository-standard build, capturing build failures, and fixing build errors until the build succeeds.
 - Do not produce `test-plan.md`, `test-n.md`, or any final verification files in this skill. Final verification is planned separately via `write-test-plan` after every goal is implemented.
-- The implementation plan for the selected goal must first be designed by invoking the Plan subagent (`Agent` tool with `subagent_type: "Plan"`); the parent agent only writes the resulting design into `goal-<id>/plan.md` using the plan template.
+- The implementation plan uses a **two-pass** approach via the Plan subagent: Pass 1 produces the task title list; Pass 2 fills in all AC conditions at once. The parent agent only writes the resulting design into `goal-<id>/plan.md` using the plan template.
 - Every task in `plan.md` must be an implementation task. Exploratory actions — surveying existing code, searching for relevant files, investigating the current state — are planning work and must be completed during the planning phase (before `plan.md` is written). They must not appear as tasks in `plan.md`.
 
 ## Procedure
@@ -70,31 +70,38 @@ user-invocable: true
 2. Determine which specific goal id (e.g. `1`, `2a`, `2b`, `3`) to plan for this session. If the user passed a goal id as the skill argument, use it. If `goal.md` contains more than one goal and no goal id was given, ask the user which goal to plan before continuing.
 3. Read `goal.md` and extract the scope, constraints, impact, and expected validation style for the selected goal only.
 4. Create a `goal-<id>/` subdirectory beside `goal.md` (where `<id>` is the goal id determined in step 2, e.g. `goal-1/`, `goal-2a/`, `goal-2b/`).
-5. Invoke the Plan subagent (`Agent` tool with `subagent_type: "Plan"`) to design the implementation plan for the selected goal. The Plan subagent prompt must include:
+5. **(Pass 1 — Task List)** Invoke the Plan subagent (`Agent` tool with `subagent_type: "Plan"`) to draft **only the ordered task title list** (no AC conditions yet). The Pass 1 prompt must include:
    - The full goal scope, constraints, impact, and expected validation style extracted from `goal.md`.
+   - The single-chat-session sizing constraint for each implementation task.
+   - The requirement that the final task is a dedicated build task.
+   - The task count constraint: at most 9 implementation tasks + 1 build task (10 total).
+   - An explicit instruction to return **only** a numbered list of task titles — no AC, no details yet.
+6. Review the Pass 1 task list. If it exceeds 9 implementation tasks (excluding the build task), re-invoke Pass 1 once with the excess called out and ask the Plan subagent to consolidate. If the re-invoked Pass 1 still exceeds 9 implementation tasks, stop immediately and tell the user to use `/tdp:write-goal` to split the goal into smaller sub-goals before retrying. If the build task is missing, re-invoke Pass 1 with the gap called out.
+7. **(Pass 2 — All AC Conditions)** Invoke the Plan subagent again with the confirmed task list from Pass 6 and request the **full AC conditions for every task in one pass**. The Pass 2 prompt must include:
+   - The confirmed task title list from Pass 6.
    - The full AC Category Catalog from this skill (verbatim list of seven categories).
    - The Mandatory Static Review Baseline from this skill (verbatim list of static checks).
-   - The single-chat-session sizing constraint for each implementation task.
-   - The requirement that the final task is a dedicated build task with the repository-standard build, build-failure capture, and fix loop.
-   - An explicit instruction that the Plan subagent returns a structured task list (each task = goal + scope + AC by full category catalog + completion criteria) but does not write any files.
-6. Read the Plan subagent's returned design. If it is missing any AC category, missing the static review baseline, or missing the final build task, re-invoke the Plan subagent with the gap explicitly called out instead of patching it silently.
-7. Draft `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Plan subagent's design (draft only — do not write to disk yet). Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
-8. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
-9. **(Plan-mode handoff)** Steps 1–8 above constitute the planning phase (always run in plan mode; if not already in plan mode, `EnterPlanMode` was called at the start). After `ExitPlanMode` grants approval:
-   - Write the finalized design into `goal-<id>/plan.md` using the plan template (this is the implementation step).
-   - Then **stop**. Tell the user: "`plan.md` 已寫入。建議先執行 `/compact` 清理對話脈絡，然後再執行 `/tdp:implement-task` 開始實作。"
+   - An explicit instruction to write all AC conditions for all tasks in one response, in order, grouped by the full AC category catalog for each task.
+   - An explicit instruction that the Plan subagent returns the full structured task list (each task = title + scope + AC by full category catalog + completion criteria) but does not write any files.
+8. Read the Pass 2 output. If any task is missing an AC category or missing the static review baseline items, re-invoke Pass 2 with the gaps explicitly called out instead of patching them silently.
+9. Draft `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Pass 2 design (draft only — do not write to disk yet). Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
+10. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
+11. **(Plan-mode handoff)** Steps 1–10 above constitute the planning phase (always run in plan mode; if not already in plan mode, `EnterPlanMode` was called at the start). After `ExitPlanMode` grants approval:
+    - Write the finalized design into `goal-<id>/plan.md` using the plan template (this is the implementation step).
+    - Then **stop**. Tell the user: "`plan.md` 已寫入。建議先執行 `/compact` 清理對話脈絡，然後再執行 `/tdp:implement-task` 開始實作。"
 
 ## Decision Rules
 - Keep implementation tasks aligned with the selected goal scope and do not let them drift into final verification planning.
 - Keep the build task separate from feature tasks so `implement-task` can treat it as the final gate.
 - If the user asks for verification tasks here, redirect them to `write-test-plan` and complete only the implementation plan in this skill.
-- If the selected goal cannot reasonably fit one chat session even after reasonable task splitting, stop and discuss with the user whether to use `write-goal` to split some items into new lettered sub-goals under the same number (e.g. adding `2b` and renaming the original `2b` to `2c`) and update `### 進度總覽` accordingly. Do not unilaterally produce an oversized `plan.md`; wait for the user's decision before proceeding.
+- If the confirmed task list still exceeds the 9+1 limit after consolidation attempts, stop and ask the user to use `/tdp:write-goal` to split the goal into smaller sub-goals.
 
 ## Completion Checks
 - `plan.md` exists inside `goal-<id>/` and all implementation tasks have AC.
 - Every implementation task AC is grouped by the full AC category catalog in this skill (all seven categories present, with N/A where not applicable).
 - Every implementation task AC explicitly includes: a compile-error risk check under `Integration & Compatibility`; `csharp-comment` compliance, `js-comment` compliance, Traditional Chinese comments, and duplicate-logic reuse checks under `Maintainability & Code Quality`; and a verification-signal adequacy check under `Testability & Observability`.
 - Every implementation task AC explicitly requires code formatting and indentation to be checked under `Maintainability & Code Quality` and aligned with existing repository style.
+- The total task count is at most 10 (at most 9 implementation tasks + 1 build task).
 - The final implementation task is a dedicated build task.
 - No `test-plan.md` or `test-n.md` files were created in this skill.
 
