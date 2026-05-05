@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-05
+
+### Fixed
+
+- `write-plan`、`write-plan-fast`：`EnterPlanMode` 規則原本只寫在 `Core Rules`，`Procedure` 編號步驟中缺少明確呼叫，導致模型直接從 Step 1 開始而跳過 `EnterPlanMode`；現於 `Procedure` 加入 Step 0 明確呼叫，確保未在 Plan Mode 時立即進入
+
 ## [0.4.0] - 2026-05-05
 
 ### Added
