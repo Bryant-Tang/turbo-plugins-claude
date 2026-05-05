@@ -66,6 +66,7 @@ user-invocable: true
 - Every task in `plan.md` must be an implementation task. Exploratory actions — surveying existing code, searching for relevant files, investigating the current state — are planning work and must be completed during the planning phase (before `plan.md` is written). They must not appear as tasks in `plan.md`.
 
 ## Procedure
+0. If not already in plan mode, call `EnterPlanMode` immediately before proceeding to any other step.
 1. Identify the target `goal.md`. If the branch name and specs path clearly point to one file, use it. Otherwise ask the user.
 2. Determine which specific goal id (e.g. `1`, `2a`, `2b`, `3`) to plan for this session. If the user passed a goal id as the skill argument, use it. If `goal.md` contains more than one goal and no goal id was given, ask the user which goal to plan before continuing.
 3. Read `goal.md` and extract the scope, constraints, impact, and expected validation style for the selected goal only.
@@ -86,7 +87,7 @@ user-invocable: true
 8. Read the Pass 2 output. If any task is missing an AC category or missing the static review baseline items, re-invoke Pass 2 with the gaps explicitly called out instead of patching them silently.
 9. Draft `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Pass 2 design (draft only — do not write to disk yet). Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
 10. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
-11. **(Plan-mode handoff)** Steps 1–10 above constitute the planning phase (always run in plan mode; if not already in plan mode, `EnterPlanMode` was called at the start). After `ExitPlanMode` grants approval:
+11. **(Plan-mode handoff)** Steps 0–10 above constitute the planning phase (always run in plan mode; `EnterPlanMode` was called in step 0 if needed). After `ExitPlanMode` grants approval:
     - Write the finalized design into `goal-<id>/plan.md` using the plan template (this is the implementation step).
     - Then **stop**. Tell the user: "`plan.md` 已寫入。建議先執行 `/compact` 清理對話脈絡，然後再執行 `/tdp:implement-task` 開始實作。"
 
