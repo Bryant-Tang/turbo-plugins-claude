@@ -42,7 +42,15 @@ user-invocable: true
 - Testability & Observability must statically check whether the planned verification points, logs, or error signals are specific enough to diagnose failures.
 - These static checks are mandatory even when the task will later be validated through runtime verification.
 
+## Tool Preference
+- For all file read, write, search, and edit operations, prefer the dedicated tools: Read, Write, Edit, Glob, Grep, and LSP diagnostics.
+- Avoid using Bash, PowerShell, Python, or Node.js for file operations unless the task cannot be accomplished with the above tools.
+- When invoking subagents, include an explicit instruction to follow the same tool preference rule.
+
 ## Core Rules
+- If this skill is invoked outside of plan mode, call `EnterPlanMode` immediately before proceeding to any steps.
+- The total number of implementation tasks in `plan.md` (excluding the final build task) must not exceed 9. Together with the mandatory final build task, the plan must have at most 10 tasks total.
+- If the selected goal cannot be covered within 9 implementation tasks + 1 build task, stop immediately and ask the user to use `/tdp:write-goal` to split the goal into smaller sub-goals before proceeding.
 - First determine which `goal.md` to use. If more than one candidate fits, ask the user instead of guessing.
 - Then determine which specific goal id within `goal.md` to plan for this session. Goal ids follow the `<number>[<letter>]` format (e.g. `1`, `2a`, `2b`, `3`). If `goal.md` contains more than one goal and the user did not specify a goal id, ask the user which goal to plan before proceeding. Plan only the tasks for that one goal — do not mix in other goals (including sibling lettered sub-goals under the same number).
 - `plan.md` tasks must stay small enough that one implementation task can finish in a single chat session.
@@ -72,9 +80,9 @@ user-invocable: true
 6. Read the Plan subagent's returned design. If it is missing any AC category, missing the static review baseline, or missing the final build task, re-invoke the Plan subagent with the gap explicitly called out instead of patching it silently.
 7. Create `plan.md` inside `goal-<id>/` from the [plan template](./assets/plan.template.md) and fill in each task with the Plan subagent's design. Preserve the AC Category Catalog ordering and keep the final build task as the last entry.
 8. Surface any ambiguous assumptions raised by the Plan subagent that still need user confirmation.
-9. **(Plan-mode handoff)** If this skill was invoked while plan mode is active, steps 1–8 above constitute the planning phase. After `ExitPlanMode` grants approval:
+9. **(Plan-mode handoff)** Steps 1–8 above constitute the planning phase (always run in plan mode; if not already in plan mode, `EnterPlanMode` was called at the start). After `ExitPlanMode` grants approval:
    - Write the finalized design into `goal-<id>/plan.md` using the plan template (this is the implementation step).
-   - Then invoke the `implement-task` skill to begin implementation.
+   - Then **stop**. Tell the user: "`plan.md` 已寫入。建議先執行 `/compact` 清理對話脈絡，然後再執行 `/tdp:implement-task` 開始實作。"
 
 ## Decision Rules
 - Keep implementation tasks aligned with the selected goal scope and do not let them drift into final verification planning.
