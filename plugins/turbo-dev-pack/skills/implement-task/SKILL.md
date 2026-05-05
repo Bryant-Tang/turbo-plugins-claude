@@ -22,6 +22,11 @@ user-invocable: true
 - The loop stops only when the current task review says `COMPLETE`.
 - After all tasks for the current goal are `COMPLETE`, the user is asked whether to confirm the goal as done. If confirmed, the corresponding `- [ ] 目標 <編號>：<標題>` line in `goal.md`'s `### 進度總覽` is changed to `- [x]` (where `<編號>` may include a letter suffix such as `2a`). After the checkbox is updated, the parent agent invokes `/tdp:commit-msg` to recommend a commit message to the user. If the user defers confirmation, or any task ended as `BLOCKED`, the checkbox is left unchanged.
 
+## Tool Preference
+- For all file read, write, search, and edit operations, prefer the dedicated tools: Read, Write, Edit, Glob, Grep, and LSP diagnostics.
+- Avoid using Bash, PowerShell, Python, or Node.js for file operations unless the task cannot be accomplished with the above tools.
+- When instructing implementation and review subagents, include an explicit directive to use Read, Write, Edit, Glob, Grep, and LSP for file operations instead of Bash, PowerShell, Python, or Node.js.
+
 ## Core Rules
 - First determine which `plan.md` to use. If more than one candidate fits, ask the user instead of guessing.
 - Do not implement the task directly in the parent agent. Use the Agent tool for each implementation attempt.

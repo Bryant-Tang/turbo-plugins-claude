@@ -37,6 +37,11 @@ user-invocable: true
 5. If a single goal is too broad to fit one session, split it into more sub-goals **under the same number**, re-lettering as needed. Example: an original `目標 2a` + `目標 2b`; if `2a` is found too large, split it into a new `2a` + `2b` and rename the original `2b` as `2c`. If goals must run in sequence, record the dependency in each goal's 依賴關係 field; sub-goals within the same number group should also state same-group dependencies (e.g. `同群組 2b` or `無`). Whenever goals are added, removed, renamed, re-lettered, or reordered, immediately update the `### 進度總覽` checklist at the top of **修正或開發目標** so that each `- [ ] 目標 <編號>：<標題>` line matches a `### 目標 <編號>：<簡短標題>` heading exactly. Initial checkbox state is `- [ ]`; do not pre-mark goals as completed in this skill.
 6. Stop after `goal.md` is ready. Do not create `plan.md`, `test-plan.md`, `test-n.md`, or review reports in this skill.
 
+## Tool Preference
+- For all file read, write, search, and edit operations, prefer the dedicated tools: Read, Write, Edit, Glob, Grep, and LSP diagnostics.
+- Avoid using Bash, PowerShell, Python, or Node.js for file operations unless the task cannot be accomplished with the above tools.
+- When invoking subagents, include an explicit instruction to follow the same tool preference rule.
+
 ## Decision Rules
 - If the user bundled more than one independent requirement together, do not split them inside this skill — direct the user back to `start-dev` to open separate branches and specs folders.
 - If the user is still changing scope, keep refining `goal.md`; do not jump ahead to implementation planning.
