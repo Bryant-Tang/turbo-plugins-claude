@@ -67,7 +67,7 @@ After `goal.md` is confirmed, tell the user:
 > **每個目標（含字母字尾的子目標）重複以下步驟：**
 > 1. 開新的 chat session，使用 **plan mode** 規劃該目標的實作方式
 > 2. 若 plan mode 發現該目標仍太大、無法在單一 session 內完成，回到 `/tdp:write-goal`（或直接編輯 `goal.md`）將其拆分為更多同數字子目標（例如 `2a` 拆成新的 `2a` + `2b`，原 `2b` 重新編號為 `2c`），並更新 `### 進度總覽` checklist
-> 3. `/tdp:write-plan` — 將計畫寫入 `goal-<編號>/plan.md`（僅實作計畫，不含驗證）
+> 3. `/tdp:write-plan`（或 `/tdp:write-plan-fast` 若希望加速） — 將計畫寫入 `goal-<編號>/plan.md`（僅實作計畫，不含驗證）
 > 4. `/tdp:implement-task` — 透過 subagent 逐步實作並評審；所有 task 完成後會詢問你是否確認該目標完成，若是則自動把 `goal.md` 進度總覽中對應的 `- [ ]` 改為 `- [x]`
 >
 > **所有目標完成後（可選的整體驗證流程）：**
