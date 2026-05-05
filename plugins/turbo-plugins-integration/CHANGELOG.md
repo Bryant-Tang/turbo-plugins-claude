@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-05
+
+### Added
+
+- `dependency-check` skill：偵測已安裝的 turbo-plugins-claude plugin 的外部依賴（`tdp` 需要 `docker`、`tgs` 需要 `svn`、`tnf` 需要 `node`），以及推薦的全域工具（`ENABLE_LSP_TOOL=1`、`csharp-ls`、`typescript-language-server`），並列出狀態；若必要依賴缺失，在彙總末尾顯示明顯警告與受影響的功能清單
+
 ## [0.3.0] - 2026-05-02
 
 ### Added
