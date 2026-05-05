@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-05
+
+### Added
+
+- 新增 `write-plan-fast` skill：與 `write-plan` 相同，但採用兩階段 Plan subagent 流程（Pass 1 列出所有任務標題，Pass 2 一次寫完所有任務的 AC 條件），速度較快
+- 新增 `implement-task-fast` skill：與 `implement-task` 相同，但每批最多 3 個任務由同一 implementation subagent 處理，全部完成後再以單一 review subagent 統一檢查所有任務，適合優先速度的場景
+
+### Changed
+
+- `write-goal`、`write-plan`、`implement-task`：新增 `Tool Preference` 段落，要求優先使用 Read、Write、Edit、Glob、Grep、LSP 進行檔案操作，避免 Bash/PowerShell/Python/Node.js；呼叫 subagent 時亦須傳遞此規則
+- `write-plan`：若未在 Plan Mode 中則自動呼叫 `EnterPlanMode`；實作任務上限改為 9 個 + 1 個建置任務（共 10 個），超出時提示使用 `/tdp:write-goal` 拆分目標；`ExitPlanMode` 後寫入 `plan.md` 即停止，建議使用者先 `/compact` 再 `/tdp:implement-task`
+- `write-plan-fast`：同上 `write-plan` 的 Plan Mode、任務上限、handoff 規則
+
 ## [0.3.1] - 2026-05-03
 
 ### Changed
