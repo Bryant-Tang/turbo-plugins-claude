@@ -64,6 +64,14 @@ if ! git -C "$REMOTE_WORKTREE_PATH" commit --no-edit; then
   exit 1
 fi
 
+# Write commit message to a UTF-8 temp file and use --file --encoding to avoid
+# any ANSI/codepage conversion in `-m` arg-passing (matters when this script is
+# called from a non-UTF-8 environment such as Git Bash on Windows). On
+# Linux/macOS the locale is already UTF-8 so this is also strictly correct.
+MSG_FILE="$(mktemp)"
+trap 'rm -f "$MSG_FILE"' EXIT
+printf '%s' "$MESSAGE" > "$MSG_FILE"
+
 # Handle SVN status items: filter git-ignored ones, build explicit commit list
 (
   cd "$REMOTE_WORKTREE_PATH"
@@ -122,7 +130,7 @@ fi
   fi
 
   echo "Committing to SVN..."
-  COMMIT_OUT="$(svn commit "${COMMIT_TARGETS[@]}" -m "$MESSAGE")"
+  COMMIT_OUT="$(svn commit "${COMMIT_TARGETS[@]}" --file "$MSG_FILE" --encoding UTF-8)"
   printf '%s\n' "$COMMIT_OUT"
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'

@@ -32,11 +32,6 @@ PowerShell are only for invoking the cleanup script.
 
 ## Procedure
 
-### Step 0: Enter plan mode if it is not already active
-
-If you are not in plan mode, call `EnterPlanMode` so the user can approve the
-cleanup before any branch or worktree is removed.
-
 ### Step 1: Validate input
 
 If `--n` is not given, list the existing `remote-test-*` worktrees (read the
