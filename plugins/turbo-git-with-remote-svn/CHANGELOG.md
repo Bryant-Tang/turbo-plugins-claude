@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-06
+
+### Added
+
+- 新增 `reset-remote-test` skill 與 `reset-remote-test.ps1` / `.sh` 腳本：把 `test-<n>` 對齊回 main、丟棄 test-only commit，並透過 `push-to-svn` 推上 SVN；保留本地 branch、worktree 與 SVN URL，槽位繼續使用。`--diff-only` 參數提供唯讀差異預覽供 SKILL 在確認步驟使用
+- 新增 `cleanup-remote-test` skill 與 `cleanup-remote-test.ps1` / `.sh` 腳本：永久退役一個 test 槽，移除本地 `test-<n>` / `remote/test-<n>` branch、`remote-test-<n>` worktree、`<proj>.code-workspace` 對應 folder 條目；SVN 上的 `branches/test-<n>` URL **保留作為歷史**，下次 `create-remote-test` 自動使用新編號
+- 新增 `release` skill 與 `release-detect-merges.ps1` / `.sh`、`release-merge-tips.ps1` / `.sh` 腳本：一次完成 dev 分支合併進 main、推 SVN trunk、視情況 reset test-<n>、清理 dev worktree。三種模式：
+  - **A. test-cycle full / partial**（`--n <n>` 無 `--branch`）：互動偵測 `main..test-<n>` 的 merge commit 候選，全選自動觸發 reset，部分選則保留未 release 的 merge
+  - **B. test-cycle explicit**（`--n <n>` + `--branch`）：跳過互動，嚴格只 release 指定分支；驗證每個 `--branch` 對應 test-<n> 的某筆 merge commit；涵蓋全部偵測候選時觸發 reset
+  - **C. hotfix**（僅 `--branch`，無 `--n`）：直接從分支當前 HEAD merge 進 main 並 push，不經過 test-<n>
+  - 候選偵測從 `main..test-<n>` 的 merge commit 追溯（`--first-parent` + parent[1] 取 dev tip），不依賴分支命名 convention，支援自由命名與中途改名；自動過濾 `pull-from-svn` 的 SVN bridge merge 與已 release（tip 已在 main）的 merge
+  - merge 階段以 commit hash（非 branch name）`--no-ff` merge 進 main，確保 release 的就是當初被測過的內容
+  - dev worktree cleanup 對每個 release 過的 tip 互動詢問（移除 worktree + 刪除 branch / 僅刪除 branch / 都不動）；分支已前進的不刪只警示
+
+### Changed
+
+- 文件中強調 dev 分支合併進 `test-<n>` 必須使用 `--no-ff`，以保留 merge commit 供 `release` 模式 A / B 偵測使用
+
 ## [0.5.0] - 2026-05-05
 
 ### Changed
