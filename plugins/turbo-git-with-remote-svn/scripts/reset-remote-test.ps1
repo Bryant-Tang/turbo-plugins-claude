@@ -19,7 +19,6 @@ try {
 
     $idx = [int]$N
     $testBranch = "test-$idx"
-    $remoteBranch = "remote/test-$idx"
 
     $mainWorktree = Get-MainWorktree
     $projName = [System.IO.Path]::GetFileName($mainWorktree)
@@ -79,7 +78,7 @@ try {
 
     & git -C $mainWorktree reset --hard 'main'
     if ($LASTEXITCODE -ne 0) {
-        if ($switched) { & git -C $mainWorktree checkout $originalBranch | Out-Null }
+        if ($switched) { & git -C $mainWorktree checkout $originalBranch }
         throw "git reset --hard main failed on $testBranch"
     }
 

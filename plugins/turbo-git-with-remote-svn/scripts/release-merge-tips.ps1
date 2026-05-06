@@ -68,7 +68,8 @@ try {
         & git -C $mainWorktree merge --no-ff $item.Tip -m $item.Message
         if ($LASTEXITCODE -ne 0) {
             $conflicts = (& git -C $mainWorktree diff --name-only --diff-filter=U | Out-String).Trim()
-            [Console]::Error.WriteLine("Merge conflict on $($item.Tip). Resolve in main worktree (currently on 'main') and run 'git merge --continue', then re-run /tgs:release for any remaining items.`nConflicting files:`n$conflicts")
+            $restoreNote = if ($switched) { " After resolving, switch back to '$originalBranch' (e.g. 'git checkout $originalBranch')." } else { '' }
+            [Console]::Error.WriteLine("Merge conflict on $($item.Tip). Resolve in main worktree (currently on 'main') and run 'git merge --continue', then re-run /tgs:release for any remaining items.$restoreNote`nConflicting files:`n$conflicts")
             exit 1
         }
     }

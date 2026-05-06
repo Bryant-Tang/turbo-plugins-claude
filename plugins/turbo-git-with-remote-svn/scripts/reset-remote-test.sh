@@ -59,8 +59,8 @@ if [[ -n "$REMOTE_STATUS" ]]; then
   exit 1
 fi
 
-LOSE_RAW="$(git -C "$MAIN_WORKTREE" log --oneline "main..$TEST_BRANCH" || true)"
-GAIN_RAW="$(git -C "$MAIN_WORKTREE" log --oneline "$TEST_BRANCH..main" || true)"
+LOSE_RAW="$(git -C "$MAIN_WORKTREE" log --oneline "main..$TEST_BRANCH")"
+GAIN_RAW="$(git -C "$MAIN_WORKTREE" log --oneline "$TEST_BRANCH..main")"
 
 echo 'LOSE'
 [[ -n "$LOSE_RAW" ]] && echo "$LOSE_RAW"

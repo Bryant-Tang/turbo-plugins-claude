@@ -85,6 +85,9 @@ for I in "${!TIPS[@]}"; do
   if ! git -C "$MAIN_WORKTREE" merge --no-ff "$TIP" -m "$MSG"; then
     CONFLICTS="$(git -C "$MAIN_WORKTREE" diff --name-only --diff-filter=U)"
     echo "Error: merge conflict on $TIP. Resolve in main worktree (currently on 'main') and run 'git merge --continue', then re-run /tgs:release for any remaining items." >&2
+    if [[ "$SWITCHED" == true ]]; then
+      echo "After resolving, switch back to '$ORIGINAL_BRANCH' (e.g. 'git checkout $ORIGINAL_BRANCH')." >&2
+    fi
     echo "Conflicting files:" >&2
     echo "$CONFLICTS" >&2
     exit 1

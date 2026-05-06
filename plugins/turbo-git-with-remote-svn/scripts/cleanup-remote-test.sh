@@ -2,6 +2,10 @@
 # Usage: cleanup-remote-test.sh --n <number>
 set -euo pipefail
 
+# Track sed -i.bak backup so it always gets cleaned, even on error mid-flow.
+WORKSPACE_BAK=''
+trap 'if [[ -n "$WORKSPACE_BAK" ]]; then rm -f "$WORKSPACE_BAK"; fi' EXIT
+
 N_ARG=''
 
 while [[ $# -gt 0 ]]; do
@@ -87,6 +91,7 @@ fi
 # Handles both single-line entries (as written by create-remote-test.sh) and
 # multi-line entries (as VS Code or hand-formatting would write).
 if [[ -f "$WORKSPACE_FILE" ]]; then
+  WORKSPACE_BAK="${WORKSPACE_FILE}.bak"
   TARGET_LINE="$(grep -n "\"name\":[[:space:]]*\"$REMOTE_WORKTREE_NAME\"" "$WORKSPACE_FILE" | head -n1 | cut -d: -f1 || true)"
   if [[ -n "$TARGET_LINE" ]]; then
     LINE_CONTENT="$(sed -n "${TARGET_LINE}p" "$WORKSPACE_FILE")"
@@ -101,19 +106,21 @@ if [[ -f "$WORKSPACE_FILE" ]]; then
         sed -i.bak -e "${TARGET_LINE}d" -e "${PREV_LINE}s/,[[:space:]]*$//" "$WORKSPACE_FILE"
       fi
     else
-      # Multi-line entry: walk back to the opening '{' and forward to the
-      # closing '}' to determine the block range, then delete it.
+      # Multi-line entry: walk back to the opening '{' (at line start, after
+      # optional whitespace) and forward to the closing '}' (same anchor) to
+      # determine the block range, then delete it. The leading-whitespace
+      # anchor avoids stopping on braces embedded inside string values.
       START_LINE=$TARGET_LINE
       while (( START_LINE > 1 )); do
         L="$(sed -n "${START_LINE}p" "$WORKSPACE_FILE")"
-        if [[ "$L" == *'{'* ]]; then break; fi
+        if [[ "$L" =~ ^[[:space:]]*\{ ]]; then break; fi
         START_LINE=$(( START_LINE - 1 ))
       done
       END_LINE=$TARGET_LINE
       TOTAL_LINES="$(wc -l < "$WORKSPACE_FILE")"
       while (( END_LINE <= TOTAL_LINES )); do
         L="$(sed -n "${END_LINE}p" "$WORKSPACE_FILE")"
-        if [[ "$L" == *'}'* ]]; then break; fi
+        if [[ "$L" =~ ^[[:space:]]*\} ]]; then break; fi
         END_LINE=$(( END_LINE + 1 ))
       done
       END_CONTENT="$(sed -n "${END_LINE}p" "$WORKSPACE_FILE")"
@@ -136,7 +143,6 @@ if [[ -f "$WORKSPACE_FILE" ]]; then
         done
       fi
     fi
-    rm -f "${WORKSPACE_FILE}.bak"
     echo "  - Removed workspace entry: $REMOTE_WORKTREE_NAME"
   else
     echo "  - Workspace entry '$REMOTE_WORKTREE_NAME' was not present, skipping."
