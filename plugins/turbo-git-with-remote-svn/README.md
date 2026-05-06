@@ -78,6 +78,8 @@ tgs 用多個 git worktree 分隔職責，讓 SVN 同步與個人開發互不干
 2. 在 `dev-<n>` 目錄開啟 Claude Code，執行 `/tgs:setup`（每個 worktree 設定各自獨立）
 3. 開發完成後，在 main worktree 把分支 merge 進 `main` 或 `test-<n>`，再用以下 push 流程送上 SVN
 
+> **重要**：把開發分支 merge 進 `test-<n>` 時請固定使用 `--no-ff`（VS Code Git extension 與 IntelliJ 都可設定預設 `--no-ff`；命令列加上 `--no-ff` 旗標）。`/tgs:release` 偵測 release 候選時依賴 merge commit 的 parent[1]，fast-forward merge 不留 merge commit 會被偵測漏抓。
+
 ### 日常 SVN 同步
 
 | 動作 | 指令 |
@@ -92,6 +94,30 @@ tgs 用多個 git worktree 分隔職責，讓 SVN 同步與個人開發互不干
 - **pull** 流程：自動把 main worktree 切到目標 branch、merge、再切回原 branch；發生衝突時停在目標 branch 等使用者解決
 - **push** 流程：列出待送 commit，AI 建議 SVN commit message 標題，確認後送出
 
+### 結束一輪測試 / 退役 test 槽
+
+| 動作 | 指令 |
+|---|---|
+| 把 `test-<n>` 對齊回 main、丟棄 test-only commit、推上 SVN（保留槽位繼續用） | `/tgs:reset-remote-test --n <n>` |
+| 永久退役一個 `test-<n>` 槽（刪本地 branch / worktree / workspace 條目；SVN URL 保留） | `/tgs:cleanup-remote-test --n <n>` |
+
+- **reset** 是常用動作：每輪測試結束、要把測試環境拉回 main 起點時用。SVN 上的 `branches/test-<n>` URL 不變，部署到該 URL 的測試伺服器自動拿到 main 內容
+- **cleanup** 是少用動作：當你確定該 `test-<n>` 槽不會再用時。SVN 路徑保留作為歷史，`/tgs:create-remote-test` 下次自動取新編號
+
+### 發布到正式環境
+
+| 模式 | 指令 |
+|---|---|
+| A. 互動完整 / 部分發布 | `/tgs:release --n <n>` |
+| B. 顯式指定子集 | `/tgs:release --n <n> --branch <name> [--branch <name> ...]` |
+| C. Hotfix（不經 test-<n>） | `/tgs:release --branch <name> [--branch <name> ...]` |
+
+- **模式 A**：偵測 `main..test-<n>` 中所有 dev merge commit 為候選，互動勾選；全選自動 reset `test-<n>`，部分選則保留未發布的 merge
+- **模式 B**：跳過互動，嚴格只發布指定的分支；分支名稱必須對應到 test-<n> 內某筆 merge commit
+- **模式 C**：直接從分支當前 HEAD 發布到 main 與 SVN trunk，不碰任何 test-<n>
+- 每個模式都會：merge 進 main → `/tgs:push-to-svn --branch main`（含可選 release tag 互動）→ 視情況 `/tgs:reset-remote-test --n <n>` → 互動式清理 dev worktree
+- 失敗即停（不自動 rollback），錯誤訊息會明確指出停在哪一步、後續如何手動接續
+
 ## 提供的命令與 skill
 
 | 名稱 | 類型 | 用途 |
@@ -101,6 +127,9 @@ tgs 用多個 git worktree 分隔職責，讓 SVN 同步與個人開發互不干
 | `create-dev-worktree` | command | 新增 `dev-<n>` 個人開發 worktree |
 | `pull-from-svn` | skill | SVN → git（透過 `remote-*` worktree） |
 | `push-to-svn` | skill | git → SVN（透過 `remote-*` worktree） |
+| `reset-remote-test` | skill | 把 `test-<n>` 對齊回 main、丟棄 test-only commit、推上 SVN（槽位保留） |
+| `cleanup-remote-test` | skill | 永久退役 `test-<n>` 槽（刪本地 branch / worktree / workspace 條目；SVN 不動） |
+| `release` | skill | 發布到正式環境：merge dev 進 main → push SVN trunk → 視情況 reset test-<n> → 清理 dev worktree |
 | `svn-log` | command | 唯讀查看 SVN 歷史 |
 | `suggest-ignore` | skill | 管理 git/SVN ignore：直接新增或移除 `.gitignore` / `svn:ignore` pattern，或互動式分析並修正 git/SVN 不一致 |
 | `setup` | skill | 互動式設定 tgs 環境變數 |
