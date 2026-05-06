@@ -31,11 +31,6 @@ to.
 
 ## Procedure
 
-### Step 0: Enter plan mode if it is not already active
-
-If you are not in plan mode, call `EnterPlanMode` before reading further so the
-user can approve the reset plan before any branch is mutated.
-
 ### Step 1: Validate input
 
 If `--n` is not given, use `AskUserQuestion` to ask which test number to reset.

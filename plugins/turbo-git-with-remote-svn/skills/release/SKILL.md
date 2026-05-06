@@ -43,11 +43,6 @@ PowerShell are only for invoking the helper scripts (`release-detect-merges`,
 
 ## Procedure
 
-### Step 0: Enter plan mode if it is not already active
-
-If you are not in plan mode, call `EnterPlanMode` so the user can approve the
-release plan before any branch is mutated or anything is pushed to SVN.
-
 ### Step 1: Resolve mode and validate input
 
 - Parse `--n` and `--branch` arguments (parameter form — note that `--branch`

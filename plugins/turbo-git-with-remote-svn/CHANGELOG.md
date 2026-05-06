@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-06
+
+### Fixed
+
+- `push-to-svn-commit`（`.ps1` / `.sh`）：SVN log message 含中文時推上 SVN 後會變亂碼（Windows 繁體中文系統 / Big5 CP950）。原本 `svn commit -m $Message` 透過 native command argument 傳遞，PS 5.1 會以系統 ANSI codepage（CP_ACP）編碼，超出 Big5 範圍的字元被替換成「?」或亂碼。改為將 message 寫入 UTF-8（無 BOM）暫存檔，呼叫 `svn commit --file <tempfile> --encoding UTF-8`，繞過 native arg 編碼路徑、由 SVN 直接以 UTF-8 讀取（issue #15）
+- `reset-remote-test` / `cleanup-remote-test` / `release` SKILL.md：移除 Procedure 開頭的「Step 0: Enter plan mode if it is not already active」。三者皆為 mutation 型 skill（reset hard-reset branch、cleanup 刪 branch / worktree、release 編排 merge + push + reset），且各自已有「預覽 + AskUserQuestion 確認」步驟；EnterPlanMode 在本專案的慣例僅用於 `tdp` 的 `write-plan` / `write-plan-fast`（任務本身就是產出 plan 檔供使用者審核）。其他所有 mutation 型 skill（`push-to-svn`、`pull-from-svn`、`tdp:start-dev` 等）皆未使用 EnterPlanMode；移除以維持 plugin 內部一致性，避免使用者多一層無實質意義的 plan mode 進出（issue #17）
+
 ## [0.6.0] - 2026-05-06
 
 ### Added

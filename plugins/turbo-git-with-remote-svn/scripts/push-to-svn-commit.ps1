@@ -68,8 +68,16 @@ try {
     # Handle SVN status items: filter git-ignored ones, build explicit commit list
     $newRev = '?'
     $noCommit = $false
+    # Write commit message to a UTF-8 (no BOM) temp file. On Windows, passing non-ASCII
+    # via native command args (-m "...") goes through the system ANSI codepage (CP_ACP,
+    # e.g. Big5 / CP950 on Traditional Chinese systems), which mangles characters that
+    # are not representable in that codepage. `--file <path> --encoding UTF-8` bypasses
+    # arg-encoding entirely and tells SVN to read the file as UTF-8.
+    $msgFile = [System.IO.Path]::GetTempFileName()
     Push-Location $remote.Path
     try {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($msgFile, $Message, $utf8NoBom)
         $svnStatusLines = & svn status
         $toAdd = @()
         $toDel = @()
@@ -119,7 +127,7 @@ try {
             $noCommit = $true
         } else {
             Write-Output "Committing to SVN..."
-            $commitLines = & svn commit $commitTargets -m $Message
+            $commitLines = & svn commit $commitTargets --file $msgFile --encoding UTF-8
             if ($LASTEXITCODE -ne 0) { throw 'svn commit failed' }
             $commitLines | ForEach-Object { Write-Output $_ }
             $newRevLine = $commitLines | Where-Object { $_ -match 'Committed revision (\d+)\.' } | Select-Object -Last 1
@@ -131,6 +139,9 @@ try {
         & svn update | Out-Null
     } finally {
         Pop-Location
+        if (Test-Path -LiteralPath $msgFile) {
+            Remove-Item -LiteralPath $msgFile -Force -ErrorAction SilentlyContinue
+        }
     }
 
     if ($noCommit) { exit 0 }
