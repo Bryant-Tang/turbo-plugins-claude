@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-07
+
+### Added
+
+- 新增 `stop-iis` slash command，讓使用者可直接停止對應當前 repo / site 的 IIS Express process，無需透過 `run-web` 繞道執行
+- `README.md` 補上 `stop-iis` 與 `publish-web` 的命令說明
+
 ## [0.2.4] - 2026-05-02
 
 ### Changed
