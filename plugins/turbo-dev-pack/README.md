@@ -4,9 +4,14 @@
 
 Skills and scripts for web project development workflows, testing and proof, and team collaboration.
 
+## 依賴
+
+tdp 從 0.5.0 起把 branch 與歸檔的執行委派給 `turbo-git-with-remote-svn` (tgs)。**請先安裝 tgs 再安裝 tdp**，否則 `/tdp:start-dev` 與 `/tdp:finish-dev` 會無法呼叫對應的 tgs 指令。tgs 安裝方式見其 [README](../turbo-git-with-remote-svn/README.md)。
+
 ## 安裝
 
-1. 安裝 plugin
+1. 先確認已安裝 `tgs`（見上方「依賴」段落）
+1. 安裝 tdp plugin
     - 在 claude 聊天視窗使用 `/plugins` 指令
       1. 在 claude 聊天視窗使用 `/plugins`
       1. 選擇 `Marketplaces`
@@ -25,6 +30,7 @@ Skills and scripts for web project development workflows, testing and proof, and
         }
       },
       "enabledPlugins": {
+        "tgs@turbo-plugins-claude": true,
         "tdp@turbo-plugins-claude": true
       }
       ```

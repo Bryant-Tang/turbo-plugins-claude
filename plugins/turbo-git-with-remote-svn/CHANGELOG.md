@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-07
+
+### Added
+
+- 新增 `create-branch` command 與 `create-branch.ps1` / `.sh` 腳本：提供「在 main worktree 建立並切換到指定名稱 branch」的 primitive，完全不假設命名 convention；pre-flight 檢查目標 branch 不存在、base branch 存在、main worktree 乾淨。供 `tdp:start-dev` 等高層工作流委派呼叫，以保持 branch 生命週期由 tgs 單一擁有
+- 新增 `archive` command 與 `archive.ps1` / `.sh` 腳本：提供「原子改名 branch + 搬移多個資料夾」的 primitive，參數 `--branch-from`、`--branch-to` 與可重複 `--move <from>=<to>`；pre-flight 檢查包含來源 branch 已合併到 main、目標 branch / 路徑均不存在、main worktree 乾淨且不在來源 branch 上、來源 branch 未在其它 worktree 被 checkout；搬資料夾失敗時嘗試 rollback（資料夾搬回 + branch 改名回去），rollback 也失敗時回報精確中斷點供手動恢復。供 `tdp:finish-dev` 委派呼叫做歸檔
+
+### Changed
+
+- 7 個原本以 SKILL 形式存在的指令改為 command（搬到 `commands/`，frontmatter 改為 `description` / `argument-hint` / `allowed-tools`，移除 `name` / `user-invocable`）：`setup`、`pull-from-svn`、`push-to-svn`、`init-from-existing`、`cleanup-remote-test`、`release`、`reset-remote-test`。body 內容（含 AskUserQuestion 多步互動、委派其它指令）保留。`/tgs:<name>` 觸發方式不變
+- `suggest-ignore` 維持為 SKILL（agent 看到新 untracked 檔案時可主動建議的場景仍有真實價值，是 8 個原 SKILL 中唯一例外）
+- `reset-remote-test` diff preview 文案修正：將「將被丟棄」改為「將離開 `test-<n>` 分支」，並加註說明 `git reset --hard` 只搬 branch 指標、被 release tag 或其它 ref 指到的 commit 仍可透過該 ref 找回完整歷史
+- `push-to-svn` 流程重寫：原本兩段 `AskUserQuestion`（檔案清單 / 標題）合併為單一確認頁，同時顯示保留 commits、被過濾掉的 commits、檔案清單、即將寫入 SVN 的完整訊息（標題 + body）；新增 type prefix 過濾規則，commit subject 開頭為 `Merge ` / `doc:` / `docs:` / `spec:` / `db:` / `chore:`（含可選 scope）的 commit 不會出現在 SVN body 的「本次送交內容」列表，保留 `feat:` / `fix:` / `refactor:` 與無 prefix 的 subject；過濾後若一個 commit 都不剩，仍 push 但 body 列出全部原始 commits 並加上「本次推送沒有程式碼層級的異動」說明
+- `release` command 與 `release-detect-merges` 腳本：dev branch 偵測與 cleanup 一律忽略 `archives/*` 命名空間，避免把已歸檔 branch 誤判為待合併或待清理對象（與既有 `merge-main-into-all` 的行為一致）；mode B/C 的 `--branch` 參數同時拒絕 `archives/` 開頭的名稱
+
 ## [0.6.1] - 2026-05-06
 
 ### Fixed

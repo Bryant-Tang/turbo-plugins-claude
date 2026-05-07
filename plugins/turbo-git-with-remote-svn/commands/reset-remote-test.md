@@ -1,8 +1,7 @@
 ---
-name: reset-remote-test
-description: 'Reset a test-<n> branch back to main, discarding all test-only commits, then publish to SVN. Use when one test cycle has ended and the slot will be reused for the next round, when the user wants to clear test-only data, or when "reset test branch" / "align test to main" is requested.'
+description: 'Reset a test-<n> branch back to main, then publish to SVN. Commits referenced by tags remain reachable. Use when one test cycle has ended and the slot will be reused for the next round, when the user wants to clear test-only data, or when "reset test branch" / "align test to main" is requested.'
 argument-hint: 'Required: --n <number>'
-user-invocable: true
+allowed-tools: Bash, PowerShell
 ---
 
 # reset-remote-test
@@ -13,21 +12,37 @@ Re-align a `test-<n>` branch with `main` between testing cycles, keeping the
 SVN test branch URL alive (so any deployment pipeline pointing at it stays
 valid):
 
-1. Show the user every commit in `test-<n>` that is **not** in `main` — these
-   will be permanently discarded
+1. Show the user every commit currently on `test-<n>` that is **not** in
+   `main` — those commits will leave the `test-<n>` branch tip after the
+   reset (any commit referenced by a release tag or another ref remains
+   reachable in the git object database)
 2. After confirmation, hard-reset `test-<n>` to `main` in the main worktree
 3. Push the reset content up to SVN via `push-to-svn`
 
-This skill never touches the SVN URL itself nor the local worktree / branch
+This command never touches the SVN URL itself nor the local worktree / branch
 metadata — only the contents of `test-<n>` and the SVN test branch are
 realigned.
+
+## Why "leaving" rather than "discarding"
+
+`git reset --hard` only moves the branch pointer; the underlying commit
+objects are not deleted from the git object database. As long as a commit is
+referenced by **any** ref — a release tag, another branch, or even the
+reflog — it remains reachable via `git log <ref>`, `git checkout <hash>`, or
+`git show <tag>`. SVN history on `branches/test-<n>` is also untouched: the
+push that follows the reset adds a new revision rather than rewriting older
+ones.
+
+In this project's workflow, every push to `test-<n>` typically gets a release
+tag, so reset is non-destructive in practice — the commits simply stop being
+listed under the `test-<n>` branch.
 
 ## Tool Preference
 
 Read / Write / Edit / Glob / Grep / LSP for any file inspection or change.
 Avoid using Bash / PowerShell / Python / Node.js for filesystem operations.
-Bash / PowerShell are only for invoking the scripts that this SKILL delegates
-to.
+Bash / PowerShell are only for invoking the scripts that this command
+delegates to.
 
 ## Procedure
 
@@ -52,7 +67,7 @@ The script's stdout has two sections separated by an empty line:
 
 ```
 LOSE
-<hash> <subject>     ← commits in test-<n> not in main, will be discarded
+<hash> <subject>     ← commits leaving test-<n> after reset (still reachable via tags / refs)
 ...
 
 GAIN
@@ -70,7 +85,7 @@ Format the summary like this (translate labels to the user's language):
 ```
 即將 reset test-<n> 為 main：
 
-將被丟棄（test-<n> 上不在 main 的 commit，N 個）：
+將離開 test-<n> 分支（test-<n> 上不在 main 的 commit，N 個——若已被 release tag 或其它 ref 指到，仍可透過該 ref 找回）：
 - <hash> <subject>
 - ...
 
@@ -105,7 +120,7 @@ and switch back. Report any output to the user.
 
 ### Step 5: Push to SVN
 
-Delegate to the existing `push-to-svn` SKILL to publish the reset content.
+Delegate to the existing `push-to-svn` command to publish the reset content.
 Suggest a commit message such as `reset test-<n> to main after release`:
 
 ```
@@ -119,9 +134,10 @@ typically not a tagging point.
 ### Step 6: Report
 
 Print a final summary listing:
-- The number of commits discarded
+- The number of commits that left the `test-<n>` tip
 - The number of commits brought in from main
 - The new SVN revision (from push-to-svn output)
+- A reminder that any tagged commits remain reachable via their tags
 
 ## Decision Rules
 
@@ -131,10 +147,11 @@ Print a final summary listing:
   be clean (no uncommitted changes, no half-finished SVN merges); otherwise
   fail with a clear instruction to run `/tgs:push-to-svn` or `/tgs:pull-from-svn`
   first.
-- Hard reset is destructive: do not skip the explicit confirmation step even
-  when the LOSE list looks small.
+- Hard reset moves the branch pointer; do not skip the explicit confirmation
+  step even when the LOSE list looks small. The confirmation prompt should
+  remind the user that release tags preserve history.
 - Do **not** delete `remote/test-<n>`, the worktree, or the SVN URL — that is
-  `cleanup-remote-test`'s job. This skill keeps the slot alive and ready for
+  `cleanup-remote-test`'s job. This command keeps the slot alive and ready for
   the next testing cycle.
 - Can be called from any worktree in the project.
 
@@ -145,3 +162,5 @@ Print a final summary listing:
   the branch was already aligned at the SVN level).
 - The main worktree HEAD is on the same branch it started on (unless it was
   on `test-<n>`, in which case it stays).
+- Any release tag created on the previous tip of `test-<n>` still resolves
+  with `git rev-parse <tag>` and `git show <tag>`.

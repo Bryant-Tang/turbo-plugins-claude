@@ -1,8 +1,7 @@
 ---
-name: init-from-existing
 description: 'Analyse an existing git project and migrate it to tgs structure: create the required remote/* branches, .worktrees/ worktrees, and SVN checkout, then run the initial sync. Use when converting an existing git repo to work with tgs.'
 argument-hint: 'Optional: --svn-url <svn-url-for-main>'
-user-invocable: true
+allowed-tools: Bash, PowerShell
 ---
 
 # init-from-existing
@@ -16,7 +15,7 @@ Convert an existing git project into a tgs-structured project by detecting which
 - You have an existing git project and want to connect it to an SVN repository via tgs.
 - You want to add the tgs worktree structure (`remote-main`, `.code-workspace`) to a project that was not created with `/tgs:create-project`.
 
-Do **not** use this skill for brand-new projects — use the `create-project` command instead.
+Do **not** use this command for brand-new projects — use the `create-project` command instead.
 
 ## Phase 1 — Explore (read-only)
 
@@ -279,7 +278,7 @@ Report a summary:
 - Stop immediately if the SVN URL is unreachable.
 - On merge conflict: list conflicting files, guide the user to resolve them manually; never auto-abort.
 - git-svn detected: warn and require explicit user confirmation before proceeding.
-- Only the `main` remote worktree is created by this skill. Additional `test-<n>` worktrees are handled by `/tgs:create-remote-test`.
+- Only the `main` remote worktree is created by this command. Additional `test-<n>` worktrees are handled by `/tgs:create-remote-test`.
 - `.code-workspace` is always updated if incomplete (missing worktree entries) — never prompt about overwrite.
 - If `git rev-parse --git-common-dir` shows the CWD is already a linked worktree (not the main one), resolve all paths from the common git dir and work in the main worktree for branch and worktree operations.
 

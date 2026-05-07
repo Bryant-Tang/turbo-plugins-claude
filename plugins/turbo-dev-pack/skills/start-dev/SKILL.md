@@ -13,8 +13,15 @@ user-invocable: true
 
 ## Outcome
 - One dedicated branch name is confirmed.
+- The branch exists in git (created via `/tgs:create-branch` if it did not already exist).
 - One matching specs folder exists under `specs/bugfix/` or `specs/feature/`.
 - The work is ready for `write-goal` to define the requirement.
+
+## Plugin Boundary
+
+This skill belongs to tdp's dev workflow. It owns the **dev workflow conventions** — the `<type>/<slug>` branch namespace, the matching `specs/<type>/<slug>/` folder, and the SQL slug folders. It **delegates** branch creation to tgs's `/tgs:create-branch` primitive instead of running `git` directly, so that branch lifecycle has a single owner (tgs) and `release` / `archive` see consistent state.
+
+This skill requires the `turbo-git-with-remote-svn` (tgs) plugin to be installed.
 
 ## Naming And Path Rules
 - Every requirement gets exactly one dedicated branch.
@@ -28,17 +35,30 @@ user-invocable: true
 ## Procedure
 1. Determine whether the requirement is a bug fix or a feature.
 2. Determine the branch slug. If the slug is ambiguous, ask the user before creating or reusing any branch or specs path.
-3. Confirm the intended branch name. If the user asked to start the work and the working tree is safe, create or switch to that branch. If the working tree is not safe, stop and explain the blocker instead of forcing a branch change.
-4. Create the matching specs folder if it does not exist.
+3. Confirm the intended branch name with the user.
+4. **Branch handling**:
+   - **If the branch does not yet exist**, delegate to `/tgs:create-branch` to create it from `main` and switch to it. tgs handles all pre-flight checks (target name not in use, `main` exists, main worktree clean) and reports back.
+
+     ```
+     /tgs:create-branch --name <type>/<slug> --base main
+     ```
+
+     If `/tgs:create-branch` fails (e.g., because the working tree is dirty), surface its error to the user and stop — do not retry with raw `git` commands. The user must commit, stash, or otherwise make the working tree safe before re-running `/tdp:start-dev`.
+
+   - **If the branch already exists**, switch to it with `git checkout <type>/<slug>` after verifying the working tree is clean (`git status --porcelain` empty). If the tree is not clean, stop and explain the blocker instead of forcing a branch change.
+5. Create the matching specs folder under `specs/<type>/<slug>/` if it does not exist. **Folder creation stays in tdp** — tgs has no opinion about `specs/` layout.
 
 ## Decision Rules
 - If the user bundled more than one independent requirement together, split them into separate branches and separate specs folders instead of sharing one workflow.
 - If an existing branch name or specs path does not match the requirement, ask whether to create a new one instead of silently reusing the wrong location.
+- Never run `git checkout -b` directly from this skill. New branch creation always goes through `/tgs:create-branch` so that tgs remains the single owner of branch lifecycle.
+- Branch slugs must not collide with the `archives/` namespace. Names like `feature/<slug>` and `bugfix/<slug>` are safe; tgs's `archive` primitive handles the move into `archives/<type>/<slug>` later.
 
 ## Completion Checks
-- Branch name follows the prefix rule.
-- Specs folder matches the branch slug.
-- Specs folder exists at the expected path.
+- Branch name follows the prefix rule (`bugfix/<slug>` or `feature/<slug>`).
+- Branch exists in git (`git rev-parse --verify refs/heads/<type>/<slug>` succeeds).
+- HEAD of the main worktree is on the dedicated branch.
+- Specs folder matches the branch slug and exists at `specs/<type>/<slug>/`.
 
 ## Handoff
 

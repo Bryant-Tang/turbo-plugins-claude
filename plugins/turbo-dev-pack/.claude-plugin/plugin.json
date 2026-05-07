@@ -1,7 +1,7 @@
 {
   "name": "tdp",
-  "description": "Web project development workflows.",
-  "version": "0.4.1",
+  "description": "Web project development workflows. Requires turbo-git-with-remote-svn (tgs) for branch and archive operations.",
+  "version": "0.5.0",
   "license": "MIT",
   "author": {
     "name": "Bryant Tang"

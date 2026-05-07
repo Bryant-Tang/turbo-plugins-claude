@@ -27,10 +27,20 @@ Claude Code 的 plugin 更新機制是基於 **版本號** 而不是 git commit�
 
 | Alias | 目錄 | 職責 |
 |---|---|---|
-| `tdp` | `plugins/turbo-dev-pack/` | Web 專案開發流程 skills（goal → plan → implement-task → testing-and-proof → finish-dev），整合 dbhub / memory / markitdown MCP server |
+| `tdp` | `plugins/turbo-dev-pack/` | Web 專案開發流程 skills（goal → plan → implement-task → testing-and-proof → finish-dev），整合 dbhub / memory / markitdown MCP server。dev branch 建立與歸檔委派給 tgs（`tdp` 從 0.5.0 起把 tgs 列為依賴） |
 | `tnf` | `plugins/turbo-dotnet-framework-commands/` | .NET Framework + MSBuild + IIS Express 的 build / run / publish 指令 |
-| `tgs` | `plugins/turbo-git-with-remote-svn/` | 用 git worktree 橋接遠端 SVN repo 的工作流（pull / push / 建立 worktree / 管理 ignore） |
+| `tgs` | `plugins/turbo-git-with-remote-svn/` | 用 git worktree 橋接遠端 SVN repo 的工作流（pull / push / 建立 worktree / 管理 ignore），同時提供 `create-branch` / `archive` 等無語意 git+結構 primitive 給 tdp 等高層 plugin 委派呼叫 |
 | `tpi` | `plugins/turbo-plugins-integration/` | 跨 plugin 編排：`setup-all` 一次跑完所有 plugin 的 setup 並把 env 同步到 peer worktree、`teach-me` 整合教學、`dependency-check` 依賴檢查 |
+
+### Plugin 之間的職責邊界
+
+從 `tdp` 0.5.0 / `tgs` 0.7.0 起，跨 plugin 邊界遵循「**tgs 提供無語意 primitive、tdp 維持 convention 擁有者**」的原則：
+
+- tgs 不知道 `<slug>` / `<type>` / `specs/<type>/<slug>/` / `archives/` 等 tdp 的 convention，只負責「在 main worktree 建立指定名稱的 branch」「原子改名 branch + 搬一組資料夾並支援 rollback」這種機械操作。
+- tdp 維持 spec 資料夾、SQL 資料夾、type/slug 命名、archives 命名等 convention，呼叫 tgs 時把完整路徑與名稱當參數傳進去。
+- 兩端透過 `/tgs:<command>` slash command 介面溝通，**不直接呼叫對方的 script**。
+
+修改 `start-dev` / `finish-dev` 時要維持這條邊界：branch 建立 / rename / 資料夾搬移一律走 `/tgs:create-branch` 或 `/tgs:archive`，不要在 tdp 端直接 `git checkout -b` 或 `git branch -m`。
 
 ### 標準 plugin 內部結構
 
@@ -53,8 +63,12 @@ plugins/<plugin-name>/
 
 ### Skill ↔ Command ↔ Script 三層分工
 
-- **Skill**（`skills/<name>/SKILL.md`）：用 frontmatter 宣告 `name` / `description` / `argument-hint` / `user-invocable`，內容是給 agent 讀的「Procedure / Decision Rules / Completion Checks」式說明。Skill 不直接執行指令，會委派給 subagent 或叫 user-level 工具。
-- **Command**（`commands/<name>.md`）：用 frontmatter 宣告 `description` / `allowed-tools`，本體通常極短，只是叫 agent 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.ps1` 或 `.sh`。
+- **Skill**（`skills/<name>/SKILL.md`）：用 frontmatter 宣告 `name` / `description` / `argument-hint` / `user-invocable`，內容是給 agent 讀的「Procedure / Decision Rules / Completion Checks」式說明。Skill 不直接執行指令，會委派給 subagent 或叫 user-level 工具。**選 SKILL 的時機**：當 agent 看到某種狀態（例如新 untracked 檔案）時應主動建議該指令；典型範例是 tgs 的 `suggest-ignore`。
+- **Command**（`commands/<name>.md`）：用 frontmatter 宣告 `description` / `allowed-tools` / `argument-hint`。**本體長度依需求變化**：
+  - **薄 command**（如 `create-project`、`svn-log`、`merge-main-into-all`、`create-branch`、`archive`）：body 極短，只引導 agent 執行對應 script 並解讀輸出。
+  - **長 orchestrator command**（如 `push-to-svn`、`release`、`reset-remote-test`、`init-from-existing`）：body 包含完整的 Procedure / Decision Rules / Completion Checks 段落，含 `AskUserQuestion` 多步互動、parse script 輸出、委派其它指令——形式上幾乎等同舊 SKILL 寫法，差別只在於不會被 agent 自動觸發。
+
+  **選 command 的時機**：使用者主動觸發為主，agent 沒有「該主動建議」的場景。`/tgs:<name>` 觸發路徑與 SKILL 完全相同，差別只在於 agent 是否會自動依 description 觸發。
 - **Script**：實際做事的地方。**所有 script 都要同時提供 `.ps1` 和 `.sh` 兩個版本**，行為一致；Windows 走 PowerShell、其它平台走 Bash。命名為配對（如 `pull-from-svn.ps1` + `pull-from-svn.sh`）。
 
 ### Cross-platform script 約定
@@ -92,7 +106,7 @@ plugins/<plugin-name>/
 `tdp` 的 dev skill 串成一條鏈，要按順序走：
 
 ```
-start-dev          → 建立 bugfix/<slug> 或 feature/<slug> 分支與 specs 資料夾
+start-dev          → 委派 /tgs:create-branch 建立 bugfix/<slug> 或 feature/<slug>，建立 specs 資料夾
   ↓
 write-goal         → 在 specs/<type>/<slug>/goal.md 寫並反覆討論需求；目標編號格式 <number>[<letter>]，例如 1, 2a, 2b, 3
   ↓ （每個目標循環）
@@ -104,7 +118,7 @@ write-test-plan    → 在 spec 資料夾根目錄寫 test-plan.md / test-n.md
   ↓
 testing-and-proof  → 跑驗證並產生佐證
   ↓
-finish-dev         → 把 specs/<type>/<slug>/ 與 sql files/<env>/<slug>/ 移到 archives/
+finish-dev         → 委派 /tgs:archive 一次完成 branch rename（→ archives/<type>/<slug>）+ specs/<type>/<slug>/ 與 sql files/<env>-db/<slug>/（local-db / test-db / main-db）搬到 archives/ 對應位置
 ```
 
 兩個 skill 有 `-fast` 變體（`write-plan-fast`、`implement-task-fast`），用較少 subagent 換速度。
@@ -119,6 +133,7 @@ finish-dev         → 把 specs/<type>/<slug>/ 與 sql files/<env>/<slug>/ 移�
 - **日期**：CHANGELOG.md 與其它需要日期的地方都用絕對日期（`YYYY-MM-DD`），不要用「今天」「上週」這種相對時間。
 - **AC 分類**（影響 `tdp` 的 `write-plan` 與 `implement-task`）：固定 7 類，順序是 Correctness / Security / Integration & Compatibility / Maintainability & Code Quality / Testability & Observability / Performance & Resource Usage / User Experience。修改 plan template 時要保留全部 7 類，不適用就寫 `N/A`。
 - **C# 註解**：改 C# 程式碼要呼叫 `/tdp:csharp-comment`；**JS/TS 註解**：改 `.js` / `.ts` 或 `.vue` / `.cshtml` / `.html` 中的 `<script>` 區塊要呼叫 `/tdp:js-comment`。
+- **Commit message 類型**（`tdp:commit-msg` 0.5.0 起）：`feat` / `fix` 限程式碼、`refactor` 給行為不變的整理（含測試重構）、`doc` 給純文件、`spec` 給 `specs/<type>/<slug>/` 規格文件、`db` 給 SQL 腳本、`chore` 給非實作雜務。`tgs:push-to-svn` 在組裝 SVN body 時會過濾掉 `Merge ` / `doc` / `docs` / `spec` / `db` / `chore` 開頭的 commit subject，保留 `feat` / `fix` / `refactor`，所以類型用對才會出現在 SVN history。
 - **不要 commit `.local.*`**：已經在 `.gitignore`，但要記得不要把 `settings.local.json` 或 `*.local.toml` 加進範本以外的位置。
 
 ## Marketplace Manifest

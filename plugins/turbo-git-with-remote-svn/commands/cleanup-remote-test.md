@@ -1,8 +1,7 @@
 ---
-name: cleanup-remote-test
 description: 'Permanently retire a test-<n> slot by removing the local test-<n> branch, the remote/test-<n> branch, the remote-test-<n> worktree, and the matching code-workspace folder entry. SVN content is preserved. Use when the user wants to retire a test environment, delete a test slot, or remove a test-<n>.'
 argument-hint: 'Required: --n <number>'
-user-invocable: true
+allowed-tools: Bash, PowerShell
 ---
 
 # cleanup-remote-test
@@ -92,7 +91,7 @@ user; the most common cause is a non-clean main or remote worktree.
   (no uncommitted changes, no half-finished SVN merges) — the script enforces
   this. Tell the user to commit / stash / push / pull as appropriate before
   retrying.
-- This skill never removes:
+- This command never removes:
   - The SVN test branch URL
   - Any `dev-<m>` worktree or its branches
   - Any `<proj>.code-workspace` folder entries other than the named
