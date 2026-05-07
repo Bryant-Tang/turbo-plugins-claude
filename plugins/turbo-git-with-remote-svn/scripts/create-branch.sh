@@ -39,7 +39,7 @@ COMMON_GIT_DIR=$(git rev-parse --git-common-dir 2>/dev/null) || {
     echo "Not inside a git repository." >&2
     exit 1
 }
-MAIN_WORKTREE=$(cd "$(dirname "$COMMON_GIT_DIR")" && pwd)
+MAIN_WORKTREE="$(dirname "$(realpath "$COMMON_GIT_DIR")")"
 
 if git -C "$MAIN_WORKTREE" rev-parse --verify -q "refs/heads/$NAME" >/dev/null 2>&1; then
     echo "Branch '$NAME' already exists." >&2

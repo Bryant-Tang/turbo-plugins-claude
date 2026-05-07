@@ -64,7 +64,11 @@ plugins/<plugin-name>/
 ### Skill ↔ Command ↔ Script 三層分工
 
 - **Skill**（`skills/<name>/SKILL.md`）：用 frontmatter 宣告 `name` / `description` / `argument-hint` / `user-invocable`，內容是給 agent 讀的「Procedure / Decision Rules / Completion Checks」式說明。Skill 不直接執行指令，會委派給 subagent 或叫 user-level 工具。**選 SKILL 的時機**：當 agent 看到某種狀態（例如新 untracked 檔案）時應主動建議該指令；典型範例是 tgs 的 `suggest-ignore`。
-- **Command**（`commands/<name>.md`）：用 frontmatter 宣告 `description` / `allowed-tools` / `argument-hint`，本體可短（呼叫一支 script）也可長（含 `AskUserQuestion` 多步互動、委派其它指令）。**選 command 的時機**：使用者主動觸發為主，agent 沒有「該主動建議」的場景（例如 `pull-from-svn` / `release` / `setup`）。`/tgs:<name>` 觸發路徑與 SKILL 完全相同，差別只在於 agent 是否會自動觸發。
+- **Command**（`commands/<name>.md`）：用 frontmatter 宣告 `description` / `allowed-tools` / `argument-hint`。**本體長度依需求變化**：
+  - **薄 command**（如 `create-project`、`svn-log`、`merge-main-into-all`、`create-branch`、`archive`）：body 極短，只引導 agent 執行對應 script 並解讀輸出。
+  - **長 orchestrator command**（如 `push-to-svn`、`release`、`reset-remote-test`、`init-from-existing`）：body 包含完整的 Procedure / Decision Rules / Completion Checks 段落，含 `AskUserQuestion` 多步互動、parse script 輸出、委派其它指令——形式上幾乎等同舊 SKILL 寫法，差別只在於不會被 agent 自動觸發。
+
+  **選 command 的時機**：使用者主動觸發為主，agent 沒有「該主動建議」的場景。`/tgs:<name>` 觸發路徑與 SKILL 完全相同，差別只在於 agent 是否會自動依 description 觸發。
 - **Script**：實際做事的地方。**所有 script 都要同時提供 `.ps1` 和 `.sh` 兩個版本**，行為一致；Windows 走 PowerShell、其它平台走 Bash。命名為配對（如 `pull-from-svn.ps1` + `pull-from-svn.sh`）。
 
 ### Cross-platform script 約定
@@ -114,7 +118,7 @@ write-test-plan    → 在 spec 資料夾根目錄寫 test-plan.md / test-n.md
   ↓
 testing-and-proof  → 跑驗證並產生佐證
   ↓
-finish-dev         → 委派 /tgs:archive 一次完成 branch rename（→ archives/<type>/<slug>）+ specs/<type>/<slug>/ 與 sql files/<env>-db/<slug>/ 搬到 archives/ 對應位置
+finish-dev         → 委派 /tgs:archive 一次完成 branch rename（→ archives/<type>/<slug>）+ specs/<type>/<slug>/ 與 sql files/<env>-db/<slug>/（local-db / test-db / main-db）搬到 archives/ 對應位置
 ```
 
 兩個 skill 有 `-fast` 變體（`write-plan-fast`、`implement-task-fast`），用較少 subagent 換速度。

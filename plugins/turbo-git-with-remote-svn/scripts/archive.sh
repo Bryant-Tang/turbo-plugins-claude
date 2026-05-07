@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# -e (errexit) intentionally omitted: the rollback loop further down must run
+# after `mv` failures. With -e enabled, the script would exit immediately on
+# the first failed mv, never reaching the rollback path. Each command that
+# needs failure handling uses an explicit `if ! cmd ...; then ... fi` pattern.
 set -uo pipefail
 
 BRANCH_FROM=""
@@ -54,7 +58,7 @@ COMMON_GIT_DIR=$(git rev-parse --git-common-dir 2>/dev/null) || {
     echo "Not inside a git repository." >&2
     exit 1
 }
-MAIN_WORKTREE=$(cd "$(dirname "$COMMON_GIT_DIR")" && pwd)
+MAIN_WORKTREE="$(dirname "$(realpath "$COMMON_GIT_DIR")")"
 
 if ! git -C "$MAIN_WORKTREE" rev-parse --verify -q "refs/heads/$BRANCH_FROM" >/dev/null 2>&1; then
     echo "Source branch '$BRANCH_FROM' does not exist." >&2; exit 1

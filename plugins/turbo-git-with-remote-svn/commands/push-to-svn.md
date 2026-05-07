@@ -21,10 +21,12 @@ Send git changes to SVN as a single, reviewable commit:
 
 ## Branch Mapping
 
-| Working branch | Remote worktree | Remote git branch |
-|---|---|---|
-| `main` | `remote-main` | `remote/main` |
-| `test-<n>` | `remote-test-<n>` | `remote/test-<n>` |
+| Working branch | Remote worktree | Remote worktree path | Remote git branch |
+|---|---|---|---|
+| `main` | `remote-main` | `<proj>.worktrees/remote-main` | `remote/main` |
+| `test-<n>` | `remote-test-<n>` | `<proj>.worktrees/remote-test-<n>` | `remote/test-<n>` |
+
+`<proj>` is the basename of the main worktree directory; `<proj>.worktrees/` always sits next to the main worktree (see the tgs README's "Worktree 結構" section). Anywhere this command needs to run a `git -C <remote-worktree-path> ...` fallback (e.g. the Cancel branch in Step 5), construct the path from this table.
 
 ## Procedure
 
@@ -147,7 +149,7 @@ For the full-filter fallback case, the "被過濾掉" section becomes the long o
 Options (single-select):
 - **Accept and submit** — proceed to Step 6
 - **Edit title** — open a follow-up `AskUserQuestion` text input for a new title, then re-render the consolidated summary with the edited title and re-confirm. The body content (kept subjects or fallback list) is **not** edited; only the title.
-- **Cancel** — run `git -C <remote-worktree-path> merge --abort` to discard the staged merge and stop.
+- **Cancel** — run `git -C <remote-worktree-path> merge --abort` to discard the staged merge and stop. Use the path from the Branch Mapping table above (e.g. `<proj>.worktrees/remote-main` for `main`).
 
 ```powershell
 git -C "<remote-worktree-path>" merge --abort
