@@ -7,18 +7,19 @@ Stop the IIS Express process associated with the current repository and site. On
 
 ## Config
 
-Set the following keys in the `env` block of `.claude/settings.local.json`. `RUN_IIS_EXPRESS_PATH` is required. `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` is required when the target `IISUrl` uses `https`.
+Set the following keys in the `env` block of `.claude/settings.local.json`. `BUILD_PROJECT_PATH` and `RUN_IIS_EXPRESS_PATH` are required — the former is needed to resolve the site root and port that identify the matching IIS Express process. `RUN_IIS_APPLICATIONHOST_CONFIG_PATH` is required when the target `IISUrl` uses `https`.
 
 ```json
 {
   "env": {
+    "BUILD_PROJECT_PATH": "relative/path/to/web-project.csproj",
     "RUN_IIS_EXPRESS_PATH": "C:/Program Files/IIS Express/iisexpress.exe",
     "RUN_IIS_APPLICATIONHOST_CONFIG_PATH": "relative/path/to/.vs/YourSolution/config/applicationhost.config"
   }
 }
 ```
 
-If `RUN_IIS_EXPRESS_PATH` is missing or empty, stop and report the configuration problem before attempting to stop the process.
+If `BUILD_PROJECT_PATH` or `RUN_IIS_EXPRESS_PATH` is missing or empty, stop and report the configuration problem before attempting to stop the process.
 
 ## Execution
 
