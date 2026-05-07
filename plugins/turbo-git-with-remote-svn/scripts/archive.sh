@@ -111,16 +111,25 @@ MOVED_SRC=()
 MOVED_DST=()
 MOVED_FROM_REL=()
 MOVED_TO_REL=()
+CREATED_PARENTS=()
 MOVE_ERROR=""
 
 for i in "${!FROMS[@]}"; do
     SRC="$MAIN_WORKTREE/${FROMS[$i]}"
     DST="$MAIN_WORKTREE/${TOS[$i]}"
     PARENT=$(dirname "$DST")
+
+    # Track whether PARENT existed before mkdir -p so rollback can clean
+    # up the empty shell we leave behind if a subsequent mv fails.
+    PARENT_PRE_EXISTED=true
+    [[ -d "$PARENT" ]] || PARENT_PRE_EXISTED=false
+
     if ! mkdir -p "$PARENT" 2>/dev/null; then
         MOVE_ERROR="Failed to create parent directory for '${TOS[$i]}'"
         break
     fi
+    [[ "$PARENT_PRE_EXISTED" == "false" ]] && CREATED_PARENTS+=("$PARENT")
+
     if ! mv "$SRC" "$DST" 2>/dev/null; then
         MOVE_ERROR="Failed to move '${FROMS[$i]}' -> '${TOS[$i]}'"
         break
@@ -144,6 +153,12 @@ if [[ -n "$MOVE_ERROR" ]]; then
     if ! git -C "$MAIN_WORKTREE" branch -m "$BRANCH_TO" "$BRANCH_FROM" 2>/dev/null; then
         ROLLBACK_ERRORS+=("Could not revert branch rename '$BRANCH_TO' -> '$BRANCH_FROM'")
     fi
+    # Clean up parent directories we created. rmdir -p walks up the chain,
+    # silently stopping at the first non-empty / pre-existing directory.
+    # Reverse order so deeper paths are removed first.
+    for ((i=${#CREATED_PARENTS[@]}-1; i>=0; i--)); do
+        rmdir -p "${CREATED_PARENTS[$i]}" 2>/dev/null || true
+    done
     if [[ ${#ROLLBACK_ERRORS[@]} -gt 0 ]]; then
         {
             echo "Archive failed mid-way and rollback was incomplete."

@@ -122,14 +122,20 @@ try {
     Write-Output "Renamed branch '$BranchFrom' -> '$BranchTo'."
 
     $moved = @()
+    $createdParents = @()
     $moveError = $null
     foreach ($m in $moves) {
         $fromPath = Join-Path $mainWorktree $m.From
         $toPath = Join-Path $mainWorktree $m.To
+        $toParent = [System.IO.Path]::GetDirectoryName($toPath)
+        $parentExisted = $true
+        if ($toParent -and -not (Test-Path -LiteralPath $toParent)) {
+            $parentExisted = $false
+        }
         try {
-            $toParent = [System.IO.Path]::GetDirectoryName($toPath)
-            if ($toParent -and -not (Test-Path -LiteralPath $toParent)) {
+            if (-not $parentExisted) {
                 New-Item -ItemType Directory -Force -Path $toParent | Out-Null
+                $createdParents += $toParent
             }
             Move-Item -LiteralPath $fromPath -Destination $toPath
             $moved += [pscustomobject]@{ FromAbs = $fromPath; ToAbs = $toPath; FromRel = $m.From; ToRel = $m.To }
@@ -160,6 +166,20 @@ try {
         }
         catch {
             $rollbackErrors += "Could not revert branch rename '$BranchTo' -> '$BranchFrom': $($_.Exception.Message)"
+        }
+        # Clean up newly-created parent directories. Walk up the chain,
+        # removing each directory only if it is empty; stop at the first
+        # non-empty parent. Silent on failure.
+        for ($i = $createdParents.Count - 1; $i -ge 0; $i--) {
+            $current = $createdParents[$i]
+            while ($current -and (Test-Path -LiteralPath $current -PathType Container)) {
+                $items = @(Get-ChildItem -LiteralPath $current -Force -ErrorAction SilentlyContinue)
+                if ($items.Count -gt 0) { break }
+                try { [System.IO.Directory]::Delete($current, $false) } catch { break }
+                $next = [System.IO.Path]::GetDirectoryName($current)
+                if (-not $next -or $next -eq $current) { break }
+                $current = $next
+            }
         }
         if ($rollbackErrors.Count -gt 0) {
             $msg = "Archive failed mid-way and rollback was incomplete.`nOriginal error: $moveError`nRollback errors:`n  - " + ($rollbackErrors -join "`n  - ")
