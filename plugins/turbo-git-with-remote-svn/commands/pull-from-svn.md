@@ -1,8 +1,7 @@
 ---
-name: pull-from-svn
 description: 'Pull the latest SVN changes into the corresponding remote-* worktree, commit them to the remote/* git branch, and merge into the specified git working branch. Use when the user wants to sync SVN updates into git, update from SVN, or pull SVN changes.'
 argument-hint: 'Required: --branch <main|test-<n>>'
-user-invocable: true
+allowed-tools: Bash, PowerShell
 ---
 
 # pull-from-svn

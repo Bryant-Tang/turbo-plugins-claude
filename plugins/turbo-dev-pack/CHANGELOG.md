@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-07
+
+### Changed
+
+- `start-dev`：branch 建立改為委派 `/tgs:create-branch --name <type>/<slug> --base main`，不再由 SKILL 直接執行 `git checkout -b`；spec 資料夾建立邏輯仍保留在 tdp。本 skill 現在需搭配 `turbo-git-with-remote-svn` (tgs) plugin 使用
+- `finish-dev`：新增 branch 歸檔職責，呼叫 `/tgs:archive` 將 `<type>/<slug>` 改名為 `archives/<type>/<slug>`，同時搬移 `specs/<type>/<slug>/` 與所有對應的 `sql files/<env>-db/<slug>/` 到 `archives/` 對應位置；branch rename 與資料夾搬移合併為單一原子委派呼叫，失敗時由 tgs 嘗試 rollback
+- `commit-msg`：type 詞彙重新分類，明確區隔程式碼與非程式碼變更：`feat` / `fix` 限程式碼、`refactor` 涵蓋行為不變的整理（含原 `test`、`perf` 範疇）、`doc` 對應純文件、`spec` 對應 `specs/<type>/<slug>/` 規格文件、`db` 對應 SQL 腳本、`chore` 對應非實作雜務；新增 Mixed-Intent Commits 段落建議拆分跨類別 commit
+- `plugin.json` description：明確標註需與 tgs 搭配使用
+
+### Removed
+
+- `commit-msg`：移除 `perf` 與 `test` type；舊 `docs` type 重新命名為 `doc`。實際歷史中已存在的 commit 不受影響，僅新建議不再使用
+
 ## [0.4.1] - 2026-05-05
 
 ### Fixed

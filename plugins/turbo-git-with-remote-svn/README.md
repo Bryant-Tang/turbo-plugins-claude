@@ -120,19 +120,35 @@ tgs 用多個 git worktree 分隔職責，讓 SVN 同步與個人開發互不干
 
 ## 提供的命令與 skill
 
+從 0.7.0 起，原本以 SKILL 形式存在的多步互動指令都改為 command（使用者體驗不變，仍以 `/tgs:<name>` 觸發）。`suggest-ignore` 維持 SKILL，因為 agent 看到新 untracked 檔案時主動建議它仍有真實價值。
+
 | 名稱 | 類型 | 用途 |
 |---|---|---|
 | `create-project` | command | 建立 tgs 專案初始結構 |
 | `create-remote-test` | command | 新增 `test-<n>` 環境（git + SVN） |
 | `create-dev-worktree` | command | 新增 `dev-<n>` 個人開發 worktree |
-| `pull-from-svn` | skill | SVN → git（透過 `remote-*` worktree） |
-| `push-to-svn` | skill | git → SVN（透過 `remote-*` worktree） |
-| `reset-remote-test` | skill | 把 `test-<n>` 對齊回 main、丟棄 test-only commit、推上 SVN（槽位保留） |
-| `cleanup-remote-test` | skill | 永久退役 `test-<n>` 槽（刪本地 branch / worktree / workspace 條目；SVN 不動） |
-| `release` | skill | 發布到正式環境：merge dev 進 main → push SVN trunk → 視情況 reset test-<n> → 清理 dev worktree |
+| `create-branch` | command | 在 main worktree 建立指定名稱的 branch（無語意 primitive，給 tdp 等高層工作流委派用） |
+| `archive` | command | 原子改名 branch + 搬移多個資料夾（無語意 primitive，給 tdp 的 `finish-dev` 委派用） |
+| `pull-from-svn` | command | SVN → git（透過 `remote-*` worktree） |
+| `push-to-svn` | command | git → SVN（透過 `remote-*` worktree）；單一確認頁顯示完整訊息預覽，自動過濾 Merge / doc / spec / db / chore commit |
+| `reset-remote-test` | command | 把 `test-<n>` 對齊回 main、推上 SVN（槽位保留；release tag 指到的歷史仍可找回） |
+| `cleanup-remote-test` | command | 永久退役 `test-<n>` 槽（刪本地 branch / worktree / workspace 條目；SVN 不動） |
+| `release` | command | 發布到正式環境：merge dev 進 main → push SVN trunk → 視情況 reset test-<n> → 清理 dev worktree |
 | `svn-log` | command | 唯讀查看 SVN 歷史 |
+| `merge-main-into-all` | command | 把 main merge 進所有非 `remote/*` 與 `archives/*` 的 branch |
+| `init-from-existing` | command | 把既有 git 專案遷移成 tgs 結構（idempotent） |
 | `suggest-ignore` | skill | 管理 git/SVN ignore：直接新增或移除 `.gitignore` / `svn:ignore` pattern，或互動式分析並修正 git/SVN 不一致 |
-| `setup` | skill | 互動式設定 tgs 環境變數 |
+| `setup` | command | 互動式設定 tgs 環境變數 |
+
+## Primitive 委派（給其它 plugin 使用）
+
+`create-branch` 與 `archive` 是設計成可被其它 plugin 委派呼叫的無語意 primitive：tgs 不假設 branch 命名 convention（`feature/`、`bugfix/`、`archives/` 等），由呼叫者組成完整名稱與路徑後傳入。`turbo-dev-pack` (tdp) 從 0.5.0 起就是透過這條路徑來建立 dev branch 與歸檔。
+
+設計原則：
+
+- tgs 提供 git / 結構操作的機械性原子保證（pre-flight、原子改名、失敗 rollback）
+- tdp 等高層 plugin 維持自家 convention（`<type>/<slug>` namespace、`specs/<type>/<slug>/` 資料夾、archives 命名等）
+- 兩端透過 `/tgs:<command>` slash command 介面溝通，不直接呼叫對方的 script
 
 ## 設定
 

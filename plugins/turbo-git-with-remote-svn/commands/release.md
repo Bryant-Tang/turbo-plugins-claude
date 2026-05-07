@@ -1,8 +1,7 @@
 ---
-name: release
 description: 'Release dev branches to production by merging into main, pushing main to SVN trunk, optionally aligning test-<n> back to main, and cleaning up dev worktrees. Three modes: interactive full release of a test cycle, explicit subset release, or hotfix straight to main without going through a test branch. Use when validation passes and the user wants to publish, ship, deploy to production, finalise a test cycle, or run a hotfix release.'
 argument-hint: '[--n <number>] [--branch <name> ...] (at least one of --n or --branch is required)'
-user-invocable: true
+allowed-tools: Bash, PowerShell
 ---
 
 # release
@@ -14,7 +13,7 @@ release succeeds, `main` and the SVN trunk reflect the new production state,
 and the relevant `test-<n>` slot has been realigned (or left holding the
 unreleased remainder for partial releases).
 
-The skill never invents new git mechanics — it orchestrates:
+The command never invents new git mechanics — it orchestrates:
 
 1. Merge selected dev tips into `main` (one merge commit per tip,
    `--no-ff`)
@@ -39,7 +38,7 @@ Reject input where neither `--n` nor `--branch` is given.
 Read / Write / Edit / Glob / Grep / LSP for any file inspection or change.
 Avoid Bash / PowerShell / Python / Node.js for filesystem operations. Bash /
 PowerShell are only for invoking the helper scripts (`release-detect-merges`,
-`release-merge-tips`) and for delegating to other tgs skills.
+`release-merge-tips`) and for delegating to other tgs commands.
 
 ## Procedure
 
@@ -51,6 +50,9 @@ PowerShell are only for invoking the helper scripts (`release-detect-merges`,
   and asking which mode the user wants.
 - Decide mode A / B / C from the table above.
 - For modes A / B, verify `test-<n>` exists in git (otherwise reject).
+- For mode C, **reject any branch whose name starts with `archives/`** —
+  archived branches must not be re-released. The same exclusion applies to
+  candidate detection in modes A / B (see Step 3).
 
 ### Step 2: Pre-flight checks
 
@@ -91,8 +93,10 @@ The script outputs one line per candidate:
 - `ADVANCED:<comma-separated branches>` — branches that contain the tip but their HEAD has moved past it
 - `NONE` — no current branch corresponds to the tip (branch deleted or renamed)
 
-Already-released merges (tips already in `main`) and SVN-bridge merges
-(`pull-from-svn` artifacts) are filtered out automatically.
+Already-released merges (tips already in `main`), SVN-bridge merges
+(`pull-from-svn` artifacts), and any branches under the `archives/`
+namespace are filtered out automatically — archived branches represent
+completed work and must not surface as candidates.
 
 If the output is empty, tell the user there is nothing to release on
 `test-<n>` and stop.
@@ -109,6 +113,7 @@ Track the selected items as `(merge_hash, tip_hash, subject)` tuples.
 
 Run the same detection script. For each `--branch <name>`:
 
+- Reject names that start with `archives/`.
 - Find the candidate whose `<subject>` contains `'<name>'` (the standard git
   merge subject is `Merge branch '<name>' into <test-<n>>`, so substring match
   on the quoted name is reliable).
@@ -123,6 +128,7 @@ Track the resolved items.
 
 For each `--branch <name>`:
 
+- Reject names that start with `archives/`.
 - Verify the local branch exists (`git rev-parse --verify refs/heads/<name>`).
 - If not, fail with a clear error.
 
@@ -194,14 +200,14 @@ Then stop. **Do not continue to step 6 or beyond.**
 
 ### Step 6: Push main to SVN
 
-Delegate to the existing skill:
+Delegate to the existing command:
 
 ```
 /tgs:push-to-svn --branch main
 ```
 
 Suggest a commit message such as `release: <comma-list of subjects>` (or
-`release: hotfix <branches>` for mode C). Allow the existing skill to ask
+`release: hotfix <branches>` for mode C). Allow the existing command to ask
 about the release tag — answer per the user's preference.
 
 If `push-to-svn` fails, report it and stop. The merges have already landed
@@ -229,13 +235,14 @@ fails, report — the prior steps remain valid; the user can rerun
 Iterate the released items. For each tip `T`:
 
 1. Look up branches still pointing exactly at `T` (excluding `main`,
-   `test-*`, and `remote/*`):
+   `test-*`, `remote/*`, **and `archives/*`**):
 
 ```powershell
 git -C <main-worktree> branch --points-at <T> --format='%(refname:short)'
 ```
 
-   Filter out `main`, `test-<n>` patterns, and any `remote/*`.
+   Filter out `main`, `test-<n>` patterns, any `remote/*`, and any
+   `archives/*` (archived branches must not be touched by cleanup).
 
 2. **If exactly one branch matches:**
 
@@ -259,10 +266,13 @@ git -C <main-worktree> worktree list --porcelain
       - Remove the worktree's folder entry from `<proj>.code-workspace`
         (load JSON, filter `folders` by `name`, write UTF-8 no BOM)
 
-3. **If zero branches match** (branch was deleted, renamed, or has advanced):
+3. **If zero branches match** (branch was deleted, renamed, archived, or has
+   advanced):
    - Print an informational note ("tip released; no exact branch match for
      cleanup") and skip. **Do not** delete branches that contain the tip but
-     have advanced past it — that would discard untested work.
+     have advanced past it — that would discard untested work. Branches
+     under `archives/` are skipped by design, since they have already been
+     archived by `/tdp:finish-dev`.
 
 4. **If multiple branches match** (rare): list them and ask the user to
    handle cleanup manually; skip the auto-cleanup for this tip.
@@ -282,6 +292,9 @@ Print:
 - `--n <n>` must be a positive integer when provided.
 - Each `--branch <name>` must reference an existing local branch (mode C) or
   an existing detected merge (mode B).
+- Branches under the `archives/` namespace are never released, never
+  detected as candidates, and never cleaned up. They represent completed,
+  archived work owned by `/tdp:finish-dev`.
 - The merges in step 5 are non-fast-forward by design — every release leaves a
   visible merge commit on `main` for traceability.
 - The whole pipeline is fail-stop. No automatic rollback. Report exactly which
@@ -320,3 +333,5 @@ Print:
   but `test-<n>` HEAD differs from `main` HEAD.
 - Dev worktree cleanups, where confirmed, leave no entry for the removed
   worktree in `<proj>.code-workspace` and no branch in `git branch`.
+- No `archives/*` branch was renamed, deleted, or otherwise touched by the
+  release run.

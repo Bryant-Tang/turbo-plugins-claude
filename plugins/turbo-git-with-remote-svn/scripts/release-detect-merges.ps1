@@ -71,11 +71,11 @@ try {
 
         # Annotate current branch correspondence
         $pointsAt = (& git -C $mainWorktree branch --points-at $tip --format='%(refname:short)' | Out-String).Trim() -split "`r?`n" |
-            Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^test-\d+$' -and $_ -notmatch '^remote/' }
+            Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^test-\d+$' -and $_ -notmatch '^remote/' -and $_ -notmatch '^archives/' }
         $pointsAt = @($pointsAt)
 
         $contains = (& git -C $mainWorktree branch --contains $tip --format='%(refname:short)' | Out-String).Trim() -split "`r?`n" |
-            Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^test-\d+$' -and $_ -notmatch '^remote/' }
+            Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^test-\d+$' -and $_ -notmatch '^remote/' -and $_ -notmatch '^archives/' }
         $contains = @($contains)
 
         if ($pointsAt.Count -gt 0) {

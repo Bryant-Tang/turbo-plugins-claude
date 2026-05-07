@@ -71,14 +71,14 @@ while IFS= read -r LINE; do
 
   # Annotate current branch
   POINTS_AT="$(git -C "$MAIN_WORKTREE" branch --points-at "$TIP" --format='%(refname:short)' \
-    | grep -v -E '^(main|test-[0-9]+|remote/)' \
+    | grep -v -E '^(main|test-[0-9]+|remote/|archives/)' \
     | grep -v '^$' \
     | paste -sd, -)"
   if [[ -n "$POINTS_AT" ]]; then
     BRANCH_STATUS="AT_TIP:$POINTS_AT"
   else
     CONTAINS="$(git -C "$MAIN_WORKTREE" branch --contains "$TIP" --format='%(refname:short)' \
-      | grep -v -E '^(main|test-[0-9]+|remote/)' \
+      | grep -v -E '^(main|test-[0-9]+|remote/|archives/)' \
       | grep -v '^$' \
       | paste -sd, -)"
     if [[ -n "$CONTAINS" ]]; then

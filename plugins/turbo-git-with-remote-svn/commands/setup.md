@@ -1,8 +1,7 @@
 ---
-name: setup
 description: 'Set up or update tgs environment variable defaults in .claude/settings.local.json. Use when installing tgs for the first time or adjusting svn-log defaults and working branch defaults.'
 argument-hint: ''
-user-invocable: true
+allowed-tools: Bash, PowerShell
 ---
 
 # Setup
@@ -11,12 +10,12 @@ user-invocable: true
 
 Configure `.claude/settings.local.json` with the environment variables used by tgs commands and skills so their default behaviours match your workflow without requiring arguments on every invocation.
 
-## What This Skill Configures
+## What This Command Configures
 
 | Area | Env Vars | Companion File | Required For |
 |---|---|---|---|
 | svn-log defaults | `TGS_SVN_LOG_DEFAULT_BRANCH`, `TGS_SVN_LOG_DEFAULT_LIMIT`, `TGS_SVN_LOG_DEFAULT_VERBOSE` | — | `svn-log` command (all optional) |
-| Working branch default | `TGS_DEFAULT_WORKING_BRANCH` | — | `pull-from-svn`, `push-to-svn` skills (optional) |
+| Working branch default | `TGS_DEFAULT_WORKING_BRANCH` | — | `pull-from-svn`, `push-to-svn` commands (optional) |
 
 ## Procedure
 
