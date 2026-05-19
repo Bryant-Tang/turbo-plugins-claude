@@ -1,6 +1,8 @@
 {
   "enabledPlugins": {
     "plugin-dev@claude-plugins-official": true,
-    "commit-commands@claude-plugins-official": true
+    "commit-commands@claude-plugins-official": true,
+    "compound-engineering@compound-engineering-plugin": true,
+    "coding-tutor@compound-engineering-plugin": true
   }
 }
