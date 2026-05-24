@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Probe-GitVersion {
@@ -119,6 +119,25 @@ function Write-Utf8NoBom {
     )
     $enc = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $Content, $enc)
+}
+
+# Compute a relative path from $From to $To, compatible with PowerShell 5.1.
+# [System.IO.Path]::GetRelativePath is .NET Core / .NET 5+ only — not in .NET Framework
+# (which is what powershell.exe runs on). Use System.Uri.MakeRelativeUri instead.
+function Get-RelativePathSafe {
+    param(
+        [Parameter(Mandatory = $true)][string]$From,
+        [Parameter(Mandatory = $true)][string]$To
+    )
+    # MakeRelativeUri needs $From treated as a directory — append a separator if missing
+    # so the relative path is computed from the dir, not "as a sibling of the file".
+    $fromNorm = $From.TrimEnd('\','/') + [System.IO.Path]::DirectorySeparatorChar
+    $fromUri = New-Object System.Uri($fromNorm)
+    $toUri = New-Object System.Uri($To)
+    $relUri = $fromUri.MakeRelativeUri($toUri)
+    $rel = [System.Uri]::UnescapeDataString($relUri.ToString())
+    # MakeRelativeUri returns forward slashes; convert to OS native separator
+    return $rel -replace '/', [System.IO.Path]::DirectorySeparatorChar
 }
 
 # Compute the project-identity hash used for IIS Express site name suffixes
@@ -306,7 +325,7 @@ function Resolve-ConfigValue {
     if ($null -ne $CliValue -and -not ([string]::IsNullOrWhiteSpace([string]$CliValue))) {
         return $CliValue
     }
-    $configPath = Join-Path $RepoRoot '.turbo-plugin' 'config.toml'
+    $configPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
     $cfg = Read-TurboPluginConfig -ConfigPath $configPath
     Test-TurboPluginConfigSchema -Config $cfg
     if ($cfg.ContainsKey($Section) -and $cfg[$Section].ContainsKey($Key)) {

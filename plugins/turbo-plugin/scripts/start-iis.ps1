@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Project = '',
     [int]$Timeout = 0
 )
@@ -6,8 +6,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. (Join-Path $PSScriptRoot 'lib' 'common.ps1')
-. (Join-Path $PSScriptRoot 'lib' 'applicationhost-helpers.ps1')
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'applicationhost-helpers.ps1'))
 . (Join-Path $PSScriptRoot 'resolve-iis-settings.ps1')
 
 function Find-IisInstanceByPort {

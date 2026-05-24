@@ -5,7 +5,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. (Join-Path $PSScriptRoot 'lib' 'common.ps1')
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
 
 try {
     Probe-GitVersion
@@ -17,7 +17,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($topLevel)) { throw 'Not inside a git repository.' }
     $topLevel = Get-NormalizedAbsolutePath -Path $topLevel
     $projectAbs = Get-NormalizedAbsolutePath -Path $projectFile
-    $relPath = [System.IO.Path]::GetRelativePath($topLevel, $projectAbs)
+    $relPath = Get-RelativePathSafe -From $topLevel -To $projectAbs
     $relPath = $relPath -replace '\\', '/'
 
     $hash = Get-ProjectIdentityHash -RepoPath $topLevel -CsprojRelPath $relPath

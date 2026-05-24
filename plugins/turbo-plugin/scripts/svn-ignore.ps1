@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(ValueFromRemainingArguments=$true)]
     [string[]]$Arguments
@@ -7,7 +7,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. (Join-Path $PSScriptRoot 'lib' 'common.ps1')
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
 
 # Manual arg parsing so `-Add p1 -Add p2` works when invoked via
 # `powershell -File ...` (which would otherwise stringify an array param).

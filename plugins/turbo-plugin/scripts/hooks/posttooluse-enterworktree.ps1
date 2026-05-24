@@ -1,9 +1,9 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 # Hooks must not throw the host session. Surface errors as stderr but never exit non-zero.
 $ErrorActionPreference = 'Continue'
 
-. (Join-Path $PSScriptRoot '..' 'lib' 'common.ps1')
-. (Join-Path $PSScriptRoot '..' 'lib' 'applicationhost-helpers.ps1')
+. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'common.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'applicationhost-helpers.ps1'))
 
 function Emit-Json {
     param([hashtable]$Payload)
@@ -59,7 +59,7 @@ try {
 
     $updates = @()
     foreach ($csproj in $csprojFiles) {
-        $rel = [System.IO.Path]::GetRelativePath($newPath, $csproj.FullName)
+        $rel = Get-RelativePathSafe -From $newPath -To $csproj.FullName
         $hash = Get-ProjectIdentityHash -RepoPath $newPath -CsprojRelPath $rel
         $siteName = Format-IisExpressSiteName -CsprojPath $csproj.FullName -IdentityHash $hash
         $newPhysical = [System.IO.Path]::GetDirectoryName($csproj.FullName)

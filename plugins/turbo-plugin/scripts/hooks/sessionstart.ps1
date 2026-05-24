@@ -1,8 +1,8 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
-. (Join-Path $PSScriptRoot '..' 'lib' 'common.ps1')
-. (Join-Path $PSScriptRoot '..' 'lib' 'applicationhost-helpers.ps1')
+. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'common.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'applicationhost-helpers.ps1'))
 
 function Emit-Json {
     param([hashtable]$Payload)
@@ -42,7 +42,7 @@ try {
                     $apphostTarget = Join-Path $cwd ".vs/$slnStem/config/applicationhost.config"
                     if (Test-Path -LiteralPath $apphostTarget -PathType Leaf) {
                         foreach ($csproj in $csprojFiles) {
-                            $rel = [System.IO.Path]::GetRelativePath($cwd, $csproj.FullName)
+                            $rel = Get-RelativePathSafe -From $cwd -To $csproj.FullName
                             $hash = Get-ProjectIdentityHash -RepoPath $cwd -CsprojRelPath $rel
                             $siteName = Format-IisExpressSiteName -CsprojPath $csproj.FullName -IdentityHash $hash
                             $newPhysicalPath = [System.IO.Path]::GetDirectoryName($csproj.FullName)

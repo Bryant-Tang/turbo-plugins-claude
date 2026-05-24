@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-24
+
+### Fixed
+
+- **P0:Windows PowerShell 5.1 完全不能跑** — 20 個 .ps1 用 3-arg `Join-Path $X 'a' 'b'` syntax(PS 7+ only),PS 5.1 dot-source lib 階段就 die。改用 `[System.IO.Path]::Combine($X, 'a', 'b')`(PS 5.1 + PS 7+ 通吃)。
+- **P0:`[System.IO.Path]::GetRelativePath` 不在 .NET Framework** — 4 處 call site(`compute-project-identity.ps1`、`resolve-iis-settings.ps1`、`hooks/posttooluse-enterworktree.ps1`、`hooks/sessionstart.ps1`)用 .NET Core / .NET 5+ only 的 method,PS 5.1 跑到 identity hash 計算就 die。新增 `Get-RelativePathSafe` helper(用 `System.Uri.MakeRelativeUri`,PS 5.1 + 7+ 通吃)放 `scripts/lib/common.ps1`,4 處 call site 改用 helper。
+- **P0:含中文 .ps1 沒 UTF-8 BOM,PS 5.1 在中文 Windows 上 mojibake → parser fail** — 9 個含中文的 .ps1 加 UTF-8 BOM(`build-web.ps1`、`publish-web.ps1`、`start-iis.ps1`、`stop-iis.ps1`、`svn-ignore.ps1`、`hooks/posttooluse-enterworktree.ps1`、`hooks/sessionstart.ps1`、`lib/applicationhost-helpers.ps1`、`lib/common.ps1`)。
+
+### Test verification
+
+實機在 `SampleGitWithSvn` 跑通:
+- compute-project-identity 跨 worktree hash 完全一致(`0eb9b6ee` from main = from dev-1)
+- build 從 dev-1 → 產物只進 dev-1 bin/、main bin/ mtime 不變(關鍵 EnterWorktree bug 不重現)
+- PostToolUse hook 接 stdin JSON → applicationhost.config physicalPath 從 main 改到 dev-1
+- SessionStart peer worktree 無 marker → systemMessage 含真正 main path(非字面 `$mainPath`)
+- svn-log / svn-ignore 直接模式 PASS
+- create-remote-test SVN setup 失敗時 ERR trap 完整 rollback git branches + worktree
+
 ## [0.2.0] - 2026-05-24
 
 ### Added

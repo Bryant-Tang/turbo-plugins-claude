@@ -1,7 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. (Join-Path $PSScriptRoot 'lib' 'common.ps1')
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
 
 function Find-IisExpressPath {
     if (-not [string]::IsNullOrWhiteSpace($env:TURBO_PLUGIN_IIS_EXPRESS_PATH)) {
@@ -56,7 +56,7 @@ function Resolve-IisSettings {
     if ([string]::IsNullOrWhiteSpace($topLevel)) { throw 'Not inside a git repository.' }
     $topLevel = Get-NormalizedAbsolutePath -Path $topLevel
     $projectAbs = Get-NormalizedAbsolutePath -Path $projectFile
-    $relPath = ([System.IO.Path]::GetRelativePath($topLevel, $projectAbs)) -replace '\\', '/'
+    $relPath = (Get-RelativePathSafe -From $topLevel -To $projectAbs) -replace '\\', '/'
     $identityHash = Get-ProjectIdentityHash -RepoPath $topLevel -CsprojRelPath $relPath
     $siteName = Format-IisExpressSiteName -CsprojPath $projectFile -IdentityHash $identityHash
 
