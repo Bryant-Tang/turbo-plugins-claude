@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-24
+
+### Fixed
+
+- **PowerShell 5.1 在中文 Windows 跑時 native exe(svn/msbuild/iisexpress)的 UTF-8 stdout 渲染成 mojibake**:在 `scripts/lib/common.ps1` 開頭加 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` 與 `$OutputEncoding = [System.Text.Encoding]::UTF8`,所有 dot-source common.ps1 的 script 自動取得 UTF-8 解碼。實機 svn-log 對 UTF-8 中文 commit message 顯示問題的 fix。
+
 ## [0.2.3] - 2026-05-24
 
 ### Fixed
