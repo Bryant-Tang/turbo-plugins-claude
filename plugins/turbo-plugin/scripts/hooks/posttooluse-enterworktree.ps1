@@ -72,7 +72,10 @@ try {
         }
     }
 
-    $updatedCount = ($updates | Where-Object { $_.Updated }).Count
+    # @(...) wrap: a single-element Where-Object pipeline returns the unwrapped object;
+    # without @(...) the next .Count reads the hashtable's KEY count (4 for our shape),
+    # not the number of updated sites. Classic PS single-element pipeline gotcha.
+    $updatedCount = @($updates | Where-Object { $_.Updated }).Count
     $msg = if ($updatedCount -gt 0) {
         "turbo-plugin: refreshed applicationhost.config for $updatedCount site(s) in $newPath"
     } else {

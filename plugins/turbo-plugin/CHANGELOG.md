@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-24
+
+### Fixed
+
+- **PostToolUse EnterWorktree hook 報「for N site(s)」N 錯誤**(off-by-N → 4 而非 1):`($updates | Where-Object { $_.Updated }).Count` 在 pipeline 結果只 1 個 hashtable 時 PowerShell 不會 wrap 成 array,`.Count` 讀的是 **hashtable 自己的 key 數**(4 個 key:`Updated, SiteName, OldPaths, NewPath`)而非 update 過的 site 數。改用 `@(... | Where-Object {}).Count` 強制 array semantics。經典 PS single-element pipeline 陷阱。
+
+### Added
+
+- 根目錄 `tools/lint-ps-compat.ps1`(+ `.sh` wrapper):靜態掃 `.ps1` 偵測 Windows PowerShell 5.1 不相容 patterns:3+ arg `Join-Path`、`[System.IO.Path]::GetRelativePath`、含非 ASCII 但無 UTF-8 BOM。可手動跑 `pwsh tools/lint-ps-compat.ps1` 或進 pre-commit hook。
+- 根目錄 `CLAUDE.md` 加 **Windows PowerShell 5.1 相容性** 條目(5 條禁忌:Join-Path 3+arg / GetRelativePath / 無 BOM 中文 / `2>&1` on native exe / 單元素 pipeline 直接 `.Count`),讓未來貢獻者免踩同坑。
+
 ## [0.2.2] - 2026-05-24
 
 ### Fixed

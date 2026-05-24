@@ -78,6 +78,18 @@ plugins/<plugin-name>/
 - 不要用 `&&` 串接會改變狀態的 shell 指令（建立目錄、移動檔案、commit 等）；分成獨立步驟跑（這條規則在多個 skill 的 Decision Rules / Procedure 都有寫，要遵守）。
 - Windows 上若使用者傳入 Git Bash 風格的路徑（`/c/Users/...`），在寫進 `settings.local.json` 之前要轉成 Windows 格式（`C:/Users/...`）——否則 Docker Desktop 不認。
 
+#### Windows PowerShell 5.1 相容性（必須遵守）
+
+支援目標 = **Windows PowerShell 5.1**（內建 `powershell.exe`，跑在 .NET Framework 4.x 上）— 多數 Windows 使用者沒裝 PowerShell 7+。下列 syntax / API **必禁**：
+
+- ❌ **3+ arg `Join-Path`**：`Join-Path $a 'b' 'c'` 是 PS 7+ only，PS 5.1 噴 `A positional parameter cannot be found...`。改用 `[System.IO.Path]::Combine($a, 'b', 'c')`（PS 5.1 + 7+ 通吃）。
+- ❌ **`[System.IO.Path]::GetRelativePath`**：.NET Core / .NET 5+ only，PS 5.1（.NET Framework）沒這個 method。用 `Get-RelativePathSafe` helper（`scripts/lib/common.ps1`，內部用 `System.Uri.MakeRelativeUri`）。
+- ❌ **無 BOM 的含中文 `.ps1`**：PS 5.1 在中文 Windows（system codepage 950 / Big5）讀無 BOM UTF-8 → mojibake → parser fail。任何含非 ASCII 字串的 `.ps1` 都要存成 **UTF-8 with BOM**（前 3 bytes `EF BB BF`）。
+- ❌ **對 native exe 用 `2>&1`**：PS 5.1 會把 stderr 包成 `NativeCommandError`，把 exe 的 `$?` 變成 `$false`（即使 exit code 0）。改用 `2>$null` 抑制 + 明確 check `$LASTEXITCODE`，或讓 stderr 自然往上走。
+- ❌ **單元素 pipeline 直接讀 `.Count`**：`($x | Where ...).Count` 在 result 只 1 個 object 時不會 wrap 成 array，`.Count` 可能讀到該 object 自己的 property（hashtable 的 key 數、字串長度等）。改用 `@($x | Where ...).Count` 強制 array。
+
+新增 `.ps1` 或修改既有 .ps1 時請以上 5 條對照檢查。
+
 ### 設定檔分層
 
 - `.claude/settings.json`：可進版控的設定（這個 repo 自己的 `enabledPlugins`）。
