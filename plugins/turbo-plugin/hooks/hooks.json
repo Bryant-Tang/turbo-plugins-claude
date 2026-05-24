@@ -1,0 +1,29 @@
+{
+  "description": "turbo-plugin: PostToolUse EnterWorktree 自動補 applicationhost.config（Windows 限定，atomic+idempotent）+ SessionStart 提示性 3 分支 prompt。兩 hook 都是 advisory（不會 block session）。",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/posttooluse-enterworktree.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/sessionstart.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

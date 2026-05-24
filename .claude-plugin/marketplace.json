@@ -23,6 +23,11 @@
       "name": "tpi",
       "description": "Cross-plugin integration.",
       "source": "./plugins/turbo-plugins-integration"
+    },
+    {
+      "name": "turbo-plugin",
+      "description": ".NET Framework Web + git+SVN bridged 環境的本機開發雜務工具集（13 個 skill）。env-free，集中設定於 .turbo-plugin/，取代 tdp/tnf/tgs/tpi。",
+      "source": "./plugins/turbo-plugin"
     }
   ]
 }

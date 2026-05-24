@@ -1,0 +1,36 @@
+# turbo-plugin 集中設定
+# 進 git，跨同事 / 跨 worktree 共享。
+# 不要把 credentials 寫進這裡 — 那是 dbhub.local.toml 的工作。
+
+schema_version = 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [build] — tp-build-dotnet-framework-web 用
+# 全部欄位都有 default，省略整段也可。
+# ─────────────────────────────────────────────────────────────────────────────
+# [build]
+# configuration = "Debug"           # MSBuild /p:Configuration
+# platform      = "Any CPU"         # MSBuild /p:Platform
+# project       = "src/Web/Web.csproj"  # 相對 worktree root；省略時自動偵測單一 .csproj
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [publish] — tp-publish-dotnet-framework-web 用
+# ─────────────────────────────────────────────────────────────────────────────
+# [publish]
+# configuration  = "Release"
+# platform       = "Any CPU"
+# default_pubxml = "src/Web/Properties/PublishProfiles/Production.pubxml"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [frontend] — 整段省略則發佈時不跑前端 build
+# ─────────────────────────────────────────────────────────────────────────────
+# [frontend]
+# dir             = "src/Web/ClientApp"
+# install_command = "yarn install"
+# build_command   = "yarn dev-build"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [run] — tp-run-dotnet-framework-web 用
+# ─────────────────────────────────────────────────────────────────────────────
+# [run]
+# listening_timeout_seconds = 30    # IIS Express 冷啟 + first-request JIT 場景可調高至 90

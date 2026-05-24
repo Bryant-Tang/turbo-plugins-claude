@@ -1,0 +1,126 @@
+param(
+    [string]$Pubxml = '',
+    [string]$Configuration = '',
+    [string]$Platform = '',
+    [string]$Project = ''
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'lib' 'common.ps1')
+
+try {
+    Probe-GitVersion
+
+    $repoRoot = (Get-Location).Path
+
+    # Project: CLI arg → config.toml [build].project → auto-detect single .csproj
+    $projectFile = Find-SingleCsproj -RepoRoot $repoRoot -CliProjectValue $Project
+
+    # MSBuild path: TURBO_PLUGIN_MSBUILD_PATH env → standard VS install locations
+    $msbuildPath = Find-MSBuild -RepoRoot $repoRoot
+
+    # pubxml: CLI arg → config.toml [publish].default_pubxml → auto-detect single .pubxml under project's Properties/PublishProfiles
+    $pubxmlPathRaw = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'default_pubxml' -CliValue $Pubxml -Default $null
+    if ([string]::IsNullOrWhiteSpace($pubxmlPathRaw)) {
+        $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
+        $profilesDir = Join-Path $projectDir 'Properties/PublishProfiles'
+        $pubxmls = @()
+        if (Test-Path -LiteralPath $profilesDir -PathType Container) {
+            $pubxmls = @(Get-ChildItem -LiteralPath $profilesDir -Filter '*.pubxml' -ErrorAction SilentlyContinue)
+        }
+        if ($pubxmls.Count -eq 0) {
+            throw 'No .pubxml found. Specify -Pubxml or set [publish].default_pubxml in .turbo-plugin/config.toml.'
+        }
+        if ($pubxmls.Count -gt 1) {
+            $names = ($pubxmls | ForEach-Object { $_.Name }) -join ', '
+            throw "Multiple .pubxml files found under $profilesDir ($names). Specify -Pubxml or set [publish].default_pubxml."
+        }
+        $pubxmlAbsPath = $pubxmls[0].FullName
+    } else {
+        $pubxmlAbsPath = Resolve-RepoPath -RepoRoot $repoRoot -PathValue $pubxmlPathRaw
+    }
+    if (-not (Test-Path -LiteralPath $pubxmlAbsPath -PathType Leaf)) {
+        throw "Publish profile does not exist: $pubxmlAbsPath"
+    }
+
+    $publishConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'configuration' -CliValue $Configuration -Default 'Release'
+    $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default 'Any CPU'
+
+    # Pre-publish: run pack-content for frontend (if configured)
+    $packScript = Join-Path $PSScriptRoot 'pack-content.ps1'
+    if (Test-Path -LiteralPath $packScript -PathType Leaf) {
+        & $packScript
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+
+    $publishProfileName = [System.IO.Path]::GetFileNameWithoutExtension($pubxmlAbsPath)
+    $publishProfileDir  = [System.IO.Path]::GetDirectoryName($pubxmlAbsPath)
+
+    Write-Output "Running MSBuild Publish for $projectFile (Configuration: $publishConfiguration, Platform: $publishPlatform)"
+    Write-Output "  Publish profile: $publishProfileName"
+    Write-Output "  Profile root:    $publishProfileDir"
+
+    & $msbuildPath $projectFile `
+        /p:DeployOnBuild=true `
+        "/p:PublishProfile=$publishProfileName" `
+        "/p:PublishProfileRootFolder=$publishProfileDir" `
+        "/p:Configuration=$publishConfiguration" `
+        "/p:Platform=$publishPlatform"
+
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Output 'Publish succeeded.'
+
+    try {
+        $pubxml = [xml](Get-Content -LiteralPath $pubxmlAbsPath -Raw)
+    } catch {
+        [Console]::Error.WriteLine("Warning: failed to parse publish profile XML; output path unknown. ($($_.Exception.Message))")
+        return
+    }
+
+    $publishUrlNodes = $pubxml.SelectNodes('//*[local-name()="PublishUrl"]')
+    $methodNodes     = $pubxml.SelectNodes('//*[local-name()="WebPublishMethod"]')
+
+    $method = if ($methodNodes -and $methodNodes.Count -gt 0) { $methodNodes[$methodNodes.Count - 1].InnerText.Trim() } else { '' }
+    if ([string]::IsNullOrWhiteSpace($method)) { $method = 'FileSystem' }
+    Write-Output "Method: $method"
+
+    if (-not $publishUrlNodes -or $publishUrlNodes.Count -eq 0) {
+        [Console]::Error.WriteLine('Warning: <PublishUrl> not found in profile; output path unknown.')
+        return
+    }
+
+    $publishUrlRaw = $publishUrlNodes[$publishUrlNodes.Count - 1].InnerText.Trim()
+    if ([string]::IsNullOrWhiteSpace($publishUrlRaw)) {
+        [Console]::Error.WriteLine('Warning: <PublishUrl> is empty; output path unknown.')
+        return
+    }
+
+    if ($publishUrlRaw -match '\$\(') {
+        [Console]::Error.WriteLine('Warning: <PublishUrl> contains MSBuild properties; cannot resolve statically.')
+        Write-Output "Published to: $publishUrlRaw"
+        return
+    }
+
+    if ($method -eq 'FileSystem') {
+        if ([System.IO.Path]::IsPathRooted($publishUrlRaw)) {
+            $resolved = [System.IO.Path]::GetFullPath($publishUrlRaw)
+        } else {
+            $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
+            $resolved = [System.IO.Path]::GetFullPath((Join-Path $projectDir $publishUrlRaw))
+        }
+        $resolved = $resolved.TrimEnd('\')
+        $displayPath = 'file:///' + ($resolved -replace '\\', '/')
+    } else {
+        $resolved = $publishUrlRaw
+        $displayPath = $resolved
+    }
+
+    Write-Output "Published to: $displayPath"
+    Write-Output "PUBLISH_OUTPUT_PATH=$resolved"
+}
+catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}

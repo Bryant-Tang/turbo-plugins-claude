@@ -1,0 +1,59 @@
+param(
+    [string]$Project = ''
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'lib' 'common.ps1')
+. (Join-Path $PSScriptRoot 'resolve-iis-settings.ps1')
+
+try {
+    Probe-GitVersion
+    $settings = Resolve-IisSettings -Project $Project
+
+    if ([string]::IsNullOrWhiteSpace($settings.IisConfigSiteName)) {
+        throw 'No IIS site name resolved; cannot identify which IIS Express instance to stop.'
+    }
+
+    $processes = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'iisexpress.exe'" -ErrorAction SilentlyContinue)
+
+    # Anchored site-name match: extract /site:<name> and compare exactly (no substring/glob ambiguity).
+    $matched = @($processes | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
+        $_.CommandLine -match '/site:([^\s"]+)' -and
+        $Matches[1] -eq $settings.IisConfigSiteName
+    })
+
+    if ($matched.Count -eq 0) {
+        Write-Output "No IIS Express process found for site '$($settings.IisConfigSiteName)'."
+
+        # Secondary scan: look for same csproj-stem but different hash (orphan from worktree rename).
+        $csprojStem = [System.IO.Path]::GetFileNameWithoutExtension($settings.ProjectFile)
+        $stemPattern = "^$([regex]::Escape($csprojStem))-[0-9a-f]{8}$"
+        $orphans = @($processes | Where-Object {
+            if ([string]::IsNullOrWhiteSpace($_.CommandLine)) { return $false }
+            if ($_.CommandLine -notmatch '/site:([^\s"]+)') { return $false }
+            # Capture $Matches[1] into a local before the next -match clobbers it.
+            $candidateSite = $Matches[1]
+            $candidateSite -match $stemPattern -and $candidateSite -ne $settings.IisConfigSiteName
+        })
+        if ($orphans.Count -gt 0) {
+            $orphanList = ($orphans | ForEach-Object {
+                $null = $_.CommandLine -match '/site:([^\s"]+)'
+                "PID $($_.ProcessId) site=$($Matches[1])"
+            }) -join '; '
+            Write-Output "tp-stop 用當前 identity 撈不到 instance,但偵測到下列同 csproj-stem 但不同 hash 的 instance — 可能是 worktree rename 留的 orphan: $orphanList。請手動殺或跑 /tp-cleanup-orphan-iis."
+        }
+        exit 0
+    }
+
+    foreach ($p in $matched) {
+        Stop-Process -Id $p.ProcessId -Force
+        Write-Output "Stopped IIS Express PID $($p.ProcessId) (site: $($settings.IisConfigSiteName))"
+    }
+}
+catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
