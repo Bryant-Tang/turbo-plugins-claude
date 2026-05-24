@@ -262,8 +262,8 @@ List what was changed in each category and what was skipped.
 
 ## Test Scenarios
 
-- **Direct mode --add-git**: `--add-git "*.log"` → .gitignore 末尾出現 "*.log"、新 commit on main branch 內容只有 .gitignore。
+- **Direct mode --add-git**: PowerShell `-AddGit "*.log"` / bash `--add-git "*.log"` → .gitignore 末尾出現 "*.log"、新 commit on main branch 內容只有 .gitignore。
 - **Direct mode --remove-git**: 對已存在 pattern 跑 `--remove-git` → 該行從 .gitignore 移除、commit 新增。對不存在 pattern 跑 → 印 "not found" 不 commit。
-- **Direct mode --add-svn**: `--add-svn "build/"` → 全 remote worktrees svn:ignore 都加該 pattern,一次 SVN commit。
+- **Direct mode --add-svn**: PowerShell `-Add "build/"` / bash `--add "build/"` → 全 remote worktrees svn:ignore 都加該 pattern,一次 SVN commit。
 - **Analysis mode**: 在有 untracked `.env` 的 repo 跑 analysis mode → Git Ignore prompt 出現 .env,使用者選 Apply all → .gitignore 加 .env、commit 新增。
 - **No remote worktrees**: 沒 remote-* worktree 的 repo 跑 analysis mode → 只跑 Git Ignore 分類,跳過 SVN Ignore / Inconsistency / Un-track。

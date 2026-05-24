@@ -82,8 +82,13 @@ try {
         $remotemainPath = Join-Path $worktreesDir 'remote-main'
         $ignoreToApply = '.git' + [System.Environment]::NewLine + '.gitignore'
         if (Test-Path -LiteralPath $remotemainPath -PathType Container) {
-            $inherited = (& svn propget svn:ignore $remotemainPath 2>&1 | Out-String).Trim()
-            if (-not [string]::IsNullOrWhiteSpace($inherited)) { $ignoreToApply = $inherited }
+            # Suppress stderr (avoid wrapping warning as NativeCommandError in PS 5.1) and check exit code.
+            # "Property 'svn:ignore' not found" is a normal state when remote-main has no inherited ignore;
+            # in that case keep the default $ignoreToApply rather than treating the warning text as value.
+            $inherited = (& svn propget svn:ignore $remotemainPath 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($inherited)) {
+                $ignoreToApply = $inherited
+            }
         }
         Push-Location $remoteWorktreePath
         try {

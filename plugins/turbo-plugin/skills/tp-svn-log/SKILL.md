@@ -13,10 +13,19 @@ user-invocable: true
 
 ## Procedure
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/svn-log.{ps1,sh}`,可選參數:
-   - `--branch <main|test-<n>>`(default `main`)
-   - `--limit <n>`(default 50,正整數)
-   - `--verbose`(顯示變更檔案清單)
+1. 跑 script,參數依平台:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-log.ps1" [-Branch <main|test-<n>>] [-Limit <n>] [-VerboseOutput]
+   ```
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-log.sh" [--branch <main|test-<n>>] [--limit <n>] [--verbose]
+   ```
+
+   可選參數(logical 名稱與行為):
+   - branch(default `main`)
+   - limit(default 50,正整數)
+   - verbose(顯示變更檔案清單)
 
 2. 將 script stdout 原樣呈現給使用者。
 
@@ -33,7 +42,7 @@ user-invocable: true
 
 ## Test Scenarios
 
-- **Default limit**: 不傳 `--limit` → 顯示 default(讀 config.toml `[svn] log_limit` 或 fallback 預設值)的 SVN log 條目。
-- **Custom limit**: `--limit 5` → 顯示最近 5 條 SVN revision。
-- **Invalid limit**: `--limit abc` 或 `--limit -5` → fail loudly 拒跑,訊息明確指出 limit 必須是正整數。
+- **Default limit**: 不傳 limit → 顯示 default 50 條的 SVN log。
+- **Custom limit**: PowerShell `-Limit 5` / bash `--limit 5` → 顯示最近 5 條 SVN revision。
+- **Invalid limit**: PowerShell `-Limit 'abc'` → PS param binding 直接拒;`-Limit -5` 或 bash `--limit -5` → script 拋 `Limit must be a positive integer`。
 - **Encoding**: 含中文 commit message 的 revision → 顯示為 UTF-8 不亂碼。

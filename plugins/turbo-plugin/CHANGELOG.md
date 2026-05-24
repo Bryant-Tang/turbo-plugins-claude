@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-24
+
+### Fixed
+
+- **`create-remote-test.ps1` 對 `svn propget svn:ignore` 過度敏感**:當 remote-main 沒設 `svn:ignore` propset 時(乾淨初始狀態的常見情況),`svn propget` 對 stderr 寫 warning(`W200017: Property 'svn:ignore' not found`)。原本程式用 `2>&1` 捕捉 stderr → PS 5.1 把 native exe stderr 包成 NativeCommandError → script throw + rollback。改用 `2>$null` 抑制 warning + 明確 check `$LASTEXITCODE`,缺 propset 時 fall through 用 default 值(`.git\n.gitignore`)。
+- **SKILL Test Scenarios shell-only 語法 → 改成 PowerShell + bash 雙列**:`tp-svn-log` 與 `tp-suggest-ignore` 的 Test Scenarios 寫成 `--limit 5` / `--add-svn "..."`,但 PS script 用 `-Limit 5` / `-Add "..."`。改成兩種語法並列(PowerShell `-Limit 5` / bash `--limit 5`),並把 Procedure 改成顯示 powershell + bash 各自完整 invocation。
+
 ## [0.2.1] - 2026-05-24
 
 ### Fixed
