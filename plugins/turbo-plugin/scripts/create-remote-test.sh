@@ -97,8 +97,19 @@ else
   svn copy "$MAIN_SVN_URL" "$SVN_URL" -m "create $TEST_BRANCH branch"
 fi
 
-echo "Running: svn checkout $SVN_URL $REMOTE_PATH"
-svn checkout "$SVN_URL" "$REMOTE_PATH"
+echo "Running: svn checkout --force $SVN_URL $REMOTE_PATH"
+# --force: `git worktree add` already created `.git` (pointer file) + init-commit content
+# (init.txt) in the worktree path; svn would otherwise mark these as "obstructed/conflict"
+# and svn commit would refuse. --force treats existing files as already-versioned.
+svn checkout --force "$SVN_URL" "$REMOTE_PATH"
+
+# CRITICAL: untrack `.git` from svn working copy BEFORE setting svn:ignore.
+# Without this, `.git` (git pointer file) gets pushed to permanent SVN history and pollutes
+# test branches for everyone who checks out (with a `.git` pointing to the original committer's
+# local path). `--keep-local` removes it from svn versioning but keeps the file on disk.
+if [[ -e "$REMOTE_PATH/.git" ]]; then
+  (cd "$REMOTE_PATH" && svn rm --keep-local '.git' 2>/dev/null || true)
+fi
 
 REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-main"
 IGNORE_TO_APPLY=$'.git\n.gitignore'

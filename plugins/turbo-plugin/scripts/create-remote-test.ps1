@@ -75,18 +75,48 @@ try {
         } else {
             Write-Output "SVN path exists, will checkout: $SvnUrl"
         }
-        Write-Output "Running: svn checkout $SvnUrl $remoteWorktreePath"
-        & svn checkout $SvnUrl $remoteWorktreePath
+        Write-Output "Running: svn checkout --force $SvnUrl $remoteWorktreePath"
+        # --force: `git worktree add` already created `.git` (pointer file) + init-commit content
+        # (init.txt) in the worktree path; svn would otherwise mark these as "obstructed/conflict"
+        # and svn commit would refuse. --force treats existing files as already-versioned.
+        & svn checkout --force $SvnUrl $remoteWorktreePath
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
+
+        # CRITICAL: untrack `.git` from svn working copy BEFORE setting svn:ignore.
+        # `--force` checkout added `.git` (git pointer file) to svn-managed state; if we leave it,
+        # the next svn commit will push `.git` to permanent SVN history, polluting test branches for
+        # everyone who checks out (with a `.git` pointing to the original committer's local path).
+        # `--keep-local` removes it from svn versioning but keeps the file on disk (git still uses it).
+        Push-Location $remoteWorktreePath
+        try {
+            $gitFile = Join-Path $remoteWorktreePath '.git'
+            if (Test-Path -LiteralPath $gitFile) {
+                & svn rm --keep-local '.git' 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    # If .git wasn't tracked yet (e.g., --force didn't add it), svn rm fails harmlessly
+                    Write-Verbose 'svn rm .git: not tracked (ok)'
+                }
+            }
+        } finally {
+            Pop-Location
+        }
 
         $remotemainPath = Join-Path $worktreesDir 'remote-main'
         $ignoreToApply = '.git' + [System.Environment]::NewLine + '.gitignore'
         if (Test-Path -LiteralPath $remotemainPath -PathType Container) {
-            # Suppress stderr (avoid wrapping warning as NativeCommandError in PS 5.1) and check exit code.
-            # "Property 'svn:ignore' not found" is a normal state when remote-main has no inherited ignore;
-            # in that case keep the default $ignoreToApply rather than treating the warning text as value.
-            $inherited = (& svn propget svn:ignore $remotemainPath 2>$null | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($inherited)) {
+            # v0.2.6 fix: `2>$null` alone does NOT prevent PS 5.1 + StrictMode + EAP=Stop from
+            # treating native exe stderr (svn W200017 warning) as a terminating NativeCommandError.
+            # Wrap in nested try/catch so the "Property 'svn:ignore' not found" warning is
+            # swallowed at the call site rather than bubbling to the outer rollback catch.
+            $inherited = ''
+            try {
+                $inherited = (& svn propget svn:ignore $remotemainPath 2>$null | Out-String).Trim()
+            } catch {
+                # W200017 ("Property 'svn:ignore' not found") is normal for a clean remote-main;
+                # keep $inherited as empty so default $ignoreToApply is used below.
+                $inherited = ''
+            }
+            if (-not [string]::IsNullOrWhiteSpace($inherited)) {
                 $ignoreToApply = $inherited
             }
         }
