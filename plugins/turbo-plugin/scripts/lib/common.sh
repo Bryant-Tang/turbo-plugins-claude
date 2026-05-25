@@ -129,31 +129,14 @@ write_utf8_no_bom() {
   LC_ALL=C.UTF-8 printf '%s' "$content" > "$path" 2>/dev/null || printf '%s' "$content" > "$path"
 }
 
-# Compute project-identity hash: first 8 hex chars of sha256(git-common-dir + "#" + lower(csproj-relpath)).
-# Args: <repo_path> <csproj_relpath>
-get_project_identity_hash() {
-  local repo_path="$1"
-  local csproj_relpath="$2"
-  local common_dir norm rel identity hash
-  common_dir="$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  if [[ -z "$common_dir" ]]; then
-    echo "Error: not a git repository: $repo_path" >&2
-    return 1
-  fi
-  norm="$(get_normalized_absolute_path "$common_dir")"
-  rel="${csproj_relpath//\\//}"
-  rel="${rel,,}"
-  identity="${norm}#${rel}"
-  if command -v sha256sum >/dev/null 2>&1; then
-    hash="$(printf '%s' "$identity" | sha256sum | awk '{print $1}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    hash="$(printf '%s' "$identity" | shasum -a 256 | awk '{print $1}')"
-  else
-    echo "Error: neither sha256sum nor shasum available." >&2
-    return 1
-  fi
-  echo "${hash:0:8}"
-}
+# v0.2.7+ F-U3.9 fix: Removed bash get_project_identity_hash() function. It was dead
+# code (no caller in production — all SVN scripts are native bash; all IIS/build scripts
+# are ps1-delegate so hash computation always happens on PS side via Get-ProjectIdentityHash).
+# The bash version was producing DIFFERENT hashes than PS (due to get_normalized_absolute_path
+# using forward slashes vs PS using backslashes in the sha256 input), which would cause
+# subtle cross-language inconsistency if any future caller relied on this function. Better
+# to remove than to maintain a divergent implementation. Restore + slash-normalize if a
+# future bash caller needs project identity hashing.
 
 # Compute IIS Express site name from csproj path and identity hash.
 # Args: <csproj_path> <identity_hash>

@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **F-U17.5(P1)** `create-remote-test.ps1` git mutations(`git branch`/`worktree add`)移進 rollback try 內,任一 git op 失敗也觸發 rollback 清掉部分建好的 branch。.sh 端早有 `trap ERR` 涵蓋,行為一致。
+- **F-U16.bridge(P1)** create-remote-test 在 svn commit 前同步 main 當前 `.gitignore` 進 remote-test-N worktree。Root cause:SVN copy 帶過去的 .gitignore 是 main SVN 過去版本,跟 main git 當前版本不同 → 第一次 tp-push-to-svn 必撞 .gitignore + .svn/wc.db merge conflict。同步後 pull/push 完全乾淨。.ps1 + .sh 兩端同修。
+- **F-U3.11(P1)** bash `read_turbo_plugin_config` sentinel-mode 判斷條件 `[[ -n "$filter_section" && -n "$filter_key" ]]` 對 top-level key(section="")永遠 false → `check_turbo_plugin_config_schema` 對 invalid schema_version 永遠不發 warning。改成 `[[ -n "$filter_key" ]]` 以 key 為 sentinel。
+- **F-U2.3(P2)** `Get-MainWorktree` 包 try/catch 防 PS 5.1 + StrictMode + EAP=Stop 把 git fatal stderr 變 terminating error 蓋掉自寫的 `Not inside a git repository.` 訊息。
+- **F-U2.9(P2)** `Get-RelativePathSafe -From X -To X` same-path case 加 special-case return `''`(原 MakeRelativeUri 行為視 trailing separator state 不確定)。
+- **F-U18.svn-state(P2)** `reset-remote-test` `.ps1 + .sh` 兩端 git status check 都 filter 掉 `.svn/*` paths。原本把 SVN binary metadata `.svn/wc.db` 視為 user uncommitted change → 拒絕 reset,提示 user 用 push/pull 解,但 push/pull 自己也 touch wc.db,死循環。
+- **F-U13.6(P3)** `cleanup-orphan-iis -RemoveSite X` 在 orphanMap.Count=0 時 emit warning「X specified but no orphans found」,不再 silent exit 0(原本 user 不知道請求 mismatch)。
+
+### Removed
+
+- **F-U3.9(P3)** Removed bash `get_project_identity_hash()` from `common.sh`. Was dead code(no caller — all SVN scripts are native bash, all build/IIS scripts are ps1-delegate so hash computation always happens on PS side). Bash version produced **different** hashes than PS due to forward-slash vs backslash difference in sha256 input — kept-but-divergent was a foot-gun for future callers.
+
 ## [0.2.7] - 2026-05-25
 
 ### Added

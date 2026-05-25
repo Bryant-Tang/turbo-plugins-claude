@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Project = '',
     [string]$RemoveSite = '',
@@ -81,6 +81,12 @@ try {
     }
 
     if ($orphanMap.Count -eq 0) {
+        # v0.2.7+ F-U13.6 fix: if user explicitly asked to remove a specific site but no orphans
+        # exist, surface a warning rather than silently exit 0 ("No orphan...") — user might
+        # think the removal succeeded when actually nothing was checked against their request.
+        if (-not [string]::IsNullOrWhiteSpace($RemoveSite)) {
+            [Console]::Error.WriteLine("Warning: -RemoveSite '$RemoveSite' specified but no orphans found. Nothing matched your request.")
+        }
         Write-Output 'No orphan IIS Express instances or applicationhost.config sites found.'
         exit 0
     }

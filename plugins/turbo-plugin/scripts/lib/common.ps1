@@ -50,7 +50,15 @@ function Get-NormalizedAbsolutePath {
 }
 
 function Get-MainWorktree {
-    $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+    # v0.2.7+ F-U2.3 fix: wrap git call in try/catch to prevent PS 5.1 + StrictMode + EAP=Stop
+    # from bubbling raw git "fatal: not a git repository" stderr as terminating NativeCommandError
+    # before our self-emitted "Not inside a git repository." throw can fire.
+    $commonDir = ''
+    try {
+        $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+    } catch {
+        $commonDir = ''
+    }
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonDir)) {
         throw 'Not inside a git repository.'
     }
@@ -137,9 +145,17 @@ function Get-RelativePathSafe {
         [Parameter(Mandatory = $true)][string]$From,
         [Parameter(Mandatory = $true)][string]$To
     )
+    # v0.2.7+ F-U2.9 fix: define same-path return contract explicitly. MakeRelativeUri's
+    # behavior on $From == $To is ambiguous (can return "" or "../<basename>" depending on
+    # trailing-separator state); callers expecting a meaningful empty result get surprised.
+    $fromTrimmed = $From.TrimEnd('\','/')
+    $toTrimmed = $To.TrimEnd('\','/')
+    if ($fromTrimmed -eq $toTrimmed) {
+        return ''
+    }
     # MakeRelativeUri needs $From treated as a directory — append a separator if missing
     # so the relative path is computed from the dir, not "as a sibling of the file".
-    $fromNorm = $From.TrimEnd('\','/') + [System.IO.Path]::DirectorySeparatorChar
+    $fromNorm = $fromTrimmed + [System.IO.Path]::DirectorySeparatorChar
     $fromUri = New-Object System.Uri($fromNorm)
     $toUri = New-Object System.Uri($To)
     $relUri = $fromUri.MakeRelativeUri($toUri)

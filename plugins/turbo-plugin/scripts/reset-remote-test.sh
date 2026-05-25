@@ -48,7 +48,11 @@ if [[ -n "$MAIN_STATUS" ]]; then
   exit 1
 fi
 
-REMOTE_STATUS="$(git -C "$REMOTE_PATH" status --porcelain)"
+# v0.2.7+ F-U18.svn-state fix: filter out .svn/* paths from git status check.
+# .svn/wc.db is SVN's binary metadata (modified by every svn op); treating it as
+# user uncommitted change deadlocks user — told to push/pull but those touch wc.db too.
+REMOTE_STATUS_RAW="$(git -C "$REMOTE_PATH" status --porcelain)"
+REMOTE_STATUS="$(printf '%s' "$REMOTE_STATUS_RAW" | grep -v -E '^\s*[?MADRC!]+\s+\.svn[/\\]' || true)"
 if [[ -n "$REMOTE_STATUS" ]]; then
   echo "Error: remote test worktree '$REMOTE_PATH' has uncommitted changes. Run /tp-push-to-svn or /tp-pull-from-svn to resolve first." >&2
   echo "$REMOTE_STATUS" >&2

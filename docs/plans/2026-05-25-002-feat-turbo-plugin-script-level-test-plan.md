@@ -205,7 +205,7 @@ Count check:17 user-facing(`build-web` ~ `svn-log`)+ 2 hook + 2 lib = **21 .ps1*
 - **U1.2 SVN server up**:`svn ls file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/` exit 0,輸出含 `main/` `test/`
 - **U1.3 MSBuild + IIS path**:`Test-Path 'C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe'` + `Test-Path 'C:/Program Files/IIS Express/iisexpress.exe'` 各 True
 - **U1.4 Lint clean**:`tools/lint-ps-compat.ps1 -Path plugins/turbo-plugin` exit 0,訊息 `0 violations`
-- **U1.5 PATH 工具齊**:`Get-Command svn,git,powershell,iisexpress -ErrorAction SilentlyContinue` 各 Source 非空;`node` / `npm` 缺則 U7.10 / U8.1 / U8.6 mark `skip - no node`
+- **U1.5 PATH 工具齊**(F-U1.5 修正):`Get-Command svn,git,powershell -ErrorAction SilentlyContinue` 各 Source 非空;**iisexpress 不在 default PATH**(Windows 設計上裝在 `C:\Program Files\IIS Express\` 不加 PATH),改用 U1.3 file existence check 已涵蓋;`node` / `npm` 缺則 U7.10 / U8.1 / U8.6 mark `skip - no node`
 - **U1.6 git version >=2.31**:`git --version` 解 numeric 比對(若 <2.31 → U2.3 / U5.1 等所有 git-common-dir / worktree 操作會 fail;mark blocker)
 
 **Verification**:全 PASS = 環境 ready,後續 unit 可信賴 baseline 一致。
