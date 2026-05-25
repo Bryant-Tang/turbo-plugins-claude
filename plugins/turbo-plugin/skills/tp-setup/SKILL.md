@@ -27,6 +27,24 @@ turbo-plugin 唯一設定入口,自動偵測當前狀態並進入對應的 case:
 1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.ps1`(PowerShell)或 `common.sh`(Bash)的 `Probe-GitVersion` / `probe_git_version`。Git < 2.31 → fail loudly 帶升級提示。
 2. 跑 `git rev-parse --show-superproject-working-tree`。非空 → 拒跑,提示「submodule 不在 turbo-plugin 管理範圍內,請在 superproject root 設定」。
 
+### Step 0.5 — Encoding support check(v0.2.7+)
+
+跑 `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/check-encoding-support.ps1"` 偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。
+
+parse stdout 取 `ARGV_SAFE_FOR_UNICODE` 值:
+- `True` → 略過此 step
+- `False` → 進入 codepage remediation,**使用 `AskUserQuestion`** 提供三選一:
+
+  | 選項 | 內容 | 動作 |
+  |---|---|---|
+  | (a) PowerShell 7+(Recommended) | 自動 winget install + 切換 shell | 跑 `winget install Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements`(若 winget 不存在 → 提示 user 從 https://aka.ms/powershell 手動下載 MSI);完成後在 `.claude/settings.local.json` 寫 `{"env": {"TURBO_PLUGIN_SHELL_HINT": "use pwsh.exe"}}`;提示 user 重啟 Claude Code session 用 pwsh |
+  | (b) Win10 UTF-8 codepage | 開設定面板讓 user 手動勾選 + 提示重開機 | 跑 `Start-Process intl.cpl -Verb RunAs`;emit 訊息:「在『系統管理』 tab → 變更系統地區設定 → 勾選『Beta: 使用 Unicode UTF-8 提供全球語言支援』→ 確定 → **重新開機**後生效」;不在 `.claude/settings.local.json` 寫 marker(因要等重開機驗證) |
+  | (c) 自行處理 / 接受限制 | 不動,但記載 | 在 `.turbo-plugin/encoding-status.local.md`(gitignored,user-specific)寫一行 timestamp + 「user accepted argv encoding limitation: SVN ops on non-ASCII filenames will fail in PS 5.1 + CP$ANSI_CP」;tp-setup 後續 step 繼續跑 |
+
+**重要警示**(寫進 AskUserQuestion question text):「Git Bash(.sh)也無法解決這個問題 — MSYS2 bash 呼叫 native Windows exe(svn.exe)時仍走 Win32 ANSI codepage 轉換。在 Git Bash 下 svn add 看似成功(exit 0)但 silently 把 mojibake 檔名寫進 SVN 永久 history,比 PowerShell 明顯 fail 更危險。**只有 PS 7+ 或 Win10 UTF-8 codepage 才能真正解決**。」
+
+選 (a) 或 (b) 之後 tp-setup 繼續跑後續 step(remediation 不阻塞 setup,但 user 知道下一次 SVN 操作前該 reboot / 切 shell)。
+
 ### Step 1 — Case detection
 
 依以下優先序判斷,**第一個 match 的 case 即為當前 case**:

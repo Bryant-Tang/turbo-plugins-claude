@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-05-25
+
+### Added
+
+- **`scripts/check-encoding-support.ps1`(+ `.sh` delegate)**:偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。輸出結構化 token(`PS_VERSION` / `ANSI_CODEPAGE` / `ARGV_SAFE_FOR_UNICODE` / `RECOMMENDATION`)讓 SKILL parse,搭配警示訊息說明 Git Bash 也無法解的 root cause。
+- **`tp-setup` SKILL Step 0.5 — Encoding support check**(plan 002 U16.enc P0 環境性限制 user-side remediation):tp-setup 跑時 detect codepage,若非 UTF-8(PS 5.1 + zh-TW/zh-CN/ja-JP Windows 常態)→ 用 `AskUserQuestion` 三選一:(a) winget install PowerShell 7+ 自動 + 寫 hint 進 `settings.local.json` + 提示切 shell / (b) 開 `intl.cpl` 讓 user 勾選 Win10 UTF-8 codepage + 提示重開機 / (c) 接受限制 + 記載於 `.turbo-plugin/encoding-status.local.md`。**重要警示**:Git Bash 不解決問題,MSYS2 bash 對 native Windows exe 仍走 Win32 ANSI codepage,svn add 看似成功 exit 0 但 silently 寫 mojibake 進 SVN 永久 history,比 PS 明顯 fail 更危險。
+
+### Documented
+
+- **Known limitation:PowerShell 5.1 + non-UTF-8 ANSI codepage(zh-TW/CN/JP Windows 預設)無法 lossless 傳遞中文 argv 給 native exe(svn.exe / git.exe / msbuild.exe)**:由 plan 002 U16.enc 在實機 reproduce 得到 smoking gun(`svn: 'C:\...\�����ɮ�.txt' not found`)。Root cause 在 Win32 CreateProcessA 的 CP_ACP 強制轉換,PS 5.1 + .NET Framework 無法 bypass。**plugin code 層無法修**,僅能 user-side 解(PS 7+ 用 CreateProcessW,或 Win10 UTF-8 ANSI codepage)。v0.2.7 加 tp-setup detect + interactive remediation 引導 user 自己選並動手。
+
 ## [0.2.6] - 2026-05-25
 
 ### Fixed
