@@ -118,10 +118,20 @@ if [[ -d "$REMOTE_MAIN_PATH" ]]; then
   if [[ -n "$INHERITED" ]]; then IGNORE_TO_APPLY="$INHERITED"; fi
 fi
 
+# v0.2.7+ F-U16.bridge fix: sync main's current .gitignore into remote-test-N BEFORE
+# svn commit. SVN's test-N was svn-copied from main SVN whose .gitignore may be older
+# than main git's current .gitignore. Without this sync, test-N and remote/test-N
+# diverge on .gitignore content → first tp-push-to-svn 必撞 add/add merge conflict.
+if [[ -f "$MAIN_WORKTREE/.gitignore" ]]; then
+  cp -f "$MAIN_WORKTREE/.gitignore" "$REMOTE_PATH/.gitignore"
+  echo "Synced main's .gitignore into $REMOTE_NAME for first-push consistency."
+fi
+
 (
   cd "$REMOTE_PATH"
   svn propset svn:ignore "$IGNORE_TO_APPLY" '.'
-  svn commit -m 'svn:ignore: copy from remote-main'
+  # svn commit picks up both the propset and the .gitignore content sync (if main differs).
+  svn commit -m 'svn:ignore: copy from remote-main; sync .gitignore from main'
 )
 
 # All SVN steps succeeded; disable the rollback trap.

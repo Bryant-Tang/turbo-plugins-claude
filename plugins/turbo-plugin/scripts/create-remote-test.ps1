@@ -122,11 +122,24 @@ try {
                 $ignoreToApply = $inherited
             }
         }
+        # v0.2.7+ F-U16.bridge fix: sync main's current .gitignore into remote-test-N BEFORE
+        # svn commit. SVN's test-N was svn-copied from main SVN whose .gitignore may be older
+        # than main git's current .gitignore. Without this sync, test-N (= main HEAD .gitignore vN)
+        # and remote/test-N (svn checkout .gitignore vN-k) diverge → first tp-push-to-svn必撞
+        # add/add merge conflict on .gitignore + .svn/wc.db(後者因 .gitignore 沒含 .svn/* rule)。
+        $mainGitignore = Join-Path $mainWorktree '.gitignore'
+        $peerGitignore = Join-Path $remoteWorktreePath '.gitignore'
+        if (Test-Path -LiteralPath $mainGitignore -PathType Leaf) {
+            Copy-Item -LiteralPath $mainGitignore -Destination $peerGitignore -Force
+            Write-Output "Synced main's .gitignore into remote-test-$idx for first-push consistency."
+        }
+
         Push-Location $remoteWorktreePath
         try {
             & svn propset svn:ignore $ignoreToApply '.'
             if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
-            & svn commit -m 'svn:ignore: copy from remote-main'
+            # svn commit picks up both the propset and the .gitignore content sync (if main differs).
+            & svn commit -m 'svn:ignore: copy from remote-main; sync .gitignore from main'
             if ($LASTEXITCODE -ne 0) { throw 'svn commit svn:ignore failed' }
         } finally {
             Pop-Location
