@@ -33,17 +33,24 @@ turbo-plugin 唯一設定入口,自動偵測當前狀態並進入對應的 case:
 
 parse stdout 取 `ARGV_SAFE_FOR_UNICODE` 值:
 - `True` → 略過此 step
-- `False` → 進入 codepage remediation,**使用 `AskUserQuestion`** 提供三選一,question text 含**團隊性質提問**(homogeneous zh-TW Windows vs 跨 OS):
+- `False` → 進入 codepage remediation。**用 `AskUserQuestion` 問 user 的實際情境**(不要用技術術語,用具體場景):
 
-  | 選項 | 適用情境 | 動作 |
+  **Question text**(對 user 顯示):
+  > 偵測到你用 PowerShell 5.1 + 中文 Windows。**SVN 操作含中文檔名**可能有問題。請問你的實際情況?
+  >
+  > (按一下對應選項,plugin 會自動處理或告訴你下一步)
+
+  **Options**:
+
+  | 選項 label | description | 動作 |
   |---|---|---|
-  | (a) 同質 zh-TW Windows 團隊(SVN 中文檔名用 Git Bash 跑 .sh) | 接受 SVN 內以 Big5 bytes 存中文檔名(team 內 round-trip 一致)。**plugin .sh sibling 自動 route 經 bash,中文檔名 SVN 操作 OK** | 在 `.turbo-plugin/encoding-status.local.md` 寫一行「Confirmed homogeneous zh-TW Windows team. SVN Chinese filenames work via .sh (Big5 bytes in SVN). PS 5.1 .ps1 path will fail on Chinese filenames — use .sh equivalent if needed.」 |
-  | (b) 跨 OS 團隊(有 Mac/Linux 同事用 SVN)— 需要 SVN 內 UTF-8 檔名 | 二選一:winget install PS 7+ 或 Win10 UTF-8 codepage | 用 nested `AskUserQuestion` 二選一:(b1) `winget install Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements`(若 winget 不存在 → 提示從 https://aka.ms/powershell 手動下載);完成後在 `.claude/settings.local.json` 寫 `{"env": {"TURBO_PLUGIN_SHELL_HINT": "use pwsh.exe"}}`;提示 user 重啟 Claude Code 用 pwsh。(b2) `Start-Process intl.cpl -Verb RunAs`;emit 訊息「在『系統管理』tab → 變更系統地區設定 → 勾選『Beta: 使用 Unicode UTF-8』→ 確定 → **重新開機**後生效」 |
-  | (c) 避用中文檔名 / 接受限制 | 不動,但記載 | 在 `.turbo-plugin/encoding-status.local.md` 寫「user accepted limitation: avoid non-ASCII filenames in SVN ops」 |
+  | **(a) 我跟同事都用中文 Windows,沒人用 Mac/Linux** | 你的 SVN repo 同事都用中文 Windows 開發,沒有 Mac/Linux 同事用 svn checkout。 **plugin 會處理**:含中文檔名的 SVN 操作自動走 Git Bash(`.sh`)版本,你不用換工具。後續 tp-push-to-svn / tp-create-remote-test 都會自動選對。 **代價**:SVN repo 裡中文檔名存的是 Big5 編碼(你跟同事看都正確,Mac/Linux 同事如果加入會看到亂碼)。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: zh-TW-only team. SVN ops with Chinese filenames will be routed through .sh siblings (Big5 bytes in SVN repo).」並設 `.claude/settings.local.json` 加 `{"env":{"TURBO_PLUGIN_SVN_FORCE_BASH":"true"}}` flag |
+  | **(b) 我有 Mac/Linux 同事會 svn checkout(他們會看到亂碼)** | 跨 OS 團隊。為了讓 Mac/Linux 同事 checkout 看到的是正常中文,SVN repo 必須存 UTF-8 編碼,要把你的 PowerShell 升級或改 Windows 編碼設定。 | nested `AskUserQuestion` 二選一:**(b1) 安裝 PowerShell 7+(Recommended,不用重開機)**:跑 `winget install --id Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements`(若 winget 不存在 → 提示從 https://aka.ms/powershell 下載 MSI 手動裝);完成後在 `.claude/settings.local.json` 加 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`;告知 user「裝好了!請關掉這個 Claude Code session,改用 pwsh.exe 啟動 Claude Code(不是 powershell.exe)」。**(b2) 改 Windows 系統編碼設定(要重開機)**:`Start-Process intl.cpl -Verb RunAs`;emit 訊息「會幫你打開 Windows 設定。請點『系統管理』→『變更系統地區設定...』→ 勾『Beta:使用 Unicode UTF-8 提供全球語言支援』→ 確定 → **重新開機**生效。重開後 SVN 中文檔名會以 UTF-8 存。」 |
+  | **(c) 我不會用中文檔名,維持現狀就好** | 你的 SVN 操作不會有中文檔名(或會避免)。plugin 其它功能(build / run / publish 等)不受影響。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: ASCII-only filenames. User declined encoding remediation. SVN ops with non-ASCII filenames will fail.」 |
 
-**重要 context**(寫進 question text):「Git Bash(.sh)**對中文檔名 SVN 操作 work**(MSYS2 bash + svn.exe 都走 CP_ACP round-trip 一致),但 SVN repo 內檔名存的是 Big5(zh-TW)/GB2312(zh-CN)/Shift-JIS(ja-JP)bytes,**不是 UTF-8**。同質 Windows 中文團隊用 .sh 完全 OK;但若團隊含 Mac/Linux 同事,他們 svn checkout 拿到的是 garbage 檔名。**PS 7+(用 CreateProcessW)或 Win10 UTF-8 codepage 才能讓 SVN repo 內存 UTF-8 跨平台檔名**。」
+**Note for SKILL implementer**:不要在 question/options 文字裡用 CP_ACP / CreateProcessA / DBCS / MSYS2 等術語 — user 看不懂。用「中文 Windows」「Git Bash」「PowerShell 7」「UTF-8 設定」這類具體名詞。
 
-選擇後 tp-setup 繼續跑後續 step(remediation 不阻塞 setup,但 user 清楚下一次 SVN 操作該用哪條 path)。
+**完成後**:plugin 印一句確認(例如「OK,已記載你選了選項 (a) — 後續 SVN 中文檔名操作會自動走 .sh」),繼續跑 tp-setup 後續 step(remediation 不阻塞 setup)。
 
 ### Step 1 — Case detection
 
