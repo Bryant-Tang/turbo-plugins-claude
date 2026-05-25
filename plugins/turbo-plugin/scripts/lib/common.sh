@@ -200,14 +200,19 @@ read_turbo_plugin_config() {
       if [[ "$val" =~ ^\"(.*)\"$ ]]; then val="${BASH_REMATCH[1]}"
       elif [[ "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"
       fi
-      if [[ -n "$filter_section" && -n "$filter_key" ]]; then
-        # Targeted lookup: emit sentinel-prefixed value when section+key match
+      if [[ -n "$filter_key" ]]; then
+        # Targeted lookup: emit sentinel-prefixed value when section+key match.
+        # Use $filter_key (not section) as the sentinel for "targeted mode" because
+        # top-level keys have an empty section name and `-n ""` is false.
+        # v0.2.7+ F-U3.11 fix: previously checked `-n "$filter_section" && -n "$filter_key"`
+        # which meant schema_version (top-level, section="") never hit the sentinel branch,
+        # so check_turbo_plugin_config_schema never emitted the schema_version warning on bash side.
         if [[ "$section" == "$filter_section" && "$key" == "$filter_key" ]]; then
           echo "__TP_FOUND__:${val}"
           return 0
         fi
       else
-        # Legacy flat-text output
+        # Legacy flat-text output (no filter_key passed → dump all)
         echo "${section}.${key}=${val}"
       fi
     fi
