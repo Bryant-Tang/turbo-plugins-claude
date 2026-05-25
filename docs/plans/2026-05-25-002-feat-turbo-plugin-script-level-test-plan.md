@@ -88,6 +88,7 @@ test 環境:`C:\Turbo\SampleGitWithSvn`(fixture,內容可隨意改)。每 unit
 2. **不模擬真實 IIS Express start**:U-IIS-START 邏輯驗 fail-fast +
    process.HasExited check;真實啟動成功留 manual。理由:fixture apphost
    太簡會立刻 exit,反複測試浪費時間
+2b. **fake iisexpress process spawn 機制**(U10.4 / U10.6 / U11.3-U11.5):用 `Start-Process iisexpress.exe -ArgumentList '/site:Fake-deadbeef','/config:<scratch-apphost>' -PassThru -WindowStyle Hidden`,scratch apphost 預先寫 `<site name="Fake-deadbeef">`。target test 只看 `Get-CimInstance Win32_Process` CommandLine 抓得到即可(無論 listening 與否)。測完 `Stop-Process -Force`。U13.8 lock 測試用 `[System.IO.File]::Open` FileShare.None。**Auto-mode pre-classification**:此類測試 spawn real process / lock file,**預設標 `auto_mode: needs-manual`** 寫在 unit Approach 頂;若 agent autonomous 跑得了(無 sandbox 擋)再 promote `ok`。**不要等跑到一半才發現擋** — plan 時就決定
 3. **SVN test 用 `^/test-script-N`(N=1,2,3,…) namespace**:跟 manual
    plan 的 `^/test3` 區隔,避免互撞。測完一起 cleanup
 4. **中文檔名測試**用 `測試檔案-${random}.txt` pattern,涵蓋:
@@ -97,10 +98,16 @@ test 環境:`C:\Turbo\SampleGitWithSvn`(fixture,內容可隨意改)。每 unit
 5. **Cross-platform parity 用 diff-based verification**:同 input 餵兩個
    sibling script,比對 stdout (normalize line endings) + exit code +
    file system side-effect。差異視為 finding
-6. **每 unit 失敗即修**:P0/P1 立即 commit fix(bump patch version);
-   P2/P3 累積到 unit 結尾批次 commit fix。所有 fix 收進 v0.2.5(預計)
-7. **lib helper unit test 用 inline PowerShell dot-source**:無 test framework,
-   直接 `. common.ps1; Assert-Equal (FuncCall) ExpectedValue`,簡單夠用
+6. **每 unit 失敗即修(依 CLAUDE.md versioning rule)**:P0/P1 立即 commit fix → 對應 patch bump(每 fix 一個 patch,不是「全部塞 v0.2.5」);P2/P3 累積到 phase 結尾批次 commit + 一次 bump。**若整 test run 找不到 P0/P1/P2/P3 → no bump**(violate CLAUDE.md「bump 須有實 change」)
+8. **Privilege level assumption(SEC-009)**:全 test run 預設**non-elevated**(非 Administrator)身分跑。U8.3 canary `C:/tmp/SHOULD-NOT-EXIST-<n>` 要在 admin 也擋住才有意義 — 若 agent 被 elevated 啟動,U8.3 為 false positive(rm 不靠 shell composed 也可成功)。U1 preflight 加 `[System.Security.Principal.WindowsIdentity]::GetCurrent()` check;若 IsInRole(Administrator)= True → U8.3 mark **manual-needed**(等使用者在 non-admin shell 跑)。Process-kill tests(U10.5+/U11.3+/U13)若遇到跨用戶 process → Stop-Process 應 emit access-denied clear error 而非 silent exit 0(test 加 negative assertion)
+
+7. **lib helper unit test 用 inline PowerShell dot-source + minimal harness**:**不**引入 Pester。Agent 自寫一個 minimal harness file `jobs/<job>/test-output/test-harness.ps1`,內含:
+   ```powershell
+   function Assert-Equal { param($Actual, $Expected, $Label) if ($Actual -ne $Expected) { Write-Host "[$Label] FAIL expected=$Expected actual=$Actual" -ForegroundColor Red; return $false } else { Write-Host "[$Label] PASS" -ForegroundColor Green; return $true } }
+   function Assert-Match { param($Actual, $Pattern, $Label) if ($Actual -notmatch $Pattern) { Write-Host "[$Label] FAIL pattern=$Pattern actual=$Actual" -ForegroundColor Red; return $false } else { Write-Host "[$Label] PASS"; return $true } }
+   function Assert-Throws { param([scriptblock]$Block, $Label) try { & $Block; Write-Host "[$Label] FAIL did not throw" -ForegroundColor Red; return $false } catch { Write-Host "[$Label] PASS"; return $true } }
+   ```
+   每 unit 第一行 `. $env:CLAUDE_JOB_DIR/test-output/test-harness.ps1`;每 sub-test 用 `Assert-Equal (FuncCall) ExpectedValue 'U2.1'` 統一輸出格式,U25.7 final report 可 grep `\[U(\d+)\.\d+\] (PASS|FAIL)` aggregate
 
 ---
 
@@ -142,6 +149,34 @@ C:\Users\Mel Wu\.claude\jobs\<job-id>\           # agent 暫存
 
 ## Implementation Units
 
+### Script → Unit mapping table(traceability,避免「漏測哪個 script」)
+
+| Script(.ps1) | 對應 .sh | 主 Unit | 涵蓋 sub-test |
+|---|---|---|---|
+| `lib/common.ps1` | `lib/common.sh` | U2 / U3 | U2.1-U2.16 / U3.1-U3.12 |
+| `lib/applicationhost-helpers.ps1` | (PS-only) | U4 | U4.1-U4.9 |
+| `compute-project-identity.ps1` | `.sh` | U5 | U5.1-U5.8 |
+| `resolve-iis-settings.ps1` | `.sh` | U6 | U6.1-U6.9 |
+| `build-web.ps1` | `.sh` | U7 | U7.1-U7.12 |
+| `pack-content.ps1` | `.sh` | U8(security)| U8.1-U8.8 |
+| `publish-web.ps1` | `.sh` | U9 | U9.1-U9.9 |
+| `start-iis.ps1` | `.sh` | U10 | U10.1-U10.11 |
+| `stop-iis.ps1` | `.sh` | U11 | U11.1-U11.7 |
+| `check-iis-listening.ps1` | `.sh` | U12 | U12.1-U12.2, U12.5 |
+| `get-target-url.ps1` | `.sh` | U12 | U12.3-U12.5 |
+| `cleanup-orphan-iis.ps1` | `.sh`(delegate)| U13 | U13.1-U13.11 |
+| `pull-from-svn.ps1` | `.sh` | U14 | U14.1-U14.9 |
+| `push-to-svn-prepare.ps1` | `.sh` | U15 | U15.1-U15.9 |
+| `push-to-svn-commit.ps1` | `.sh` | U16(中文檔名 ⭐)| U16.1-U16.14 |
+| `create-remote-test.ps1` | `.sh` | U17 | U17.1-U17.9 |
+| `reset-remote-test.ps1` | `.sh` | U18 | U18.1-U18.5 |
+| `svn-ignore.ps1` | `.sh` | U19 | U19.1-U19.9 |
+| `svn-log.ps1` | `.sh` | U20 | U20.1-U20.9 |
+| `hooks/posttooluse-enterworktree.ps1` | `.sh` | U21 | U21.1-U21.14 |
+| `hooks/sessionstart.ps1` | `.sh` | U22 | U22.1-U22.8 |
+
+Count check:17 user-facing(`build-web` ~ `svn-log`)+ 2 hook + 2 lib = **21 .ps1**;對應 .sh 同 21(U13 delegate-only;`pack-content.sh` / `lib/common.sh` 與 hook 都有 sibling)。
+
 ### Phase 1 — Foundation(lib helpers + identity layer)
 
 ---
@@ -170,6 +205,8 @@ C:\Users\Mel Wu\.claude\jobs\<job-id>\           # agent 暫存
 - **U1.2 SVN server up**:`svn ls file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/` exit 0,輸出含 `main/` `test/`
 - **U1.3 MSBuild + IIS path**:`Test-Path 'C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe'` + `Test-Path 'C:/Program Files/IIS Express/iisexpress.exe'` 各 True
 - **U1.4 Lint clean**:`tools/lint-ps-compat.ps1 -Path plugins/turbo-plugin` exit 0,訊息 `0 violations`
+- **U1.5 PATH 工具齊**:`Get-Command svn,git,powershell,iisexpress -ErrorAction SilentlyContinue` 各 Source 非空;`node` / `npm` 缺則 U7.10 / U8.1 / U8.6 mark `skip - no node`
+- **U1.6 git version >=2.31**:`git --version` 解 numeric 比對(若 <2.31 → U2.3 / U5.1 等所有 git-common-dir / worktree 操作會 fail;mark blocker)
 
 **Verification**:全 PASS = 環境 ready,後續 unit 可信賴 baseline 一致。
 
@@ -223,7 +260,8 @@ function 跑 happy + edge + failure case。所有 Assert 失敗即 finding。
 - **U2.10 `Get-ProjectIdentityHash`**(determinism + cross-OS):
   - 同 input 不同 invocation → 同 hash(determinism)
   - case variation in `CsprojRelPath`(`src/X.csproj` vs `SRC/X.csproj`)→ same hash(lowercase normalization)
-  - 不同 RepoPath(main vs peer git-common-dir)→ 同 hash if git-common-dir resolves to same
+  - **positive cross-worktree**:從 main + peer cwd 各 invoke → 同 hash(因 `git rev-parse --git-common-dir` 對 linked worktree 解到同一個 main `.git/`,是 git design;此 case 永遠 PASS 不是 bug,描述清楚原因)
+  - **negative different repo**:另開一個 throwaway git repo `C:/tmp/throwaway-repo/`,加同 relative path `src/X.csproj`,跑 → hash 應**不同**於 SampleGit 的 hash(因 git-common-dir 不同)— 才真的驗到 cross-repo isolation
 - **U2.11 `Format-IisExpressSiteName`**:
   - `-CsprojPath 'X.csproj' -IdentityHash 'abc123de'` → `X-abc123de`
   - 中文 csproj `測試.csproj` + hash → `測試-abc123de`(non-ASCII preserve)
@@ -445,11 +483,15 @@ case。
 - **U8.1 happy install + build success**:`install_command = "npm install"; build_command = "npm run build"` → 各跑成功(若無 frontend 可 mock)
 - **U8.2 install_command 單 token**(Pass 4 P0 finding):
   - `install_command = "yarn"` → 不 throw,正確 invoke `yarn`,不傳 garbage args
-- **U8.3 install_command 含 shell metachar 不 compose shell**(security):
-  - `install_command = "echo a; rm -rf C:/tmp/SHOULD-NOT-EXIST"` → `echo a; rm -rf...`
-    被 tokenize 成 `echo`(arg `a;`、`rm`、`-rf`、`C:/tmp/SHOULD-NOT-EXIST`)
-    → echo 印 `a; rm -rf C:/tmp/SHOULD-NOT-EXIST`,**rm 不執行**
-  - assert `C:/tmp/SHOULD-NOT-EXIST` 仍存在 if 預先 mkdir 之
+- **U8.3 install_command 含 shell metachar 完整套**(security):各 metachar 預先 `mkdir` canary `C:/tmp/SHOULD-NOT-EXIST-<n>`,跑完 assert 仍存在:
+  - (a) **semicolon `;`**:`install_command = "echo a; rm -rf C:/tmp/SHOULD-NOT-EXIST-1"`
+  - (b) **pipe `|`**:`"echo a | rm -rf C:/tmp/SHOULD-NOT-EXIST-2"` → echo 印 literal `a | rm ...`,canary 仍存在
+  - (c) **subshell `$(...)`**(PowerShell-specific):`"npm $(Remove-Item -Recurse C:/tmp/SHOULD-NOT-EXIST-3)"` → 不 expand subshell
+  - (d) **subshell backtick**(legacy):`'npm \`rm -rf C:/tmp/SHOULD-NOT-EXIST-4\`'` → 不 expand
+  - (e) **compound `&&`**:`"npm && rm -rf C:/tmp/SHOULD-NOT-EXIST-5"` → `&&` 為 literal arg
+  - (f) **`||`**:`"npm || rm -rf C:/tmp/SHOULD-NOT-EXIST-6"`
+  - (g) **null byte injection**:`"npm$([char]0x00) rm -rf ..."` → 不分 token 為 rm
+  - **bash 端同套**(U8.4 originally;移到此處):每 metachar 餵給 `pack-content.sh` 驗 — bash IFS / `$()` / backtick 在 bash 是 shell expand,需確認 `.sh` 把 install_command 當 single command 跑或同 PS 一樣 split 處理
 - **U8.4 install_command empty**:skip 進 build_command
 - **U8.5 install_command 空白 only**:skip
 - **U8.6 install_command 失敗 exit propagate**:`install_command = "exit 5"`
@@ -504,6 +546,8 @@ case。
 - **U10.4 同 port + 同 site name(cross-worktree self-heal, R15a)**:
   - 模擬 fake iisexpress(假 commandLine /site:<same>)→ start-iis 應該停舊啟新
 - **U10.5 同 port + 不同 site name(R15b 別 project 撞 port)**:fail loudly,**不殺別人**
+- **U10.5b prefix attack**:foreign site name 是 `MinimalWebApp-0eb9b6ee-extra`(legit name 為 prefix)→ stop-iis 不殺(因 `-eq` exact match);verify
+- **U10.5c hex-stem overlap**:csproj 命名 `MyApp-deadbeef.csproj`,stem `MyApp-deadbeef`,site `MyApp-deadbeef-cafe1234`;同時 fake 另一個 site `MyApp-deadbeefdeadbeef` 跑 → confirm orphan secondary scan 用 `^MyApp-deadbeef-[0-9a-f]{8}$` 不會 false-positive 抓到後者
 - **U10.6 process spawn 後 prematurely exit**(Pass 1 REL-002 HasExited check):
   - 模擬手工 sleep 後 kill iisexpress → script `Wait-PortListening` 內偵測
     HasExited → throw `IIS Express process (PID xxx) exited prematurely`
@@ -590,9 +634,17 @@ case。
   - assert stdout 含 `PARTIAL_FAILURE: failed=1 sites=<that-name>`
   - assert stderr 含 per-site reason
   - assert exit code = **2**(not 1)
-- **U13.9 stemPattern regex-escape**(Pass 4 SF2):
-  - csproj `My.Test.csproj` → stem `My.Test`(含 `.` metachar)→ 對 site
-    `MyXTestXabc12345`(隨機字代 `.`)**不** match
+- **U13.9 stemPattern regex-escape 完整套**(Pass 4 SF2 + SEC-003):每 metachar 各 csproj stem 一條,測 fake-site negative match:
+  - (a) `.` — csproj `My.Test.csproj` stem `My.Test` → 對 fake site `MyXTestXabc12345` **不** match
+  - (b) `+` — csproj `App+v2.csproj` stem `App+v2` → 對 `Apv2-deadbeef` **不** match(原本 `+` 為 quantifier 會誤匹配)
+  - (c) `[` `]` — csproj `Feature[X].csproj` stem `Feature[X]` → 對 `FeatureX-deadbeef` **不** match(原本 char class)
+  - (d) `(` `)` — csproj `Mod(A).csproj` stem `Mod(A)` → 對 `ModA-deadbeef` **不** match
+  - (e) `{` `}` — csproj `App{1}.csproj` stem `App{1}` → 對 `App1-deadbeef` **不** match
+  - (f) `^` — csproj `Base^Hook.csproj` stem `Base^Hook` → 對 `BaseHook-deadbeef` **不** match
+  - (g) `$` — csproj `Var$.csproj` stem `Var$` → 對 `Var-deadbeef` **不** match
+  - (h) `*` `?` — csproj `Wild*.csproj` / `Maybe?.csproj` → 同
+  - (i) `|` — csproj `A|B.csproj` → 同
+  - (j) `\` — csproj `Path\X.csproj`(Windows 不允許但 defensive)→ 同
 - **U13.10 -RemoveAll + -RemoveSite 同時傳**:script 應拒(or 優先一個 +
   document)
 - **U13.11 .sh delegate**:`cleanup-orphan-iis.sh -RemoveAll` 經 ps1-delegate 正確傳 switch parameter
@@ -688,6 +740,11 @@ SKILL three-option choreography 的前提。
   - **short-form Substring guard**(v0.2.0 AF3):pinned 不足 8 char 不 throw
 - **U16.4 SHA pin file 不在**:script 跳過 pin check,正常 commit(legacy
   compat,Pass 2)
+- **U16.4b SHA pin tampered content**(SEC-004):
+  - (a) 寫 4096-byte 字串到 pin file → script 應 reject(訊息「pinned SHA not 8-hex / malformed」)而非 silently accept
+  - (b) 寫含 embedded newline 的 SHA(`abc12345\nMORE_DATA`)→ `.Trim()` truncate 第一行,若剛好不 match current → 觸發 mismatch throw;若 match 則 silent OK(file system level risk note)
+  - (c) pin file 為 symlink 指到 `C:/Windows/win.ini` → `Get-Content -LiteralPath` 跟著 symlink 讀;assert 行為(讀 target 內容 ≠ SHA → mismatch throw)正確不 hang;若不放心改 `-NoFollow` 或檢查 symlink reparse point
+- **U16.4c .git 為 symlink 邊界**(SEC-004 advisory):若 `.git` 在 UNC 網路 share、且 share 為 world-writable → 攻擊者可 race 替換 pin file。本 plan **不直驗**此 case(需特殊 lab 環境),只在 plan threat-model 段標記為 deferred
 - **U16.5 SHA pin cleanup on success**(v0.2.0 + v0.2.1 + v0.2.2 P1F1):
   - 成功 push 後 `Test-Path <gitdir>/MERGE_HEAD.tp_branch_sha` 為 False
 - **U16.6 SHA pin RETAIN on failure**(v0.2.0 WF2 + v0.2.2 P1F1):
@@ -701,11 +758,12 @@ SKILL three-option choreography 的前提。
   - 預先在 test/rc-N 加新檔 `測試檔案-${rand}.txt`(內容 ASCII)
   - git commit 該檔
   - 跑 push-to-svn-commit → svn add 該檔 → svn commit
-  - assert svn server 端`svn ls SampleGit.worktrees/remote-test-N/` 含
-    `測試檔案-${rand}.txt`(**正確檔名,非 mojibake 也非 quote-printable**)
-  - assert `svn log -v --limit 1` 列改動檔含正確檔名
+  - **assert server bytes(URL form 直接打 server,不靠 working-copy index)**:
+    - `svn ls file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/test-script-N/` 含 `測試檔案-${rand}.txt`(**正確檔名,非 mojibake 也非 quote-printable**)
+    - `svn log -v --xml -r HEAD file:///.../test-script-N/` 解析 `<path>` element 確認 server 端 bytes 為正確 UTF-8
 - **U16.10 中文目錄名 + 中文檔名**:
   - 加 `測試目錄/中文檔.txt` → svn add --parents → 兩層都正確
+  - 同 U16.9 用 URL form 驗 server bytes:`svn ls file:///.../test-script-N/測試目錄/` 含 `中文檔.txt`
 - **U16.11 svn status 各 status char 處理**:
   - `?` → svn add
   - `!` → svn delete
@@ -741,8 +799,15 @@ cross-platform parity。
   - remote-main 無 propset → 不 throw,fall through 用 default `.git\n.gitignore`
 - **U17.4 ERR-trap rollback**(Pass 3 WF1 + Pass 4 B5):
   - 故意傳無效 SVN URL → svn copy fail → rollback git branches + worktree
-- **U17.5 trap 位置 BEFORE first git mutation**(v0.2.3 B1):
-  - 模擬 `git branch '<rev>'` 失敗(rev 不存在)→ trap 仍 fire 清掉殘
+- **U17.4b SVN URL path traversal / scheme switching**(SEC-005,**expected FAIL → 預期生 finding**):
+  - (a) `-SvnUrl file:///C:/Windows/System32/`(path traversal 出 repo root)→ 目前 script line 73 直接 `svn copy $mainSvnUrl $SvnUrl` 不做 prefix 驗證 → svn 可能成功 copy 到此 path,污染 system32(雖然 ACL 一般擋住但 defense-in-depth)
+  - (b) `-SvnUrl http://attacker.example/fake-svn` → scheme 切換給 svn copy 跨 server。svn 本身會 fail,但 plugin design 不該允許這條
+  - **Action item**:此 finding 加進 v0.2.5,fix「`create-remote-test.ps1` 開頭加 `svn info <repoRoot> --show-item repos-root-url` 拿 trusted base URL,assert `$SvnUrl.StartsWith($baseUrl)` 否則 throw」
+- **U17.5 trap 位置 BEFORE first git mutation**(**expected FAIL — 預期會生 finding**):
+  - CHANGELOG v0.2.3 並沒有 "B1 trap-position" entry,本 plan 之前誤引用
+  - 現行 code(`create-remote-test.ps1` line 51-58):`git branch $remoteBranch $initCommit` + `git branch $testBranch 'main'` + `git worktree add` **outside 內層 try**;若 line 51 fail → 跳 OUTER catch(line 118)只 emit stderr + exit 1,**沒 rollback**
+  - 模擬:傳一個 SVN URL 不存在的 source 給 `--init-from-rev`(或讓 `$initCommit` 是 invalid SHA)→ git branch fail → 預期看到沒 rollback,有殘留 git branch(部分 mutation)
+  - **Action item**:此 finding 加進 v0.2.5,fix 方向「把內層 try 往前包到 line 51 第一個 git mutation,讓 trap 涵蓋 git branch 失敗」
 - **U17.6 PARTIAL_ROLLBACK emission**(Pass 4 B5):
   - 部分 cleanup fail → emit `PARTIAL_ROLLBACK: worktree-remove=<n> branch-D-remote=<n> branch-D-test=<n>`
 - **U17.7 --n 撞名 existing**:fail loudly
@@ -864,6 +929,13 @@ UTF-8 console output fix regression。
 - **U21.3 malformed JSON**:emit `{}` exit 0
 - **U21.4 worktreePath missing in JSON**:emit `{}` exit 0
 - **U21.5 worktreePath 不存在 directory**:emit `{}` exit 0
+- **U21.5b worktreePath 是合法但 repo 外的 directory**(SEC-006):
+  - 餵 `{"tool_response": {"worktreePath": "C:\\Windows\\System32"}}` → hook 應 emit `{}` exit 0 不掃 system32 內容(`.turbo-plugin` marker 在 system32 不會在,line 32 marker check 應守住)
+  - assert hook 沒 enumerate `.csproj` in system32(看 process trace 或 mock `Find-SingleCsproj` log)
+- **U21.5c pathological JSON 大 payload**(SEC-006):
+  - 10 MB deeply-nested JSON(`{"a":{"a":{...}}}` 10000 層)→ hook 5 秒內結束、無 OOM、emit `{}` exit 0
+- **U21.5d null byte injection**(SEC-006):
+  - 餵 `{"tool_response": {"worktreePath": "C:\\valid evil"}}` → `ConvertFrom-Json` 應 reject 或 `Get-NormalizedAbsolutePath` throw 乾淨;不該 silent accept
 - **U21.6 marker .turbo-plugin/ missing**:emit `{}` exit 0
 - **U21.7 apphost source missing**:emit `{}` exit 0
 - **U21.8 no csproj in worktree**:emit `{}` exit 0
@@ -873,14 +945,20 @@ UTF-8 console output fix regression。
   - 第一次 fire 後 apphost mtime A
   - 再 fire(physicalPath 已正確)→ updates Updated=false,**emit `{}` 不
     emit systemMessage**,apphost mtime 不變(Pass 1 T002)
-- **U21.11 concurrent fire .tmp 唯一性**(Pass 4 AF2):
-  - 兩個 hook 同時跑 → 不互相蓋(看 .tmp.PID.GUID 命名 + 沒 leftover)
+- **U21.11 atomic save .tmp 唯一性 deterministic surrogate**(Pass 4 AF2):
+  - **原 design「兩 hook 並行 fire」agent autonomous 跑不出來**(需 Start-Job + timing-dependent)。改 deterministic surrogate:
+  - invoke `Save-ApplicationhostConfigAtomically` 兩次 in rapid sequence(同一 PowerShell session 連 call,但兩次 build 不同 XmlDocument 內容)
+  - assert (a) 兩次 return 都成功(no throw)、(b) target apphost 最終內容 = 第二次的(後寫贏)、(c) **沒 leftover `.tmp.*` file** in target dir(用 `Get-ChildItem '*tmp*' -ErrorAction SilentlyContinue` 確認 = $null)、(d) instrument 在 helper 加暫 log 印 GUID,確認兩次 GUID 不同
+  - 真正 concurrency contention 留 manual acceptance(plan 不涵蓋)
 - **U21.12 .sh stdin pipe `cat | powershell ...`**(Pass 1 REL-001):
   - sh sibling 餵 stdin → 正確傳到 ps1 處理(已 script-level 證實)
 - **U21.13 .sh on non-Windows fail-safe**:
   - 在 fake non-Windows env(Git Bash 假裝)→ hook exit 0,不 block
-- **U21.14 hooks.json bash command quoting**(v0.2.0 SF4 + 後續):
-  - `${CLAUDE_PLUGIN_ROOT}` 含 space 路徑 → hook 仍正確 invoke
+- **U21.14 hooks.json bash command quoting 完整套**(v0.2.0 SF4 + SEC-011):
+  - (a) **space**:`${CLAUDE_PLUGIN_ROOT}` 含 space(`Program Files\...`)→ hook 仍正確 invoke
+  - (b) **single-quote**:plugin 安裝於 `C:\Users\O'Brien\...` → hook 仍正確 invoke,不 break shell quoting
+  - (c) **subshell metachar `$()`**:plugin 安裝路徑含 `$(evil)`(理論上 file system 允許)→ hook 不 evaluate
+  - 先確認 hooks.json 用哪種 quoting strategy(double-quoting / single-quoting),test 對應 strategy 的 holdout case
 
 **Verification**:全 PASS。U21.1 site count = 1 是 v0.2.3 P3 regression。
 
@@ -907,14 +985,23 @@ UTF-8 console output fix regression。
     「請複製 dbhub.example.local.toml ...」
 - **U22.4 marker + dbhub.local.toml 都在**:
   - emit `{}` exit 0,no systemMessage(silent)
-- **U22.5 sessionstart.ps1 Branch (i) auto-fix applicationhost.config**(Pass 1 #14 + Pass 2 M-08):
-  - main worktree marker missing + apphost source 有 + csproj 在 → 靜默 update apphost(類 PostToolUse 行為)
+- **U22.5 sessionstart.ps1 marker-present auto-fix applicationhost.config**(Pass 1 #14 + Pass 2 M-08):
+  - **precondition 修正**:apphost auto-fix 在 `if (Test-Path $markerDir)` block 裡(line 31-64),**marker 必須 EXISTS** 才跑(原 plan 寫 marker missing 走不到此 path)
+  - 場景:marker 存在 + `.turbo-plugin/applicationhost.config` 在 + `.vs/<sln-stem>/config/applicationhost.config` target 在但 `physicalPath` 為 stale(指到舊路徑)
+  - Action:開新 session 在 SampleGit/
+  - **Expected**:hook 在 line 50 呼叫 `Update-ApplicationhostConfig` 把 physicalPath 更新到當前 worktree;不 emit systemMessage(silent fix);apphost mtime 更新
+  - **Note**:sessionstart.ps1 line 5 直接 import applicationhost-helpers.ps1,呼叫同一個 `Update-ApplicationhostConfig`,**不是「import PostToolUse」**,共享 helper 而已
 - **U22.6 .sh on Windows powershell wrapped in if**(Pass 4 SF5):
   - powershell 失敗時 exit_code 仍捕到,ERR trap 不 shadow diagnostic
 - **U22.7 .sh on non-Windows ERR-trap fail-safe**(Pass 3 WF3):
   - sh 在 non-Windows env 故意製造 common.sh source fail → exit 0,不 block session
 - **U22.8 中文 systemMessage 不亂碼**:
   - sessionstart 訊息含中文 → Claude Code 收到 unicode-correct JSON
+- **U22.9 .turbo-plugin/ junction/symlink defense-in-depth**(SEC-007 advisory,low):
+  - `cmd /c mklink /J SampleGit\.turbo-plugin C:\Windows\Temp\evil-payload`(junction 指外部含 malformed apphost)
+  - 開 session → hook 進 marker-present branch、嘗試讀 evil-payload 的 applicationhost.config
+  - **Expected**:hook 對 malformed XML graceful fail(parse error catch + emit `{}` exit 0),不寫回 evil junction target
+  - 限制:realistic threat 需 attacker 有 repo write perm;標 defense-in-depth advisory
 
 **Verification**:U22.2 main path interpolation 是 v0.2.1 fix regression test。
 
@@ -924,53 +1011,47 @@ UTF-8 console output fix regression。
 
 ---
 
-### U23. Encoding edge cases consolidated
+### U23. Encoding edge cases — 只測 prior unit 沒涵蓋的 2 條
 
-**Goal**:把分散在各 unit 的 encoding 測試集中 sanity-check。
+**Goal**:U23 收斂成「prior unit 沒涵蓋的 encoding edge」,不重跑已 inline 驗過的部分。
 
-**Dependencies**:U2 / U3 / U16 / U19 / U20
+**Dependencies**:U5 / U16 / U19 / U20(已 inline 驗 unit-specific encoding;本 unit 只補 missing piece)
 
-**Files**:跨 script(non-unit-specific)
+**Files**:跨 script
 
-**Test scenarios**:
+**已 covered by prior unit(本 unit 不重跑,pass confirmation 即可)**:
+- ~~U23.1 中文 csproj filename 全流程~~ → 由 **U5.7** covered
+- ~~U23.2 中文 commit subject git→svn→svn-log~~ → 由 **U16.8 + U20.8** covered
+- ~~U23.3 中文 filename git status / svn add / svn ls~~ → 由 **U16.9 + U16.10** covered(FEAS-002 已修 URL form)
+- ~~U23.4 中文 svn:ignore pattern~~ → 由 **U19.8** covered
+- ~~U23.5 中文 directory name~~ → 由 **U5.7 variant** covered
 
-- **U23.1 中文 csproj filename 全流程**:`src/測試專案/中文.csproj` 跑
-  compute-identity / resolve-iis / build → 全程不錯
-- **U23.2 中文 commit subject git → svn → svn-log 渲染**:
-  - git commit 含「修中文 bug」→ push-to-svn → svn-log 渲染**不亂碼**
-- **U23.3 中文 filename git status `??` → svn add → svn ls**:
-  - U16.9/U16.10 加強驗
-- **U23.4 中文 svn:ignore pattern**:U19.8 加強驗
-- **U23.5 中文 directory name**:`src/測試目錄/X.csproj` 全流程
-- **U23.6 PowerShell argv encoding to svn.exe**(根因驗):
-  - 用 .NET `Process.Start` 透過 PowerShell native exe invocation 傳含中文
-    argv → svn.exe stdout assert 收到正確 bytes(若有 mojibake,加 fix
-    `[Console]::InputEncoding` / native exe argv UTF-8 設定)
-- **U23.7 BOM check after fix**(v0.2.0 fix 9 個 .ps1 加 BOM regression):
-  - 所有 turbo-plugin .ps1 含非 ASCII → 前 3 byte 是 `EF BB BF`
-- **U23.8 .sh on Windows Git Bash UTF-8**:
-  - 同 U23.6 但 from bash → svn.exe 收到正確 UTF-8
+**Test scenarios — 唯一兩條新增**:
+
+- **U23.6 PowerShell argv → svn.exe byte-level**(根因驗,prior unit 沒涵蓋):
+  - 用 .NET `Process.Start` 透過 PowerShell native exe invocation 傳含中文 argv → svn.exe 收到正確 UTF-8 bytes(`[Console]::OutputEncoding` v0.2.4 fix 只管 stdout 解碼,**InputEncoding / argv encoding 沒明確設定**;此 test 驗 argv 是否也正確)
+  - 若 mojibake,加 fix `[Console]::InputEncoding = [System.Text.Encoding]::UTF8` 到 `common.ps1`,或測 native exe argv UTF-8 設定
+  - .sh on Windows Git Bash 同套(原 U23.8):從 bash invoke 含中文 argv 給 svn.exe,驗 server bytes 正確
+- **U23.7 BOM check sanity re-run**(prior unit 沒涵蓋,避免跟 U1.4/U25.1 重複):
+  - 直接 re-run `tools/lint-ps-compat.ps1 -Path plugins/turbo-plugin` 確認 v0.2.1 加 BOM 的 9 個檔(build-web / publish-web / start-iis / stop-iis / svn-ignore / posttooluse-enterworktree / sessionstart / applicationhost-helpers / common)仍是 BOM 開頭、無 regression
+  - **不**做 byte-level audit(已被 lint 涵蓋);只 sanity-check 9-file set,差異視為 regression finding
 
 **Verification**:全 PASS。若 U23.6 fail = bug,P0/P1 fix(可能需在 common.ps1
 加 `chcp 65001` 或 `[Console]::InputEncoding`)。
 
 ---
 
-### U24. Cross-platform parity verification
+### U24. Cross-platform parity verification — **gate checklist only(不 re-execute)**
 
-**Goal**:對所有有 .ps1 + .sh 配對的 script,跑 diff-based equivalence test。
+**Goal**:**不重跑** U5-U22 已 inline 驗過的 parity sub-test。U24 變成 single gate:確認 U5-U22 各 unit 的 parity sub-test **全 PASS** 即 U24 PASS。
 
-**Dependencies**:U5–U20(每個 paired script unit 都已 single-platform 驗)
+**Dependencies**:U5-U22(各 unit 的 parity sub-test 必須先跑完)
 
 **Files**:跨 script
 
-**Approach**:同一 input(cwd / args / env)餵 .ps1 + .sh,比對:
-- stdout(normalize CRLF → LF + remove path drive case)
-- stderr(同)
-- exit code
-- file system side-effects(file mtime / file content hash)
+**Approach**:**no re-execution**;agent grep `jobs/<job>/test-output/*.log` 找各 unit parity sub-test 的 PASS/FAIL record,逐 pair confirm。
 
-**Test scenarios**:per pair:
+**Gate criteria**:18 pair parity sub-test 全 PASS:
 
 - **U24.1 compute-project-identity parity**:U5.8 加強(byte-identical hash)
 - **U24.2 resolve-iis-settings parity**:U6.9 加強(9 field 全 match)
@@ -1017,14 +1098,43 @@ git branches。
   - `Get-Process iisexpress -ErrorAction SilentlyContinue | Stop-Process -Force`
 - **U25.5 scratch fixtures 清掉**:
   - 刪 `jobs/<job>/test-fixtures/*`
+- **U25.5b dbhub.local.toml leak guard**(SEC-010):
+  - `git -C SampleGit log --all --oneline --name-only -- '**/dbhub.local.toml'` 應**完全無輸出**(整 test run 期間沒有 commit 把 dbhub.local.toml 帶進 history)
+  - `git -C SampleGit log --all --oneline --name-only | Select-String -Pattern 'dbhub.local'` 同樣空
+  - 若 match → finding,確認 .gitignore 是否被誤動 / 哪個 unit 跑了 `git add .`
 - **U25.6 中文路徑 fixture 清掉**(若加在 SampleGit):
   - 若 U23 加了 `src/測試專案/`,留下 commit 或 reset 視你決定
-- **U25.7 fix commits bump version**:
-  - 累積 finding fix 一起 commit 為 v0.2.5
-  - CHANGELOG 加 entry 列每個 finding + fix
+- **U25.7 fix commits bump version**(per CLAUDE.md):
+  - **依 CLAUDE.md versioning rule**:每 P0/P1 fix 一個 patch bump;phase 內 P2/P3 累積批次 commit + 一次 bump
+  - 若整 test run 找不到任何 finding → **no version bump**(plan 不能預設「一定 bump v0.2.5」)
+  - CHANGELOG 加 entry 列每個 finding + fix(若有 bump)
 
 **Verification**:fixture 回 baseline state,SVN server 乾淨,版本 bump
 land。
+
+---
+
+## Threat Model — Top 3 Exploit Surfaces(SEC-012)
+
+由 security-lens review 合成,這 3 條是 plan 跑下去要特別注意的高風險 path,fix 方向已散在對應 unit:
+
+1. **Malicious `config.toml` → shell command injection via pack-content**(機率最高)
+   - 攻擊面:有人能寫 `.turbo-plugin/config.toml` 的 `[frontend] install_command` 就能 inject
+   - 緣由:tokenizer split on `\s+` 已擋 `;` 一種,但 `|` / `$()` / `&&` / 多 shell side 多 metachar 還沒 test
+   - 涵蓋:**U8.3 (a)-(g)** 完整 metachar 套 + bash 端
+   - 緩解:文件明寫 `config.toml` 是 trust boundary,只能透過 tp-setup 或 reviewed commit 改
+
+2. **SVN URL injection → unauthorized SVN branch creation**(影響最大)
+   - 攻擊面:`create-remote-test -SvnUrl` 完全沒 prefix 驗證
+   - 緣由:`svn copy $mainSvnUrl $SvnUrl` line 73 直接 pass-through;惡意 URL 可在 SVN repo 任意位置建 branch(SVN history 不可逆)
+   - 涵蓋:**U17.4b** 兩條 + fix 方向「`svn info --show-item repos-root-url` 拿 trusted base + assert prefix」
+   - **Action item v0.2.5**:加 SvnUrl prefix validation
+
+3. **Encoding confusion → silent mojibake in SVN permanent history**(最 subtle)
+   - 攻擊面:中文 Windows(CP950)native exe argv encoding
+   - 緣由:v0.2.4 fix 只設 `[Console]::OutputEncoding`,**InputEncoding / argv encoding 沒設**;svn.exe 收到 mojibake bytes commit 進 SVN → 永久 history 亂碼,只能 svnadmin recover
+   - 涵蓋:**U23.6** byte-level argv 驗 + **U16.9/U16.10 URL form** server bytes 驗(FEAS-002 修)
+   - 緩解:若 U23.6 fail,在 `common.ps1` 加 `[Console]::InputEncoding = [System.Text.Encoding]::UTF8`
 
 ---
 
@@ -1105,7 +1215,7 @@ land。
 ### Phase 6 — Cross-cutting
 - [ ] U23 Encoding edge cases(含 PowerShell argv → svn.exe)
 - [ ] U24 Cross-platform parity(18 pair)
-- [ ] U25 Final lint + cleanup + v0.2.5 bump
+- [ ] U25 Final lint + cleanup + 依 finding 數量 patch bump(若無 finding 不 bump)
 
 ⭐ 標的是使用者明確點出之前漏的 — U16 中文檔名是首要補測項。
 

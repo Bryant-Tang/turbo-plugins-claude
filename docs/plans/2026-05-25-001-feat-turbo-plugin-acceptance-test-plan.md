@@ -141,6 +141,8 @@ physicalPath。tp-setup 也走同邏輯。
 
 ## Implementation Units
 
+**Note: tp-setup case ordering mapping**:origin 需求 R5 定義 4 個 case 順序為 `(a) 新建 → (b) 現有 git+SVN → (c) 已 setup 主 worktree 補設定 → (d) peer-mode`。本 plan 用 unit 順序 **U2(case c) → U3(case d) → U4(case a)**,**case (b) 屬 init-from-existing 大重組 Deferred**。U-IDs 與 case 字母不對應,跨 reference 時請對照本 mapping。
+
 ### U1. Pre-flight:install turbo-plugin v0.2.4 + disable 既有 4 plugin
 
 **Goal**:確認 Claude Code session 看得到 v0.2.4,SKILL trigger 不會誤觸到
@@ -286,8 +288,10 @@ mtime 不變),此 Unit 補 SKILL agent-flow 完整鏈路。
   artifact)
 - `SampleGit/src/MinimalWebApp/bin/MinimalWebApp.dll`(預期 mtime **不變**)
 
-**Approach**:在 SampleGit/ 已有的 Claude session(U2 那個,別關),用
-`EnterWorktree` 工具切到 dev-1,跑 `/turbo-plugin:tp-build-dotnet-framework-web`。
+**Approach**:
+1. **Pre-step**(baseline):在 SampleGit/ session(U2 那個)先跑一次 `/turbo-plugin:tp-build-dotnet-framework-web` 生 main bin/dll;`(Get-Item SampleGit/src/MinimalWebApp/bin/MinimalWebApp.dll).LastWriteTime` 記為 `$mainBaselineMtime`(寫 `$env:TEMP/u5-main-mtime.txt`)。否則 B.1.4「mtime 不變」trivially true(檔不存在)
+2. 用 `EnterWorktree` 工具切到 dev-1,跑 `/turbo-plugin:tp-build-dotnet-framework-web`
+3. 比對:dev-1 bin/dll mtime 在 build 後更新(B.1.3)+ main bin/dll mtime == `$mainBaselineMtime`(B.1.4)
 
 **Test scenarios**:
 
@@ -339,8 +343,10 @@ tp-stop 仍能殺到。
 - **B.2.4 無 instance stop**:再跑 tp-stop → `No IIS Express process found
   for site 'MinimalWebApp-0eb9b6ee'.` exit 0(不是 error)
 
-**Verification**:✅ B.2.3 = stop-iis 跨 worktree key 設計 work(原 tnf
-用 worktree path 為 key 跨 session 找不到)。
+**Verification**:✅ B.2.3 = 兩個 design 同時成立:
+  - (a) **site name 跨 worktree identical**:`/turbo-plugin:tp-compute-project-identity`(或讀 apphost site name)從 main 跟 dev-1 跑都得 `MinimalWebApp-0eb9b6ee`
+  - (b) **Get-CimInstance Win32_Process 全機掃**:`stop-iis.ps1` 用 CommandLine match 不限 worktree path
+  - 缺一不可(原 tnf 用 worktree path 為 key 跨 session 找不到 dev-1 啟的 iisexpress)。
 
 **Execution note**:若 IIS Express 啟動失敗看
 `~/AppData/Local/IISExpress/TraceLogFiles/`。我寫的 minimal apphost 可能
@@ -355,11 +361,11 @@ MinimalWebApp.sln 讓 VS 生成完整 apphost**,再回跑 U6。
 marker / marker 在但 dbhub.local.toml 缺)在真實 session 啟動時觸發正確
 prompt。
 
-**Requirements**:無
+**Requirements**:U2(需 `SampleGit/.turbo-plugin/` marker 已建,C.1/C.2 才有東西可 Copy 備份);U3(需 `dev-1/.turbo-plugin/` marker 已建,C.1/C.3 才有東西可動)
 
-**Dependencies**:無(獨立)
+**Dependencies**:U2、U3(雖然 sessionstart hook 本身不依賴它們,但 C.x test scenarios 用 backup-and-restore 模式,必須有 marker 才能 backup)
 
-**Files**:`.turbo-plugin/` 暫時 rename(modeling 缺 marker 情況)
+**Files**:`.turbo-plugin/` 暫時 Copy 為 `.turbo-plugin-original`(modeling 缺 marker 情況;Group 1 F7 修)
 
 **Approach**:每分支關掉舊 session、暫時調整 fixture state、開新 session
 觀察 systemMessage。
@@ -368,25 +374,31 @@ prompt。
 
 - **C.1 Branch (ii) peer 無 marker**:
   1. 關 dev-1 所有 session
-  2. `mv dev-1/.turbo-plugin dev-1/.turbo-plugin.bak`
-  3. 開新 session 在 dev-1/
-  4. **Expected**:systemMessage:「turbo-plugin: 偵測到本 worktree 尚未
+  2. `Copy-Item -Recurse dev-1/.turbo-plugin dev-1/.turbo-plugin-original`(**備份不 rename**)
+  3. `Remove-Item -Recurse dev-1/.turbo-plugin`(移走原)
+  4. 開新 session 在 dev-1/
+  5. **Expected**:systemMessage:「turbo-plugin: 偵測到本 worktree 尚未
      bootstrap,且這裡是 peer worktree。請到主 worktree
      (`C:\Turbo\SampleGitWithSvn\SampleGit`) 啟動 Claude 並執行 `/tp-setup`,
      完成 bootstrap 後再回此 worktree 工作。」
-  5. **重點**:main path 是真實絕對路徑,**非字面 `$mainPath`**(v0.2.1 fix)
-  6. Cleanup:`mv dev-1/.turbo-plugin.bak dev-1/.turbo-plugin`
+  6. **重點**:main path 是真實絕對路徑,**非字面 `$mainPath`**(v0.2.1 fix)
+  7. Cleanup:`Move-Item dev-1/.turbo-plugin-original dev-1/.turbo-plugin`
+  8. **Cleanup verification**(mandatory):`Test-Path dev-1/.turbo-plugin/config.toml` = True;否則 mark 整 C.1 FAIL,並手動還原 `.turbo-plugin-original` → `.turbo-plugin` 後重跑
 - **C.2 Branch (i) main 無 marker**:
   1. 關 SampleGit 所有 session
-  2. `mv SampleGit/.turbo-plugin SampleGit/.turbo-plugin.bak`
-  3. 開新 session 在 SampleGit/
-  4. **Expected**:systemMessage 提示「主 worktree 尚未 bootstrap,請執行
+  2. `Copy-Item -Recurse SampleGit/.turbo-plugin SampleGit/.turbo-plugin-original`
+  3. `Remove-Item -Recurse SampleGit/.turbo-plugin`
+  4. 開新 session 在 SampleGit/
+  5. **Expected**:systemMessage 提示「主 worktree 尚未 bootstrap,請執行
      `/tp-setup`」
-  5. Cleanup:`mv SampleGit/.turbo-plugin.bak SampleGit/.turbo-plugin`
-- **C.3 Branch (iii) marker 在但 dbhub.local.toml 缺**(預設狀態):
-  1. 開新 session 在 SampleGit/
-  2. **Expected**:systemMessage 提示「請複製 `dbhub.example.local.toml`
+  6. Cleanup:`Move-Item SampleGit/.turbo-plugin-original SampleGit/.turbo-plugin`
+  7. **Cleanup verification**(mandatory):`Test-Path SampleGit/.turbo-plugin/config.toml` = True 才算 PASS
+- **C.3 Branch (iii) marker 在但 dbhub.local.toml 缺(只在 peer 觸發)**:
+  1. **Pre-step**:確認 `dev-1/.turbo-plugin/dbhub.local.toml` 不存在(若 U3 已建過,先 `Move-Item dev-1/.turbo-plugin/dbhub.local.toml $env:TEMP/d-c3-dbhub.bak`)
+  2. 開新 session 在 **dev-1/**(**不是 SampleGit/** — sessionstart.ps1 Pattern B 只在 peer worktree 且 dbhub.local 缺時 prompt;主 worktree 不發此訊息)
+  3. **Expected**:systemMessage 提示「請複製 `dbhub.example.local.toml`
      為 `dbhub.local.toml` 並填 credentials」
+  4. Cleanup:若 pre-step backup 了 → `Move-Item $env:TEMP/d-c3-dbhub.bak dev-1/.turbo-plugin/dbhub.local.toml`
 
 **Verification**:三分支各自輸出對應 prompt,**Branch (ii) main path 是
 實值非字面 `$mainPath`** = v0.2.1 fix 確認 land。
@@ -407,28 +419,29 @@ rollback 三條 path 行為符合 SKILL spec。
 - `SampleGit.worktrees/remote-main/`(SVN sync bridge)
 - `SampleSvnServer/main/`(SVN trunk)
 
-**Approach**:
-1. happy path:當前狀態 `git log remote/main` HEAD = SVN r21,跑 pull →
-   `Already up to date`
-2. conflict path:在 main + remote-main 各做衝突 commit,跑 pull → 觀察
-   auto-rollback
+**Approach**:在 main + remote-main 各做衝突 commit,跑 pull → 觀察 auto-rollback。
+
+**Pre-condition**:`git log remote/main` HEAD = SVN r21(即 D.2 setup 前已 sync;script-level happy「Already up to date」已由 sibling plan 002 U14.1 涵蓋,本 unit 不重驗)。
 
 **Test scenarios**:
 
-- **D.1 happy path**:`/turbo-plugin:tp-pull-from-svn --branch main` →
-  `Already up to date.` 或 fast-forward
 - **D.2 conflict + rollback**:
-  1. Setup(main):`echo conflict-A > new-conflict.txt && git add . && git commit -m "feat: ..."`
-  2. Setup(remote-main):`cd remote-main; echo conflict-B > new-conflict.txt;
+  1. **Pre-step**:`git -C SampleGit rev-parse HEAD > $env:TEMP/d2-baseline-sha.txt`(記下 cleanup target SHA)
+  2. Setup(main):`echo conflict-A > new-conflict.txt && git add . && git commit -m "feat: ..."`
+  3. Setup(remote-main):`cd remote-main; echo conflict-B > new-conflict.txt;
      svn add new-conflict.txt; svn commit -m "test: conflict"`
-  3. Action:在 main session 跑 `/turbo-plugin:tp-pull-from-svn --branch main`
-  4. **Expected**:
+  4. Action:在 main session 跑 `/turbo-plugin:tp-pull-from-svn --branch main`
+  5. **Expected**:
      - 偵測衝突
      - 自動 `git merge --abort` + `git checkout main`
      - emit `Merge conflict detected. ... Conflicting files: new-conflict.txt`
      - 中文訊息**不亂碼**(v0.2.4 UTF-8 fix)
      - 主 worktree HEAD 回到 conflict-A commit、working tree clean
-  5. Cleanup:`git reset --hard HEAD~1`(放棄 conflict-A)
+  6. Cleanup:`git reset --hard (Get-Content $env:TEMP/d2-baseline-sha.txt)`(**用絕對 SHA,不用 HEAD~1**;避免被中間其他 plan commit 干擾誤丟)
+  7. **⚠️ SVN side-effect 警告**:remote-main 上 conflict-B 那次 `svn commit` 是**永久 SVN history**(不可逆)。D.2 跑完後,**main pull 永遠 fail** 直到:
+     - 選項 a:D.6 push 把 conflict-A 推上 SVN(覆掉 conflict-B 的 file 但保留 history),或
+     - 選項 b:手動 `cd remote-main; svn revert new-conflict.txt; svn delete new-conflict.txt; svn commit -m "revert D.2 fixture"`
+     - 不處理 → 影響 §結尾 cleanup 後 next test cycle
 
 **Verification**:D.2 完成 = Pass 4 B6 rollback + v0.2.4 UTF-8 console
 output 同時驗證。
@@ -480,10 +493,11 @@ SVN URL → ERR-trap rollback git branches/worktree)。
 
 ---
 
-### U10. tp-push-to-svn 完整 lifecycle(含 SHA pin / PENDING_MERGE / failure-retain)
+### U10a. tp-push-to-svn happy lifecycle(commit type filtering + unknown prompt + UTF-8 中文)
 
-**Goal**:驗 push-to-svn 整條 lifecycle:commit type 篩選 / SHA pin guard
-觸發 / failure path pin retain / PENDING_MERGE_DETECTED 三選一。
+**Goal**:驗 push-to-svn happy path:SKILL 走 prepare → 列 COMMITS/FILES → 篩選(kept-subset vs filtered)→ unknown type AskUserQuestion 三選一 → Step 5 confirm → commit + UTF-8 中文 commit subject 不亂碼 + SHA pin cleanup on success。
+
+**Note**:SHA pin mismatch throw 行為(D.7)+ failure-retain pin(D.8)已由 sibling plan 002 U16.3/U16.5/U16.6 script-level 完整驗,本 unit 不重驗 script-level 邏輯,只收尾驗 pin file 在 happy path 結束被清(D.6 post-condition)。
 
 **Requirements**:U9(D.3 已 land,有 `test-3` + `remote-test-3`)
 
@@ -499,35 +513,52 @@ push-to-svn 觀察篩選 + lifecycle 各 step。
 
 **Test scenarios**:
 
-- **D.6 happy lifecycle**:
-  - Setup:`git checkout test-3` + 4 個 commit(feat/docs/fix/chore)
+- **D.6 happy lifecycle**(含 unknown type prompt):
+  - Setup:`git checkout test-3` + **5 個 commit**(feat / docs / fix / chore / **`update something`** ← unknown,無 conventional prefix)
   - Action:`/turbo-plugin:tp-push-to-svn --branch test-3`
-  - SKILL prepare → 列 COMMITS/FILES → 篩選(feat/fix kept、docs/chore
-    filtered)→ unknown prompt(無)→ Step 5 confirm → commit
+  - SKILL prepare → 列 COMMITS/FILES → 篩選(feat/fix kept、docs/chore silent filtered)→ **unknown prompt fire**:`update something` 觸發 AskUserQuestion 三選一(`Keep / Filter / Abort`)
+  - 三 path 各跑一次驗:
+    - Keep → `update something` 進 SVN body
+    - Filter → 不進 SVN body
+    - Abort → push 中斷,branch 狀態不變
+  - Final pass:選 Keep 走完 → Step 5 confirm → commit
   - **Expected**:
-    - SVN body 只含 `feat: ...` + `fix: ...`
+    - SVN body 只含 `feat: ...` + `fix: ...`(+ unknown 視 user 選 Keep / Filter)
     - **`<main>/.git/worktrees/remote-test-3/MERGE_HEAD.tp_branch_sha` push 過程中
       存在**(可在 prepare 完 commit 前查;**不是** `<remote-test-3>/.git/...`,因 linked worktree `.git` 是 pointer file)
-    - 成功 push 後 pin file 被清(v0.2.1 + v0.2.2 fix)
-    - 中文 commit subject 在 SVN 顯示**不亂碼**(`svn log
-      SampleGit.worktrees/remote-test-3 --limit 1`)
-- **D.7 SHA pin guard 觸發**:
-  - 跑 `/turbo-plugin:tp-push-to-svn --branch test-3` 到 Step 5 confirm 前
-  - **另開** terminal 在 test-3 加新 commit
-  - 回 SKILL 按 Accept
-  - **Expected**:commit-phase throw `Branch 'test-3' has new commits since
-    prepare (pinned: <8hex>, current: <8hex>)`
-- **D.8 failure-retain pin**(可選,複雜):
-  - 跑 push 到 commit 階段中斷 SVN(rename SampleSvnServer/db 暫時隱藏)
-  - **Expected**:push 失敗,**pin file 仍存在**(v0.2.2 P1F1 fix)
-- **D.9 PENDING_MERGE_DETECTED 三選一**:
-  - 中斷 prepare 留 staged merge
-  - 重跑 push → SKILL 出現 3 選一(Abort+re-prepare / Continue / Cancel)
-  - 三 path 各跑一次
+    - **post-condition pin cleanup**:成功 push 後 `Test-Path <main>/.git/worktrees/remote-test-3/MERGE_HEAD.tp_branch_sha` = False(v0.2.1+v0.2.2 fix);若 happy 結束 pin 仍在 = FAIL
+    - 中文 commit subject 在 SVN 顯示**不亂碼**(`svn log SampleGit.worktrees/remote-test-3 --limit 1`)
+- **(已併入 D.6)D.7 SHA pin mismatch throw** — script-level deterministic 邏輯,由 sibling plan 002 U16.3 直驗,本 unit 不重跑「另開 terminal 加 commit」race-condition setup
+- **(已砍)D.8 failure-retain pin** — 本來要 rename `SampleSvnServer/db` 模擬 SVN 失敗,但該目錄是 FSFS SVN repo 的 revision data 核心,rename 後 cleanup 漏跑會 corrupt 整 SVN repo。failure-retain pin 行為已由 sibling plan 002 U16.6 script-level 完整驗證
 
-**Verification**:D.6 中文無亂碼 = v0.2.4 fix 驗證;D.7 throw = v0.2.1 F1
-SHA pin gitdir 修法驗證;D.8 pin retain = v0.2.2 P1F1 驗證;D.9 = Pass 2
-F15 token-based 三選一 land。
+**Verification**:D.6 中文無亂碼 = v0.2.4 fix 驗證;pin file cleanup post-condition = v0.2.1+v0.2.2 fix。
+
+---
+
+### U10b. tp-push-to-svn PENDING_MERGE_DETECTED 三選一(SKILL choreography only)
+
+**Goal**:驗 push-to-svn 唯一無法 script-level 涵蓋的 SKILL 行為 — PENDING_MERGE_DETECTED 三選一 AskUserQuestion(Abort+re-prepare / Continue / Cancel)。
+
+**Requirements**:U10a 已 land(test-3 branch + remote-test-3 worktree 在,SVN history 有 D.6 push 後狀態)。
+
+**Dependencies**:U10a。
+
+**Files**:`SampleGit.worktrees/remote-test-3/`(staged merge state 暫時)。
+
+**Approach**:中斷 prepare 留 staged merge → 重跑 push → SKILL 出現 3 選一,三 path 各跑一次。
+
+**Test scenarios**:
+
+- **D.9 PENDING_MERGE_DETECTED 三選一**:
+  - Setup:在 test-3 加 1 個 commit → 跑 push-to-svn-prepare → **prepare 走到 svn rev check / merge staged 後中斷 SKILL**(Ctrl-C),留 `remote-test-3/` staged merge state(`git -C remote-test-3 status` 含 `Unmerged paths` 或 merge in progress)
+  - Action:重跑 `/turbo-plugin:tp-push-to-svn --branch test-3`
+  - **Expected**:script emit `PENDING_MERGE_DETECTED <path>` token + exit 0;SKILL parse token 後跳 AskUserQuestion 三選一
+  - 三 path 各跑一次(每跑前重做 setup):
+    - **Abort+re-prepare** → `git merge --abort` + 重跑 prepare → 正常 flow → commit 成功
+    - **Continue** → 略過 prepare,直接 commit current staged merge → 成功
+    - **Cancel** → 不動,branch 留 staged 狀態,使用者後續手動處理(`git -C remote-test-3 merge --abort`)
+
+**Verification**:D.9 = Pass 2 F15 token-based 三選一 land。
 
 ---
 
@@ -570,6 +601,12 @@ F15 token-based 三選一 land。
   - SKILL enumerate(列 `ORPHAN: <site> <kind> pid=<n>` 行)→ AskUserQuestion
     多選 → script 殺 process + remove site
   - 若任 step 失敗:`PARTIAL_FAILURE: failed=<n> sites=<list>` token + exit 2
+- **E2 tp-csharp-comment / tp-js-comment throwaway invoke**(原 Deferred 提升為 sanity-check):
+  - 對 `SampleGit/src/MinimalWebApp/Default.aspx.cs` 隨便加一行需要註解的 code(如 `var x = 1; // TODO`)
+  - Action:`/turbo-plugin:tp-csharp-comment`
+  - **Expected**:SKILL 真執行(改寫該行 comment 風格 / emit revised diff / 至少不 throw),確認 SKILL body 不只是 stub
+  - 同樣對 `Default.aspx` `<script>` 區塊加一行 JS,跑 `/turbo-plugin:tp-js-comment` 驗
+  - Cleanup:`git checkout Default.aspx Default.aspx.cs` 還原
 
 **Verification**:D.10 三步流程 = v0.2.3 B1 Procedure rewrite 驗證;D.11
 analysis 完整跑通;E PARTIAL_FAILURE token + exit 2 = v0.2.0 WF4 設計驗證。
@@ -586,8 +623,8 @@ analysis 完整跑通;E PARTIAL_FAILURE token + exit 2 = v0.2.0 WF4 設計驗證
 | Claude Code session 多開 → resource 占用、log 雜訊 | 每 phase 後關掉不必要 session |
 | 真實 IIS Express 啟動 port 51999 占用 | 跑 U6 前 `Get-NetTCPConnection -LocalPort 51999` 確認無人占 |
 
-**Dependencies(unit 順序)**:U1 → U2 → {U3, U4, U5, U7, U8, U9} → U6(依 U5)
-→ U10(依 U9)→ U11(依 U9)。
+**Dependencies(unit 順序)**:U1 → U2 → U3 → {U4, U5, U7, U8, U9} → U6(依 U5)
+→ U10a(依 U9)→ U10b(依 U10a)→ U11(依 U9)。U7 依 U2+U3(Copy backup 需要 marker)。
 
 ---
 
@@ -636,7 +673,8 @@ analysis 完整跑通;E PARTIAL_FAILURE token + exit 2 = v0.2.0 WF4 設計驗證
 - [ ] U7 SessionStart hook 三分支
 - [ ] U8 tp-pull-from-svn happy + conflict
 - [ ] U9 tp-create-remote-test happy / cancel / fail
-- [ ] U10 tp-push-to-svn lifecycle + SHA pin + PENDING_MERGE
-- [ ] U11 tp-reset-remote-test + suggest-ignore + cleanup-orphan-iis
+- [ ] U10a tp-push-to-svn happy lifecycle + commit type filter + unknown prompt + UTF-8 + pin cleanup
+- [ ] U10b tp-push-to-svn PENDING_MERGE_DETECTED 三選一
+- [ ] U11 tp-reset-remote-test + suggest-ignore + cleanup-orphan-iis + tp-csharp/js-comment throwaway
 
 ⭐ 標的是核心優先;其他若忙可省。發現問題隨時回報。
