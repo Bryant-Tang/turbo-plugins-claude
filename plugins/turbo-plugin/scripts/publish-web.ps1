@@ -72,21 +72,25 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Output 'Publish succeeded.'
 
+    # Parse via Select-Xml (avoids PS 5.1 + StrictMode + outer-try interaction that
+    # caused [xml] cast / New-Object XmlDocument to silently coerce to String here).
+    $publishUrlNodes = $null
+    $methodNodes = $null
     try {
-        $pubxml = [xml](Get-Content -LiteralPath $pubxmlAbsPath -Raw)
+        # VS-generated pubxml uses camelCase <publishUrl> (and PascalCase <WebPublishMethod>);
+        # local-name() is case-sensitive, so query both shapes via translate() lowercase-match.
+        $publishUrlNodes = @(Select-Xml -Path $pubxmlAbsPath -XPath "//*[translate(local-name(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='publishurl']" | ForEach-Object { $_.Node })
+        $methodNodes     = @(Select-Xml -Path $pubxmlAbsPath -XPath "//*[translate(local-name(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='webpublishmethod']" | ForEach-Object { $_.Node })
     } catch {
         [Console]::Error.WriteLine("Warning: failed to parse publish profile XML; output path unknown. ($($_.Exception.Message))")
         return
     }
 
-    $publishUrlNodes = $pubxml.SelectNodes('//*[local-name()="PublishUrl"]')
-    $methodNodes     = $pubxml.SelectNodes('//*[local-name()="WebPublishMethod"]')
-
-    $method = if ($methodNodes -and $methodNodes.Count -gt 0) { $methodNodes[$methodNodes.Count - 1].InnerText.Trim() } else { '' }
+    $method = if ($methodNodes.Count -gt 0) { $methodNodes[$methodNodes.Count - 1].InnerText.Trim() } else { '' }
     if ([string]::IsNullOrWhiteSpace($method)) { $method = 'FileSystem' }
     Write-Output "Method: $method"
 
-    if (-not $publishUrlNodes -or $publishUrlNodes.Count -eq 0) {
+    if ($publishUrlNodes.Count -eq 0) {
         [Console]::Error.WriteLine('Warning: <PublishUrl> not found in profile; output path unknown.')
         return
     }

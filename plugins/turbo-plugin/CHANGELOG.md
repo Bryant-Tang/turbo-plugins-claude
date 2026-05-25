@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-25
+
+### Fixed
+
+- **`publish-web.ps1` 兩條 bug 連環,publish 實際成功但 script exit 1、不 emit `PUBLISH_OUTPUT_PATH=` token,SKILL 誤判失敗**(plan 002 U9.1 抓到):
+  - (a) `[xml](Get-Content -Raw)` cast 在 PS 5.1 + StrictMode + outer try/catch 內失敗(`$pubxml` 變 String → `.SelectNodes` 不存在);改用 `Select-Xml -Path ... -XPath ...` 直接讀檔解 XPath,完全繞過 XmlDocument 物件處理
+  - (b) XPath query 用 `local-name()='PublishUrl'`(PascalCase),但 VS 生 pubxml 用 camelCase `<publishUrl>`,case-sensitive `local-name()` 永遠找不到;改用 `translate()` lowercase-match 同時涵蓋兩種 case(`<publishUrl>` 與 `<PublishUrl>`)
+
 ## [0.2.4] - 2026-05-24
 
 ### Fixed
