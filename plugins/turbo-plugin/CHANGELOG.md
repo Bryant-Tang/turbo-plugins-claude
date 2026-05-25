@@ -10,12 +10,18 @@
 
 ### Added
 
-- **`scripts/check-encoding-support.ps1`(+ `.sh` delegate)**:偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。輸出結構化 token(`PS_VERSION` / `ANSI_CODEPAGE` / `ARGV_SAFE_FOR_UNICODE` / `RECOMMENDATION`)讓 SKILL parse,搭配警示訊息說明 Git Bash 也無法解的 root cause。
-- **`tp-setup` SKILL Step 0.5 — Encoding support check**(plan 002 U16.enc P0 環境性限制 user-side remediation):tp-setup 跑時 detect codepage,若非 UTF-8(PS 5.1 + zh-TW/zh-CN/ja-JP Windows 常態)→ 用 `AskUserQuestion` 三選一:(a) winget install PowerShell 7+ 自動 + 寫 hint 進 `settings.local.json` + 提示切 shell / (b) 開 `intl.cpl` 讓 user 勾選 Win10 UTF-8 codepage + 提示重開機 / (c) 接受限制 + 記載於 `.turbo-plugin/encoding-status.local.md`。**重要警示**:Git Bash 不解決問題,MSYS2 bash 對 native Windows exe 仍走 Win32 ANSI codepage,svn add 看似成功 exit 0 但 silently 寫 mojibake 進 SVN 永久 history,比 PS 明顯 fail 更危險。
+- **`scripts/check-encoding-support.ps1`(+ `.sh` delegate)**:偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。輸出結構化 token(`PS_VERSION` / `ANSI_CODEPAGE` / `ARGV_SAFE_FOR_UNICODE` / `RECOMMENDATION`)讓 SKILL parse,搭配 byte-level evidence 後修正的精確訊息(見 Documented)。
+- **`tp-setup` SKILL Step 0.5 — Encoding support check**(plan 002 U16.enc 環境性限制 user-side remediation):tp-setup 跑時 detect codepage,若非 UTF-8(PS 5.1 + zh-TW/zh-CN/ja-JP Windows 常態)→ 用 `AskUserQuestion` 依「團隊性質」三選一:(a) 同質中文 Windows 團隊 → 接受 SVN repo 存 DBCS bytes、SVN 中文檔名操作走 `.sh`(plugin sibling)/ (b) 跨 OS 團隊 → nested `AskUserQuestion` 選 winget PS 7+ 或 Win10 UTF-8 codepage / (c) 避用中文檔名。記載於 `.turbo-plugin/encoding-status.local.md`(gitignored,user-specific)。
 
 ### Documented
 
-- **Known limitation:PowerShell 5.1 + non-UTF-8 ANSI codepage(zh-TW/CN/JP Windows 預設)無法 lossless 傳遞中文 argv 給 native exe(svn.exe / git.exe / msbuild.exe)**:由 plan 002 U16.enc 在實機 reproduce 得到 smoking gun(`svn: 'C:\...\�����ɮ�.txt' not found`)。Root cause 在 Win32 CreateProcessA 的 CP_ACP 強制轉換,PS 5.1 + .NET Framework 無法 bypass。**plugin code 層無法修**,僅能 user-side 解(PS 7+ 用 CreateProcessW,或 Win10 UTF-8 ANSI codepage)。v0.2.7 加 tp-setup detect + interactive remediation 引導 user 自己選並動手。
+- **Refined understanding:PS 5.1 + non-UTF-8 ANSI codepage 對中文檔名 SVN 的影響不是「全 fail」,而是 path-dependent**(plan 002 U16.enc 第二輪 byte-level 驗證後修正先前結論):
+  - **PowerShell 5.1 .ps1 path**:**fail**(`svn: file not found`)。PS .NET 用 UTF-16 字串建檔(Windows FS 存 UTF-16),但 svn.exe argv 透過 CreateProcessA 從 UTF-16 轉到 CP_ACP (Big5),svn 找的 bytes 跟 filesystem 不 match
+  - **Git Bash .sh path**:**work**(對同質 zh-TW Windows 團隊)。bash 建檔走 MSYS2 + CP_ACP,svn.exe 接 argv 也走 CP_ACP,**bash 跟 svn 在 ANSI 編碼世界 round-trip 一致**。`svn ls URL` byte dump 確認 SVN repo 存 `b4 fa b8 d5`(Big5 bytes for 測試),不是 UTF-8 e6b8ac e8a9a6。Team 內 Windows zh-TW 使用者全部來回看到一致檔名
+  - **跨 OS 不 work**:SVN repo 內是 Big5 bytes,Mac/Linux UTF-8 系統 svn checkout 看到 garbage 檔名
+  - **PS 7+ 或 Win10 UTF-8 codepage**:**真正 UTF-8 work**(CreateProcessW + UTF-8 argv → SVN 存 UTF-8 bytes),跨平台 OK
+  - byte-level evidence(實機驗):磁碟 UTF-8 `e6 b8 ac e8 a9 a6` + bash svn commit → SVN repo Big5 `b4 fa b8 d5`,清楚展示 CP_ACP round-trip 路徑
+  - **推論修正**:之前說「Git Bash silent corruption 比 PS 明顯 fail 更危險」**過度悲觀**;對 zh-TW Windows homogeneous team 來說,Git Bash 是可用工作流;只有 cross-platform 場景才需 PS 7+ / Win10 UTF-8 codepage
 
 ## [0.2.6] - 2026-05-25
 
