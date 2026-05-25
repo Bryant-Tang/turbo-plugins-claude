@@ -10,8 +10,8 @@ status: active
 ## Summary
 
 agent-executable 完整 script-level 測試計畫,covering 所有 `.ps1` / `.sh` /
-helper / hook 的所有狀況,目標**不要缺漏**。21 個 Implementation Unit 分 6
-phase(Foundation / Build & IIS / Publish / SVN Bridge / SVN Tools / Hooks
+helper / hook 的所有狀況,目標**不要缺漏**。**25 個 Implementation Unit 分 6
+phase**(Foundation / Build & IIS & Publish / SVN Bridge / SVN Tools / Hooks
 / Cross-cutting encoding & parity)。**agent autonomous 跑得到的全跑**,
 SKILL agent-flow 部分由另一份 plan
 (`2026-05-25-001-feat-turbo-plugin-acceptance-test-plan.md`)由人 manual 跑。
@@ -51,14 +51,13 @@ test 環境:`C:\Turbo\SampleGitWithSvn`(fixture,內容可隨意改)。每 unit
 
 ### In scope
 
-- **All 17 user-facing `.ps1` scripts**(`scripts/*.ps1`)各 happy + edge +
-  failure 完整 case
-- **All 17 `.sh` siblings**(`scripts/*.sh`)同 case,額外加 cross-platform
-  parity 驗證
+- **17 個 user-facing `.ps1` script**(`scripts/<name>.ps1`,不含 hooks/ 與 lib/)各 happy + edge + failure 完整 case
+- **對應 `.sh` sibling**:其中 16 個有真實 bash 實作,U13(`cleanup-orphan-iis`)Windows-only,`.sh` 只是 ps1-delegate wrapper(不算真 sibling,U13 只測 Windows side + delegate 正確呼叫 ps1)
 - **3 個 lib file**(`common.ps1`、`common.sh`、`applicationhost-helpers.ps1`)
   helper function 各別 unit test(directly invoked + return value 驗)
 - **2 hook(`posttooluse-enterworktree` + `sessionstart`)**.ps1 + .sh
   各 input scenario(empty / malformed JSON / 各條件 short-circuit)
+- 全體 .ps1 count:17 user-facing + 2 hooks + 2 lib(`common.ps1` + `applicationhost-helpers.ps1`)= **21 個 .ps1**;.sh count:16 真 sibling + 1 delegate(`cleanup-orphan-iis.sh`)+ 2 hooks + 1 lib(`common.sh`)+ 1 utility(`ps1-delegate.sh`)= **21 個 .sh**
 - **Cross-cutting encoding test**:中文檔名 / 中文 commit message / 中文
   pattern / 中文 csproj 名 / 中文 directory 名
 - **`tools/lint-ps-compat.ps1`** 對 turbo-plugin scope 跑 0 violation 確認
@@ -293,7 +292,7 @@ requirement — fail 等於設計失敗。
 
 **Goal**:對 `Find-ApplicationhostSite` / `Save-ApplicationhostConfigAtomically`
 (private)/ `Update-ApplicationhostConfig` / `Remove-ApplicationhostSite`
-4 個 function 直接 unit test。
+**4 個 function 直接 unit test**。
 
 **Dependencies**:U1
 
@@ -1035,7 +1034,7 @@ land。
 |---|---|
 | 部分 unit 需模擬 process(fake iisexpress 啟動)— Auto-mode 可能擋 | 用最少 process,測完 immediately kill;若擋 document 為 manual-needed |
 | 中文 fixture 加進 SampleGit 後續難清 | 用 scratch dir `jobs/<job>/test-fixtures/` 隔離;非必要不動 SampleGit |
-| 21 unit 跑完時間長(estimate 3-4 小時 agent autonomous) | 可分 phase 跑,phase 間 checkpoint;agent 在 BG session |
+| 25 unit 跑完時間長(估 6-10 小時 agent autonomous,U2 含 16 sub-test、U24 整 18 pair parity) | 可分 phase 跑,phase 間 checkpoint;agent 在 BG session;agent 自定 must-run vs nice-to-have 排序 |
 | SVN file:// repo 殘留多 test branch(每 push 留 history) | 用 `test-script-N` namespace + U25 cleanup |
 | fix 累積多 → 集體 commit 風險 | 每 phase 結尾 commit 一次,bump patch version |
 | Edge case 觸到未 design 的 path 引發新 finding | 預期會發生,正常 acceptance process |

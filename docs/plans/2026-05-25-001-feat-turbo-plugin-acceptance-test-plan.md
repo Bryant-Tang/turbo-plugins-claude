@@ -12,7 +12,7 @@ status: active
 turbo-plugin v0.2.0 → v0.2.4 經 4 輪 ce-code-review + 1 輪實機 script-level
 acceptance(在 `C:\Turbo\SampleGitWithSvn`)後,**SKILL agent-flow 部分**
 仍須在真實 Claude Code session 由使用者驗。本 plan 列 11 個 Implementation
-Unit 覆蓋 14 個 SKILL,優先驗「主 worktree 開 Claude → EnterWorktree 進
+Unit 覆蓋 **12 個 SKILL**(全 13 個中 tp-svn-log 留 Deferred);優先驗「主 worktree 開 Claude → EnterWorktree 進
 peer worktree → build/run」這個原 `tnf` plugin 帶來的 pain point 是否在
 turbo-plugin 解決。
 
@@ -64,6 +64,8 @@ file:// repo)已備好;`.gitignore` union merge / `.pubxml` profile 已 commit
 - **tp-csharp-comment / tp-js-comment 真實 dev flow trigger 驗證**:屬
   dev flow 整合測試,留待跟 tdp 替代品(別的 dev workflow plugin)整合
   測試一起跑
+- **tp-svn-log SKILL agent-flow 驗證**:script-level 已由 sibling plan
+  `2026-05-25-002-...` U20 覆蓋(svn log render + 中文 commit + header strip 等)。SKILL agent-flow(invoke `/turbo-plugin:tp-svn-log` 走 SKILL.md Procedure)未直驗,但 SKILL body 本身只是 thin wrapper 呼叫 script,風險低,留 follow-up
 
 ### Outside this product's identity(carried verbatim from origin)
 
@@ -82,9 +84,12 @@ file:// repo)已備好;`.gitignore` union merge / `.pubxml` profile 已 commit
 2. **`.NET FW Web` skill 全 4 個都用 MinimalWebApp fixture**:build / run /
    stop / publish 都針對 `src/MinimalWebApp/MinimalWebApp.csproj`,site name
    `MinimalWebApp-0eb9b6ee`,port 51999
-3. **真實 IIS Express 啟動 fall-back**:若 minimal `applicationhost.config`
-   不足以讓 IIS Express 真實啟動,先用 VS 開過一次 `.sln` 讓 VS 生成完整
-   apphost,再回來跑 tp-run。**非 plugin bug,純 fixture 限制**
+3. **VS 預跑 site bootstrap(必跑 prerequisite,不是 fallback)**:`.turbo-plugin/applicationhost.config`(source-of-truth template) **`<sites>` 內無任何 `<site>` element**(只 comment 跟 defaults),PostToolUse hook 預設 update 0 個 site → 不 emit `systemMessage`、IIS Express 也起不來。**在 U2 完成後、U5 開始前**,必須:
+   1. 在 SampleGit/ 用 VS 開過一次 `MinimalWebApp.sln` 讓 VS 在 `.vs/MinimalWebApp/config/applicationhost.config` 寫入完整 `<site>` 條目
+   2. 把 VS 生的 site name **手動 rename 成 `MinimalWebApp-0eb9b6ee`**(plan 預期值,對應 compute-project-identity hash)
+   3. 把同樣的 `<site>` 條目 **copy 進 `.turbo-plugin/applicationhost.config`** 讓後續 PostToolUse hook 有東西可 update
+   
+   未做此 prerequisite,U5 B.1.1 + U6 全部 fail。**非 plugin bug,純 fixture 限制**
 4. **`tp-setup case (c)` 整合驗證 tp-csharp-comment / tp-js-comment**:
    這兩個 SKILL 的本意是 dev flow 自動 trigger,使用者意圖透過 setup
    階段在 CLAUDE.md 加 reference 讓 agent 後續開發時遵守。**驗 tp-setup
@@ -141,6 +146,8 @@ physicalPath。tp-setup 也走同邏輯。
 **Goal**:確認 Claude Code session 看得到 v0.2.4,SKILL trigger 不會誤觸到
 舊 plugin。
 
+**⚠️ 重要**:本 plan 期間 `.claude-plugin/marketplace.json` `name` 暫改為 `turbo-plugins-claude-dev`(避免與 user-scope production marketplace 撞名)。**不要 commit 此變更** — 結尾 cleanup checklist「**必跑** 還原 marketplace name」一定要執行;否則 plugin production 安裝路徑會跑掉,既有使用者 update plugin 會壞。
+
 **Dependencies**:無
 
 **Files**:
@@ -183,26 +190,18 @@ env + permissions allow、dbhub.local.toml 引導。
 
 **Test scenarios**:
 
-- **A.1.1 CLAUDE.md 加 SKILL reference**:`cat SampleGit/CLAUDE.md` 含
-  - 「修 `.cs` 前 invoke `/turbo-plugin:tp-csharp-comment`」
-  - 「修 `.js`/`.ts`/`.vue`/`.cshtml` `<script>` 前 invoke `/turbo-plugin:tp-js-comment`」
-  - 「新 untracked 檔出現可建議 `/turbo-plugin:tp-suggest-ignore`」
-  - 「Web 專案 build/run/publish 用 `/turbo-plugin:tp-build-dotnet-framework-web` 等」
-- **A.1.2 apphost bootstrap**:
-  - `Test-Path SampleGit/.vs/MinimalWebApp/config/applicationhost.config` → True
-  - 該檔內 `<site name="MinimalWebApp-0eb9b6ee">`,physicalPath ==
-    `C:\Turbo\SampleGitWithSvn\SampleGit\src\MinimalWebApp\`
-- **A.1.3 settings.local.json env**:含 `TURBO_PLUGIN_MSBUILD_PATH` +
-  `TURBO_PLUGIN_IIS_EXPRESS_PATH`(若 user-level 沒設)
-- **A.1.4 permissions allowlist**(解 sandbox 擋 SKILL invocation):
-  ```json
-  "permissions": { "allow": [
-    "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File:*)",
-    "Bash(powershell -ExecutionPolicy Bypass -File:*)"
-  ] }
-  ```
-- **A.1.5 dbhub.local.toml 引導**:systemMessage 或 prompt 提示「複製
+- **A.1.1 CLAUDE.md 注入 commit-type-convention 段**:`cat SampleGit/CLAUDE.md` 含
+  - turbo-plugin marker 區段(`<!-- turbo-plugin:convention:start -->` … `:end`)
+  - commit type 12 類 table(feat / fix / refactor / perf / revert / docs / test / chore / build / ci / style / spec)
+  - **註**:目前 tp-setup 注入的 snippet(`assets/claudemd-convention-snippet.md`)只包含 commit-type-convention,**不含** tp-csharp-comment / tp-js-comment / tp-suggest-ignore / tp-build-dotnet-framework-web 等 SKILL reference。若期待後者,屬 SKILL 本體該加 feature,留 v0.3.0 規劃,**本 plan 只驗 commit-type-convention 注入**
+- **A.1.2 apphost source-of-truth bootstrap**:
+  - `Test-Path SampleGit/.turbo-plugin/applicationhost.config` → True(由 tp-setup 從 plugin default-files 複製)
+  - **註**:tp-setup case (c) **不會主動建** `.vs/<sln>/config/applicationhost.config` — 那條路徑由 PostToolUse hook 在 EnterWorktree 觸發時自動建(或 VS 開過 .sln 時 VS 建)。詳見 §K3 第 3 條 VS site bootstrap prerequisite
+  - **(已移除)**:本 plan 之前期待 A.1.2 驗 `.vs/MinimalWebApp/config/applicationhost.config` 存在;case (c) 不負責這條,改在 §K3 第 3 條當 prerequisite 處理
+- **A.1.3 user-level env**:`cat ~/.claude/settings.json` `env` block 含 `TURBO_PLUGIN_MSBUILD_PATH` + `TURBO_PLUGIN_IIS_EXPRESS_PATH`(若 SKILL 找不到 default path 才 prompt 寫入);**寫 user-level 而非 repo-level** — Decision Rule:不要把這兩個 env 寫到 repo-level `.claude/settings.local.json`,會跨同事覆寫各自本機路徑
+- **A.1.4 dbhub.local.toml 引導**:systemMessage 或 prompt 提示「複製
   `dbhub.example.local.toml` 為 `dbhub.local.toml` 並填 credentials」
+- **(已刪 permissions allowlist 驗證)**:SKILL 目前不寫 `permissions.allow` 到 settings.local.json。若 user 跑時 sandbox 擋 `-ExecutionPolicy Bypass` 須自己加 allowlist,**屬 SKILL 該補 feature 但本 plan 不驗**(留 finding 記)
 
 **Verification**:後續 SKILL invocation 不再被 sandbox 擋(解 v0.2.1 前
 agent 報的 `-ExecutionPolicy Bypass` 被 sandbox 擋下問題);tp-run 可正常
@@ -295,6 +294,7 @@ mtime 不變),此 Unit 補 SKILL agent-flow 完整鏈路。
 - **B.1.1 PostToolUse hook fire**:EnterWorktree 後 systemMessage 出現
   `turbo-plugin: refreshed applicationhost.config for 1 site(s) in c:\Turbo\SampleGitWithSvn\SampleGit.worktrees\dev-1`
   (**「1 site(s)」不是「4」— v0.2.3 P3 fix 驗證**)
+  - **前提**:已依 §K3 第 3 條跑完 VS site bootstrap;否則 `.turbo-plugin/applicationhost.config` 無 site,hook update 0 個,**不會** emit systemMessage,B.1.1 必 fail
 - **B.1.2 apphost physicalPath update**:
   ```powershell
   Select-Xml -Path 'C:/.../dev-1/.vs/MinimalWebApp/config/applicationhost.config' `
@@ -463,7 +463,7 @@ SVN URL → ERR-trap rollback git branches/worktree)。
   - SKILL Step 2.5 AskUserQuestion 出現(顯示 N=3 / branch / path / URL)
   - 選 Confirm → script 跑 svn copy + checkout + svn:ignore propset
   - **不再 throw `svn:ignore not found`**(v0.2.2 fix)
-  - `git branch -a` 含 `test/rc3` + `remote/test-3`
+  - `git branch -a` 含 `test-3` + `remote/test-3`
   - `git worktree list` 含 `remote-test-3`
   - `svn ls file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/` 含 `test3/`
 - **D.4 cancel path**(N=4):confirm 選 Cancel → branches/worktree/SVN
@@ -471,7 +471,7 @@ SVN URL → ERR-trap rollback git branches/worktree)。
 - **D.5 fail-rollback path**(N=5,無效 SVN URL):
   - SVN setup 失敗 → ERR trap fire
   - 訊息 `SVN setup failed; rolling back git state...`
-  - `git branch -a` 不含 `test/rc5` 或 `remote/test-5`
+  - `git branch -a` 不含 `test-5` 或 `remote/test-5`
   - `git worktree list` 不含 `remote-test-5`
   - (機率低)若 partial cleanup 失敗 emit `PARTIAL_ROLLBACK: ...` 訊息
 
@@ -485,36 +485,35 @@ SVN URL → ERR-trap rollback git branches/worktree)。
 **Goal**:驗 push-to-svn 整條 lifecycle:commit type 篩選 / SHA pin guard
 觸發 / failure path pin retain / PENDING_MERGE_DETECTED 三選一。
 
-**Requirements**:U9(D.3 已 land,有 `test/rc3` + `remote-test-3`)
+**Requirements**:U9(D.3 已 land,有 `test-3` + `remote-test-3`)
 
 **Dependencies**:U9
 
 **Files**:
-- `SampleGit/`(test/rc3 branch + commits)
-- `SampleGit.worktrees/remote-test-3/.git/MERGE_HEAD.tp_branch_sha`(SHA pin
-  file)
+- `SampleGit/`(test-3 branch + commits)
+- `SampleGit/.git/worktrees/remote-test-3/MERGE_HEAD.tp_branch_sha`(SHA pin file;**linked worktree 的 `.git` 是 pointer file 不是 dir**,真正的 gitdir 在 main 的 `.git/worktrees/<name>/`)
 - `SampleSvnServer/test3/`(SVN history)
 
-**Approach**:在 test/rc3 做 4 個 commit(feat/docs/fix/chore 各 1),跑
+**Approach**:在 test-3 做 4 個 commit(feat/docs/fix/chore 各 1),跑
 push-to-svn 觀察篩選 + lifecycle 各 step。
 
 **Test scenarios**:
 
 - **D.6 happy lifecycle**:
-  - Setup:`git checkout test/rc3` + 4 個 commit(feat/docs/fix/chore)
+  - Setup:`git checkout test-3` + 4 個 commit(feat/docs/fix/chore)
   - Action:`/turbo-plugin:tp-push-to-svn --branch test-3`
   - SKILL prepare → 列 COMMITS/FILES → 篩選(feat/fix kept、docs/chore
     filtered)→ unknown prompt(無)→ Step 5 confirm → commit
   - **Expected**:
     - SVN body 只含 `feat: ...` + `fix: ...`
-    - **`<remote-test-3>/.git/.../MERGE_HEAD.tp_branch_sha` push 過程中
-      存在**(可在 prepare 完 commit 前查)
+    - **`<main>/.git/worktrees/remote-test-3/MERGE_HEAD.tp_branch_sha` push 過程中
+      存在**(可在 prepare 完 commit 前查;**不是** `<remote-test-3>/.git/...`,因 linked worktree `.git` 是 pointer file)
     - 成功 push 後 pin file 被清(v0.2.1 + v0.2.2 fix)
     - 中文 commit subject 在 SVN 顯示**不亂碼**(`svn log
       SampleGit.worktrees/remote-test-3 --limit 1`)
 - **D.7 SHA pin guard 觸發**:
   - 跑 `/turbo-plugin:tp-push-to-svn --branch test-3` 到 Step 5 confirm 前
-  - **另開** terminal 在 test/rc3 加新 commit
+  - **另開** terminal 在 test-3 加新 commit
   - 回 SKILL 按 Accept
   - **Expected**:commit-phase throw `Branch 'test-3' has new commits since
     prepare (pinned: <8hex>, current: <8hex>)`
@@ -536,7 +535,7 @@ F15 token-based 三選一 land。
 
 **Goal**:把剩 3 個 SKILL 一起驗 — 都是相對獨立的 SKILL,可順手跑完。
 
-**Requirements**:U9(reset-remote-test 需 `test/rc3` 存在);U2(其他)
+**Requirements**:U9(reset-remote-test 需 `test-3` 存在);U2(其他)
 
 **Dependencies**:U9
 
@@ -550,14 +549,14 @@ F15 token-based 三選一 land。
 **Test scenarios**:
 
 - **D.10 tp-reset-remote-test 三步**(v0.2.3 B1 fix):
-  - Action:`/turbo-plugin:tp-reset-remote-test --branch test-3`
+  - Action:`/turbo-plugin:tp-reset-remote-test --n 3`(reset-remote-test 只認 `-N <number>`,不認 `--branch`)
   - SKILL 應走:
     1. **Step 1** 跑 script 帶 `--diff-only` → 印 `LOSE: <N> commits` +
        `GAIN: <M> commits`
     2. **Step 2** AskUserQuestion confirm(顯示 LOSE/GAIN 數字)
     3. **Step 3** 跑 script(無 flag)→ `Reset test-3 to main`
-  - Apply case:選 Apply → `test/rc3` SHA == `main` SHA
-  - Cancel case:選 Cancel → `test/rc3` SHA 不動
+  - Apply case:選 Apply → `test-3` SHA == `main` SHA
+  - Cancel case:選 Cancel → `test-3` SHA 不動
 - **D.11 tp-suggest-ignore analysis mode**:
   - Setup:`echo x > junk.tmp; echo x > debug.log`
   - Action:`/turbo-plugin:tp-suggest-ignore`
@@ -594,9 +593,8 @@ analysis 完整跑通;E PARTIAL_FAILURE token + exit 2 = v0.2.0 WF4 設計驗證
 
 ## System-Wide Impact
 
-- **全 14 個 turbo-plugin SKILL** 都被觸到(U2 / U5 / U6 / U7 / U8 / U9 /
-  U10 / U11 = 11 個 user-invocable SKILL + tp-csharp-comment / tp-js-comment
-  / tp-publish-dotnet-framework-web 透過 CLAUDE.md reference 與 fixture 驗)
+- **12/13 個 turbo-plugin SKILL** 被觸到(直接 invoke:tp-setup 在 U2/U3/U4、tp-build/tp-run/tp-stop 在 U5/U6、tp-pull-from-svn 在 U8、tp-create-remote-test 在 U9、tp-push-to-svn 在 U10、tp-reset-remote-test + tp-suggest-ignore 在 U11 = **9 個直驗**;+ tp-csharp-comment / tp-js-comment 透過 CLAUDE.md commit-type-convention 注入間驗(本 plan A.1.1 只驗 commit-type-convention 注入,不驗 SKILL 本體真執行)+ tp-publish-dotnet-framework-web 透過 fixture `.pubxml` 在 §Output Structure 預備但**本 plan 不直驗** = **3 個間驗** → 12 SKILL 共)
+- **tp-svn-log Deferred**:本 plan 不覆蓋(留 follow-up,見 §Deferred to Follow-Up Work)
 - **兩個 hook** 都跑:`PostToolUse EnterWorktree`(U5)+ `SessionStart`(U7)
 - **fixture mutation**:SampleGit `main` 多 1-2 個 commit(D.2 conflict + D.11
   suggest-ignore);SampleSvnServer 多 `^/test3` SVN branch(D.3 land)+ test3
@@ -612,9 +610,9 @@ analysis 完整跑通;E PARTIAL_FAILURE token + exit 2 = v0.2.0 WF4 設計驗證
 |---|---|
 | SVN test3 殘留 | `svn delete file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/test3 -m "cleanup"` |
 | git remote-test-3 worktree | `git -C SampleGit worktree remove --force SampleGit.worktrees/remote-test-3` |
-| git branches `test/rc3` `remote/test-3` | `git -C SampleGit branch -D test/rc3 remote/test-3` |
+| git branches `test-3` `remote/test-3` | `git -C SampleGit branch -D test-3 remote/test-3` |
 | iisexpress 殘留 | `Get-Process iisexpress -ErrorAction SilentlyContinue \| Stop-Process -Force` |
-| (可選)還原 marketplace name | `cd <worktree> && git checkout .claude-plugin/marketplace.json` |
+| **必跑** 還原 marketplace name | `cd <worktree> && git checkout .claude-plugin/marketplace.json`;Pass criteria:`git diff --name-only .claude-plugin/marketplace.json` 空 |
 | (可選)squash v0.2.x fix commits 為 1 個 | `git rebase -i` |
 
 ---
