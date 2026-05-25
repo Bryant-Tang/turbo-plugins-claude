@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$N = '',
     [string]$SvnUrl = ''
@@ -48,17 +48,19 @@ try {
     $initCommit = (& git -C $mainWorktree rev-list --max-parents=0 HEAD | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "git rev-list failed" }
 
-    & git -C $mainWorktree branch $remoteBranch $initCommit
-    if ($LASTEXITCODE -ne 0) { throw "git branch $remoteBranch failed" }
-
-    & git -C $mainWorktree branch $testBranch 'main'
-    if ($LASTEXITCODE -ne 0) { throw "git branch $testBranch failed" }
-
-    & git -C $mainWorktree worktree add $remoteWorktreePath $remoteBranch
-    if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
-
-    # Wrap SVN setup in try/catch so partial state is rolled back on failure.
+    # v0.2.7+ fix: git mutations 移進 rollback try 內,讓 trap 覆蓋 git branch + worktree add
+    # 失敗的情況。原本在 try 外,若 git branch $testBranch 失敗 → outer catch 只 emit
+    # stderr + exit 1,留下半建好的 $remoteBranch orphan,下次撞名失敗。
     try {
+        & git -C $mainWorktree branch $remoteBranch $initCommit
+        if ($LASTEXITCODE -ne 0) { throw "git branch $remoteBranch failed" }
+
+        & git -C $mainWorktree branch $testBranch 'main'
+        if ($LASTEXITCODE -ne 0) { throw "git branch $testBranch failed" }
+
+        & git -C $mainWorktree worktree add $remoteWorktreePath $remoteBranch
+        if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
+
         $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = 'SilentlyContinue'
         & svn info $SvnUrl 2>&1 | Out-Null
@@ -130,8 +132,11 @@ try {
             Pop-Location
         }
     } catch {
-        # Rollback: remove the SVN worktree and both branches, then rethrow.
-        Write-Output "SVN setup failed; rolling back git state..."
+        # Rollback: best-effort cleanup of any partial git+svn state, then rethrow.
+        # Inner try covers git branch + worktree add + svn copy/checkout/propset/commit;
+        # any of these failing triggers full rollback. Each `git worktree remove` /
+        # `branch -D` silently skips if the target didn't exist (e.g., first git branch failed).
+        Write-Output "Setup failed; rolling back partial git+svn state..."
         & git -C $mainWorktree worktree remove --force $remoteWorktreePath 2>$null | Out-Null
         & git -C $mainWorktree branch -D $remoteBranch 2>$null | Out-Null
         & git -C $mainWorktree branch -D $testBranch 2>$null | Out-Null
