@@ -18,7 +18,8 @@ try {
     # Project: CLI arg → config.toml [build].project → auto-detect single .csproj
     $projectFile = Find-SingleCsproj -RepoRoot $repoRoot -CliProjectValue $Project
 
-    # MSBuild path: TURBO_PLUGIN_MSBUILD_PATH env → standard VS install locations
+    # MSBuild path: config.local.toml [tools] msbuild_path → standard VS install locations
+    # (v1.0+ U2: strict cut, no env var fallback — throws with /tp-setup guidance if missing)
     $msbuildPath = Find-MSBuild -RepoRoot $repoRoot
 
     # pubxml: CLI arg → config.toml [publish].default_pubxml → auto-detect single .pubxml under project's Properties/PublishProfiles

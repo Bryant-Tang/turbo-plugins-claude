@@ -3,10 +3,32 @@ $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
 
+# Locate iisexpress.exe. Lookup order (v1.0+ U2 — strict cut, no env fallback):
+#   1. .turbo-plugin/config.local.toml [tools] iis_express_path  (machine-specific, gitignored)
+#   2. Standard install paths (Program Files (x86) / Program Files)
+#   3. Throw with /tp-setup guidance.
+# $env:TURBO_PLUGIN_IIS_EXPRESS_PATH is deliberately NOT read — v1.0 is the first release;
+# no legacy users to migrate. If the env var happens to be set externally, it is ignored.
 function Find-IisExpressPath {
-    if (-not [string]::IsNullOrWhiteSpace($env:TURBO_PLUGIN_IIS_EXPRESS_PATH)) {
-        return Get-NormalizedAbsolutePath -Path $env:TURBO_PLUGIN_IIS_EXPRESS_PATH
+    param([string]$RepoRoot = '')
+
+    # Step 1: config.local.toml [tools] iis_express_path
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $configured = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'tools' -Key 'iis_express_path' -CliValue $null -Default $null
+        if (-not [string]::IsNullOrWhiteSpace($configured)) {
+            $resolved = Resolve-RepoPath -RepoRoot $RepoRoot -PathValue $configured
+            if (Test-Path -LiteralPath $resolved -PathType Leaf) {
+                return $resolved
+            }
+            throw @"
+IIS Express 路徑設定指向不存在的檔案: $resolved
+(來源: .turbo-plugin/config.local.toml [tools] iis_express_path)
+請跑 /tp-setup 重新偵測,或手動修正 .turbo-plugin/config.local.toml 內的路徑。
+"@
+        }
     }
+
+    # Step 2: probe standard install paths
     $candidates = @(
         "${env:ProgramFiles(x86)}\IIS Express\iisexpress.exe",
         "${env:ProgramFiles}\IIS Express\iisexpress.exe"
@@ -16,7 +38,14 @@ function Find-IisExpressPath {
             return $c
         }
     }
-    return $null
+
+    # Step 3: throw with /tp-setup guidance
+    throw @"
+IIS Express 路徑未設定且找不到標準安裝。請跑 /tp-setup 互動填入 IIS Express 路徑,
+或手動在 .turbo-plugin/config.local.toml 加上:
+  [tools]
+  iis_express_path = "C:/Program Files/IIS Express/iisexpress.exe"
+"@
 }
 
 function Find-ApplicationhostTarget {
@@ -63,7 +92,7 @@ function Resolve-IisSettings {
         throw "Unable to parse port from <IISUrl>: $iisUrl"
     }
 
-    $iisExpressPath = Find-IisExpressPath
+    $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot
 
     $topLevel = (& git rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($topLevel)) { throw 'Not inside a git repository.' }

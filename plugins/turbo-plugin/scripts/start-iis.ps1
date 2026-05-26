@@ -79,9 +79,8 @@ try {
     if ([string]::IsNullOrWhiteSpace($settings.ApplicationhostConfigFile)) {
         throw "applicationhost.config target not found (.vs/<sln>/config/applicationhost.config). Ensure /tp-setup created the config or open the .sln in Visual Studio once to generate it."
     }
-    if ([string]::IsNullOrWhiteSpace($settings.IisExpressPath)) {
-        throw "IIS Express not found. Set user-level env ``TURBO_PLUGIN_IIS_EXPRESS_PATH`` to iisexpress.exe absolute path."
-    }
+    # Find-IisExpressPath (in resolve-iis-settings.ps1) throws on missing/invalid path
+    # since v1.0 (U2); guard kept as defensive layer in case caller short-circuits the helper.
     if (-not (Test-Path -LiteralPath $settings.IisExpressPath -PathType Leaf)) {
         throw "IIS Express executable does not exist: $($settings.IisExpressPath)"
     }

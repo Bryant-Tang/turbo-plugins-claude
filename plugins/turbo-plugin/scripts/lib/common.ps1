@@ -204,35 +204,56 @@ function Format-IisExpressSiteName {
     return "$stem-$IdentityHash"
 }
 
-# Locate MSBuild.exe by probing TURBO_PLUGIN_MSBUILD_PATH env first, then standard VS install paths.
-# Throws if MSBuild cannot be found.
+# Locate MSBuild.exe. Lookup order (v1.0+ U2 — strict cut, no env fallback):
+#   1. .turbo-plugin/config.local.toml [tools] msbuild_path  (machine-specific, gitignored)
+#   2. Standard VS install paths (VS 2017/2019/2022 Enterprise/Professional/Community)
+#   3. Throw with /tp-setup guidance.
+# $env:TURBO_PLUGIN_MSBUILD_PATH is deliberately NOT read — turbo-plugin v1.0 is the
+# first release; no legacy users to migrate. If the env var happens to be set by some
+# other tool, it is ignored.
 function Find-MSBuild {
     param([string]$RepoRoot = '')
-    $envPath = $env:TURBO_PLUGIN_MSBUILD_PATH
-    if (-not [string]::IsNullOrWhiteSpace($envPath)) {
-        if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
-            $envPath = Resolve-RepoPath -RepoRoot $RepoRoot -PathValue $envPath
-        } else {
-            $envPath = [System.IO.Path]::GetFullPath($envPath)
+
+    # Step 1: config.local.toml [tools] msbuild_path (via Resolve-ConfigValue's merge chain)
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $configured = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null
+        if (-not [string]::IsNullOrWhiteSpace($configured)) {
+            $resolved = Resolve-RepoPath -RepoRoot $RepoRoot -PathValue $configured
+            if (Test-Path -LiteralPath $resolved -PathType Leaf) {
+                return $resolved
+            }
+            throw @"
+MSBuild 路徑設定指向不存在的檔案: $resolved
+(來源: .turbo-plugin/config.local.toml [tools] msbuild_path)
+請跑 /tp-setup 重新偵測,或手動修正 .turbo-plugin/config.local.toml 內的路徑。
+"@
         }
-        if (Test-Path -LiteralPath $envPath -PathType Leaf) {
-            return $envPath
-        }
-        throw "TURBO_PLUGIN_MSBUILD_PATH points to a non-existent file: $envPath"
     }
+
+    # Step 2: probe standard VS install paths
     $candidates = @(
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\MSBuild.exe",
-        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe"
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017\Enterprise\MSBuild\15.0\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017\Professional\MSBuild\15.0\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017\Community\MSBuild\15.0\Bin\MSBuild.exe"
     )
-    $found = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace($found)) {
-        throw "MSBuild not found. Set user-level env ``TURBO_PLUGIN_MSBUILD_PATH`` to MSBuild.exe absolute path (~/.claude/settings.json)."
+    $found = @($candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1)
+    if ($found.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($found[0])) {
+        return $found[0]
     }
-    return $found
+
+    # Step 3: throw with /tp-setup guidance
+    throw @"
+MSBuild 路徑未設定且找不到 VS 安裝。請跑 /tp-setup 互動填入 MSBuild 路徑,
+或手動在 .turbo-plugin/config.local.toml 加上:
+  [tools]
+  msbuild_path = "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe"
+"@
 }
 
 # Find the single .csproj in the repo, using config or CLI arg, or auto-detecting.
