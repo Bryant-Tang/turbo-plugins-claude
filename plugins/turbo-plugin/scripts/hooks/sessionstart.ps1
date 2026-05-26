@@ -2,7 +2,6 @@
 $ErrorActionPreference = 'Continue'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'common.ps1'))
-. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'applicationhost-helpers.ps1'))
 
 function Emit-Json {
     param([hashtable]$Payload)
@@ -29,24 +28,10 @@ try {
     $markerDir = Join-Path $cwd '.turbo-plugin'
 
     if (Test-Path -LiteralPath $markerDir -PathType Container) {
-        # Branch (i): marker exists — auto-fix applicationhost.config physicalPath if stale.
-        # IIS Express is Windows-only; stale physicalPaths happen on worktree move/rename.
-        $apphostSrc = Join-Path $markerDir 'applicationhost.config'
-        if (Test-Path -LiteralPath $apphostSrc -PathType Leaf) {
-            $slnFile = @(Get-ChildItem -LiteralPath $cwd -Filter '*.sln' -ErrorAction SilentlyContinue) | Select-Object -First 1
-            if ($null -ne $slnFile) {
-                $slnStem = [System.IO.Path]::GetFileNameWithoutExtension($slnFile.FullName)
-                $apphostTarget = Join-Path $cwd ".vs/$slnStem/config/applicationhost.config"
-                if (Test-Path -LiteralPath $apphostTarget -PathType Leaf) {
-                    $refresh = Invoke-ApplicationhostRefresh -WorktreePath $cwd -ApphostTarget $apphostTarget
-                    if ($refresh.Errors.Count -gt 0) {
-                        $errSummary = ($refresh.Errors | Select-Object -First 1)
-                        Emit-Json @{ systemMessage = "turbo-plugin: 自動修正 applicationhost.config 失敗: $errSummary。請執行 ``/tp-setup`` 完成設定。" }
-                        exit 0
-                    }
-                }
-            }
-        }
+        # v1.0 (U3) — Branch (i) (.vs/<sln>/config/applicationhost.config refresh) removed.
+        # Canonical .turbo-plugin/applicationhost.config is never mutated at runtime; start-iis
+        # renders a per-launch temp file with physicalPath substituted. VS UI manages
+        # .vs/<sln>/config/applicationhost.config independently.
 
         # Branch (ii): peer worktree + missing dbhub.local.toml → Pattern B prompt with hybrid warning
         if (-not (Test-IsMainWorktree)) {

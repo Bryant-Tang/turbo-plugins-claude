@@ -75,9 +75,9 @@ try {
     Probe-GitVersion
     $settings = Resolve-IisSettings -Project $Project
 
-    # apphost-mode is always required (port-mode removed); ensure the config file is set.
+    # apphost-mode is always required (port-mode removed); ensure the canonical config file is set.
     if ([string]::IsNullOrWhiteSpace($settings.ApplicationhostConfigFile)) {
-        throw "applicationhost.config target not found (.vs/<sln>/config/applicationhost.config). Ensure /tp-setup created the config or open the .sln in Visual Studio once to generate it."
+        throw "applicationhost.config 路徑無法解析。請執行 /tp-setup 建立 .turbo-plugin/applicationhost.config。"
     }
     # Find-IisExpressPath (in resolve-iis-settings.ps1) throws on missing/invalid path
     # since v1.0 (U2); guard kept as defensive layer in case caller short-circuits the helper.
@@ -85,18 +85,20 @@ try {
         throw "IIS Express executable does not exist: $($settings.IisExpressPath)"
     }
     if (-not (Test-Path -LiteralPath $settings.ApplicationhostConfigFile -PathType Leaf)) {
-        throw "applicationhost.config does not exist at: $($settings.ApplicationhostConfigFile). Open the .sln in Visual Studio once or run /tp-setup."
+        throw "canonical applicationhost.config does not exist at: $($settings.ApplicationhostConfigFile). 請執行 /tp-setup 從 VS 複製或建立空白 template。"
     }
 
-    # Pre-validate: the site entry must exist in applicationhost.config before launching.
+    # Pre-validate: the site entry must exist in canonical applicationhost.config before launching.
     $apphostXml = New-Object System.Xml.XmlDocument
+    $apphostXml.PreserveWhitespace = $true
     $apphostXml.Load($settings.ApplicationhostConfigFile)
     $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $settings.IisConfigSiteName
     if ($null -eq $siteEntry) {
-        throw "applicationhost.config 缺對應 site '$($settings.IisConfigSiteName)'。請先用 Visual Studio 開 .sln 一次讓 VS 自動建立 site 條目,或執行 /tp-setup 補設定。"
+        throw "applicationhost.config 缺對應 site '$($settings.IisConfigSiteName)'。請先用 Visual Studio 開 .sln 一次讓 VS 自動建立 site 條目,然後執行 /tp-setup 重新從 VS 複製到 .turbo-plugin/applicationhost.config。"
     }
 
-    # Existing instance on the same port?
+    # Existing instance on the same port? (port check still uses the canonical config —
+    # site name + binding info come from canonical, both unchanged at runtime).
     $occupants = Find-IisInstanceByPort -Port $settings.IisPort -ApphostConfigFile $settings.ApplicationhostConfigFile
     if ($occupants.Count -gt 0) {
         $sameProject = @($occupants | Where-Object { $_.SiteName -ieq $settings.IisConfigSiteName })
@@ -116,15 +118,57 @@ try {
         }
     }
 
-    # Refresh applicationhost.config physicalPath for current worktree before starting.
-    try {
-        Update-ApplicationhostConfig -ConfigPath $settings.ApplicationhostConfigFile -SiteName $settings.IisConfigSiteName -NewPhysicalPath $settings.SiteRoot | Out-Null
-    } catch {
-        Write-Output "Note: $($_.Exception.Message)"
+    # v1.0 (U3) — render a per-launch temp applicationhost.config:
+    #   1. Delete any stale temp file from a previous run (same identity-hash).
+    #   2. Copy canonical → %TEMP%\turbo-plugin-iis-<identity-hash>.config.
+    #   3. In the temp file, replace the __TURBO_PLUGIN_PHYSICAL_PATH__ placeholder
+    #      with the current worktree's csproj dir. If the placeholder is not present
+    #      (canonical came from VS with a real absolute path), fall back to
+    #      SetAttribute on physicalPath via Update-ApplicationhostConfig.
+    #   4. Launch iisexpress with -config:<temp>.
+    # Canonical is never mutated — committed content stays portable across machines.
+    # Same project on every worktree resolves to the same identity-hash, hence the
+    # same temp filename — by design, since IIS Express for one project never runs
+    # concurrently across worktrees (port/site/bindings all derive from the project
+    # file and collide if two instances were attempted).
+    $tempApphost = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash).config")
+    if (Test-Path -LiteralPath $tempApphost -PathType Leaf) {
+        try {
+            Remove-Item -LiteralPath $tempApphost -Force -ErrorAction Stop
+        } catch {
+            Write-Output "Note: failed to remove stale temp apphost '$tempApphost': $($_.Exception.Message)"
+        }
+    }
+    Copy-Item -LiteralPath $settings.ApplicationhostConfigFile -Destination $tempApphost -Force
+
+    # Patch physicalPath in the temp file. Try placeholder substitution first (cheap, line-level);
+    # if no substitution happened, fall back to XML SetAttribute for the resolved site name —
+    # this handles the case where canonical was sourced from VS with concrete absolute paths
+    # (e.g. before U5 tp-setup placeholder rewrite shipped).
+    $placeholder = '__TURBO_PLUGIN_PHYSICAL_PATH__'
+    # XML attribute values escape backslash as-is (no \ escaping required), but `&`, `<`, `"`
+    # must be encoded. csproj paths can contain `&` (rare) on Windows; encode defensively.
+    $physicalPathXmlEscaped = $settings.SiteRoot.Replace('&', '&amp;').Replace('<', '&lt;').Replace('"', '&quot;')
+    $rawText = [System.IO.File]::ReadAllText($tempApphost, [System.Text.Encoding]::UTF8)
+    if ($rawText.Contains($placeholder)) {
+        $patched = $rawText.Replace($placeholder, $physicalPathXmlEscaped)
+        # Preserve UTF-8 BOM if canonical had one; otherwise write without BOM (XML decl byte-exact).
+        $bytes = [System.IO.File]::ReadAllBytes($tempApphost)
+        $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+        $encoding = if ($hasBom) { New-Object System.Text.UTF8Encoding($true) } else { New-Object System.Text.UTF8Encoding($false) }
+        [System.IO.File]::WriteAllText($tempApphost, $patched, $encoding)
+    } else {
+        # No placeholder — canonical likely came from VS with concrete absolute path(s).
+        # Use Update-ApplicationhostConfig on the temp file (canonical untouched).
+        try {
+            Update-ApplicationhostConfig -ConfigPath $tempApphost -SiteName $settings.IisConfigSiteName -NewPhysicalPath $settings.SiteRoot | Out-Null
+        } catch {
+            Write-Output "Note: failed to patch physicalPath in temp apphost '$tempApphost': $($_.Exception.Message)"
+        }
     }
 
-    $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList @("/config:$($settings.ApplicationhostConfigFile)", "/site:$($settings.IisConfigSiteName)") -WindowStyle Hidden -PassThru
-    Write-Output "Started IIS Express (site: $($settings.IisConfigSiteName), PID: $($process.Id))"
+    $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList @("/config:$tempApphost", "/site:$($settings.IisConfigSiteName)") -WindowStyle Hidden -PassThru
+    Write-Output "Started IIS Express (site: $($settings.IisConfigSiteName), PID: $($process.Id), config: $tempApphost)"
 
     $repoRoot = $settings.RepoRoot
     $cfgTimeout = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'run' -Key 'listening_timeout_seconds' -CliValue $null -Default $null

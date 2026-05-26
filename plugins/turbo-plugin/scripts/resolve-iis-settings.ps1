@@ -50,10 +50,13 @@ IIS Express 路徑未設定且找不到標準安裝。請跑 /tp-setup 互動填
 
 function Find-ApplicationhostTarget {
     param([string]$RepoRoot, [string]$ProjectFile)
-    $slnFile = @(Get-ChildItem -LiteralPath $RepoRoot -Filter '*.sln' -ErrorAction SilentlyContinue) | Select-Object -First 1
-    if ($null -eq $slnFile) { return $null }
-    $slnStem = [System.IO.Path]::GetFileNameWithoutExtension($slnFile.FullName)
-    return Join-Path $RepoRoot ".vs/$slnStem/config/applicationhost.config"
+    # v1.0 (U3) — canonical applicationhost.config lives at .turbo-plugin/applicationhost.config
+    # (committed to git, cross-worktree shared, never mutated at runtime). start-iis renders a
+    # per-launch temp file with physicalPath substituted to the current worktree's csproj dir.
+    # VS UI manages .vs/<sln>/config/applicationhost.config independently — turbo-plugin no
+    # longer reads or writes that file.
+    $canonical = Join-Path $RepoRoot '.turbo-plugin/applicationhost.config'
+    return $canonical
 }
 
 function Resolve-IisSettings {

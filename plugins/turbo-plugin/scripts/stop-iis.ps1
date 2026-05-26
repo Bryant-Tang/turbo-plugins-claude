@@ -56,6 +56,18 @@ try {
             Write-Output "PID $($p.ProcessId) already exited: $($_.Exception.Message)"
         }
     }
+
+    # v1.0 (U3) — clean up the per-launch temp applicationhost.config so subsequent
+    # start-iis rounds always start from a fresh copy of canonical.
+    $tempApphost = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash).config")
+    if (Test-Path -LiteralPath $tempApphost -PathType Leaf) {
+        try {
+            Remove-Item -LiteralPath $tempApphost -Force -ErrorAction Stop
+            Write-Output "Removed temp applicationhost.config: $tempApphost"
+        } catch {
+            Write-Output "Note: failed to remove temp applicationhost.config '$tempApphost': $($_.Exception.Message)"
+        }
+    }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

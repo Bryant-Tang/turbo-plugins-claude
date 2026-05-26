@@ -2,8 +2,22 @@
 # Hooks must not throw the host session. Surface errors as stderr but never exit non-zero.
 $ErrorActionPreference = 'Continue'
 
-. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'common.ps1'))
-. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'applicationhost-helpers.ps1'))
+# v1.0 (U3) — PostToolUse EnterWorktree hook is fully no-op.
+#
+# Prior to v1.0, this hook copied .turbo-plugin/applicationhost.config into
+# .vs/<sln>/config/applicationhost.config and rewrote physicalPath there for the
+# entered worktree. That coupled turbo-plugin to VS's internal directory and
+# polluted .vs/ writes on every EnterWorktree call.
+#
+# v1.0 separates concerns:
+#   - Canonical applicationhost.config: .turbo-plugin/applicationhost.config
+#     (committed to git, cross-worktree shared, never mutated at runtime)
+#   - Runtime config: %TEMP%\turbo-plugin-iis-<identity-hash>.config
+#     (rendered per launch by start-iis.ps1 with physicalPath substituted)
+#   - VS UI: .vs/<sln>/config/applicationhost.config (VS-managed, turbo-plugin
+#     no longer reads or writes)
+#
+# Therefore this hook has nothing to do — emit empty JSON and exit 0.
 
 function Emit-Json {
     param([hashtable]$Payload)
@@ -12,70 +26,10 @@ function Emit-Json {
 }
 
 try {
-    $stdin = [Console]::In.ReadToEnd()
-    if ([string]::IsNullOrWhiteSpace($stdin)) { Emit-Json @{}; exit 0 }
-
-    $payload = $stdin | ConvertFrom-Json -ErrorAction Stop
-
-    $worktreePath = $null
-    if ($payload.PSObject.Properties.Match('tool_response').Count -gt 0 -and
-        $null -ne $payload.tool_response -and
-        $payload.tool_response.PSObject.Properties.Match('worktreePath').Count -gt 0) {
-        $worktreePath = [string]$payload.tool_response.worktreePath
-    }
-    if ([string]::IsNullOrWhiteSpace($worktreePath)) { Emit-Json @{}; exit 0 }
-
-    $newPath = Get-NormalizedAbsolutePath -Path $worktreePath
-    if (-not (Test-Path -LiteralPath $newPath -PathType Container)) { Emit-Json @{}; exit 0 }
-
-    $markerDir = Join-Path $newPath '.turbo-plugin'
-    if (-not (Test-Path -LiteralPath $markerDir -PathType Container)) { Emit-Json @{}; exit 0 }
-
-    $apphostSource = Join-Path $markerDir 'applicationhost.config'
-    if (-not (Test-Path -LiteralPath $apphostSource -PathType Leaf)) { Emit-Json @{}; exit 0 }
-
-    $csprojFiles = @(Get-ChildItem -LiteralPath $newPath -Recurse -Filter '*.csproj' -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\\(bin|obj|node_modules|\.vs|\.git)\\' })
-    if ($csprojFiles.Count -eq 0) { Emit-Json @{}; exit 0 }
-
-    # Default target: write into the .vs/<sln-stem>/config/applicationhost.config under the
-    # worktree. If a .sln is missing, fall back to the source-of-truth itself.
-    $apphostTarget = $null
-    $slnFile = @(Get-ChildItem -LiteralPath $newPath -Filter '*.sln' -ErrorAction SilentlyContinue) | Select-Object -First 1
-    if ($null -ne $slnFile) {
-        $slnStem = [System.IO.Path]::GetFileNameWithoutExtension($slnFile.FullName)
-        $apphostTarget = Join-Path $newPath ".vs/$slnStem/config/applicationhost.config"
-    } else {
-        # F-U(synth #17): no .sln → no .vs/<sln>/config/applicationhost.config exists. Do NOT
-        # fall back to writing into the canonical .turbo-plugin/applicationhost.config — that
-        # file is version-controlled and shared across worktrees; per-worktree physicalPath
-        # writes there cause CRLF/diff noise + cross-worktree contamination. Align with
-        # sessionstart.ps1 which already guards this branch behind a .sln presence check.
-        Emit-Json @{}
-        exit 0
-    }
-
-    $targetDir = [System.IO.Path]::GetDirectoryName($apphostTarget)
-    if (-not (Test-Path -LiteralPath $targetDir -PathType Container)) {
-        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-    }
-    if (-not (Test-Path -LiteralPath $apphostTarget -PathType Leaf)) {
-        Copy-Item -LiteralPath $apphostSource -Destination $apphostTarget -Force
-    }
-
-    $refresh = Invoke-ApplicationhostRefresh -WorktreePath $newPath -ApphostTarget $apphostTarget
-
-    $msg = if ($refresh.UpdatedCount -gt 0) {
-        "turbo-plugin: refreshed applicationhost.config for $($refresh.UpdatedCount) site(s) in $newPath"
-    } else {
-        $null
-    }
-
-    if ($msg) {
-        Emit-Json @{ systemMessage = $msg }
-    } else {
-        Emit-Json @{}
-    }
+    # Drain stdin so the caller doesn't block on a broken pipe. We don't actually
+    # use any of the payload — but reading it keeps the contract clean.
+    $null = [Console]::In.ReadToEnd()
+    Emit-Json @{}
     exit 0
 } catch {
     [Console]::Error.WriteLine("turbo-plugin posttooluse-enterworktree: $($_.Exception.Message)")
