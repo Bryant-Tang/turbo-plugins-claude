@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
@@ -38,10 +38,23 @@ function Resolve-IisSettings {
 
     $projectContent = Get-Content -LiteralPath $projectFile -Raw
     $iisUrlMatch = [regex]::Match($projectContent, '<IISUrl>([^<]+)</IISUrl>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    if (-not $iisUrlMatch.Success) {
-        throw "Missing <IISUrl> in project file: $projectFile. Ensure VS has saved IIS settings; or add manually."
+    if ($iisUrlMatch.Success) {
+        $iisUrl = $iisUrlMatch.Groups[1].Value.Trim()
+    } else {
+        # Fallback 1: IISExpressSSLPort → https://localhost:<port>
+        $sslPortMatch = [regex]::Match($projectContent, '<IISExpressSSLPort>([^<]+)</IISExpressSSLPort>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($sslPortMatch.Success) {
+            $iisUrl = "https://localhost:$($sslPortMatch.Groups[1].Value.Trim())"
+        } else {
+            # Fallback 2: DevelopmentServerPort → http://localhost:<port>
+            $devPortMatch = [regex]::Match($projectContent, '<DevelopmentServerPort>([^<]+)</DevelopmentServerPort>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($devPortMatch.Success) {
+                $iisUrl = "http://localhost:$($devPortMatch.Groups[1].Value.Trim())"
+            } else {
+                throw "Missing <IISUrl>, <IISExpressSSLPort>, and <DevelopmentServerPort> in project file: $projectFile. Ensure VS has saved IIS settings; or add manually."
+            }
+        }
     }
-    $iisUrl = $iisUrlMatch.Groups[1].Value.Trim()
     $iisUri = $null
     if (-not [System.Uri]::TryCreate($iisUrl, [System.UriKind]::Absolute, [ref]$iisUri)) {
         throw "Invalid <IISUrl>: $iisUrl"

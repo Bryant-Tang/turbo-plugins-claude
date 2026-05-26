@@ -100,10 +100,16 @@ try {
     # Existing instance on the same port?
     $occupants = Find-IisInstanceByPort -Port $settings.IisPort -ApphostConfigFile $settings.ApplicationhostConfigFile
     if ($occupants.Count -gt 0) {
-        $sameProject = @($occupants | Where-Object { $_.SiteName -eq $settings.IisConfigSiteName })
+        $sameProject = @($occupants | Where-Object { $_.SiteName -ieq $settings.IisConfigSiteName })
         if ($sameProject.Count -gt 0) {
             Write-Output "Same project IIS Express already on port $($settings.IisPort). Stopping previous instance(s) (PIDs: $($sameProject.ProcessId -join ', ')) before restart."
-            $sameProject | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+            foreach ($proc in $sameProject) {
+                try {
+                    Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
+                } catch {
+                    Write-Output "  PID $($proc.ProcessId) already exited or unstoppable: $($_.Exception.Message)"
+                }
+            }
             Start-Sleep -Milliseconds 500
         } else {
             $otherSites = ($occupants | ForEach-Object { $_.SiteName }) -join ', '

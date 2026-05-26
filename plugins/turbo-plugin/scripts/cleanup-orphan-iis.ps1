@@ -122,13 +122,20 @@ try {
         $siteFailed = $false
         $siteReason = $null
         if ($info.Process -and $null -ne $info.Pid) {
-            try {
-                Stop-Process -Id $info.Pid -Force -ErrorAction Stop
-                Write-Output "Stopped orphan IIS Express PID $($info.Pid) (site: $siteName)"
-            } catch {
-                [Console]::Error.WriteLine("Warning: failed to stop PID $($info.Pid) for site '$siteName': $($_.Exception.Message)")
-                $siteFailed = $true
-                $siteReason = "stop PID $($info.Pid) failed: $($_.Exception.Message)"
+            # Pre-check (synth F16): if the targeted process already exited between detect and stop
+            # (Ctrl+C, AV kill, self-crash), treat as cleanup success rather than PARTIAL_FAILURE.
+            # End-state (no running PID) is the cleanup goal; only true Stop-Process errors should fail.
+            if (-not (Get-Process -Id $info.Pid -ErrorAction SilentlyContinue)) {
+                Write-Output "PID $($info.Pid) already exited (site: $siteName) — treating as cleanup success."
+            } else {
+                try {
+                    Stop-Process -Id $info.Pid -Force -ErrorAction Stop
+                    Write-Output "Stopped orphan IIS Express PID $($info.Pid) (site: $siteName)"
+                } catch {
+                    [Console]::Error.WriteLine("Warning: failed to stop PID $($info.Pid) for site '$siteName': $($_.Exception.Message)")
+                    $siteFailed = $true
+                    $siteReason = "stop PID $($info.Pid) failed: $($_.Exception.Message)"
+                }
             }
         }
         if ($info.Xml) {

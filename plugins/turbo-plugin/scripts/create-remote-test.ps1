@@ -63,7 +63,7 @@ try {
 
         $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = 'SilentlyContinue'
-        & svn info $SvnUrl 2>&1 | Out-Null
+        & svn info $SvnUrl 2>$null | Out-Null
         $svnExists = ($LASTEXITCODE -eq 0)
         $ErrorActionPreference = $prevEAP
 

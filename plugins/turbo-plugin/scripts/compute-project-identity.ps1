@@ -9,7 +9,12 @@ $ErrorActionPreference = 'Stop'
 
 try {
     Probe-GitVersion
-    $repoRoot = (Get-Location).Path
+    # F-U(synth 19): use git toplevel as repoRoot (not cwd) so csproj discovery works
+    # regardless of which subfolder the user invoked the script from. Mirrors line 16
+    # which already uses --show-toplevel for the identity hash path.
+    $repoRoot = (& git rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($repoRoot)) { throw 'Not inside a git repository.' }
+    $repoRoot = Get-NormalizedAbsolutePath -Path $repoRoot
 
     $projectFile = Find-SingleCsproj -RepoRoot $repoRoot -CliProjectValue $Project
 

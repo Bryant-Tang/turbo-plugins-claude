@@ -22,7 +22,7 @@ try {
     $matched = @($processes | Where-Object {
         -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
         $_.CommandLine -match '/site:([^\s"]+)' -and
-        $Matches[1] -eq $settings.IisConfigSiteName
+        $Matches[1] -ieq $settings.IisConfigSiteName
     })
 
     if ($matched.Count -eq 0) {
@@ -49,8 +49,12 @@ try {
     }
 
     foreach ($p in $matched) {
-        Stop-Process -Id $p.ProcessId -Force
-        Write-Output "Stopped IIS Express PID $($p.ProcessId) (site: $($settings.IisConfigSiteName))"
+        try {
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+            Write-Output "Stopped IIS Express PID $($p.ProcessId) (site: $($settings.IisConfigSiteName))"
+        } catch {
+            Write-Output "PID $($p.ProcessId) already exited: $($_.Exception.Message)"
+        }
     }
 }
 catch {

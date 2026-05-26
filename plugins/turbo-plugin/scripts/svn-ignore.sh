@@ -29,7 +29,7 @@ ROOT_DIR="$(dirname "$MAIN_WORKTREE")"
 WORKTREES_DIR="$ROOT_DIR/$PROJ_NAME.worktrees"
 
 if [[ ! -d "$WORKTREES_DIR" ]]; then
-  echo "Error: worktrees directory not found: $WORKTREES_DIR. Are you inside a tgs project?" >&2; exit 1
+  echo "Error: worktrees directory not found: $WORKTREES_DIR. Run /tp-setup to bootstrap the SVN remote worktrees." >&2; exit 1
 fi
 
 # Collect all remote worktrees
@@ -106,7 +106,7 @@ if [[ ${#ADD[@]} -gt 0 ]]; then
     [[ ${#TO_ADD[@]} -eq 0 ]] && continue
 
     # Warn if any new pattern matches already-tracked SVN files (best effort)
-    TRACKED_LIST="$(svn list -R "$SVN_PATH" "$wt" 2>/dev/null || true)"
+    TRACKED_LIST="$(cd "$wt" && svn list -R "$SVN_PATH" 2>/dev/null || true)"
     for p in "${TO_ADD[@]}"; do
       TRACKED_MATCHES="$(echo "$TRACKED_LIST" | while IFS= read -r item; do
         item="${item%/}"

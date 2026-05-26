@@ -29,12 +29,10 @@ try {
     & $msbuildPath $projectFile /restore /t:Build "/p:SolutionDir=$solutionDir" /p:RestorePackagesConfig=true "/p:Configuration=$buildConfiguration" "/p:Platform=$buildPlatform"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    # Frontend pack is delegated to pack-content.ps1; build pipeline runs it idempotently when [frontend] is set.
-    $packScript = Join-Path $PSScriptRoot 'pack-content.ps1'
-    if (Test-Path -LiteralPath $packScript -PathType Leaf) {
-        & $packScript
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    }
+    # Frontend pack is delegated to pack-content.ps1 (shipped alongside build-web.ps1);
+    # pack-content exits 0 with a skip message when [frontend] isn't set, so no Test-Path guard needed.
+    & ([System.IO.Path]::Combine($PSScriptRoot, 'pack-content.ps1'))
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

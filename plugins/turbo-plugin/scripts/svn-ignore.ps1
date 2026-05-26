@@ -71,7 +71,7 @@ try {
     $worktreesDir = Join-Path ([System.IO.Path]::GetDirectoryName($mainWorktree)) "$projName.worktrees"
 
     if (-not (Test-Path -LiteralPath $worktreesDir -PathType Container)) {
-        throw "Worktrees directory not found: $worktreesDir. Are you inside a tgs project?"
+        throw "Worktrees directory not found: $worktreesDir. Run /tp-setup to bootstrap the SVN remote worktrees."
     }
 
     $remoteWorktrees = @(
@@ -186,8 +186,12 @@ try {
             Push-Location $wt
             try {
                 try {
-                    & svn commit -m "svn:ignore: add $($info.ToAdd -join ', ')" 2>&1 | Out-Null
-                    if ($LASTEXITCODE -ne 0) { throw "svn commit returned exit code $LASTEXITCODE" }
+                    $eaSvnCommitAdd = $ErrorActionPreference
+                    $ErrorActionPreference = 'SilentlyContinue'
+                    & svn commit -m "svn:ignore: add $($info.ToAdd -join ', ')" 2>$null | Out-Null
+                    $svnCommitExit = $LASTEXITCODE
+                    $ErrorActionPreference = $eaSvnCommitAdd
+                    if ($svnCommitExit -ne 0) { throw "svn commit returned exit code $svnCommitExit" }
                     Write-Output "Added '$($info.ToAdd -join "', '")' to svn:ignore in '$wtName'"
                     $succeeded += $wtName
                 } catch {
@@ -270,8 +274,12 @@ try {
             Push-Location $wt
             try {
                 try {
-                    & svn commit -m "svn:ignore: remove $($info.ToRemove -join ', ')" 2>&1 | Out-Null
-                    if ($LASTEXITCODE -ne 0) { throw "svn commit returned exit code $LASTEXITCODE" }
+                    $eaSvnCommitRemove = $ErrorActionPreference
+                    $ErrorActionPreference = 'SilentlyContinue'
+                    & svn commit -m "svn:ignore: remove $($info.ToRemove -join ', ')" 2>$null | Out-Null
+                    $svnCommitExit = $LASTEXITCODE
+                    $ErrorActionPreference = $eaSvnCommitRemove
+                    if ($svnCommitExit -ne 0) { throw "svn commit returned exit code $svnCommitExit" }
                     Write-Output "Removed '$($info.ToRemove -join "', '")' from svn:ignore in '$wtName'"
                     $succeeded += $wtName
                 } catch {
