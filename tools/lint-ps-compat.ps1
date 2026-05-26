@@ -4,6 +4,8 @@
 #   1. 3+ arg `Join-Path` (PS 7+ only)
 #   2. `[System.IO.Path]::GetRelativePath` (.NET Core / .NET 5+ only)
 #   3. .ps1 with non-ASCII bytes but no UTF-8 BOM
+#   4. `2>&1` on native exe (NativeCommandError pollutes $LASTEXITCODE under EAP=Stop)
+#   5. `(... | ...).Count` without @() wrap (single-element pipeline reads wrong .Count)
 #
 # Exit code 0 = clean, 1 = found violations. Suitable for pre-commit hook or
 # manual `pwsh tools/lint-ps-compat.ps1` from repo root.
@@ -37,6 +39,13 @@ $violations = @()
 # Detector regexes
 $pat3argJoinPath = [regex]"Join-Path\s+\`$[A-Za-z_][A-Za-z0-9_]*\s+'[^']+'\s+'"
 $patGetRelative  = [regex][regex]::Escape('[System.IO.Path]::GetRelativePath')
+# Rule 4: 2>&1 used after a native-exe call operator `& ...`. Catches `& git ... 2>&1`,
+# `& svn ... 2>&1`, `& $cmd ... 2>&1` etc. Requires whitespace before `2>&1` so it doesn't
+# trip on string literals like the rule description itself.
+$patNativeExe2to1 = [regex]'&\s+\S.+\s2>&1\b'
+# Rule 5: pipeline result .Count without @() wrap. Negative lookbehind excludes @(.
+# Pipeline detected by `|` inside the parens. Heuristic — keeps false positives low.
+$patPipeCount    = [regex]'(?<!@)\([^()@]*\|[^()]*\)\.Count\b'
 
 Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object {
     $file = $_.FullName
@@ -92,6 +101,26 @@ Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue
                 Detail = $ln.Trim()
             }
         }
+
+        # Check 4: 2>&1 on native exe (skip comment-only lines)
+        if (-not $trimmed.StartsWith('#') -and $patNativeExe2to1.IsMatch($ln)) {
+            $violations += [pscustomobject]@{
+                File   = $file
+                Rule   = '4-redir-native-2to1'
+                Line   = $lineNo
+                Detail = $ln.Trim()
+            }
+        }
+
+        # Check 5: pipeline .Count without @() wrap (skip comment-only lines)
+        if (-not $trimmed.StartsWith('#') -and $patPipeCount.IsMatch($ln)) {
+            $violations += [pscustomobject]@{
+                File   = $file
+                Rule   = '5-pipe-count'
+                Line   = $lineNo
+                Detail = $ln.Trim()
+            }
+        }
     }
 }
 
@@ -104,10 +133,12 @@ Write-Output "lint-ps-compat: $($violations.Count) violation(s) found:"
 Write-Output ''
 $violations | Group-Object Rule | ForEach-Object {
     $ruleName = switch ($_.Name) {
-        '1-joinpath-3arg'  { 'Join-Path 3+ arg (PS 7+ only) — use [System.IO.Path]::Combine' }
-        '2-getrelativepath' { 'GetRelativePath (.NET Core+ only) — use Get-RelativePathSafe' }
-        '3-no-bom'         { 'non-ASCII without UTF-8 BOM — re-save with BOM' }
-        default            { $_.Name }
+        '1-joinpath-3arg'      { 'Join-Path 3+ arg (PS 7+ only) — use [System.IO.Path]::Combine' }
+        '2-getrelativepath'    { 'GetRelativePath (.NET Core+ only) — use Get-RelativePathSafe' }
+        '3-no-bom'             { 'non-ASCII without UTF-8 BOM — re-save with BOM' }
+        '4-redir-native-2to1'  { '2>&1 on native exe (PS 5.1 NativeCommandError pollutes $LASTEXITCODE under EAP=Stop) — use 2>$null + EAP guard' }
+        '5-pipe-count'         { 'pipeline .Count without @() wrap — single-element pipeline reads object''s own Count, not array length' }
+        default                { $_.Name }
     }
     Write-Output "[$($_.Name)] $ruleName"
     $_.Group | ForEach-Object {
