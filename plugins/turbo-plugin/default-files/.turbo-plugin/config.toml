@@ -12,6 +12,25 @@ schema_version = 2
 #                     # 中文 Windows + 含中文檔名的 SVN repo(見 /tp-setup Step 0.5 (a))
 
 # ─────────────────────────────────────────────────────────────────────────────
+# [iis] — IIS Express 啟用開關
+# 預設啟用;沒有 .NET Framework Web 專案 / 不需要 IIS 的環境可設 enabled = false,
+# tp-run / tp-stop / tp-cleanup-orphan-iis 等 IIS 相關 SKILL 會直接 fail-loudly 跳過。
+# ─────────────────────────────────────────────────────────────────────────────
+[iis]
+enabled = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [tools] — 機器專屬工具路徑 (machine-specific,不該進 git)
+# 這個 section 不該寫在 config.toml 裡 — 請改寫到 .turbo-plugin/config.local.toml
+# (gitignored 的 sibling 檔案)。tp-setup Phase 3 會引導你互動填入。
+#
+# 範例 (寫在 config.local.toml,不要寫在這裡):
+#   [tools]
+#   msbuild_path      = "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe"
+#   iis_express_path  = "C:/Program Files/IIS Express/iisexpress.exe"
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
 # [build] — tp-build-dotnet-framework-web 用
 # 全部欄位都有 default，省略整段也可。
 # ─────────────────────────────────────────────────────────────────────────────

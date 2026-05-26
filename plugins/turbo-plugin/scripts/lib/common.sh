@@ -226,10 +226,15 @@ check_turbo_plugin_config_schema() {
   fi
 }
 
-# Lookup chain: CLI arg → config.toml → built-in default
+# Lookup chain: CLI arg → config.local.toml → config.toml → built-in default
 # Args: <repo_root> <section> <key> <cli_value> <default>
 # Echoes resolved value (empty string if nothing resolved).
 # Uses sentinel __TP_FOUND__: so empty-string config values are distinguished from "not found".
+#
+# v1.0+ U1: config.local.toml (gitignored, machine-specific) is consulted BEFORE
+# config.toml so its key-level values override the canonical version-controlled file.
+# This is the bash equivalent of common.ps1's "read config.toml then merge local on top"
+# — semantically identical for the get-one-key API surface.
 resolve_config_value() {
   local repo_root="$1"
   local section="$2"
@@ -242,12 +247,22 @@ resolve_config_value() {
     return 0
   fi
   local config_path="$repo_root/.turbo-plugin/config.toml"
+  local config_local_path="$repo_root/.turbo-plugin/config.local.toml"
+  local sentinel_line
+
+  # 1. config.local.toml first (highest precedence after CLI arg)
+  if [[ -f "$config_local_path" ]]; then
+    sentinel_line="$(read_turbo_plugin_config "$config_local_path" "$section" "$key")"
+    if [[ "$sentinel_line" == __TP_FOUND__:* ]]; then
+      echo "${sentinel_line#__TP_FOUND__:}"
+      return 0
+    fi
+  fi
+  # 2. config.toml next (schema check runs on the canonical file only)
   if [[ -f "$config_path" ]]; then
     check_turbo_plugin_config_schema "$config_path"
-    local sentinel_line
     sentinel_line="$(read_turbo_plugin_config "$config_path" "$section" "$key")"
     if [[ "$sentinel_line" == __TP_FOUND__:* ]]; then
-      # Strip the sentinel prefix; the remainder is the value (may be empty)
       echo "${sentinel_line#__TP_FOUND__:}"
       return 0
     fi

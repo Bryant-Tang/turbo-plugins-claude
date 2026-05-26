@@ -268,47 +268,63 @@ function Find-SingleCsproj {
 # Returns a hashtable keyed by section name, where each value is a hashtable of key→value.
 # Supports: [section] headers, `key = "string"`, `key = 'string'`, `key = <bool|int|float>`,
 # `# comments`, and blank lines. Multi-line values, nested tables, and arrays are not handled.
+#
+# v1.0+ U1: $ConfigPath accepts either a single string or an array of paths. When given
+# multiple paths, files are read in order and merged with later paths overriding earlier
+# ones at key-level (shallow per-section merge). Missing files are skipped silently.
+# Typical use: pass @(config.toml, config.local.toml) so the local file (gitignored,
+# machine-specific) overrides the canonical version-controlled file.
 function Read-TurboPluginConfig {
     param(
-        [Parameter(Mandatory = $true)][string]$ConfigPath
+        [Parameter(Mandatory = $true)]$ConfigPath
     )
     $result = @{}
-    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-        return $result
+    # Normalize input to array of paths so callers can pass a single string or an array.
+    $paths = @()
+    if ($ConfigPath -is [System.Array]) {
+        $paths = @($ConfigPath)
+    } else {
+        $paths = @($ConfigPath)
     }
-    $currentSection = ''
-    $lines = Get-Content -LiteralPath $ConfigPath
-    foreach ($raw in $lines) {
-        $line = $raw -replace '^\s+|\s+$', ''
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        if ($line.StartsWith('#')) { continue }
-        if ($line -match '^\[([^\]]+)\]$') {
-            $currentSection = $Matches[1].Trim()
-            if (-not $result.ContainsKey($currentSection)) {
-                $result[$currentSection] = @{}
-            }
-            continue
-        }
-        if ($line -match '^([A-Za-z0-9_\-]+)\s*=\s*(.+)$') {
-            $key = $Matches[1].Trim()
-            $val = $Matches[2].Trim()
-            # strip trailing inline comment (only if not inside a quoted string)
-            if ($val -notmatch '^"' -and $val -notmatch "^'") {
-                if ($val -match '^(.*?)\s+#') {
-                    $val = $Matches[1].Trim()
+
+    foreach ($pathItem in $paths) {
+        if ([string]::IsNullOrWhiteSpace($pathItem)) { continue }
+        if (-not (Test-Path -LiteralPath $pathItem -PathType Leaf)) { continue }
+        $currentSection = ''
+        $lines = Get-Content -LiteralPath $pathItem
+        foreach ($raw in $lines) {
+            $line = $raw -replace '^\s+|\s+$', ''
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            if ($line.StartsWith('#')) { continue }
+            if ($line -match '^\[([^\]]+)\]$') {
+                $currentSection = $Matches[1].Trim()
+                if (-not $result.ContainsKey($currentSection)) {
+                    $result[$currentSection] = @{}
                 }
+                continue
             }
-            if ($val -match '^"(.*)"$') { $val = $Matches[1] }
-            elseif ($val -match "^'(.*)'$") { $val = $Matches[1] }
-            elseif ($val -eq 'true') { $val = $true }
-            elseif ($val -eq 'false') { $val = $false }
-            elseif ($val -match '^-?\d+$') { $val = [int]$val }
-            elseif ($val -match '^-?\d+\.\d+$') { $val = [double]$val }
-            if ([string]::IsNullOrEmpty($currentSection)) {
-                if (-not $result.ContainsKey('')) { $result[''] = @{} }
-                $result[''][$key] = $val
-            } else {
-                $result[$currentSection][$key] = $val
+            if ($line -match '^([A-Za-z0-9_\-]+)\s*=\s*(.+)$') {
+                $key = $Matches[1].Trim()
+                $val = $Matches[2].Trim()
+                # strip trailing inline comment (only if not inside a quoted string)
+                if ($val -notmatch '^"' -and $val -notmatch "^'") {
+                    if ($val -match '^(.*?)\s+#') {
+                        $val = $Matches[1].Trim()
+                    }
+                }
+                if ($val -match '^"(.*)"$') { $val = $Matches[1] }
+                elseif ($val -match "^'(.*)'$") { $val = $Matches[1] }
+                elseif ($val -eq 'true') { $val = $true }
+                elseif ($val -eq 'false') { $val = $false }
+                elseif ($val -match '^-?\d+$') { $val = [int]$val }
+                elseif ($val -match '^-?\d+\.\d+$') { $val = [double]$val }
+                if ([string]::IsNullOrEmpty($currentSection)) {
+                    if (-not $result.ContainsKey('')) { $result[''] = @{} }
+                    $result[''][$key] = $val
+                } else {
+                    # In-place overwrite — later paths override earlier ones at key level.
+                    $result[$currentSection][$key] = $val
+                }
             }
         }
     }
@@ -350,8 +366,11 @@ function Resolve-ConfigValue {
     if ($null -ne $CliValue -and -not ([string]::IsNullOrWhiteSpace([string]$CliValue))) {
         return $CliValue
     }
-    $configPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
-    $cfg = Read-TurboPluginConfig -ConfigPath $configPath
+    # v1.0+ U1: read config.toml first then merge config.local.toml on top of it.
+    # config.local.toml is gitignored (machine-specific tool paths etc.) and takes precedence.
+    $configPath      = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
+    $configLocalPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.local.toml')
+    $cfg = Read-TurboPluginConfig -ConfigPath @($configPath, $configLocalPath)
     Test-TurboPluginConfigSchema -Config $cfg
     if ($cfg.ContainsKey($Section) -and $cfg[$Section].ContainsKey($Key)) {
         return $cfg[$Section][$Key]
