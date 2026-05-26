@@ -3,6 +3,7 @@ name: tp-svn-log
 description: '在指定 remote-<branch> worktree 跑 svn log,顯示 SVN history。使用者明確要求查 SVN history 時執行;agent 在需要對齊 SVN revision / 確認新 SVN commit 時也可建議執行(read-only,可安全 auto-trigger)。'
 argument-hint: '[--branch <main|test-<n>>] [--limit <n>] [--verbose]'
 user-invocable: true
+allowed-tools: Bash, Read
 ---
 
 # tp-svn-log

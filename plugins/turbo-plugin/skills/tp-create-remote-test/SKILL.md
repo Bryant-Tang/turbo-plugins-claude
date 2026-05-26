@@ -3,6 +3,7 @@ name: tp-create-remote-test
 description: '建立 SVN test 分支對應的 remote/test-<n> branch + remote-test-<n> worktree + svn checkout(或 svn-copy-from-trunk 若 target SVN URL 不存在)。**會建立永久 SVN 路徑,必須使用者明確要求才執行**;agent 偵測需要新 test 環境時可建議,但需明確確認。'
 argument-hint: '--svn-url <url> [--n <number>]'
 user-invocable: true
+allowed-tools: Bash, Read, AskUserQuestion
 ---
 
 # tp-create-remote-test
@@ -43,6 +44,7 @@ user-invocable: true
 
 ## Decision Rules
 
+- **force_bash routing**: 呼叫 script 前,讀取 `.turbo-plugin/config.toml` 中 `[svn] force_bash` 的值(透過 `Resolve-ConfigValue -Section 'svn' -Key 'force_bash' -Default 'false'`)。若為 `true`,改以 Git Bash 執行 `.sh` sibling 而非 `.ps1`(對應 Step 0.5 case (a) 的中文 Windows 使用者)。
 - 必須在主 worktree 跑(否則 `Get-MainWorktree` 仍回主路徑,但建議拒跑 — script 不限,但本 skill body 應明確說「請到主 worktree 跑」)。
 - `--svn-url` 必填。
 - 衝突 branch / worktree → 拒跑,不嘗試 cleanup 舊狀態。

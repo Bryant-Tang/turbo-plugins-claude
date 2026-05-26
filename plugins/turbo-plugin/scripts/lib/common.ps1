@@ -332,8 +332,9 @@ function Test-TurboPluginConfigSchema {
     $topLevel = $Config['']
     if (-not $topLevel.ContainsKey('schema_version')) { return }
     $version = $topLevel['schema_version']
-    if ($version -ne 1) {
-        [Console]::Error.WriteLine("turbo-plugin: .turbo-plugin/config.toml schema_version=$version is not recognized (expected 1); some settings may be ignored.")
+    # schema_version 2 adds [svn] force_bash. Versions 1 and 2 are both recognized.
+    if ($version -ne 1 -and $version -ne 2) {
+        [Console]::Error.WriteLine("turbo-plugin: .turbo-plugin/config.toml schema_version=$version is not recognized (expected 1 or 2); some settings may be ignored. Run /tp-setup option (c) to upgrade.")
         $script:_TpSchemaWarned = $true
     }
 }

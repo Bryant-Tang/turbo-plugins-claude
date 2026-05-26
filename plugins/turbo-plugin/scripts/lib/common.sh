@@ -217,8 +217,9 @@ check_turbo_plugin_config_schema() {
   schema_line="$(read_turbo_plugin_config "$config_path" '' 'schema_version' 2>/dev/null || true)"
   if [[ "$schema_line" == __TP_FOUND__:* ]]; then
     local version="${schema_line#__TP_FOUND__:}"
-    if [[ "$version" != "1" ]]; then
-      echo "turbo-plugin: .turbo-plugin/config.toml schema_version=$version is not recognized (expected 1); some settings may be ignored." >&2
+    # schema_version 2 adds [svn] force_bash. Versions 1 and 2 are both recognized.
+    if [[ "$version" != "1" && "$version" != "2" ]]; then
+      echo "turbo-plugin: .turbo-plugin/config.toml schema_version=$version is not recognized (expected 1 or 2); some settings may be ignored. Run /tp-setup option (c) to upgrade." >&2
       _TP_SCHEMA_WARNED=true
       export _TP_SCHEMA_WARNED
     fi

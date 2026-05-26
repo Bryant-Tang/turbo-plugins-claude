@@ -3,6 +3,7 @@ name: tp-run-dotnet-framework-web
 description: '在本機啟動 IIS Express 跑當前 .NET Framework Web 專案,內含 listening 健康檢查與跨 worktree self-heal(發現同 project 在別 worktree 已啟 → 自動停舊 instance 並重啟)。使用者明確要求 run 時執行;agent 偵測「準備手動驗證、需要本機跑起 IIS」時可建議。'
 argument-hint: '[--project <path>] [--timeout <seconds>]'
 user-invocable: true
+allowed-tools: Bash, Read
 ---
 
 # tp-run-dotnet-framework-web

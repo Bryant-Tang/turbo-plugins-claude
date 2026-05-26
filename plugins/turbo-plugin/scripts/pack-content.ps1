@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
@@ -32,11 +32,41 @@ try {
     $buildCmd = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'frontend' -Key 'build_command' -CliValue $null -Default $null
     $requiredNodeVersion = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'frontend' -Key 'node_version' -CliValue $null -Default $null
 
+    # F22: trust prompt — verify install_command + build_command haven't changed since last approval.
+    # Uses "VS Code workspace trust" pattern: hash is stored in a gitignored local file.
+    # If commands match the approved hash, proceed silently. If not, emit a TRUST_REQUIRED token
+    # and exit non-zero so the invoking SKILL can prompt the user for confirmation.
+    $trustInput = "$installCmd|$buildCmd"
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($trustInput))
+    } finally {
+        $sha256.Dispose()
+    }
+    $commandHash = ($hashBytes | ForEach-Object { $_.ToString('x2') }) -join ''
+    $trustFile = [System.IO.Path]::Combine($repoRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
+    $trustApproved = $false
+    if (Test-Path -LiteralPath $trustFile -PathType Leaf) {
+        $trustContent = (Get-Content -LiteralPath $trustFile -Raw -Encoding UTF8)
+        if ($trustContent -match 'approved_hash\s*=\s*"([^"]+)"') {
+            $trustApproved = ($Matches[1] -eq $commandHash)
+        }
+    }
+    if (-not $trustApproved) {
+        $installDisplay = if ([string]::IsNullOrWhiteSpace($installCmd)) { '(not set)' } else { $installCmd }
+        $buildDisplay = if ([string]::IsNullOrWhiteSpace($buildCmd)) { '(not set)' } else { $buildCmd }
+        Write-Output "TRUST_REQUIRED hash=$commandHash install_command=$installDisplay build_command=$buildDisplay"
+        throw "pack-content: commands not approved. Re-invoke via /tp-build or /tp-publish skill — the skill will prompt for confirmation and record approval."
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($requiredNodeVersion)) {
         $nodeCommand = Find-CommandPath -CommandName 'node'
         if ([string]::IsNullOrWhiteSpace($nodeCommand)) { $nodeCommand = Find-CommandPath -CommandName 'node.exe' }
         if ([string]::IsNullOrWhiteSpace($nodeCommand)) { throw 'Missing node command in PATH' }
-        $nodeCurrentOutput = (& $nodeCommand -v 2>&1 | Out-String).Trim()
+        $eaNodeVer = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        $nodeCurrentOutput = (& $nodeCommand -v 2>$null | Out-String).Trim()
+        $ErrorActionPreference = $eaNodeVer
         Write-Output "Active Node version: $nodeCurrentOutput"
         $currentMajor = ($nodeCurrentOutput -replace '^v', '').Split('.')[0]
         $requiredMajor = ($requiredNodeVersion.ToString() -replace '^v', '').Split('.')[0]

@@ -3,6 +3,7 @@ name: tp-suggest-ignore
 description: '管理 git / SVN ignore 設定:直接增刪 `.gitignore` / `svn:ignore` patterns,或互動分析偵測修正不一致。**Add / remove ignore pattern 可逆**(寫錯可拿掉),agent 偵測到新 untracked 檔案符合常見 ignore pattern 時可建議執行;使用者明確要求 analysis mode 全 repo 掃描時也可跑。'
 argument-hint: 'Direct: --add-git|--remove-git|--add-svn|--remove-svn <pattern>… [--path <dir>] | Analysis: (no args)'
 user-invocable: true
+allowed-tools: Bash, Read, Edit, Glob, Grep, AskUserQuestion
 ---
 
 # suggest-ignore

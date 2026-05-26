@@ -3,6 +3,7 @@ name: tp-cleanup-orphan-iis
 description: '清除殘留的孤兒 IIS Express process 及 applicationhost.config site 條目,通常在 worktree rename 或 project 搬移後出現。使用者明確要求清除時執行;tp-stop 偵測到同 csproj-stem 但不同 hash 的 orphan instance 時建議。'
 argument-hint: '[--project <path>]'
 user-invocable: true
+allowed-tools: Bash, Read, Grep, AskUserQuestion
 ---
 
 # tp-cleanup-orphan-iis

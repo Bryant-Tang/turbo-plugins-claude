@@ -2,7 +2,14 @@
 # 進 git，跨同事 / 跨 worktree 共享。
 # 不要把 credentials 寫進這裡 — 那是 dbhub.local.toml 的工作。
 
-schema_version = 1
+schema_version = 2
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [svn] — SVN bridge 行為設定
+# ─────────────────────────────────────────────────────────────────────────────
+[svn]
+# force_bash = false  # 設為 true 強制 SVN 操作走 .sh(Git Bash)版本,用於
+#                     # 中文 Windows + 含中文檔名的 SVN repo(見 /tp-setup Step 0.5 (a))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [build] — tp-build-dotnet-framework-web 用

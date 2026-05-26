@@ -3,6 +3,7 @@ name: tp-push-to-svn
 description: '把本地工作分支推上 SVN(透過 remote-<branch> worktree),自 parse 每個 commit subject 篩 SVN history。**SVN 寫操作影響永久 history,必須由使用者明確要求才執行;agent 偵測到「使用者完成一輪改動準備 push」時可建議,但需明確確認**。'
 argument-hint: '--branch <main|test-<n>>'
 user-invocable: true
+allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 ---
 
 # tp-push-to-svn
@@ -34,6 +35,15 @@ user-invocable: true
 - remote SVN 不 up-to-date → fail loudly 提示先 `/tp-pull-from-svn`
 - merge 衝突 → 列出衝突檔,**不自動 abort**(由使用者解或手動 `git merge --abort`)
 - `PENDING_MERGE_DETECTED <remote-path>` → Script 輸出此 token 並 exit 0;SKILL 進入下方三選一 prompt
+- `BRANCH_MISMATCH_WARNING current=<current> requested=<requested>` → Script 輸出此 token 並**繼續執行**;SKILL 進入下方確認 prompt
+
+**BRANCH_MISMATCH_WARNING 處理** — 當 prepare 輸出含 `BRANCH_MISMATCH_WARNING` 行時,在繼續解析其他輸出之前,`AskUserQuestion` 詢問:
+
+> 你目前在 `<current>` branch,但要推送 `<requested>`。確認推送 `<requested>`?
+
+選項:
+1. **Yes, push `<requested>`**:繼續執行 Step 3
+2. **No, cancel**:跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill
 
 **PENDING_MERGE_DETECTED 處理** — 當 prepare 輸出以 `PENDING_MERGE_DETECTED` 開頭時,`AskUserQuestion` 提示三選一:
 1. **Abort + re-prepare**:跑 `git -C <remote-path> merge --abort`,再次跑 push-to-svn-prepare(返回本 Step)
@@ -141,6 +151,7 @@ Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 gi
 
 ## Decision Rules
 
+- **force_bash routing**: 呼叫 prepare / commit script 前,讀取 `.turbo-plugin/config.toml` 中 `[svn] force_bash` 的值(透過 `Resolve-ConfigValue -Section 'svn' -Key 'force_bash' -Default 'false'`)。若為 `true`,改以 Git Bash 執行對應的 `.sh` sibling 而非 `.ps1`(對應 Step 0.5 case (a) 的中文 Windows 使用者)。
 - **Valid type 動態讀取 + 安全 fallback**:每次跑都重讀 `.commitlintrc.json`,使用者改該檔加 / 移除 type 後本 skill 自動同步。fallback 用 default 12 類 + stderr notice,**不靜默失敗也不 fail 拒跑**。
 - **Kept-subset hard-code 在本 skill,不從 `.commitlintrc.json` 讀**:`.commitlintrc.json` 定義「什麼是有效 commit type」(諮詢),turbo-plugin 定義「哪些 type 該進 SVN body」(篩選決策)。兩者刻意分離。
 - **Unknown type 必須 prompt,不能猜**:SVN history 是永久紀錄,猜錯比明確問代價高。

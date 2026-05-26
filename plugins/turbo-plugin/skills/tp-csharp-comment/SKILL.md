@@ -3,6 +3,7 @@ name: tp-csharp-comment
 description: '對 C# 程式碼套用本專案註解 convention(XML doc + 單行 / 多行解釋註解),讓新進工程師能讀懂程式意圖。使用者明確要求註解 / 補文件時執行;agent 修完一段 C# 程式碼也可建議跑(註解可逆,改錯可重寫)。'
 argument-hint: 'Optional: target C# file, symbol, or comment scope'
 user-invocable: true
+allowed-tools: Read, Edit, Glob, Grep
 ---
 
 # CSharp Comment

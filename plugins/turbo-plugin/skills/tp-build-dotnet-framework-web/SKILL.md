@@ -3,6 +3,7 @@ name: tp-build-dotnet-framework-web
 description: '對 .NET Framework Web 專案跑 MSBuild build。使用者明確要求 build 時執行;agent 偵測到「程式碼變更後驗證可建置」需求時也可建議執行(build 失敗可重跑,可逆操作)。'
 argument-hint: '[--configuration <name>] [--platform <name>] [--project <path>]'
 user-invocable: true
+allowed-tools: Bash, Read
 ---
 
 # tp-build-dotnet-framework-web
@@ -23,6 +24,7 @@ user-invocable: true
 
 ## Decision Rules
 
+- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 `.turbo-plugin/pack-content-trust.local.toml`(格式:`approved_hash = "<h>"`)並重新呼叫 script。使用者選 No → 終止 skill。
 - Build 失敗可逆(重跑即可),屬於 agent-proactive 觸發類別 — 偵測「剛改完程式碼」可建議跑。
 - 多個 `.csproj` 又沒指定 → fail loudly 列出候選 + 建議設 `[build].project`。
 - MSBuild 找不到 → fail loudly 提示設 `TURBO_PLUGIN_MSBUILD_PATH`。

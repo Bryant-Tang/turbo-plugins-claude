@@ -3,6 +3,7 @@ name: tp-setup
 description: '設定 turbo-plugin 環境。使用者明確要求 setup 時執行;agent 偵測到 .turbo-plugin/ marker 不存在 / SessionStart 提示需 setup 時可建議使用者執行,**不要自動觸發**。處理四 case:(a) 新建 git+SVN 專案 / (b) 接管既有 git+SVN 專案 / (c) 主 worktree 補設定 / (d) peer worktree per-peer 設定。'
 argument-hint: 'optional: --svn-url <url>'
 user-invocable: true
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
 
 # tp-setup
@@ -44,7 +45,7 @@ parse stdout 取 `ARGV_SAFE_FOR_UNICODE` 值:
 
   | 選項 label | description | 動作 |
   |---|---|---|
-  | **(a) 我跟同事都用中文 Windows,沒人用 Mac/Linux** | 你的 SVN repo 同事都用中文 Windows 開發,沒有 Mac/Linux 同事用 svn checkout。 **plugin 會處理**:含中文檔名的 SVN 操作自動走 Git Bash(`.sh`)版本,你不用換工具。後續 tp-push-to-svn / tp-create-remote-test 都會自動選對。 **代價**:SVN repo 裡中文檔名存的是 Big5 編碼(你跟同事看都正確,Mac/Linux 同事如果加入會看到亂碼)。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: zh-TW-only team. SVN ops with Chinese filenames will be routed through .sh siblings (Big5 bytes in SVN repo).」並設 `.claude/settings.local.json` 加 `{"env":{"TURBO_PLUGIN_SVN_FORCE_BASH":"true"}}` flag |
+  | **(a) 我跟同事都用中文 Windows,沒人用 Mac/Linux** | 你的 SVN repo 同事都用中文 Windows 開發,沒有 Mac/Linux 同事用 svn checkout。 **plugin 會處理**:含中文檔名的 SVN 操作自動走 Git Bash(`.sh`)版本,你不用換工具。後續 tp-push-to-svn / tp-create-remote-test 都會自動選對。 **代價**:SVN repo 裡中文檔名存的是 Big5 編碼(你跟同事看都正確,Mac/Linux 同事如果加入會看到亂碼)。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: zh-TW-only team. SVN ops with Chinese filenames will be routed through .sh siblings (Big5 bytes in SVN repo).」並在 `.turbo-plugin/config.toml` 的 `[svn]` section 寫入 `force_bash = true`(若 config.toml 不存在先複製 default-files template)。**不再**寫 `TURBO_PLUGIN_SVN_FORCE_BASH` 進 settings.local.json。 |
   | **(b) 我有 Mac/Linux 同事會 svn checkout(他們會看到亂碼)** | 跨 OS 團隊。為了讓 Mac/Linux 同事 checkout 看到的是正常中文,SVN repo 必須存 UTF-8 編碼,要把你的 PowerShell 升級或改 Windows 編碼設定。 | nested `AskUserQuestion` 二選一:**(b1) 安裝 PowerShell 7+(Recommended,不用重開機)**:跑 `winget install --id Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements`(若 winget 不存在 → 提示從 https://aka.ms/powershell 下載 MSI 手動裝);完成後在 `.claude/settings.local.json` 加 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`;告知 user「裝好了!請關掉這個 Claude Code session,改用 pwsh.exe 啟動 Claude Code(不是 powershell.exe)」。**(b2) 改 Windows 系統編碼設定(要重開機)**:`Start-Process intl.cpl -Verb RunAs`;emit 訊息「會幫你打開 Windows 設定。請點『系統管理』→『變更系統地區設定...』→ 勾『Beta:使用 Unicode UTF-8 提供全球語言支援』→ 確定 → **重新開機**生效。重開後 SVN 中文檔名會以 UTF-8 存。」 |
   | **(c) 我不會用中文檔名,維持現狀就好** | 你的 SVN 操作不會有中文檔名(或會避免)。plugin 其它功能(build / run / publish 等)不受影響。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: ASCII-only filenames. User declined encoding remediation. SVN ops with non-ASCII filenames will fail.」 |
 
@@ -67,7 +68,17 @@ else:
   → case (c) 主 worktree 補設定
 ```
 
-進 case 之前**先報告**:「偵測為 case (X) <短說明>,即將執行:<該 case 的高階步驟>」,並用 `AskUserQuestion` 確認後再執行。
+進 case 之前**先報告**:「偵測為 case (X) <短說明>,即將執行:<該 case 的高階步驟>」,然後用 `AskUserQuestion` 給使用者選擇:
+
+- **執行偵測到的 case (X)** **(Recommended)**
+- 改執行 case (a) — 新建 git+SVN 專案
+- 改執行 case (b) — init-from-existing(接管既有 git+SVN)
+- 改執行 case (c) — 主 worktree 補設定
+- 改執行 case (d) — peer-mode
+
+(偵測到的那個 case 不重複列在 override 選項中,只列其餘四個)
+
+依使用者選擇進對應 case 的後續 Step 2/3/4/5。這讓使用者可以覆蓋自動偵測(例如手動測試 case (b) on a worktree 被偵測為 (d) 的情況)。
 
 ### Step 2 — Case (a):新建 git+SVN 專案
 

@@ -3,6 +3,7 @@ name: tp-pull-from-svn
 description: '從 SVN 拉新 revision 到 remote/<branch>(`remote-main` / `remote-test-<n>` worktree)並 merge 進對應本地工作分支。使用者明確要求 pull / 偵測到 remote 有新 SVN commit 而本地 working branch 落後時建議執行;**不要自動觸發**(merge 衝突需使用者介入)。'
 argument-hint: '--branch <main|test-<n>>'
 user-invocable: true
+allowed-tools: Bash, Read
 ---
 
 # tp-pull-from-svn
@@ -21,6 +22,7 @@ user-invocable: true
 
 ## Decision Rules
 
+- **force_bash routing**: 呼叫 script 前,讀取 `.turbo-plugin/config.toml` 中 `[svn] force_bash` 的值(透過 `Resolve-ConfigValue -Section 'svn' -Key 'force_bash' -Default 'false'`)。若為 `true`,改以 Git Bash 執行 `.sh` sibling 而非 `.ps1`(對應 Step 0.5 case (a) 的中文 Windows 使用者)。
 - 必須在 main worktree 跑;script 內部會自動定位主 worktree。
 - main worktree 不乾淨(`git status --porcelain` 非空)→ 拒跑,提示先 commit / stash。
 - 衝突時 **不自動 abort**,讓使用者選擇手動解決。

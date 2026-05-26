@@ -3,6 +3,7 @@ name: tp-stop-dotnet-framework-web
 description: '停止當前 project 對應的 IIS Express instance(透過 project identity 匹配 site name,跨 worktree 都能找到)。使用者明確要求 stop 時執行;agent 偵測「使用者結束驗證、port 不再需要」時可建議。'
 argument-hint: '[--project <path>]'
 user-invocable: true
+allowed-tools: Bash, Read
 ---
 
 # tp-stop-dotnet-framework-web
