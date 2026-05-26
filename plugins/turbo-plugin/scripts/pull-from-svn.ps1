@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Branch = ''
 )
@@ -28,6 +28,28 @@ try {
     $mainStatus = (& git -C $mainWorktree status --porcelain | Out-String).Trim()
     if ($mainStatus) {
         throw "Main worktree has uncommitted changes. Please commit or stash before pulling from SVN.`n$mainStatus"
+    }
+
+    # F-U(synth #24): dirty-check remote worktree, filter out .svn/* (wc.db updates on every svn op).
+    # Mirrors F-U18 fix in reset-remote-test. Without this, manual edits in the remote worktree get
+    # packaged into the sync commit silently.
+    $remoteStatusRaw = (& git -C $remote.Path status --porcelain | Out-String).Trim()
+    $remoteStatusLines = @($remoteStatusRaw -split "`n" | Where-Object {
+        $_ -and ($_ -notmatch '^\s*[?MADRC!]+\s+\.svn[/\\]')
+    })
+    if ($remoteStatusLines.Count -gt 0) {
+        $remoteStatusDisplay = $remoteStatusLines -join "`n"
+        throw "Remote worktree '$($remote.Path)' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling.`n$remoteStatusDisplay"
+    }
+
+    # F-U(synth #11): detect previously-orphaned remote sync commit (svn update + git commit
+    # succeeded last time but the subsequent merge into $Branch was aborted). Refuse fast-path
+    # until the user resolves it (manual merge or rerun /tp-pull-from-svn after committing conflict resolution).
+    $unmergedRemoteRaw = (& git -C $mainWorktree log --oneline "$Branch..$($remote.Branch)" | Out-String).TrimEnd("`r","`n")
+    $unmergedRemoteLines = @($unmergedRemoteRaw -split "`n" | Where-Object { $_ })
+    if ($unmergedRemoteLines.Count -gt 0) {
+        $unmergedDisplay = $unmergedRemoteLines -join "`n"
+        throw "remote/$($remote.Branch) has $($unmergedRemoteLines.Count) unmerged sync commit(s) ahead of '$Branch':`n$unmergedDisplay`n`nResolve via manual merge (git -C $mainWorktree merge $($remote.Branch)) or rerun /tp-pull-from-svn after the conflict is committed."
     }
 
     $originalBranch = (& git -C $mainWorktree rev-parse --abbrev-ref HEAD | Out-String).Trim()

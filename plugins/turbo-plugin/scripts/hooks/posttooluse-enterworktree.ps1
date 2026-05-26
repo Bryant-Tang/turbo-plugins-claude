@@ -46,7 +46,13 @@ try {
         $slnStem = [System.IO.Path]::GetFileNameWithoutExtension($slnFile.FullName)
         $apphostTarget = Join-Path $newPath ".vs/$slnStem/config/applicationhost.config"
     } else {
-        $apphostTarget = $apphostSource
+        # F-U(synth #17): no .sln → no .vs/<sln>/config/applicationhost.config exists. Do NOT
+        # fall back to writing into the canonical .turbo-plugin/applicationhost.config — that
+        # file is version-controlled and shared across worktrees; per-worktree physicalPath
+        # writes there cause CRLF/diff noise + cross-worktree contamination. Align with
+        # sessionstart.ps1 which already guards this branch behind a .sln presence check.
+        Emit-Json @{}
+        exit 0
     }
 
     $targetDir = [System.IO.Path]::GetDirectoryName($apphostTarget)
@@ -57,27 +63,10 @@ try {
         Copy-Item -LiteralPath $apphostSource -Destination $apphostTarget -Force
     }
 
-    $updates = @()
-    foreach ($csproj in $csprojFiles) {
-        $rel = Get-RelativePathSafe -From $newPath -To $csproj.FullName
-        $hash = Get-ProjectIdentityHash -RepoPath $newPath -CsprojRelPath $rel
-        $siteName = Format-IisExpressSiteName -CsprojPath $csproj.FullName -IdentityHash $hash
-        $newPhysical = [System.IO.Path]::GetDirectoryName($csproj.FullName)
-        try {
-            $result = Update-ApplicationhostConfig -ConfigPath $apphostTarget -SiteName $siteName -NewPhysicalPath $newPhysical
-            $updates += $result
-        } catch {
-            # Site might not exist yet — that's expected for csprojs that haven't been registered.
-            continue
-        }
-    }
+    $refresh = Invoke-ApplicationhostRefresh -WorktreePath $newPath -ApphostTarget $apphostTarget
 
-    # @(...) wrap: a single-element Where-Object pipeline returns the unwrapped object;
-    # without @(...) the next .Count reads the hashtable's KEY count (4 for our shape),
-    # not the number of updated sites. Classic PS single-element pipeline gotcha.
-    $updatedCount = @($updates | Where-Object { $_.Updated }).Count
-    $msg = if ($updatedCount -gt 0) {
-        "turbo-plugin: refreshed applicationhost.config for $updatedCount site(s) in $newPath"
+    $msg = if ($refresh.UpdatedCount -gt 0) {
+        "turbo-plugin: refreshed applicationhost.config for $($refresh.UpdatedCount) site(s) in $newPath"
     } else {
         $null
     }

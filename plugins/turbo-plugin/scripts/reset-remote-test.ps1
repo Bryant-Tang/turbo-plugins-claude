@@ -59,6 +59,13 @@ try {
     Write-Output 'GAIN'
     if ($gainRaw) { Write-Output $gainRaw }
 
+    # F25: emit file-impact preview — list files that would be svn-deleted on the next push.
+    # This lets the SKILL prompt the user before they commit to the reset.
+    $filesLost = (& git -C $mainWorktree diff --name-status "main..remote/test-$idx" 2>$null | Out-String).Trim()
+    Write-Output ''
+    Write-Output 'FILES_LOST_AFTER_PUSH'
+    if ($filesLost) { Write-Output $filesLost }
+
     if ($DiffOnly) { exit 0 }
 
     if (-not $loseRaw -and -not $gainRaw) {

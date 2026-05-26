@@ -68,6 +68,13 @@ echo ''
 echo 'GAIN'
 [[ -n "$GAIN_RAW" ]] && echo "$GAIN_RAW"
 
+# F25: emit file-impact preview — list files that would be svn-deleted on the next push.
+# This lets the SKILL prompt the user before they commit to the reset.
+FILES_LOST_RAW="$(git -C "$MAIN_WORKTREE" diff --name-status "main..remote/test-$IDX" 2>/dev/null || true)"
+echo ''
+echo 'FILES_LOST_AFTER_PUSH'
+[[ -n "$FILES_LOST_RAW" ]] && echo "$FILES_LOST_RAW"
+
 if [[ "$DIFF_ONLY" == true ]]; then exit 0; fi
 
 if [[ -z "$LOSE_RAW" && -z "$GAIN_RAW" ]]; then

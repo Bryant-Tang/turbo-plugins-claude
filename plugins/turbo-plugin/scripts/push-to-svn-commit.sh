@@ -51,15 +51,45 @@ fi
 # NOTE: in a linked worktree, .git is a pointer FILE; resolve via `git rev-parse --absolute-git-dir`.
 SHA_GITDIR="$(git -C "$REMOTE_PATH" rev-parse --absolute-git-dir)"
 SHA_FILE="$SHA_GITDIR/MERGE_HEAD.tp_branch_sha"
-if [[ -f "$SHA_FILE" ]]; then
-  PINNED_SHA="$(tr -d '[:space:]' < "$SHA_FILE")"
-  CURRENT_SHA="$(git -C "$MAIN_WORKTREE" rev-parse "$BRANCH")"
-  if [[ "$PINNED_SHA" != "$CURRENT_SHA" ]]; then
-    PIN_SHORT="${PINNED_SHA:0:8}"
-    CUR_SHORT="${CURRENT_SHA:0:8}"
-    echo "Error: Branch '$BRANCH' has new commits since prepare (pinned: $PIN_SHORT, current: $CUR_SHORT). Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to include new commits." >&2
-    exit 1
+if [[ ! -f "$SHA_FILE" ]]; then
+  # F-U(synth #18): fail-closed when MERGE_HEAD exists but the SHA pin file is missing.
+  # That state means prepare didn't stage with current locking (older logic, manual MERGE_HEAD,
+  # or hand-edit). Refuse to commit silently against the latest HEAD — require re-staging.
+  echo "Error: SHA pin file missing while merge state exists. Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to (re-)stage the merge with current locking." >&2
+  exit 1
+fi
+PINNED_SHA="$(tr -d '[:space:]' < "$SHA_FILE")"
+CURRENT_SHA="$(git -C "$MAIN_WORKTREE" rev-parse "$BRANCH")"
+if [[ "$PINNED_SHA" != "$CURRENT_SHA" ]]; then
+  PIN_SHORT="${PINNED_SHA:0:8}"
+  CUR_SHORT="${CURRENT_SHA:0:8}"
+  echo "Error: Branch '$BRANCH' has new commits since prepare (pinned: $PIN_SHORT, current: $CUR_SHORT). Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to include new commits." >&2
+  exit 1
+fi
+
+# F12: verify svn status drift — remote worktree must not have gained new files since prepare.
+SVN_STATUS_FILE="$SHA_GITDIR/MERGE_HEAD.tp_svn_status"
+if [[ ! -f "$SVN_STATUS_FILE" ]]; then
+  # Fail-closed: if the svn status pin is missing while MERGE_HEAD exists, the prepare
+  # step was not run with drift detection (older logic). Require re-staging.
+  echo "Error: svn-status pin file missing while merge state exists. Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to (re-)stage." >&2
+  exit 1
+fi
+# Compare snapshot vs current: detect files that appeared after prepare
+SNAPSHOT_PATHS="$(grep -oP '(?<=^.\s{7}).+' "$SVN_STATUS_FILE" 2>/dev/null || awk 'NF{print substr($0,9)}' "$SVN_STATUS_FILE")"
+CURRENT_SVN_STATUS="$(svn status "$REMOTE_PATH")"
+DRIFTED_FILES=''
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  filepath="${line:8}"
+  filepath="${filepath#"${filepath%%[![:space:]]*}"}"
+  if [[ -n "$filepath" ]] && ! printf '%s\n' "$SNAPSHOT_PATHS" | grep -qxF "$filepath" 2>/dev/null; then
+    DRIFTED_FILES="${DRIFTED_FILES}${filepath} "
   fi
+done < <(printf '%s\n' "$CURRENT_SVN_STATUS")
+if [[ -n "${DRIFTED_FILES// /}" ]]; then
+  echo "Error: Remote worktree changed since prepare — file(s) appeared: ${DRIFTED_FILES}. Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to recompute." >&2
+  exit 1
 fi
 
 echo "Finalising merge commit..."
@@ -84,11 +114,10 @@ set +e
   TO_DEL=()
   MODIFIED_TO_COMMIT=()
 
-  SVN_STATUS_OUT="$(svn status | tr -d '\r')"
-  if [[ $? -ne 0 ]]; then
-    echo "Error: svn status failed" >&2
-    exit 1
-  fi
+  # F-U(synth #14): capture svn status independently of the `tr` pipeline so its exit code
+  # is observed (previously `$?` read tr's 0, masking real svn failures like server-down).
+  SVN_STATUS_RAW="$(svn status)" || { echo "Error: svn status failed" >&2; exit 1; }
+  SVN_STATUS_OUT="$(printf '%s' "$SVN_STATUS_RAW" | tr -d '\r')"
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     status="${line:0:1}"
@@ -118,11 +147,9 @@ set +e
   fi
 
   COMMIT_TARGETS=()
-  SVN_STATUS_OUT2="$(svn status | tr -d '\r')"
-  if [[ $? -ne 0 ]]; then
-    echo "Error: svn status failed" >&2
-    exit 1
-  fi
+  # F-U(synth #14): same tr-mask fix — capture svn status independently for second pass.
+  SVN_STATUS_RAW2="$(svn status)" || { echo "Error: svn status (second pass) failed" >&2; exit 1; }
+  SVN_STATUS_OUT2="$(printf '%s' "$SVN_STATUS_RAW2" | tr -d '\r')"
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     status="${line:0:1}"
@@ -137,7 +164,7 @@ set +e
 
   if [[ ${#COMMIT_TARGETS[@]} -eq 0 ]]; then
     echo "No changes to commit to SVN (all pending changes are git-ignored)"
-    svn update > /dev/null
+    svn update > /dev/null || echo 'Warning: svn update on no-commit path failed. Remote worktree may be stale.' >&2
     exit 0
   fi
 
@@ -146,15 +173,16 @@ set +e
   printf '%s\n' "$COMMIT_OUT"
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'
-  svn update > /dev/null
+  svn update > /dev/null || echo 'Warning: svn update after commit failed. Remote worktree may be stale.' >&2
   echo "Pushed to SVN r$NEW_REV"
 )
 svn_commit_status=$?
 set -e
 
 if [[ $svn_commit_status -eq 0 ]]; then
-  # SHA pin cleanup runs only on success — a failed commit retains the pin for retry.
+  # SHA pin + svn-status pin cleanup runs only on success — a failed commit retains the pins for retry.
   rm -f "$SHA_FILE" 2>/dev/null || true
+  rm -f "$SVN_STATUS_FILE" 2>/dev/null || true
 else
   exit $svn_commit_status
 fi

@@ -44,6 +44,31 @@ fi
 
 ORIGINAL_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD)"
 
+# F-U(synth #24): dirty-check remote worktree, filter out .svn/* paths.
+# .svn/wc.db is modified by every svn op; treating it as uncommitted change deadlocks
+# the user. Manual edits in the remote worktree would be silently packaged into the
+# sync commit without this check.
+REMOTE_DIRTY_RAW="$(git -C "$REMOTE_PATH" status --porcelain)"
+REMOTE_DIRTY_FILTERED="$(printf '%s' "$REMOTE_DIRTY_RAW" | grep -vE '^[?MADRC! ]+ \.svn[/\\]' || true)"
+if [[ -n "$REMOTE_DIRTY_FILTERED" ]]; then
+  echo "Error: Remote worktree '$REMOTE_PATH' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling." >&2
+  echo "$REMOTE_DIRTY_FILTERED" >&2
+  exit 1
+fi
+
+# F-U(synth #11): detect previously-orphaned remote sync commit (svn update + git commit
+# succeeded last time but the subsequent merge into $BRANCH was aborted). Refuse until the
+# user resolves it (manual merge or rerun /tp-pull-from-svn after committing conflict resolution).
+UNMERGED_REMOTE="$(git -C "$MAIN_WORKTREE" log --oneline "${BRANCH}..${REMOTE_BRANCH}" 2>/dev/null || true)"
+if [[ -n "$UNMERGED_REMOTE" ]]; then
+  UNMERGED_COUNT="$(printf '%s\n' "$UNMERGED_REMOTE" | wc -l | tr -d '[:space:]')"
+  echo "Error: remote/${REMOTE_BRANCH} has $UNMERGED_COUNT unmerged sync commit(s) ahead of '${BRANCH}':" >&2
+  printf '%s\n' "$UNMERGED_REMOTE" >&2
+  echo "" >&2
+  echo "Resolve via manual merge or rerun /tp-pull-from-svn after the conflict is committed." >&2
+  exit 1
+fi
+
 echo "Running svn update in $REMOTE_NAME..."
 pushd "$REMOTE_PATH" >/dev/null
 svn update

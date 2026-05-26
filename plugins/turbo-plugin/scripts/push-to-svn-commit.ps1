@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Branch = '',
     [string]$Message = ''
@@ -45,14 +45,45 @@ try {
     # NOTE: in a linked worktree, .git is a pointer FILE; resolve via `git rev-parse --absolute-git-dir`.
     $shaGitDir = (& git -C $remote.Path rev-parse --absolute-git-dir | Out-String).Trim()
     $shaFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_branch_sha'
-    if (Test-Path -LiteralPath $shaFile -PathType Leaf) {
-        $pinnedSha = (Get-Content -LiteralPath $shaFile -Raw).Trim()
-        $currentSha = (& git -C $mainWorktree rev-parse $Branch | Out-String).Trim()
-        if ($pinnedSha -ne $currentSha) {
-            $pinShort = if ($pinnedSha.Length -ge 8) { $pinnedSha.Substring(0, 8) } else { $pinnedSha }
-            $curShort = if ($currentSha.Length -ge 8) { $currentSha.Substring(0, 8) } else { $currentSha }
-            throw "Branch '$Branch' has new commits since prepare (pinned: $pinShort, current: $curShort). Abort the merge with 'git -C $($remote.Path) merge --abort' and rerun /tp-push-to-svn to include new commits."
+    if (-not (Test-Path -LiteralPath $shaFile -PathType Leaf)) {
+        # F-U(synth #18): fail-closed when MERGE_HEAD exists but the SHA pin file is missing.
+        # That state means prepare didn't stage with current locking (older logic, manual MERGE_HEAD,
+        # or hand-edit). Refuse to commit silently against the latest HEAD — require re-staging.
+        throw "SHA pin file missing while merge state exists. Abort the merge with 'git -C $($remote.Path) merge --abort' and rerun /tp-push-to-svn to (re-)stage the merge with current locking."
+    }
+    $pinnedSha = (Get-Content -LiteralPath $shaFile -Raw).Trim()
+    $currentSha = (& git -C $mainWorktree rev-parse $Branch | Out-String).Trim()
+    if ($pinnedSha -ne $currentSha) {
+        $pinShort = if ($pinnedSha.Length -ge 8) { $pinnedSha.Substring(0, 8) } else { $pinnedSha }
+        $curShort = if ($currentSha.Length -ge 8) { $currentSha.Substring(0, 8) } else { $currentSha }
+        throw "Branch '$Branch' has new commits since prepare (pinned: $pinShort, current: $curShort). Abort the merge with 'git -C $($remote.Path) merge --abort' and rerun /tp-push-to-svn to include new commits."
+    }
+
+    # F12: verify svn status drift — remote worktree must not have gained new files since prepare.
+    $svnStatusFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_svn_status'
+    if (-not (Test-Path -LiteralPath $svnStatusFile -PathType Leaf)) {
+        # Fail-closed: if the svn status pin is missing while MERGE_HEAD exists, the prepare
+        # step was not run with drift detection (older logic). Require re-staging.
+        throw "svn-status pin file missing while merge state exists. Abort the merge with 'git -C $($remote.Path) merge --abort' and rerun /tp-push-to-svn to (re-)stage."
+    }
+    $snapshotLines = @((Get-Content -LiteralPath $svnStatusFile -Encoding UTF8) | Where-Object { $_ -match '\S' })
+    $currentSvnLines = @((& svn status $remote.Path) | Where-Object { $_ -match '\S' })
+    $snapshotPaths = @{}
+    foreach ($line in $snapshotLines) {
+        if ($line -match '^.\s+(.+)$') { $snapshotPaths[$Matches[1].Trim()] = $true }
+    }
+    $driftedFiles = @()
+    foreach ($line in $currentSvnLines) {
+        if ($line -match '^.\s+(.+)$') {
+            $path = $Matches[1].Trim()
+            if (-not $snapshotPaths.ContainsKey($path)) {
+                $driftedFiles += $path
+            }
         }
+    }
+    if ($driftedFiles.Count -gt 0) {
+        $driftList = $driftedFiles -join ', '
+        throw "Remote worktree changed since prepare — file(s) appeared: $driftList. Abort the merge with 'git -C $($remote.Path) merge --abort' and rerun /tp-push-to-svn to recompute."
     }
 
     Write-Output "Finalising merge commit..."
@@ -80,8 +111,12 @@ try {
             $statusChar = $Matches[1]
             $filePath   = $Matches[2].Trim()
 
-            & git -C $remote.Path check-ignore -q $filePath 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
+            $eaCheckIgnore = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            & git -C $remote.Path check-ignore -q $filePath 2>$null | Out-Null
+            $checkIgnoreExit = $LASTEXITCODE
+            $ErrorActionPreference = $eaCheckIgnore
+            if ($checkIgnoreExit -eq 0) {
                 Write-Output "Skipping git-ignored ($statusChar): $filePath"
                 continue
             }
@@ -125,6 +160,9 @@ try {
             }
         }
         & svn update | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            [Console]::Error.WriteLine('Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.')
+        }
     } finally {
         Pop-Location
         if (Test-Path -LiteralPath $msgFile) {
@@ -132,14 +170,18 @@ try {
         }
     }
 
-    # SHA pin cleanup runs on every success path (committed AND no-commit-needed).
-    # Failure path skips this and retains the pin for retry (pin is checked at top).
+    # SHA pin + svn-status pin cleanup runs on every success path (committed AND no-commit-needed).
+    # Failure path skips this and retains the pins for retry (pins are checked at top).
     # NOTE: in a linked worktree, .git is a pointer FILE; resolve via `git rev-parse --absolute-git-dir`.
     try {
         $shaGitDir = (& git -C $remote.Path rev-parse --absolute-git-dir | Out-String).Trim()
         $shaFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_branch_sha'
         if (Test-Path -LiteralPath $shaFile) {
             Remove-Item -LiteralPath $shaFile -Force -ErrorAction SilentlyContinue
+        }
+        $svnStatusFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_svn_status'
+        if (Test-Path -LiteralPath $svnStatusFile) {
+            Remove-Item -LiteralPath $svnStatusFile -Force -ErrorAction SilentlyContinue
         }
     } catch {
         # Best-effort cleanup; don't fail the script on cleanup error.

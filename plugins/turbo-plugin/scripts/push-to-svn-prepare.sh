@@ -35,6 +35,13 @@ if [[ ! -d "$REMOTE_PATH" ]]; then
   echo "Error: remote worktree '$REMOTE_NAME' not found at: $REMOTE_PATH" >&2; exit 1
 fi
 
+# F23: detect --branch mismatch — emit a structured token when the requested branch differs
+# from the current HEAD so the SKILL can prompt for user confirmation before pushing.
+CURRENT_HEAD_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ -n "$CURRENT_HEAD_BRANCH" && "$CURRENT_HEAD_BRANCH" != "$BRANCH" ]]; then
+  echo "BRANCH_MISMATCH_WARNING current=$CURRENT_HEAD_BRANCH requested=$BRANCH"
+fi
+
 if git -C "$REMOTE_PATH" rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1; then
   # Emit a structured token so tp-push-to-svn SKILL can offer abort/continue/cancel options.
   echo "PENDING_MERGE_DETECTED $REMOTE_PATH"
@@ -73,6 +80,11 @@ fi
 SHA_GITDIR="$(git -C "$REMOTE_PATH" rev-parse --absolute-git-dir)"
 BRANCH_HEAD_SHA="$(git -C "$MAIN_WORKTREE" rev-parse "$BRANCH")"
 printf '%s' "$BRANCH_HEAD_SHA" > "$SHA_GITDIR/MERGE_HEAD.tp_branch_sha"
+
+# F12: also snapshot svn status so push-to-svn-commit can detect files added/removed
+# in the remote worktree after prepare (drift guard in addition to SHA pin).
+# Capture before any svn-add/svn-delete — this is the starting state.
+svn status "$REMOTE_PATH" > "$SHA_GITDIR/MERGE_HEAD.tp_svn_status"
 
 echo 'COMMITS'
 echo "$LOG_OUTPUT"

@@ -20,7 +20,7 @@ function Find-ApplicationhostSite {
     # Get-ProjectIdentityHash, so the only case variation comes from how VS writes
     # the site entry on first launch.
     foreach ($node in @($sitesNode.SelectNodes('site'))) {
-        if ($node.GetAttribute('name') -eq $SiteName) {
+        if ($node.GetAttribute('name') -ieq $SiteName) {
             return $node
         }
     }
@@ -135,6 +135,44 @@ function Update-ApplicationhostConfig {
         OldPaths = $oldPaths
         NewPath  = $NewPhysicalPath
     }
+}
+
+# Scan csproj files in a worktree and refresh applicationhost.config physicalPaths.
+# Shared by sessionstart.ps1 (Branch (i)) and posttooluse-enterworktree.ps1 — both used to
+# duplicate this loop (csproj-scan + identity-hash + Update-ApplicationhostConfig).
+# Returns: PSCustomObject with UpdatedCount + Errors fields.
+function Invoke-ApplicationhostRefresh {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorktreePath,
+        [Parameter(Mandatory = $true)][string]$ApphostTarget
+    )
+
+    $csprojFiles = @(Get-ChildItem -LiteralPath $WorktreePath -Recurse -Filter '*.csproj' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(bin|obj|node_modules|\.vs|\.git)\\' })
+
+    $updates = @()
+    $errors = @()
+    foreach ($csproj in $csprojFiles) {
+        $rel = Get-RelativePathSafe -From $WorktreePath -To $csproj.FullName
+        $hash = Get-ProjectIdentityHash -RepoPath $WorktreePath -CsprojRelPath $rel
+        $siteName = Format-IisExpressSiteName -CsprojPath $csproj.FullName -IdentityHash $hash
+        $newPhysicalPath = [System.IO.Path]::GetDirectoryName($csproj.FullName)
+        try {
+            $result = Update-ApplicationhostConfig -ConfigPath $ApphostTarget -SiteName $siteName -NewPhysicalPath $newPhysicalPath
+            $updates += $result
+        } catch {
+            $errMsg = $_.Exception.Message
+            # Site not yet registered — that's expected; only collect unexpected failures.
+            if ($errMsg -notmatch 'not found in applicationhost\.config') {
+                $errors += $errMsg
+            }
+        }
+    }
+
+    # @(...) wrap required: single-element pipeline returns the unwrapped object whose .Count
+    # would read the hashtable's KEY count, not the array length.
+    $updatedCount = @($updates | Where-Object { $_.Updated }).Count
+    return [pscustomobject]@{ UpdatedCount = $updatedCount; Errors = $errors }
 }
 
 # Atomically remove a named <site> node from applicationhost.config.

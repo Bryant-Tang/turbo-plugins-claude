@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Branch = ''
 )
@@ -22,6 +22,13 @@ try {
     $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir
     if (-not (Test-Path -LiteralPath $remote.Path -PathType Container)) {
         throw "Remote worktree '$($remote.Name)' not found at: $($remote.Path)"
+    }
+
+    # F23: detect --branch mismatch — emit a structured token when the requested branch differs
+    # from the current HEAD so the SKILL can prompt for user confirmation before pushing.
+    $currentHeadBranch = (& git -C $mainWorktree rev-parse --abbrev-ref HEAD 2>$null | Out-String).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($currentHeadBranch) -and $currentHeadBranch -ne $Branch) {
+        Write-Output "BRANCH_MISMATCH_WARNING current=$currentHeadBranch requested=$Branch"
     }
 
     $ea = $ErrorActionPreference
@@ -61,7 +68,7 @@ try {
     $mergeMsg = "Merge branch '$Branch' into $($remote.Branch)"
     $ea3 = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
-    & git -C $remote.Path merge --no-ff --no-commit -m $mergeMsg $Branch 2>&1 | Out-Null
+    & git -C $remote.Path merge --no-ff --no-commit -m $mergeMsg $Branch 2>$null | Out-Null
     $mergeExit = $LASTEXITCODE
     $ErrorActionPreference = $ea3
     if ($mergeExit -ne 0) {
@@ -76,6 +83,13 @@ try {
     $shaGitDir = (& git -C $remote.Path rev-parse --absolute-git-dir | Out-String).Trim()
     $shaFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_branch_sha'
     Write-Utf8NoBom -Path $shaFile -Content $branchHeadSha
+
+    # F12: also snapshot svn status so push-to-svn-commit can detect files added/removed
+    # in the remote worktree after prepare (drift guard in addition to SHA pin).
+    # Capture before any svn-add/svn-delete — this is the starting state.
+    $svnStatusFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_svn_status'
+    $svnStatusSnap = (& svn status $remote.Path | Out-String)
+    Write-Utf8NoBom -Path $svnStatusFile -Content $svnStatusSnap
 
     Write-Output 'COMMITS'
     Write-Output $logOutput

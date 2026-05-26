@@ -33,31 +33,16 @@ try {
         # IIS Express is Windows-only; stale physicalPaths happen on worktree move/rename.
         $apphostSrc = Join-Path $markerDir 'applicationhost.config'
         if (Test-Path -LiteralPath $apphostSrc -PathType Leaf) {
-            $csprojFiles = @(Get-ChildItem -LiteralPath $cwd -Recurse -Filter '*.csproj' -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -notmatch '\\(bin|obj|node_modules|\.vs|\.git)\\' })
-            if ($csprojFiles.Count -gt 0) {
-                $slnFile = @(Get-ChildItem -LiteralPath $cwd -Filter '*.sln' -ErrorAction SilentlyContinue) | Select-Object -First 1
-                if ($null -ne $slnFile) {
-                    $slnStem = [System.IO.Path]::GetFileNameWithoutExtension($slnFile.FullName)
-                    $apphostTarget = Join-Path $cwd ".vs/$slnStem/config/applicationhost.config"
-                    if (Test-Path -LiteralPath $apphostTarget -PathType Leaf) {
-                        foreach ($csproj in $csprojFiles) {
-                            $rel = Get-RelativePathSafe -From $cwd -To $csproj.FullName
-                            $hash = Get-ProjectIdentityHash -RepoPath $cwd -CsprojRelPath $rel
-                            $siteName = Format-IisExpressSiteName -CsprojPath $csproj.FullName -IdentityHash $hash
-                            $newPhysicalPath = [System.IO.Path]::GetDirectoryName($csproj.FullName)
-                            try {
-                                Update-ApplicationhostConfig -ConfigPath $apphostTarget -SiteName $siteName -NewPhysicalPath $newPhysicalPath | Out-Null
-                            } catch {
-                                # Site not yet registered (VS hasn't created it) — not an error here.
-                                # Only emit systemMessage if Update-ApplicationhostConfig itself fails unexpectedly.
-                                $errMsg = $_.Exception.Message
-                                if ($errMsg -notmatch "not found in applicationhost\.config") {
-                                    Emit-Json @{ systemMessage = "turbo-plugin: 自動修正 applicationhost.config 失敗: $errMsg。請執行 ``/tp-setup`` 完成設定。" }
-                                    exit 0
-                                }
-                            }
-                        }
+            $slnFile = @(Get-ChildItem -LiteralPath $cwd -Filter '*.sln' -ErrorAction SilentlyContinue) | Select-Object -First 1
+            if ($null -ne $slnFile) {
+                $slnStem = [System.IO.Path]::GetFileNameWithoutExtension($slnFile.FullName)
+                $apphostTarget = Join-Path $cwd ".vs/$slnStem/config/applicationhost.config"
+                if (Test-Path -LiteralPath $apphostTarget -PathType Leaf) {
+                    $refresh = Invoke-ApplicationhostRefresh -WorktreePath $cwd -ApphostTarget $apphostTarget
+                    if ($refresh.Errors.Count -gt 0) {
+                        $errSummary = ($refresh.Errors | Select-Object -First 1)
+                        Emit-Json @{ systemMessage = "turbo-plugin: 自動修正 applicationhost.config 失敗: $errSummary。請執行 ``/tp-setup`` 完成設定。" }
+                        exit 0
                     }
                 }
             }
