@@ -14,6 +14,20 @@ allowed-tools: Bash, Read
 
 ## Procedure
 
+### Step 0 — 前置檢查 ([iis] enabled)
+
+從 `.turbo-plugin/config.toml` 讀 `[iis] enabled`(預設 `true`,未設定 / 無 `[iis]` section 視為 `true`)。若為 `false` → 直接回報下方訊息給使用者並結束 SKILL 流程,**不**呼叫任何 script:
+
+```
+IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
+若需要使用 IIS 相關功能,請編輯該檔將 enabled 設為 true 或移除該設定
+(預設啟用)。
+```
+
+否則進入下方步驟。
+
+### Step 1 — 執行 build
+
 1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/build-web.{ps1,sh}` 帶 optional `-Configuration <name>` / `-Platform <name>` / `-Project <path>`(`.sh` 為 thin wrapper 轉呼叫 `.ps1`)。
 2. Script 會:
    - 偵測 `.csproj`(CLI arg → `config.toml [build].project` → 自動找單一 .csproj)

@@ -14,6 +14,20 @@ allowed-tools: Bash, Read
 
 ## Procedure
 
+### Step 0 — 前置檢查 ([iis] enabled)
+
+從 `.turbo-plugin/config.toml` 讀 `[iis] enabled`(預設 `true`,未設定 / 無 `[iis]` section 視為 `true`)。若為 `false` → 直接回報下方訊息給使用者並結束 SKILL 流程,**不**呼叫任何 script:
+
+```
+IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
+若需要使用 IIS 相關功能,請編輯該檔將 enabled 設為 true 或移除該設定
+(預設啟用)。
+```
+
+否則進入下方步驟。
+
+### Step 1 — 停止 IIS Express
+
 1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/stop-iis.{ps1,sh}` 帶 optional `-Project <path>`。Script 流程:
    - 偵測 `.csproj`(同 `tp-build`)
    - 計算 project identity + site name

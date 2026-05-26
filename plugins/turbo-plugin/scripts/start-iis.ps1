@@ -73,6 +73,19 @@ function Wait-PortListening {
 
 try {
     Probe-GitVersion
+
+    # Defensive layer: [iis] enabled = false short-circuits IIS-touching scripts even
+    # when invoked directly (SKILL layer also checks; this guards programmatic callers).
+    $repoRootForIisCheck = (Get-Location).Path
+    $iisEnabled = Resolve-ConfigValue -RepoRoot $repoRootForIisCheck -Section 'iis' -Key 'enabled' -CliValue $null -Default $true
+    if ($iisEnabled -eq $false) {
+        throw @"
+IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
+若需要使用 IIS 相關功能,請編輯該檔將 enabled 設為 true 或移除該設定
+(預設啟用)。
+"@
+    }
+
     $settings = Resolve-IisSettings -Project $Project
 
     # apphost-mode is always required (port-mode removed); ensure the canonical config file is set.
