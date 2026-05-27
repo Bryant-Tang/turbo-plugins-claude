@@ -6,18 +6,6 @@
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-05-27
-
-### Changed
-
-- **U5** `tp-setup/SKILL.md` 整段 rewrite,從堆疊式 Step 0 / 0.5 / 1 / 2-5 / 6 / 7 / 8 改為 4 個 Phase 結構:
-  - **Phase 1 偵測** — Pre-check + Encoding profile detect + Case detect + **Phase summary**(只列「會動到外部」的 unconditional 動作,internal repo-only 動作如 `.gitignore` / `CLAUDE.md` / `.turbo-plugin/*` 寫入不列)+ AskUserQuestion 繼續 / 取消 / 改執行其他 case
-  - **Phase 2 case-specific bootstrap** — 進 case (a)/(b)/(c)/(d) 子流程,加 **apphost bootstrap**(R1 三選一);apphost bootstrap 只在 case (a)/(b)/(c) 觸發,case (d) peer-mode 不執行(canonical 在主 worktree,跨 worktree 共享由 U3 runtime 處理)
-  - **Phase 3 環境配置** — 本 unit 留 placeholder header,實際內容由 U6 unit 填入(probe + 已啟用 / 尚未配置清單 + per-item AskUserQuestion batch + LSP server binary 自動安裝)
-  - **Phase 4 完成報告** — 偵測結果 / 寫入位置 / 外部安裝成功失敗清單 / 使用者仍須手動處理事項 / 若 Phase 3 寫入 `~/.claude/settings.json` 變更則提示重啟 Claude Code 後跑 `/plugin list` 確認、看 TUI、LSP / agent teams env 在新 session 才生效 / 下一步建議
-- **apphost bootstrap(R1)**:case (a)/(b)/(c) 在 Phase 2 結尾偵測 `.turbo-plugin/applicationhost.config` 是否存在 → 不存在則偵測 `.vs/<sln>/config/applicationhost.config` → 從 VS 複製進 canonical 時必須把每個 `<site>` / `<application>` / `<virtualDirectory>` 的 `physicalPath` 屬性值替換為佔位符 `__TURBO_PLUGIN_PHYSICAL_PATH__`(避免機器-specific 絕對路徑進版控;runtime 由 start-iis 在 temp file 裡替換為實際 worktree 路徑)→ 兩個都沒有則 AskUserQuestion 三選一((1) 暫停 setup 請使用者開 VS 後重跑 / (2) 寫 `[iis] enabled = false` 跳過 IIS skill / (3) 取消 setup)
-- 廢除堆疊式 Step 編號模式(R6):未來新需求只能融入 Phase 內或開新獨立 skill,不再 append 新 Step。保留所有既有 Decision Rules / Completion Checks / Test Scenarios / Tool Preference / assets / frontmatter。
-
 ### Fixed
 
 - **F-U17.5(P1)** `create-remote-test.ps1` git mutations(`git branch`/`worktree add`)移進 rollback try 內,任一 git op 失敗也觸發 rollback 清掉部分建好的 branch。.sh 端早有 `trap ERR` 涵蓋,行為一致。
