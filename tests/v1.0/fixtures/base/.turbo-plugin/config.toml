@@ -1,0 +1,40 @@
+# turbo-plugin Phase 1 fixture config.toml
+# 此檔由 Reset-Fixture.ps1 mirror 進 C:\Turbo\test-turbo-plugin\.turbo-plugin\config.toml
+# 不要直接編輯 — 修改請改 tests/v1.0/fixtures/base/.turbo-plugin/config.toml 並重跑 reset。
+
+schema_version = 2
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [svn] — SVN bridge 行為設定
+# ─────────────────────────────────────────────────────────────────────────────
+[svn]
+# force_bash = false  # 預設關閉;Phase 1 svn-* 測試會分別 explicit 設
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [iis] — IIS Express 啟用開關
+# Phase 1 default = true。`[iis] enabled=false` canonical disabled-fixture 由
+# tests/v1.0/phase1/start-iis.Tests.ps1 跑時臨時改寫此值,測完還原 base。
+# ─────────────────────────────────────────────────────────────────────────────
+[iis]
+enabled = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [build] — tp-build-dotnet-framework-web 用
+# ─────────────────────────────────────────────────────────────────────────────
+# [build]
+# configuration = "Debug"
+# platform      = "Any CPU"
+# project       = "HelloApp.csproj"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [publish] — tp-publish-dotnet-framework-web 用
+# ─────────────────────────────────────────────────────────────────────────────
+# [publish]
+# configuration  = "Release"
+# platform       = "Any CPU"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [run] — tp-run-dotnet-framework-web 用
+# ─────────────────────────────────────────────────────────────────────────────
+# [run]
+# listening_timeout_seconds = 30
