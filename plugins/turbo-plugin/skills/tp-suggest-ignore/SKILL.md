@@ -31,8 +31,8 @@ Single entry point for managing ignore settings across both git and SVN in a tur
 |---|---|
 | `--add-git <pattern>` | Append pattern to `.gitignore` and commit |
 | `--remove-git <pattern>` | Remove pattern from `.gitignore` and commit |
-| `--add-svn <pattern> [<pattern>…]` | Add one or more patterns to `svn:ignore` on all remote worktrees in a single SVN commit |
-| `--remove-svn <pattern> [<pattern>…]` | Remove one or more patterns from `svn:ignore` on all remote worktrees in a single SVN commit |
+| `--add-svn <pattern> [<pattern>…]` | Add one or more patterns to `svn:ignore` on all remote worktrees, **one SVN commit per worktree** (cross-worktree sync; propset failure rolls back all) |
+| `--remove-svn <pattern> [<pattern>…]` | Remove one or more patterns from `svn:ignore` on all remote worktrees, **one SVN commit per worktree** (cross-worktree sync; propset failure rolls back all) |
 | `--path <dir>` | Target subdirectory for SVN operations (default: `.`) |
 
 Constraints: only one direct-mode flag per invocation; `--path` is ignored for git operations.
