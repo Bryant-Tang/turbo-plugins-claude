@@ -102,49 +102,169 @@ SVN seed r5 / r10 / r15)。
 
 ### compute-project-identity
 
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-compute-project-identity.Tests | compute-project-identity | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-compute-project-identity.sh.test | compute-project-identity | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-compute-project-identity.Tests | compute-project-identity | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\compute-project-identity.Tests.ps1 |
+| P1-compute-project-identity.sh.test | compute-project-identity | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/compute-project-identity.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\compute-project-identity.sh.test.sh |
+| P1-compute-project-identity.Tests | compute-project-identity | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\compute-project-identity.Tests.ps1 |
+| P1-compute-project-identity.sh.test | compute-project-identity | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/compute-project-identity.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\compute-project-identity.sh.test.sh |
+
 _(rows TBD by U3)_
 
 ### get-target-url
+
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-get-target-url.Tests | get-target-url | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-get-target-url.sh.test | get-target-url | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-get-target-url.Tests | get-target-url | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\get-target-url.Tests.ps1 |
+| P1-get-target-url.sh.test | get-target-url | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/get-target-url.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\get-target-url.sh.test.sh |
+| P1-get-target-url.Tests | get-target-url | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\get-target-url.Tests.ps1 |
+| P1-get-target-url.sh.test | get-target-url | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/get-target-url.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\get-target-url.sh.test.sh |
 
 _(rows TBD by U3)_
 
 ### check-iis-listening
 
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-check-iis-listening.Tests | check-iis-listening | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-check-iis-listening.sh.test | check-iis-listening | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-check-iis-listening.Tests | check-iis-listening | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\check-iis-listening.Tests.ps1 |
+| P1-check-iis-listening.sh.test | check-iis-listening | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/check-iis-listening.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\check-iis-listening.sh.test.sh |
+| P1-check-iis-listening.Tests | check-iis-listening | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\check-iis-listening.Tests.ps1 |
+| P1-check-iis-listening.sh.test | check-iis-listening | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/check-iis-listening.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\check-iis-listening.sh.test.sh |
+
 _(rows TBD by U3)_
 
 ### check-encoding-support
+
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-check-encoding-support.Tests | check-encoding-support | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-check-encoding-support.sh.test | check-encoding-support | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-check-encoding-support.Tests | check-encoding-support | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\check-encoding-support.Tests.ps1 |
+| P1-check-encoding-support.sh.test | check-encoding-support | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/check-encoding-support.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\check-encoding-support.sh.test.sh |
+| P1-check-encoding-support.Tests | check-encoding-support | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\check-encoding-support.Tests.ps1 |
+| P1-check-encoding-support.sh.test | check-encoding-support | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/check-encoding-support.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\check-encoding-support.sh.test.sh |
 
 _(rows TBD by U3)_
 
 ### resolve-iis-settings
 
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-resolve-iis-settings.Tests | resolve-iis-settings | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-resolve-iis-settings.sh.test | resolve-iis-settings | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-resolve-iis-settings.Tests | resolve-iis-settings | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\resolve-iis-settings.Tests.ps1 |
+| P1-resolve-iis-settings.sh.test | resolve-iis-settings | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/resolve-iis-settings.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\resolve-iis-settings.sh.test.sh |
+| P1-resolve-iis-settings.Tests | resolve-iis-settings | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\resolve-iis-settings.Tests.ps1 |
+| P1-resolve-iis-settings.sh.test | resolve-iis-settings | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/resolve-iis-settings.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\resolve-iis-settings.sh.test.sh |
+
 _(rows TBD by U3)_
 
 ### push-to-svn-prepare
+
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-push-to-svn-prepare.Tests | push-to-svn-prepare | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-push-to-svn-prepare.sh.test | push-to-svn-prepare | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-push-to-svn-prepare.Tests | push-to-svn-prepare | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\push-to-svn-prepare.Tests.ps1 |
+| P1-push-to-svn-prepare.sh.test | push-to-svn-prepare | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/push-to-svn-prepare.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\push-to-svn-prepare.sh.test.sh |
+| P1-push-to-svn-prepare.Tests | push-to-svn-prepare | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\push-to-svn-prepare.Tests.ps1 |
+| P1-push-to-svn-prepare.sh.test | push-to-svn-prepare | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/push-to-svn-prepare.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\push-to-svn-prepare.sh.test.sh |
 
 _(rows TBD by U3)_
 
 ### svn-log
 
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-svn-log.Tests | svn-log | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-svn-log.sh.test | svn-log | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-svn-log.Tests | svn-log | fresh-base | all Assert-* PASS | exit 1 | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\svn-log.Tests.ps1 |
+| P1-svn-log.sh.test | svn-log | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/svn-log.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\svn-log.sh.test.sh |
+| P1-svn-log.Tests | svn-log | fresh-base | all Assert-* PASS | exit 1 | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\svn-log.Tests.ps1 |
+| P1-svn-log.sh.test | svn-log | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/svn-log.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\svn-log.sh.test.sh |
+
 _(rows TBD by U3)_
 
 ### start-iis
+
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-start-iis.Tests | start-iis | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-start-iis.sh.test | start-iis | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-start-iis.Tests | start-iis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\start-iis.Tests.ps1 |
+| P1-start-iis.sh.test | start-iis | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/start-iis.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\start-iis.sh.test.sh |
+| P1-start-iis.Tests | start-iis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\start-iis.Tests.ps1 |
+| P1-start-iis.sh.test | start-iis | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/start-iis.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\start-iis.sh.test.sh |
 
 _(rows TBD by U3)_
 
 ### stop-iis
 
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-stop-iis.Tests | stop-iis | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-stop-iis.sh.test | stop-iis | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-stop-iis.Tests | stop-iis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\stop-iis.Tests.ps1 |
+| P1-stop-iis.sh.test | stop-iis | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/stop-iis.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\stop-iis.sh.test.sh |
+| P1-stop-iis.Tests | stop-iis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\stop-iis.Tests.ps1 |
+| P1-stop-iis.sh.test | stop-iis | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/stop-iis.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\stop-iis.sh.test.sh |
+
 _(rows TBD by U3)_
 
 ### cleanup-orphan-iis
+
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-cleanup-orphan-iis.Tests | cleanup-orphan-iis | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-cleanup-orphan-iis.sh.test | cleanup-orphan-iis | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-cleanup-orphan-iis.Tests | cleanup-orphan-iis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\cleanup-orphan-iis.Tests.ps1 |
+| P1-cleanup-orphan-iis.sh.test | cleanup-orphan-iis | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/cleanup-orphan-iis.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\cleanup-orphan-iis.sh.test.sh |
+| P1-cleanup-orphan-iis.Tests | cleanup-orphan-iis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\cleanup-orphan-iis.Tests.ps1 |
+| P1-cleanup-orphan-iis.sh.test | cleanup-orphan-iis | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/cleanup-orphan-iis.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\cleanup-orphan-iis.sh.test.sh |
 
 _(rows TBD by U3)_
 
 ### build-web
 
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-build-web.Tests | build-web | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-build-web.sh.test | build-web | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-build-web.Tests | build-web | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\build-web.Tests.ps1 |
+| P1-build-web.sh.test | build-web | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/build-web.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\build-web.sh.test.sh |
+| P1-build-web.Tests | build-web | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\build-web.Tests.ps1 |
+| P1-build-web.sh.test | build-web | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/build-web.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\build-web.sh.test.sh |
+
 _(rows TBD by U3)_
 
 ### publish-web
+
+
+| case ID | section | fixture | expected | actual | result | evidence |
+|---|---|---|---|---|---|---|
+| P1-publish-web.Tests | publish-web | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-publish-web.sh.test | publish-web | reset-failed | fixture reset to base | Reset-Fixture exit 1 | FAIL | Reset-Fixture.ps1 exit 1 |
+| P1-publish-web.Tests | publish-web | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\publish-web.Tests.ps1 |
+| P1-publish-web.sh.test | publish-web | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/publish-web.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\publish-web.sh.test.sh |
+| P1-publish-web.Tests | publish-web | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\publish-web.Tests.ps1 |
+| P1-publish-web.sh.test | publish-web | fresh-base | script exit 0 + last line OK | exit 99; last: The term ' '/' + $args[0].Groups[1].Value.ToLower() /Turbo/turbo-plugins-claude/.claude/worktrees/agent-ad78e689810d6e9c4/tests/v1.0/phase1/publish-web.sh.test.sh' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again. | FAIL | C:\Turbo\turbo-plugins-claude\.claude\worktrees\agent-ad78e689810d6e9c4\tests\v1.0\phase1\publish-web.sh.test.sh |
 
 _(rows TBD by U3)_
 
