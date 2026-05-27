@@ -238,11 +238,253 @@ else:
 
 ---
 
-### Phase 3 — 環境配置(by U6)
+### Phase 3 — 環境配置
 
-> **(U6 將填入完整 Phase 3 內容:probe 全部項目 → emit「已啟用 / 尚未配置」清單 → AskUserQuestion 繼續 / 取消 → per-item AskUserQuestion batch 處理缺項,包含 MSBuild path / IIS Express path / C# LSP / TS/JS LSP / compound-engineering / agent teams / TUI fullscreen 各項;含 LSP server binary 自動安裝 + 偵測降階。詳見 origin plan 的 U6 內容。)**
+Phase 3 把使用者本機環境(工具路徑、Claude Code 開發體驗功能)一次補齊。流程串成 4 個小階段:
 
-完成後 fall through to Phase 4。
+```
+3.1 偵測(外部工具 + Claude Code 既有設定)
+ ↓
+3.2 列出(✓ 已啟用 / ✗ 尚未配置)+ Phase summary AskUserQuestion 繼續 / 取消
+ ↓
+3.3 Per-item AskUserQuestion(最多 4 題/batch;最壞情況 7 題 = 2 batches)
+ ↓
+3.4 執行寫入(tool paths → .turbo-plugin/config.local.toml;Claude Code features → settings.json + LSP server binary 自動安裝)
+```
+
+#### 3.1 偵測階段
+
+跑下列偵測(每項各自獨立、失敗不阻塞,只記成「未配置」):
+
+| 項目 | 偵測方式 | 用途 |
+|---|---|---|
+| **MSBuild** | call `Find-MSBuild` from `${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.ps1`;throw 視為「未配置」(會問) | tp-build / tp-publish 前置 |
+| **IIS Express** | call `Find-IisExpressPath` from `${CLAUDE_PLUGIN_ROOT}/scripts/resolve-iis-settings.ps1`;throw 視為「未配置」(會問) | tp-run / tp-stop 前置 |
+| **dotnet SDK** | `dotnet --version`(exit code 0 + 非空 stdout 視為 ✓) | C# LSP server (`csharp-ls`) 安裝前置條件 |
+| **npm** | `npm --version`(exit code 0 + 非空 stdout 視為 ✓) | TS/JS LSP server (`typescript-language-server`) 安裝前置條件 |
+| **docker** | `docker --version`(exit code 0 視為 ✓) | dbhub MCP server 前置(僅提示) |
+| **svn** | `svn --version`(exit code 0 視為 ✓) | turbo-plugin core 必需;若 missing 在 Phase 4 報告中明寫補裝(此處不阻塞,Phase 1 應該已經提前驗證) |
+
+跑完上述外部工具偵測後,讀 **Claude Code 既有設定**(三個 scope 都要讀,任一已啟用就視為「✓ 已啟用」、不再 prompt):
+
+| Scope | 檔案路徑 |
+|---|---|
+| user-level | `~/.claude/settings.json`(展開 `$HOME` / `$env:USERPROFILE`) |
+| project-level | `<repo>/.claude/settings.json` |
+| local-level | `<repo>/.claude/settings.local.json` |
+
+每個 scope 的檔案不存在當作 `{}`;存在就 JSON parse(失敗則記入 Phase 4 報告 + 視為 `{}` 不阻塞)。三個 scope **合併**(任一 scope 設了該 key 就視為已啟用)後,檢查以下 keys:
+
+| 偵測 key(於合併後的設定) | 已啟用條件 | 對應 Phase 3 題目 |
+|---|---|---|
+| `enabledPlugins["csharp-lsp@claude-plugins-official"]` | `=== true` | C# LSP |
+| `enabledPlugins["typescript-lsp@claude-plugins-official"]` | `=== true` | TS/JS LSP |
+| `enabledPlugins["compound-engineering@compound-engineering-plugin"]` | `=== true` | compound-engineering |
+| `env.ENABLE_LSP_TOOL` | `== "1"`(字串比對) | LSP tool 旗標(C# LSP 或 TS/JS LSP 啟用時會自動寫,單獨偵測只用於跳過 prompt) |
+| `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | `== "1"` | agent teams |
+| top-level `tui` | `=== "fullscreen"` | TUI fullscreen |
+
+**Tool Preference 提醒**:`settings.json` 讀取一律用 Read tool + 內建 JSON parse(不要用 PowerShell / Bash 做檔案 IO)。
+
+#### 3.2 列出階段 + Phase summary AskUserQuestion
+
+emit 兩張清單(平實白話、具體項目名稱):
+
+```
+Phase 3 — 環境配置
+
+✓ 已啟用(會跳過,不重問):
+  - <列出 3.1 偵測到的 ✓ 項目;每項標註偵測來源 scope,例如 "TUI fullscreen (user-level)" / "C# LSP (project-level)">
+  (若全部都未啟用此區塊就寫「(無)」)
+
+✗ 尚未配置(以下會問):
+  - <列出 3.1 偵測到的 ✗ 項目;tool paths 標記「會寫進 .turbo-plugin/config.local.toml」、Claude Code features 標記「會寫進你選擇的 scope 的 settings.json」>
+  (若全部都已啟用此區塊就寫「(無 — Phase 3 沒事做)」)
+```
+
+接著用 `AskUserQuestion` emit **Phase 3 summary question**:
+
+- **Question text**:「準備開始 Phase 3 環境配置詢問。是否繼續?」
+- **Options**(2 個):
+  - **繼續** — 進入 3.3 per-item 詢問
+  - **取消** — 跳過整個 Phase 3,直接進 Phase 4(會在 Phase 4 報告中標示「使用者跳過 Phase 3」)
+
+若 3.1「✗ 尚未配置」清單為空(全部已啟用),**直接跳過此 AskUserQuestion**(以及 3.3 / 3.4),emit「Phase 3 沒事做(全部已啟用)」訊息後 fall through to Phase 4。
+
+#### 3.3 Per-item AskUserQuestion batch
+
+依「✗ 尚未配置」清單組裝 AskUserQuestion(最多 4 題/batch — 平台限制)。**Batch 分組順序固定**:
+
+- **Batch 1**:tool paths + 兩個 LSP — `MSBuild path` / `IIS Express path` / `C# LSP` / `TS/JS LSP` 四題(視「✗ 尚未配置」實際出現項目挑選,跳過已啟用者)
+- **Batch 2**:其它 Claude Code features — `compound-engineering` / `agent teams` / `TUI fullscreen` 三題(同上,跳過已啟用者)
+
+若某 batch 沒有要問的題目就整個 batch 不發。
+
+##### 3.3.A Tool paths 題目格式(MSBuild / IIS Express)
+
+**2 options**(無 scope 概念,都寫 `.turbo-plugin/config.local.toml`):
+
+| Option label | description |
+|---|---|
+| **跳過** | 不寫 `.turbo-plugin/config.local.toml` 的 `[tools]` `<key>`(後續呼叫 build / run / publish 等 SKILL 時,`Find-MSBuild` / `Find-IisExpressPath` 會再嘗試 standard install path 偵測 → 找不到則 throw 引導重跑 `/tp-setup`)。**無外部副作用**(此選項 preview 不列任何外部動作)。 |
+| **輸入路徑** | 跳出 free-text follow-up question,問使用者「請貼上 `<工具>` 的絕對路徑(例如 `C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe`)」。**無外部副作用**(只動 repo 內 `.turbo-plugin/config.local.toml`)。 |
+
+**Question text 範例(MSBuild)**:
+
+> 偵測不到 MSBuild 路徑(`.turbo-plugin/config.local.toml [tools] msbuild_path` 未設,且機器上沒找到 VS 標準安裝)。是否現在輸入?
+> 之後使用 `/tp-build-dotnet-framework-web` / `/tp-publish-dotnet-framework-web` 都會用到。
+
+(IIS Express 題目同模式,只把工具名替換成「IIS Express」、key 替換成 `iis_express_path`、用途說明替換成「`/tp-run-dotnet-framework-web` / `/tp-stop-dotnet-framework-web` 都會用到」。)
+
+**輸入路徑** 選項使用者貼上路徑後,**驗證**:
+- 用 Read tool 確認 file 存在(`Test-Path -LiteralPath <path> -PathType Leaf` 的等價);**不存在** → emit 訊息「路徑指向的檔案不存在: `<path>`」,**重問**(同題目最多 1 次重試,再失敗則記入 Phase 4 「使用者仍須手動處理」並 fall through)
+- 若使用者輸入 Git Bash 形式路徑(`/c/Users/...`),寫入前轉成 Windows 形式(`C:/Users/...`)— `tr '\\\\' '/'` 後將 leading `/c/` 轉成 `C:/`
+
+##### 3.3.B Claude Code feature 題目格式(C# LSP / TS/JS LSP / agent teams / TUI fullscreen)
+
+**4 options**(per-item scope choice;preview 列「動到外部」副作用):
+
+| Option label | description / preview |
+|---|---|
+| **跳過** | 不啟用。**無外部副作用**。 |
+| **user-level**(寫 `~/.claude/settings.json`) | 寫使用者全域設定,影響所有 Claude Code session(包括其它 repo)。**外部副作用**(依題目): C# LSP 題 → 「寫 `~/.claude/settings.json`(影響所有 Claude Code session) / Claude Code 啟動會從網路下載 `csharp-lsp@claude-plugins-official` plugin / 安裝 C# 語言伺服器 `csharp-ls` 到你的電腦(機器全域,不跟著專案走)」;TS/JS LSP 題 → 「寫 `~/.claude/settings.json` / Claude Code 下載 `typescript-lsp@claude-plugins-official` plugin / 安裝 `typescript-language-server` + `typescript` 到你的電腦」;agent teams 題 → 「寫 `~/.claude/settings.json` 的 `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"`(影響所有 Claude Code session)」;TUI 題 → 「寫 `~/.claude/settings.json` 的 `tui = "fullscreen"`」 |
+| **project-level**(寫 `<repo>/.claude/settings.json`) | 寫進 git 跟同事共享(commit 後其他人 clone 也會啟用)。**外部副作用** 同 user-level 描述,但「寫 `~/.claude/settings.json`」改成「寫 `<repo>/.claude/settings.json`(進 git,跨同事共享)」 |
+| **local-level**(寫 `<repo>/.claude/settings.local.json`) | 只影響你本機,**不**進 git(`.gitignore` 已排除 `.claude/**/*.local.*`)。**外部副作用** 同 user-level 描述,但檔案改成 `<repo>/.claude/settings.local.json` |
+
+**重要 preview 原則(R14/R15/R16)**:
+- LSP 題:**列** plugin 下載 + binary 安裝(動到外部)
+- agent teams / TUI 題:**只列** settings.json 寫入(視 scope 而定)— **不**列 plugin 下載 / binary 安裝(這兩個 feature 不涉及外部下載或安裝)
+- **永遠不**列 `.turbo-plugin/config.local.toml` 的寫入(repo 內 file write,屬 internal — per R14)
+- **永遠不**列 settings.json 寫入時的 JSON merge 動作(屬 internal implementation 細節)
+
+##### 3.3.C compound-engineering 題目格式(特殊 — 3 options,scope 一律 user-level)
+
+CE 與其它 Claude Code feature 不同:scope 一律 user-level(dev tool 通常 cross-project 共用),所以 4 options 換成「跳過 / 安裝(自動更新)/ 安裝(不自動更新)」三選一,把 autoUpdate dimension 占用一個 option slot。
+
+| Option label | description / preview |
+|---|---|
+| **跳過** | 不啟用。**無外部副作用**。 |
+| **安裝(自動更新)** | 寫 `~/.claude/settings.json` 的 `extraKnownMarketplaces["compound-engineering-plugin"]`(含 git URL `https://github.com/EveryInc/compound-engineering-plugin.git` + `autoUpdate: true`)+ `enabledPlugins["compound-engineering@compound-engineering-plugin"] = true`。**外部副作用**:「寫 `~/.claude/settings.json`(影響所有 Claude Code session) / Claude Code 啟動會自動從 GitHub fetch 最新版的 compound-engineering plugin(注意:GitHub repo 一旦被攻擊者 hijack,自動載入會有把惡意 code 拉進你電腦的風險)」 |
+| **安裝(不自動更新)** | 同上但 `autoUpdate: false`。**外部副作用**:「寫 `~/.claude/settings.json` / Claude Code 啟動會從 GitHub fetch 一次 compound-engineering plugin;之後要更新時需手動跑 `/plugin update`」 |
+
+**Question text 範例**:
+
+> 是否啟用 `compound-engineering@compound-engineering-plugin`(第三方 plugin,提供 ce-brainstorm / ce-plan / ce-debug / ce-code-review 等 Claude Code 工具流程)?
+> 啟用後寫進 `~/.claude/settings.json`(user-level),影響你所有 Claude Code session。
+
+#### 3.4 執行寫入階段
+
+依使用者在 3.3 的選擇依序執行寫入。**全部寫入都要 idempotent**(已有目標 key 直接覆寫該 key 的值,**不**破壞既有的其它 keys)。
+
+##### 3.4.A Tool paths(MSBuild / IIS Express)→ `.turbo-plugin/config.local.toml`
+
+若使用者選「輸入路徑」(且通過 file-existence 驗證):
+
+- 目標檔案:`<repo>/.turbo-plugin/config.local.toml`
+- 若檔案不存在 → 先建立空檔(無 header 即可,TOML reader 容許)
+- 若 `[tools]` section 不存在 → append 該 section header `[tools]`
+- 若該 key 已存在 → in-place 覆寫該 key 的 value
+- 若該 key 不存在 → append `<key> = "<path>"` 到 `[tools]` section 底下
+
+**Path format**:寫入時用 forward slash(`C:/Program Files/...`),便於跨 PS/Bash 解析。雙引號包夾(TOML basic string)。
+
+**寫入後 emit 確認訊息**:「已寫入 `.turbo-plugin/config.local.toml` `[tools] <key>` = `<path>`」。
+
+##### 3.4.B C# LSP / TS/JS LSP → 所選 scope 的 settings.json + 自動安裝 LSP server binary
+
+依使用者所選 scope 鎖定目標檔案:
+
+| Scope 選擇 | 目標檔案 |
+|---|---|
+| user-level | `~/.claude/settings.json` |
+| project-level | `<repo>/.claude/settings.json` |
+| local-level | `<repo>/.claude/settings.local.json` |
+
+**JSON merge 規則**(用 Read + 內建 JSON parse + Write,**不**用 PowerShell / Bash 做 IO):
+1. 若檔案不存在 → 視為 `{}`
+2. JSON parse 既有內容(失敗 → 不覆寫,emit 錯誤 + 記入 Phase 4 報告失敗清單,跳過此項目寫入)
+3. 確保 `enabledPlugins` 是 object(不存在則建立 `{}`),`env` 是 object(同上)
+4. 寫入 / 覆寫:
+   - C# LSP: `enabledPlugins["csharp-lsp@claude-plugins-official"] = true`
+   - TS/JS LSP: `enabledPlugins["typescript-lsp@claude-plugins-official"] = true`
+   - 兩個 LSP 任一啟用 → `env.ENABLE_LSP_TOOL = "1"`(idempotent — 兩個 LSP 都啟用時也只寫一次,不重複)
+5. **注意**:`claude-plugins-official` 是 Claude Code 內建 marketplace,**不**寫 `extraKnownMarketplaces`
+6. Write 回檔案時用 UTF-8 (no BOM) + 2-space indent + trailing newline(同 Claude Code settings.json 預設風格)
+7. 既有其它 keys(例如使用者自訂的 `env.MY_PERSONAL_VAR` / 其它 `enabledPlugins` 條目 / 其它 top-level 設定) **必須** 完整保留
+
+**寫入後執行 LSP server binary 自動安裝**(merged from old U7;binary 機器全域,**無** scope 概念):
+
+```
+if 使用者啟用了 C# LSP(不論選哪個 scope):
+  if dotnet 偵測 ✓:
+    執行 dotnet tool install -g csharp-ls(用 & dotnet tool install -g csharp-ls 形式呼叫,
+    每個 arg 獨立、不字串拼接、不用 Invoke-Expression)
+    capture exit code:
+      0 → 記 Phase 4 報告「✓ 已安裝 C# LSP server (csharp-ls)」
+      非 0 → 記 Phase 4 補裝清單,含 stderr 摘要 + 「可手動跑 `dotnet tool install -g csharp-ls` 補裝」
+  else(dotnet 偵測 ✗):
+    不執行安裝;記 Phase 4 補裝清單「C# LSP server (csharp-ls) 需要先裝 .NET SDK
+    (https://dotnet.microsoft.com/download),裝好後手動跑 `dotnet tool install -g csharp-ls`」
+
+if 使用者啟用了 TS/JS LSP(不論選哪個 scope):
+  if npm 偵測 ✓:
+    執行 npm install -g typescript-language-server typescript
+    (& npm install -g typescript-language-server typescript 形式呼叫,同上)
+    capture exit code:
+      0 → 記 Phase 4 報告「✓ 已安裝 TS/JS LSP server (typescript-language-server)」
+      非 0 → 記 Phase 4 補裝清單,含 stderr 摘要 + 「可手動跑 `npm install -g typescript-language-server typescript` 補裝」
+  else(npm 偵測 ✗):
+    不執行安裝;記 Phase 4 補裝清單「TS/JS LSP server 需要先裝 Node.js
+    (https://nodejs.org/),裝好後手動跑 `npm install -g typescript-language-server typescript`」
+```
+
+**安裝失敗不阻塞 setup** — 繼續處理其它項目,失敗都集中在 Phase 4 報告。
+
+##### 3.4.C compound-engineering → user-level settings.json(不論使用者 in 3.3.C 選哪個)
+
+目標檔案固定 `~/.claude/settings.json`。JSON merge 規則同 3.4.B(讀 → parse → 確保 path 是 object → 寫入 → write back),寫入 keys:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "compound-engineering-plugin": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/EveryInc/compound-engineering-plugin.git"
+      },
+      "autoUpdate": <true 或 false,依使用者選擇>
+    }
+  },
+  "enabledPlugins": {
+    "compound-engineering@compound-engineering-plugin": true
+  }
+}
+```
+
+**重要**:`extraKnownMarketplaces["compound-engineering-plugin"]` 整個物件覆寫(包含 `autoUpdate` 開關);使用者既有的其它 marketplace 條目(其它 keys 在 `extraKnownMarketplaces` 下)**必須**保留。
+
+寫入後 emit 訊息:「已啟用 compound-engineering plugin(autoUpdate: <true/false>)。請重啟 Claude Code 後才會生效。」
+
+##### 3.4.D agent teams → 所選 scope 的 settings.json
+
+JSON merge 規則同 3.4.B,寫入:
+
+- `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"`(字串,**不**寫 boolean)
+
+##### 3.4.E TUI fullscreen → 所選 scope 的 settings.json
+
+JSON merge 規則同 3.4.B,寫入:
+
+- top-level `tui = "fullscreen"`(top-level key,**不**在 `env` 下)
+
+---
+
+完成 3.4 所有寫入與安裝後 fall through to Phase 4。在 Phase 4 報告需包含:
+
+- ✓ 已寫入位置清單(tool paths / settings.json 各 scope 各 key)
+- ✓ LSP server binary 安裝成功 / 失敗 / 因 runtime 缺失而未嘗試 — 各分類列出
+- ✓ 使用者仍須手動處理事項(runtime 缺失補裝指令 / 重啟 Claude Code 才會生效的設定)
+
 
 ---
 
