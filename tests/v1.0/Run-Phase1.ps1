@@ -256,17 +256,23 @@ function Invoke-ShCase {
         }
     }
 
-    # 把 Windows 路徑轉成 bash 路徑 (C:\... -> /c/...)
+    # 把 Windows 路徑轉成 bash 路徑 (C:\... -> /c/...).
+    # U4 fix: PS 5.1 `-replace` with a scriptblock substitution stringifies the scriptblock
+    # literal source instead of invoking it — so the previous line emitted `/' + $args[0]...`
+    # into the path. Use [regex]::Replace which DOES invoke a MatchEvaluator delegate.
     $winPath  = $CaseFile.FullName
-    $bashPath = $winPath -replace '^([A-Za-z]):', { '/' + $args[0].Groups[1].Value.ToLower() }
+    $bashPath = [regex]::Replace($winPath, '^([A-Za-z]):', { param($m) '/' + $m.Groups[1].Value.ToLower() })
     $bashPath = $bashPath -replace '\\', '/'
 
     # 用 bash.exe -c "<script>" 跑;對含空白或特殊字元的路徑要 single-quote。
+    # U4 fix: must use $script:BashPath — function scope doesn't auto-bind to script-param vars
+    # under PS 5.1 StrictMode; without the prefix, $BashPath was being evaluated to $null and
+    # the call `& $null -c "<path>"` fell through to PS trying to invoke the path as a cmdlet.
     $bashCmd  = "'$bashPath'"
     $caseExit = 0
     $stdoutBuf = @()
     try {
-        $stdoutBuf = & $BashPath -c "$bashCmd"
+        $stdoutBuf = & $script:BashPath -c "$bashCmd"
         $caseExit = $LASTEXITCODE
     } catch {
         $stdoutBuf = @($_.Exception.Message)
