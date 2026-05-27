@@ -6,6 +6,40 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-27
+
+turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `tnf` / `tgs` / `tpi`）的 dev 流程進單一 plugin,加上 v1.0 refinements(apphost 跟 VS 分離、tp-setup 4-Phase 重組、Claude Code 友善功能推薦、svn-log 中文亂碼修正 + 互動分頁、tp-suggest-ignore 文件修正)。
+
+### Added
+
+- `[tools]` section 在 `.turbo-plugin/config.local.toml`,集中存 machine-specific tool paths(`msbuild_path` / `iis_express_path`)——**取代** 舊版 user-level env(`TURBO_PLUGIN_MSBUILD_PATH` / `TURBO_PLUGIN_IIS_EXPRESS_PATH`)。（U1 / U2）
+- `[iis]` section 在 `.turbo-plugin/config.toml` 加入 `enabled` 開關(預設 `true`),沒有 .NET Framework Web 開發需求時可設 `false` 跳過所有 IIS 相關 SKILL(tp-run / tp-stop / tp-build-web / tp-publish-web / tp-cleanup-orphan-iis)的 IIS lifecycle 動作,改 emit 統一 fail-loudly 訊息引導重新啟用。（U1 / U4）
+- `Resolve-ConfigValue` / bash `resolve_config_value` 現在支援 `config.toml` + `config.local.toml` key-level shallow merge(local 優先),`Read-TurboPluginConfig` 接受 array of paths 依序讀入。（U1）
+- `tp-setup` SKILL 重組為 **4 Phase 結構**(偵測 / case-specific bootstrap / 環境配置 / 完成報告),取代既有堆疊式 Step 0 / 0.5 / 1 / 2-5 / 6 / 7 / 8。新需求未來只能融入 Phase 內或開新 skill,不再 append 新 Step。（U5）
+- `tp-setup` Phase 2 加入 **apphost.config bootstrap** 三選一:`.turbo-plugin/applicationhost.config` 已存在 → 跳過;`.vs/<sln>/config/applicationhost.config` 存在 → 複製進來(`physicalPath` 屬性替換為佔位符 `__TURBO_PLUGIN_PHYSICAL_PATH__`);都缺 → AskUserQuestion 三選一(暫停 setup 去開 VS / 寫 `[iis] enabled = false` / 取消)。（U5）
+- `tp-setup` Phase 3 引導使用者啟用 Claude Code 友善功能,per-item AskUserQuestion 4-選項(跳過 / user-level / project-level / local-level):**C# LSP**(`csharp-lsp@claude-plugins-official` + `dotnet tool install -g csharp-ls`)、**TS/JS LSP**(`typescript-lsp@claude-plugins-official` + `npm install -g typescript-language-server typescript`)、**compound-engineering**(3-option:跳過 / 自動更新 / 不自動更新;寫 `extraKnownMarketplaces` + `enabledPlugins`)、**agent teams**(`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"`)、**TUI fullscreen**(`tui = "fullscreen"`)。`ENABLE_LSP_TOOL = "1"` 在任一 LSP 啟用時 idempotent 寫入。LSP binary 自動安裝失敗則記入 Phase 4 補裝清單。（U5 / U6）
+- `tp-svn-log` 新增 `--revision <spec>` 參數,接受 svn 原生格式(`r5`、`3:10`、`HEAD`、`BASE`、`{2026-01-01}:{2026-05-26}` 等),純 forward 給 svn,腳本不 validate。（U10）
+- `tp-svn-log` SKILL 互動分頁:每次顯示 5 筆 commit 後在對話訊息 emit「1. 下 5 筆 / 2. 指定修訂 / 3. 其他」三選一 plain-text 選項(**非** AskUserQuestion),使用者下一輪訊息回 `1` / `2` / `3` 或直接打 revision spec(`r5` / `3:10` 等)即可續看,不必重打完整指令;不符合分頁意圖的訊息(換話題 / unrelated)則退出迴圈讓 agent 一般對話處理。（U11）
+- `svn-log.ps1` / `.sh` 在 stdout 末尾 emit `# LAST_SHOWN_REV=<最小 revision>` 結構化 trailer line,SKILL pagination loop 從 stdout 直接讀(主路徑),conversation compaction 不會丟失 state;若 stdout 不可得 fallback 到 parse chat history `r<n>` headers。（U10 / U11）
+
+### Changed
+
+- **apphost.config runtime 從 VS 共生改為 turbo-plugin canonical**:canonical `.turbo-plugin/applicationhost.config` 進 git,進 git 時所有 `<site>` 的 `physicalPath` 屬性值固定為佔位符 `__TURBO_PLUGIN_PHYSICAL_PATH__`(跨機器 / 跨同事 portable)。Runtime 由 `start-iis.ps1` 複製到 `%TEMP%\turbo-plugin-iis-<identity-hash>.config`,在 temp file 把佔位符替換為當前 worktree 實際 csproj 路徑,再以 `iisexpress -config:<temp>` 啟動。Canonical **永遠不被 physicalPath 改寫污染**。VS UI 仍會自行維護 `.vs/<sln>/config/applicationhost.config`,turbo-plugin 從本版起**不再讀寫該檔**(VS 自管)。同專案在所有 worktree 之間仍只能啟動一個 IIS Express(切換 worktree 自動 stop 舊 instance 再用新 physicalPath 重啟,既有 line 102-118 邏輯不變)。（U3 / U5）
+- `Find-MSBuild` / `Find-IisExpressPath` **嚴格切**到 `.turbo-plugin/config.local.toml [tools]`,**不**再 fallback 到 `$env:TURBO_PLUGIN_MSBUILD_PATH` / `$env:TURBO_PLUGIN_IIS_EXPRESS_PATH`(v1.0 首次 marketplace release,無 v0.2.x 既有 user 需要 migration)。讀不到就 throw 引導跑 `/tp-setup` 補設定 path(`build-web.ps1` / `publish-web.ps1` 等 call site 同步切換)。（U2）
+- `tp-svn-log` 中文 commit message 在中文 Windows 上**不再變 `?` 亂碼** — `svn-log.ps1` / `.sh` 內部一律呼叫 `svn log --xml`(svn XML 輸出永遠 UTF-8,不看 console codepage),腳本自己解析後 format 純文字輸出。PowerShell 走 `[xml]` cast + `InnerText`;bash 走 `xmllint --xpath` 優先 + grep / sed / awk fallback。（U10）
+- `tp-svn-log` `--limit` 預設值由 50 改為 **5**(原本一次塞滿訊息;v1.0 配合 U11 互動分頁讓使用者主動續看)。（U10）
+- `tp-svn-log` SKILL Procedure 強化「必須把 script stdout 完整 echo 到對話訊息(用 markdown code block 包起來)」要求,避免只依賴 tool result UI(可能被折疊或截斷)。（U10）
+- `tp-suggest-ignore` SKILL `--add-svn` / `--remove-svn` 文件描述從「on all remote worktrees in a single SVN commit」更正為「on all remote worktrees, **one SVN commit per worktree** (cross-worktree sync; propset failure rolls back all)」,與實際 `svn-ignore.ps1` / `.sh` 兩-pass commit 邏輯一致。（U9）
+
+### Removed
+
+- 舊 user-level env `TURBO_PLUGIN_MSBUILD_PATH` / `TURBO_PLUGIN_IIS_EXPRESS_PATH` 不再被讀取,改走 `.turbo-plugin/config.local.toml [tools]`。（U2）
+- `tp-setup` 舊版堆疊式 Step 0 / 0.5 / 1 / 2-5 / 6 / 7 / 8 編號模式整段 rewrite 為 4-Phase 結構。（U5）
+- `posttooluse-enterworktree.ps1` 不再對 `.vs/<sln>/config/applicationhost.config` 做任何寫入(VS UI 自管,turbo-plugin 不介入);hook 改為直接 `Emit-Json @{} + exit 0`。（U3）
+- `sessionstart.ps1` Branch (i) 對 `.vs/<sln>/config/applicationhost.config` 的處理移除。（U3）
+- `cleanup-orphan-iis.ps1` XML orphan scan 分支移除(canonical `.turbo-plugin/applicationhost.config` 不再累積 stale site 條目);只保留**殺孤兒 process** 邏輯,並順手清掉 `%TEMP%\turbo-plugin-iis-*.config` 中找不到對應 PID 的 temp file。（U3）
+- **F-U3.9(P3)** Removed bash `get_project_identity_hash()` from `common.sh`. Was dead code(no caller — all SVN scripts are native bash, all build/IIS scripts are ps1-delegate so hash computation always happens on PS side). Bash version produced **different** hashes than PS due to forward-slash vs backslash difference in sha256 input — kept-but-divergent was a foot-gun for future callers.
+
 ### Fixed
 
 - **F-U17.5(P1)** `create-remote-test.ps1` git mutations(`git branch`/`worktree add`)移進 rollback try 內,任一 git op 失敗也觸發 rollback 清掉部分建好的 branch。.sh 端早有 `trap ERR` 涵蓋,行為一致。
@@ -15,10 +49,6 @@
 - **F-U2.9(P2)** `Get-RelativePathSafe -From X -To X` same-path case 加 special-case return `''`(原 MakeRelativeUri 行為視 trailing separator state 不確定)。
 - **F-U18.svn-state(P2)** `reset-remote-test` `.ps1 + .sh` 兩端 git status check 都 filter 掉 `.svn/*` paths。原本把 SVN binary metadata `.svn/wc.db` 視為 user uncommitted change → 拒絕 reset,提示 user 用 push/pull 解,但 push/pull 自己也 touch wc.db,死循環。
 - **F-U13.6(P3)** `cleanup-orphan-iis -RemoveSite X` 在 orphanMap.Count=0 時 emit warning「X specified but no orphans found」,不再 silent exit 0(原本 user 不知道請求 mismatch)。
-
-### Removed
-
-- **F-U3.9(P3)** Removed bash `get_project_identity_hash()` from `common.sh`. Was dead code(no caller — all SVN scripts are native bash, all build/IIS scripts are ps1-delegate so hash computation always happens on PS side). Bash version produced **different** hashes than PS due to forward-slash vs backslash difference in sha256 input — kept-but-divergent was a foot-gun for future callers.
 
 ## [0.2.7] - 2026-05-25
 
