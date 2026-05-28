@@ -6,10 +6,15 @@
 #   1. robocopy /MIR  tests/v1.0/fixtures/base  ->  $TestRoot (default C:\Turbo\test-turbo-plugin)
 #      (F-4 fix: robocopy exit 0-7 都是 success;只 ≥ 8 才 throw,且每次跑完 reset $LASTEXITCODE = 0)
 #   2. svnadmin create $SvnRepo; svnadmin load < seed.dump  (via cmd /c redirect, F-2 一致)
-#   3. svn checkout trunk -> $TestRoot\.worktrees\remote-main
-#      svn checkout branches/test-1 -> $TestRoot\.worktrees\remote-test-1
+#   3. svn checkout trunk -> <TestRoot>.worktrees\remote-main
+#      svn checkout branches/test-1 -> <TestRoot>.worktrees\remote-test-1
+#      (Sibling layout per tgs convention: <project>.worktrees/ 與 <project>/ 同層,
+#       中間用 '.' 分隔。所有 turbo-plugin script — resolve-iis-settings / svn-log /
+#       pull-from-svn 等 — 都讀 sibling layout,不是 nested。)
 #
 # Idempotent:任意先前狀態 (clean / dirty / 中間態) 都還原到 base。
+# Delete 前清 ReadOnly attr(SVN repo 的 'format' file 與 worktree 的 '.svn/' 內檔都是
+# ReadOnly,[System.IO.Directory]::Delete 不會自動清,需 walk 子樹手動清)。
 #
 # 為 PS 5.1 + 中文 Windows 寫;以 UTF-8 BOM 存檔。
 
@@ -27,6 +32,23 @@ $ErrorActionPreference = 'Stop'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
+
+# ─── Helper: delete dir tree with ReadOnly attr clear ─────────────────────────
+#
+# SVN repo db/format / db/revs/* 等 file 是 ReadOnly,worktree .svn/wc.db 也含
+# ReadOnly file。[System.IO.Directory]::Delete($dir, $true) 對 ReadOnly file 會
+# throw 'Access denied'。先 walk 子樹清 ReadOnly bit 再 Delete。
+function Remove-DirTree {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not [System.IO.Directory]::Exists($Path)) { return }
+    foreach ($f in [System.IO.Directory]::EnumerateFiles($Path, '*', [System.IO.SearchOption]::AllDirectories)) {
+        $fa = [System.IO.File]::GetAttributes($f)
+        if ($fa -band [System.IO.FileAttributes]::ReadOnly) {
+            [System.IO.File]::SetAttributes($f, $fa -band (-bnot [System.IO.FileAttributes]::ReadOnly))
+        }
+    }
+    [System.IO.Directory]::Delete($Path, $true)
+}
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -96,12 +118,10 @@ Write-Output "  robocopy OK (exit=$rc treated as success)"
 if (-not $SkipSvn) {
     Write-Output "Step 2: rebuild SVN repo at $SvnRepo from $DumpPath"
 
-    if ([System.IO.Directory]::Exists($SvnRepo)) {
-        try {
-            [System.IO.Directory]::Delete($SvnRepo, $true)
-        } catch {
-            throw "Failed to delete previous SVN repo at $SvnRepo : $($_.Exception.Message)"
-        }
+    try {
+        Remove-DirTree -Path $SvnRepo
+    } catch {
+        throw "Failed to delete previous SVN repo at $SvnRepo : $($_.Exception.Message)"
     }
 
     # Ensure parent dir exists
@@ -125,23 +145,27 @@ if (-not $SkipSvn) {
     Write-Output "  svnadmin load OK"
 
     # ─── Step 3: svn checkout remote-main / remote-test-1 ─────────────────────
+    #
+    # Sibling layout (tgs convention):
+    #   <TestRoot>                       main project
+    #   <TestRoot>.worktrees/            sibling worktrees container
+    #     ├── remote-main/
+    #     └── remote-test-1/
+    # turbo-plugin scripts(resolve-iis-settings / svn-log / pull-from-svn etc.)
+    # 都讀 sibling 路徑;**不**用 nested `<TestRoot>/.worktrees/`。
 
-    $worktreesDir   = [System.IO.Path]::Combine($TestRoot, '.worktrees')
+    $worktreesDir   = $TestRoot + '.worktrees'
     $remoteMainDir  = [System.IO.Path]::Combine($worktreesDir, 'remote-main')
     $remoteTest1Dir = [System.IO.Path]::Combine($worktreesDir, 'remote-test-1')
 
-    foreach ($d in @($remoteMainDir, $remoteTest1Dir)) {
-        if ([System.IO.Directory]::Exists($d)) {
-            try {
-                [System.IO.Directory]::Delete($d, $true)
-            } catch {
-                throw "Failed to delete previous remote worktree $d : $($_.Exception.Message)"
-            }
-        }
+    # 整個 sibling worktrees container 砍掉重建(per-case clean slate)。
+    # ReadOnly attr clear 由 Remove-DirTree helper 處理(`.svn/` 內含 ReadOnly file)。
+    try {
+        Remove-DirTree -Path $worktreesDir
+    } catch {
+        throw "Failed to delete previous worktrees container $worktreesDir : $($_.Exception.Message)"
     }
-    if (-not [System.IO.Directory]::Exists($worktreesDir)) {
-        $null = New-Item -ItemType Directory -Path $worktreesDir -Force
-    }
+    $null = New-Item -ItemType Directory -Path $worktreesDir -Force
 
     $repoUri = 'file:///' + ($SvnRepo -replace '\\', '/')
 
@@ -163,7 +187,7 @@ Write-Output "✔ Fixture reset complete."
 Write-Output "  Workspace: $TestRoot"
 if (-not $SkipSvn) {
     Write-Output "  SVN repo:  $SvnRepo (loaded from $DumpPath)"
-    Write-Output "  Remote-*:  $TestRoot\.worktrees\{remote-main, remote-test-1}"
+    Write-Output "  Remote-*:  ${TestRoot}.worktrees\{remote-main, remote-test-1}"
 } else {
     Write-Output "  (SVN reset skipped)"
 }

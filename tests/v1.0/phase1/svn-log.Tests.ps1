@@ -41,21 +41,9 @@ $repoRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoo
 $ScriptUnderTest = [System.IO.Path]::Combine($repoRoot, 'plugins', 'turbo-plugin', 'scripts', 'svn-log.ps1')
 
 $testRoot = 'C:\Turbo\test-turbo-plugin'
-$worktreesSibling = 'C:\Turbo\test-turbo-plugin.worktrees'
-
-function Ensure-WorktreesSibling {
-    # turbo-plugin scripts (svn-log, push-to-svn-prepare) expect <parent>/<projname>.worktrees/remote-*
-    # (tgs sibling model). Reset-Fixture creates them nested at <projname>/.worktrees/ — known U1 mismatch.
-    # We create a directory junction <projname>.worktrees → <projname>/.worktrees as a workaround.
-    if ([System.IO.Directory]::Exists($worktreesSibling)) { return }
-    $nested = [System.IO.Path]::Combine($testRoot, '.worktrees')
-    if (-not [System.IO.Directory]::Exists($nested)) { return }
-    try {
-        $null = New-Item -ItemType Junction -Path $worktreesSibling -Target $nested -ErrorAction Stop
-    } catch {
-        & cmd /c "mklink /J `"$worktreesSibling`" `"$nested`"" *> $null
-    }
-}
+# Reset-Fixture (F5 fix 2026-05-28)已改為直接創 sibling layout
+# `<testRoot>.worktrees/`,跟 turbo-plugin production tgs convention 對齊。
+# 早期的 Ensure-WorktreesSibling junction workaround 已移除。
 
 function Ensure-FixtureGit {
     if (-not [System.IO.Directory]::Exists($testRoot)) { return $false }
@@ -104,7 +92,6 @@ if (-not (Ensure-FixtureGit)) {
     Write-Output "  [FAIL] setup: fixture $testRoot not present"
     exit 1
 }
-Ensure-WorktreesSibling
 
 try {
     # Note: Seed dump goes r1..r19 (r20 was 'svn copy trunk@HEAD branches/test-1' but
