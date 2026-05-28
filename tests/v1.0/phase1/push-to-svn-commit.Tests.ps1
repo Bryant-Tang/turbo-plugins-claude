@@ -1,4 +1,4 @@
-# push-to-svn-commit.Tests.ps1
+﻿# push-to-svn-commit.Tests.ps1
 #
 # Phase 1 hand-rolled tests for plugins/turbo-plugin/scripts/push-to-svn-commit.ps1.
 #

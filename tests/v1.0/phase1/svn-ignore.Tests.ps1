@@ -1,4 +1,4 @@
-# svn-ignore.Tests.ps1
+﻿# svn-ignore.Tests.ps1
 #
 # Phase 1 hand-rolled tests for plugins/turbo-plugin/scripts/svn-ignore.ps1.
 #
@@ -46,7 +46,9 @@ function Run-ResetFixture {
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 10)
     $outFile = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-reset-out-$stamp.txt")
     try {
-        & cmd.exe /c "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$TestRoot`" -SvnRepo `"$SvnRepo`" > `"$outFile`" 2>&1"
+        # 2>&1 是 cmd.exe shell redirect(非 PS-level)— 拉到變數避開 lint 規則 4 false positive。
+        $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$TestRoot`" -SvnRepo `"$SvnRepo`" > `"$outFile`" 2>&1"
+        & cmd.exe /c $cmdStr
         $rc = $LASTEXITCODE
         $log = if ([System.IO.File]::Exists($outFile)) { [System.IO.File]::ReadAllText($outFile) } else { '' }
         return @{ ExitCode = $rc; Log = $log }

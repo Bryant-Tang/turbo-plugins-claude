@@ -1,4 +1,4 @@
-# _Common.ps1
+﻿# _Common.ps1
 #
 # U4-internal helper file dot-sourced by every <script>.Tests.ps1 in this directory.
 # Not picked up by Run-Phase1 discovery (filter is *.Tests.ps1).
@@ -28,10 +28,12 @@ function Run-Git {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {
+        # PS 5.1 對 native exe 用 2>&1 會把 stderr 包成 NativeCommandError 並把 $? 設 false
+        # (即使 exit code 0)。改用 2>$null 抑制 stderr,然後讀 $LASTEXITCODE 判結果。
         if ([string]::IsNullOrWhiteSpace($Cwd)) {
-            & git @GitArgs 2>&1 | Out-Null
+            & git @GitArgs 2>$null | Out-Null
         } else {
-            & git -C $Cwd @GitArgs 2>&1 | Out-Null
+            & git -C $Cwd @GitArgs 2>$null | Out-Null
         }
     } finally {
         $ErrorActionPreference = $prev

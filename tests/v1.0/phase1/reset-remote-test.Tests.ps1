@@ -1,4 +1,4 @@
-# reset-remote-test.Tests.ps1
+﻿# reset-remote-test.Tests.ps1
 #
 # Phase 1 hand-rolled tests for plugins/turbo-plugin/scripts/reset-remote-test.ps1.
 #

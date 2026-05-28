@@ -1,4 +1,4 @@
-# pull-from-svn.Tests.ps1
+﻿# pull-from-svn.Tests.ps1
 #
 # Phase 1 hand-rolled tests for plugins/turbo-plugin/scripts/pull-from-svn.ps1.
 #
@@ -117,7 +117,9 @@ if (-not [System.IO.File]::Exists($dumpPath)) {
         $testRoot = [System.IO.Path]::Combine($sb5, 'test-turbo-plugin')
         $svnRepo  = [System.IO.Path]::Combine($sb5, 'test-turbo-plugin-svn-repo')
         $resetOut = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-reset-out-$([Guid]::NewGuid().ToString('N').Substring(0,10)).txt")
-        & cmd.exe /c "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$testRoot`" -SvnRepo `"$svnRepo`" > `"$resetOut`" 2>&1"
+        # 2>&1 是 cmd.exe shell redirect(非 PS-level)— 拉到變數避開 lint 規則 4 false positive。
+        $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$testRoot`" -SvnRepo `"$svnRepo`" > `"$resetOut`" 2>&1"
+        & cmd.exe /c $cmdStr
         $rc = $LASTEXITCODE
         $resetLog = if ([System.IO.File]::Exists($resetOut)) { [System.IO.File]::ReadAllText($resetOut) } else { '' }
         if ([System.IO.File]::Exists($resetOut)) { try { [System.IO.File]::Delete($resetOut) } catch {} }

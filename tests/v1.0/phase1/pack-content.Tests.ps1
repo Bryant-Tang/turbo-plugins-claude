@@ -1,4 +1,4 @@
-# pack-content.Tests.ps1
+﻿# pack-content.Tests.ps1
 #
 # Phase 1 hand-rolled tests for plugins/turbo-plugin/scripts/pack-content.ps1.
 #
@@ -37,7 +37,11 @@ function Mirror-Base-To {
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 10)
     $outFile = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-reset-out-$stamp.txt")
     try {
-        & cmd.exe /c "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$TestRoot`" -SvnRepo `"C:\Turbo\turbo-plugin-pc-unused-svn`" -SkipSvn > `"$outFile`" 2>&1"
+        # `2>&1` 在 cmd.exe shell context 內,**不是** PS-level — cmd.exe 做 shell
+        # 重導向,PS 看到的是 single stream,不會 trigger NativeCommandError。把字串
+        # 拉到變數讓 lint-ps-compat 規則 4 不誤判。
+        $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$TestRoot`" -SvnRepo `"C:\Turbo\turbo-plugin-pc-unused-svn`" -SkipSvn > `"$outFile`" 2>&1"
+        & cmd.exe /c $cmdStr
         return $LASTEXITCODE
     } finally {
         if ([System.IO.File]::Exists($outFile)) { try { [System.IO.File]::Delete($outFile) } catch {} }
