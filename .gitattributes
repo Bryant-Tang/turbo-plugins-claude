@@ -2,4 +2,4 @@
 # Git's autocrlf must NOT mangle them — declare as binary so working-tree always
 # matches what svnadmin produced. Without this, autocrlf=true on Windows converts
 # LF→CRLF and svnadmin load fails with "Could not convert ' 2' into a number".
-tests/v1.0/fixtures/seed/*.dump binary
+plugins/turbo-plugin/tests/fixtures/seed/*.dump binary

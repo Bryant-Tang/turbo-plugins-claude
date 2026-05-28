@@ -99,7 +99,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 - R7. SVN repo **必須**建立在 `C:\Turbo\test-turbo-plugin-svn-repo`(`test-turbo-plugin` 路徑**外面**,避免被 fixture reset 誤刪),seed 包含至少 r1-r20 的歷史,其中至少 r5 / r10 / r15 三筆 commit message 含中文(分別含繁中常用字、半形符號 + 中文混排、SVN 換行 commit msg)。
 - R7a. SVN repo **必須**在每個 SVN-touching case 跑之前 reset 到 seed (r1-r20) — orchestrator 維護一份 `svnadmin dump` 形式的 snapshot,case 開始前用 `svnadmin load` 還原(或砍掉重建 + 重跑 seed script,擇一)。對應的 `.worktrees/remote-*` 本機 SVN working copy 在 case 開始前也要還原(`svn update -r 20` 或重新 `svn checkout`),確保跨 case 的 SVN state 為 known baseline,assertion 不被 prior case 的 mutation 污染。
 - R8. Phase 1 assertion 在 `.ps1` 採 **Pester**(隨 Windows PowerShell 5.1 內建出貨,Win 10 / 11 預設可用,**不**算額外環境依賴);`.sh` 在 Git Bash 採 inline `if [ ... ]; then echo OK; else echo FAIL; exit 1; fi` 對應(bats 不引入 — 那才會真正增加環境依賴)。Pester 的 structured PASS/FAIL 輸出(`Invoke-Pester -OutputFile TestResult.xml -OutputFormat NUnitXml`)直接餵 R9 / R28 的 evidence row,免手寫 Assert helper。
-- R9. Phase 1 tracking 採 `docs/test-plans/v1.0/phase1-scripts.md`(每個 script 一個 section,每個 case 一個 row:case ID / 描述 / 輸入摘要 / 預期 / 實際 / PASS-FAIL / evidence link 或 inline 摘要);**進 git**(此測試紀錄為 v1.0 release 的一部分,值得 commit 與 push)。
+- R9. Phase 1 tracking row 寫到 `plugins/turbo-plugin/tests/runs/<release>/phase1-results.md`(schema 來源:`plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md`;每個 script 一個 section,每個 case 一個 row:case ID / 描述 / 輸入摘要 / 預期 / 實際 / PASS-FAIL / evidence link 或 inline 摘要);**進 git**(此測試紀錄為 v1.0 release 的一部分,值得 commit 與 push)。
 - R10. Phase 1 **必須**全部 case 標 PASS 才允許進 Phase 2;有 FAIL 即進 F5 fail-then-fix loop。
 
 **Phase 2 — Skill 手動測試**
@@ -109,7 +109,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 - R13. 每個 case orchestrator **必須**事先在 `C:\Turbo\test-turbo-plugin` 準備完整的 fixture 狀態(檔案結構、git state、SVN state、`.turbo-plugin/config.toml`、`.claude/settings.local.json` env),使用者只需開 Claude Code 跑 prompt。
 - R14. 每個 case orchestrator **必須**提供:(a) 完整 prompt 字串(可直接 copy-paste 給 Claude Code)、(b) 預期 agent 行為摘要(該觸發哪個 SKILL、預期問什麼 AskUserQuestion、預期寫什麼檔案)、(c) 使用者轉述時的觀察重點。
 - R15. 使用者轉述格式:agent 主要文字回覆 + tool call 摘要(skill 觸發 / file write / bash 執行)+ 任何 AskUserQuestion 提示 + 任何視覺異常(中文亂碼、檔名亂掉)。orchestrator **不**要求使用者貼完整 raw log,但要求關鍵觀察點都有覆蓋。
-- R16. Phase 2 tracking 採 `docs/test-plans/v1.0/phase2-skills.md`(每個 skill 一個 section,case ID / 描述 / fixture 摘要 / prompt 摘要 / 預期 / 實際轉述 / PASS-FAIL-PARTIAL / evidence)。**進 git**。
+- R16. Phase 2 tracking row 寫到 `plugins/turbo-plugin/tests/runs/<release>/phase2-results.md`(schema + case spec + prompt 範本 + 失敗 patterns 來源:`plugins/turbo-plugin/tests/docs/phase2-skills.md`;每個 skill 一個 section,case ID / 描述 / fixture 摘要 / prompt 摘要 / 預期 / 實際轉述 / PASS-FAIL-PARTIAL / evidence)。**進 git**。
 - R17. Phase 2 session 切分:每 session 1-2 個 skill,預估 8-12 個 session 跑完。session 間 fixture 可以延續(避免重複設定 tp-setup);但跨 session 之間 orchestrator 必須在 tracking doc 紀錄當前 fixture 狀態以利下次 resume。
 
 **中文測試(跨階段共用)**
@@ -123,7 +123,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
   - svn:ignore 屬性值含中文(`tp-suggest-ignore` 對應 case)
   - C# / JS 程式碼註解含中文(`tp-csharp-comment` / `tp-js-comment` 對應 case)
   - **Source code body 含中文字串字面值**(`.cs` 的 `string s = "..."` literal、`.js` / `.vue` 的 template / 內文、`.cshtml` 的 view body)通過 `tp-build` / `tp-publish` / `pack-content.ps1` 等流程 byte-level 不變 — `tp-build` 與 `tp-publish` 的 Phase 2 各加一個 fixture 含中文 string literal 的 case 驗證(註解面向跟 string literal 面向是不同 build pipeline 處理 path,不能 conflate)
-- R19. 「中文樣本字典」**必須** inline 在 `docs/test-plans/v1.0/phase1-scripts.md` 開頭的 `## 中文 fixture 樣本` section 維護(進 git,與 case 同 doc),`phase2-skills.md` reference 同一份字典 — **不**另開 `zh-samples.md`(避免一次性測試產生 3rd tracked artifact)。字典含至少:5 個路徑片段(含 BMP / 補充字 / 半形數字混排)、5 個檔名、5 個 commit msg(短 / 長 / 多行)、5 個 source 註解樣本、5 個 source string literal 樣本(對應 R18 的 source body 面向)。每個 case 從字典挑樣本,**不**現場編。
+- R19. 「中文樣本字典」**必須** inline 在 `plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md` 開頭的 `## 中文 fixture 樣本` section 維護(進 git,與 case 同 doc),`phase2-skills.md` reference 同一份字典 — **不**另開 `zh-samples.md`(避免一次性測試產生 3rd tracked artifact)。字典含至少:5 個路徑片段(含 BMP / 補充字 / 半形數字混排)、5 個檔名、5 個 commit msg(短 / 長 / 多行)、5 個 source 註解樣本、5 個 source string literal 樣本(對應 R18 的 source body 面向)。每個 case 從字典挑樣本,**不**現場編。
 
 **Fail 處理**
 
@@ -140,7 +140,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 
 **Tracking 與證據**
 
-- R27. 兩個 tracking doc(`docs/test-plans/v1.0/phase1-scripts.md`(含 inline 中文字典)/ `docs/test-plans/v1.0/phase2-skills.md`)**必須 commit 到 `feat/turbo-plugin-v1.0` branch**(任一掛在此 branch 的 worktree 都能 commit,目前的 `turbo-plugin-brainstorm` 是其中之一 — branch / worktree 是同一個 git context)。預期跟 plugin 程式碼一起進 v1.0.0 PR;squash-merge 時 tracking doc 內容會 squash 進 release commit message 摘要(完整 doc 保留在 branch history)。
+- R27. 兩個 tracking doc(`plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md`(含 inline 中文字典)/ `plugins/turbo-plugin/tests/docs/phase2-skills.md`)**必須 commit 到 `feat/turbo-plugin-v1.0` branch**(任一掛在此 branch 的 worktree 都能 commit,目前的 `turbo-plugin-brainstorm` 是其中之一 — branch / worktree 是同一個 git context)。預期跟 plugin 程式碼一起進 v1.0.0 PR;squash-merge 時 tracking doc 內容會 squash 進 release commit message 摘要(完整 doc 保留在 branch history)。
 - R28. 每個 case 紀錄**必須**包含:case ID(`P1-<script>-<case>` 或 `P2-<skill>-<case>`)、輸入 fixture 摘要、預期、實際、結果(PASS / FAIL / PARTIAL / SKIP-N/A)、若失敗則對應的修復 commit hash。
 - R29. evidence 形式:script PS / Bash invocation 的 stdout 摘要、檔案 diff 摘要、agent 回覆轉述摘要、必要時截圖路徑。**不**要求 raw log 全文(避免 doc 爆量),但要求每個 PASS 都有可驗證的觀察錨點。
 
@@ -153,7 +153,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 - AE3. **Covers R1, R2, R18.** Given Phase 1 跑 `svn-log.ps1` 的中文 case,SVN repo r5 commit msg = "修正中文檔名 — 測試 ™ 樣本",when orchestrator invoke `svn-log.ps1 -Limit 5`,then stdout 含 `r5 | <author> | <date> | 修正中文檔名 — 測試 ™ 樣本`,中文字元逐字元 byte-compare 等於原始輸入,**不**含 `?` / `??` mojibake。
 - AE4. **Covers R1, R2, R4.** Given Phase 1 跑 `svn-log.sh` 在 Git Bash 的相同中文 case,when orchestrator `bash.exe -c "./svn-log.sh --limit 5"`,then stdout 同樣含正確中文 commit msg,內容與 AE3 一致(`.ps1` / `.sh` 跨平台行為 invariant)。
 - AE5. **Covers R6, R7, R8.** Given Phase 1 跑 `pull-from-svn.ps1` 的 happy path,fixture 含 `.worktrees/remote-main` + SVN repo seed,when orchestrator invoke,then exit code = 0、SVN repo r20 後沒新 revision、main worktree 的 git HEAD 跟 SVN trunk 對得上(`git log --oneline -1` 對應 SVN r20 內容)。
-- AE6. **Covers R9, R28, R29.** Given Phase 1 跑完 `build-web.ps1` 的 3 個 case(happy / sln 不存在 / MSBuild path 未設定),when orchestrator 寫入 `phase1-scripts.md` 對應 row,then row 含 case ID(`P1-build-web-ps1-happy` 等)、輸入摘要、預期、實際 stdout 摘要、結果欄,所有 3 row 標 PASS。
+- AE6. **Covers R9, R28, R29.** Given Phase 1 跑完 `build-web.ps1` 的 3 個 case(happy / sln 不存在 / MSBuild path 未設定),when orchestrator 寫入 `runs/<release>/phase1-results.md` 對應 row(schema 來源 `docs/phase1-scripts-schema.md`),then row 含 case ID(`P1-build-web-ps1-happy` 等)、輸入摘要、預期、實際 stdout 摘要、結果欄,所有 3 row 標 PASS。
 - AE7. **Covers R10.** Given Phase 1 跑 `push-to-svn-commit.ps1` 出現中文 commit msg 變 `?` 的 FAIL,when orchestrator 評估,then **不**繼續跑下一個 script,進 F5 fail-then-fix。
 - AE8. **Covers R11, R12, R13.** Given Phase 2 跑 `tp-setup` 的 case (a) 新建,fixture 為 empty workspace `C:\Turbo\test-turbo-plugin\fresh`,when 使用者貼入 orchestrator 給的 prompt 「我剛開了一個新專案,幫我設定 turbo-plugin」,then agent 觸發 tp-setup SKILL、跑完 4 個 Phase、Phase 4 完成報告列出寫入的設定檔位置,使用者轉述後 orchestrator 標 PASS。
 - AE9. **Covers R12, R18.** Given Phase 2 跑 `tp-setup` 中文路徑 case,fixture 工作目錄 = `C:\Turbo\test-turbo-plugin\測試專案 ™`,when 使用者跑相同 prompt,then agent 不 crash、`.turbo-plugin/config.toml` 與 `.claude/settings.local.json` 順利寫入、檔案 byte-level 為 UTF-8 (BOM 對 `.ps1` 適用),使用者轉述後 orchestrator 標 PASS。
@@ -163,7 +163,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 - AE13. **Covers R11, R12, F4.** Given Phase 2 跑 `tp-suggest-ignore --add-svn` 跨 worktree case,fixture 有 main + `.worktrees/remote-main` + `.worktrees/remote-test-1` 三個 worktree 各有不同 untracked(main 是 fixture context,不是 propset target),when 使用者跑 `/tp-suggest-ignore --add-svn obj/`,then **兩個 `remote-*` worktree** 跑了 propset + **兩個 SVN commit**(可從 `svn log` 看到 per-worktree revision),使用者轉述後 orchestrator 用 `svn pg svn:ignore` 對兩個 `remote-*` worktree 各自驗證,標 PASS。
 - AE14. **Covers R20, R21, R22, R23.** Given Phase 2 跑 `tp-build` 中文路徑 case 標 FAIL(假設 MSBuild 對中文路徑 crash),when orchestrator 進 F5,then 停止後續 case → 讀 `build-web.ps1` 找路徑處理 → 改為 quote / escape → 在 `feat/turbo-plugin-v1.0` commit 修復 → re-run 同 case 標 PASS → 評估是否影響 `publish-web` / `start-iis`(都有路徑處理)→ re-run 受影響 case 都 PASS → 解除 stop 繼續 Phase 2。
 - AE15. **Covers R24, R25.** Given Phase 2 跑 `tp-setup` 推薦項目實際安裝 case,當使用者選「user-level 啟用 C# LSP」,when agent 跑完,then `~/.claude/settings.json` 真的多了 `csharp-lsp@claude-plugins-official` 在 `enabledPlugins`、`~/.claude/plugins/cache/` 真的下載了 plugin、`dotnet tool list -g` 真的列出 `csharp-ls`,使用者轉述後 orchestrator 標 PASS;Phase 2 完成後 orchestrator 在 tracking doc 列出需要使用者手動 rollback 的清單。
-- AE16. **Covers R27, R28.** Given Phase 1 + Phase 2 都跑完,when orchestrator commit tracking doc,then `feat/turbo-plugin-v1.0` branch 含 `docs/test-plans/v1.0/phase1-scripts.md` + `phase2-skills.md` + `zh-samples.md` 三個檔案,所有 case row 都有結果欄,所有 FAIL 都有對應修復 commit hash。
+- AE16. **Covers R27, R28.** Given Phase 1 + Phase 2 都跑完,when orchestrator commit tracking doc,then `feat/turbo-plugin-v1.0` branch 含 `plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md` + `docs/phase2-skills.md` + `runs/v1.0.0/phase1-results.md` + `runs/v1.0.0/phase2-results.md`,所有 case row 都有結果欄,所有 FAIL 都有對應修復 commit hash。
 
 ---
 
@@ -174,7 +174,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 - 中文跨層(filesystem path、檔名、source content、stdout 輸出、SVN propset / commit msg / log)都 byte-level 完整保留,**沒**任何 `?` / `??` mojibake 觀察點。
 - 跨 worktree 同步(suggest-ignore --add-svn)在三個 worktree 都跑了 per-worktree propset + commit;故意觸發部分 worktree 失敗時 rollback 機制正確復原。
 - 所有 FAIL 都有對應的 turbo-plugin 修復 commit + re-run PASS 紀錄;v1.0.0 PR push 時帶零個已知 failure。
-- `feat/turbo-plugin-v1.0` branch push 前,tracking doc(phase1-scripts、phase2-skills、zh-samples)都已 commit,任何審查者都能從 doc 還原驗證過的範圍。
+- `feat/turbo-plugin-v1.0` branch push 前,tracking doc(`docs/phase1-scripts-schema.md` / `docs/phase2-skills.md` / `runs/v1.0.0/phase1-results.md` / `runs/v1.0.0/phase2-results.md`)都已 commit,任何審查者都能從 doc 還原驗證過的範圍。
 
 ---
 
