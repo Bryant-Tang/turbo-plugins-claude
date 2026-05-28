@@ -2,7 +2,7 @@
 date: 2026-05-27
 type: feat
 origin: docs/brainstorms/2026-05-27-turbo-plugin-v1.0-manual-test-plan-requirements.md
-status: active
+status: completed
 ---
 
 # feat: turbo-plugin v1.0 PR 前手動測試計畫 — 實作 plan
