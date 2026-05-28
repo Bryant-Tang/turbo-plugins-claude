@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-05-28
+
+測試基礎建設命名一致化 + 補測:把 `tests/phase1/` / `tests/lib-tests/` 兩個跟 plan-level 概念(Phase 1 / Phase 2)混淆的目錄名重整為以 testing target 命名的 `tests/unit/scripts/` / `tests/unit/scripts-lib/`,並補上 R1「18 scripts」漏算的 `scripts/hooks/` 兩個 hook script(`posttooluse-enterworktree` / `sessionstart`)的測試。被測的 plugin 行為完全不變。
+
+### Changed
+
+- 測試目錄重整:`plugins/turbo-plugin/tests/phase1/` → `plugins/turbo-plugin/tests/unit/scripts/`、`plugins/turbo-plugin/tests/lib-tests/` → `plugins/turbo-plugin/tests/unit/scripts-lib/`。`Run-Phase1.ps1` 名稱保留(Phase 1 / Phase 2 是 plan-level 概念),只是 discovery target 改成 `unit/scripts/`(`-Recurse` 自動 cover 新增的 `hooks/` 子目錄)。
+- 18 對既有 `*.Tests.ps1` + `*.sh.test.sh` 內部 walk-up 路徑跟著加深一層(`..\..` → `..\..\..`、`$SCRIPT_DIR/../..` → `$SCRIPT_DIR/../../..`),`_Common.ps1` / `scripts-lib/` 內部測試的 `$pluginRoot` 計算同步調整。
+
+### Added
+
+- 新增 `plugins/turbo-plugin/tests/unit/scripts/hooks/` 子目錄,內含 2 對 hook script 測試:
+  - `posttooluse-enterworktree.Tests.ps1` + `.sh.test.sh`(v1.0 no-op contract:exit 0 + stdout `{}` + 不在 cwd 留檔;含中文 path case)。
+  - `sessionstart.Tests.ps1` + `.sh.test.sh`(3-branch advisory contract:非 git cwd silent / Pattern B 缺 dbhub.local.toml warn / 沒 marker 提示 `/tp-setup`)。
+
 ## [1.0.0] - 2026-05-27
 
 turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `tnf` / `tgs` / `tpi`）的 dev 流程進單一 plugin,加上 v1.0 refinements(apphost 跟 VS 分離、tp-setup 4-Phase 重組、Claude Code 友善功能推薦、svn-log 中文亂碼修正 + 互動分頁、tp-suggest-ignore 文件修正)。

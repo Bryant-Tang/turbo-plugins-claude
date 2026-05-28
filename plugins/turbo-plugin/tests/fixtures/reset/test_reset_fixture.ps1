@@ -1,7 +1,7 @@
 ﻿# test_reset_fixture.ps1
 #
 # Hand-rolled assertion tests for Reset-Fixture.ps1 (style matches
-# plugins/turbo-plugin/tests/lib-tests/test_resolve_config_value_merge.ps1).
+# plugins/turbo-plugin/tests/unit/scripts-lib/test_resolve_config_value_merge.ps1).
 #
 # 不用 Pester。直接 Describe-less script with Assert-Equal / Assert-True / counters.
 #

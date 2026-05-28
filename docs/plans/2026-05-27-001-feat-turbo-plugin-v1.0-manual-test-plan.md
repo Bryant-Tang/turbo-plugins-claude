@@ -1,4 +1,4 @@
----
+﻿---
 date: 2026-05-27
 type: feat
 origin: docs/brainstorms/2026-05-27-turbo-plugin-v1.0-manual-test-plan-requirements.md
@@ -74,7 +74,7 @@ flowchart TD
 2. PowerShell:   Pester 3.4(bundled with PS 5.1)Describe/It/Should -Be|-Throw
                  ↓ (Pester 3.4 API friction 時 fallback)
                  hand-rolled Assert-Equal / Assert-True / Assert-Match / Assert-Throws
-                 (相同 shape as 既有 tests/lib-tests/*.ps1)
+                 (相同 shape as 既有 tests/unit/scripts-lib/*.ps1)
                  ↓
 3. Bash:         inline `if [...]; then echo OK; else echo FAIL; exit 1; fi`
                  對 exit code + stdout substring 做 assertion
@@ -147,7 +147,7 @@ flowchart TD
   - SVN seed 內容明文寫在 `build-seed-repo.ps1` 註解(可重現)
   - Reset 的 `.worktrees/remote-test-1` 透過 `svn checkout file:///.../branches/test-1` (seed script `svn copy trunk@HEAD branches/test-1` 產出 r20)
 - **Patterns to follow**:
-  - 既有 `plugins/turbo-plugin/tests/lib-tests/test_resolve_config_value_merge.ps1` 的 `New-IsolatedRepoRoot` + 原生 `[System.IO.Directory]::Delete($Dir, $true)` 對 PS 5.1 short-name bug 的 dodge
+  - 既有 `plugins/turbo-plugin/tests/unit/scripts-lib/test_resolve_config_value_merge.ps1` 的 `New-IsolatedRepoRoot` + 原生 `[System.IO.Directory]::Delete($Dir, $true)` 對 PS 5.1 short-name bug 的 dodge
   - 既有 `scripts/lib/common.ps1` 的 `Write-Utf8NoBom`(寫 UTF-8 BOM 時)與 `$PSScriptRoot` + `[System.IO.Path]::Combine` 路徑模式
 - **Test scenarios**:
   - **Happy reset**:跑 `Reset-Fixture.ps1` 對全新 base → `test-turbo-plugin` 內容 = `base/` mirror;`svn log -r 20` = base seed last revision
@@ -155,7 +155,7 @@ flowchart TD
   - **中文路徑 reset**:`test-turbo-plugin/測試 ™ subdir/` 含中文子目錄 + 中文檔名 → reset 後完全還原 base(不殘留)
   - **中文 commit msg seed**:`svn log -r 5` output byte-level 比對 inline 字典 #3 第一筆中文 commit msg(沒 mojibake)
   - **Idempotency**:連跑 2 次 reset → 第 2 次 diff = empty
-  - **Covers AE5(部分)**:base 還原後 `plugins/turbo-plugin/tests/phase1/pull-from-svn.Tests.ps1` happy case 可以正常跑(間接驗證)
+  - **Covers AE5(部分)**:base 還原後 `plugins/turbo-plugin/tests/unit/scripts/pull-from-svn.Tests.ps1` happy case 可以正常跑(間接驗證)
 - **Verification**:
   - `Reset-Fixture.ps1` exit 0 對所有 5 個 scenario
   - `test_reset_fixture.ps1` 所有 case PASS
@@ -171,16 +171,16 @@ flowchart TD
 - **Files**:
   - `plugins/turbo-plugin/tests/Run-Phase1.ps1` — 入口:跑 pre-flight → discovery → loop:for each `.Tests.ps1` → reset fixture → Pester → emit row → next case;loop for `.sh.test.sh` 對等
   - `plugins/turbo-plugin/tests/lib/Pester-Helpers.ps1` — Pester 3.4 wrapper:`Invoke-PesterCase`(reset + run + parse NUnit XML),`Format-PesterRow`(NUnit 結果 → tracking doc row)
-  - `plugins/turbo-plugin/tests/lib/Assert-Helpers.ps1` — hand-rolled fallback:`Assert-Equal`, `Assert-True`, `Assert-Match`, `Assert-Throws`, `Assert-FileBytes`(中文 byte-level compare)— 同 shape as 既有 `tests/lib-tests/`
+  - `plugins/turbo-plugin/tests/lib/Assert-Helpers.ps1` — hand-rolled fallback:`Assert-Equal`, `Assert-True`, `Assert-Match`, `Assert-Throws`, `Assert-FileBytes`(中文 byte-level compare)— 同 shape as 既有 `tests/unit/scripts-lib/`
   - `plugins/turbo-plugin/tests/lib/Get-RawCommitDump.ps1` — helper:從 SVN repo 取 raw bytes 對比中文(避開 console codepage 干擾)
   - `plugins/turbo-plugin/tests/lib/test_assert_helpers.ps1` — sanity test of helpers themselves
   - `plugins/turbo-plugin/tests/lib/Get-Phase1Status.ps1` — 讀 tracking doc → 統計 PASS/FAIL/SKIP → 回傳 exit code + summary
   - `plugins/turbo-plugin/tests/lib/Emit-TrackingRow.ps1` — tracking doc row writer(append-only,Markdown table row format)
 - **Approach**:
-  - Discovery:`Get-ChildItem -Recurse plugins/turbo-plugin/tests/phase1/*.Tests.ps1` + `*.sh.test.sh`
+  - Discovery:`Get-ChildItem -Recurse plugins/turbo-plugin/tests/unit/scripts/*.Tests.ps1` + `*.sh.test.sh`
   - Pre-flight pattern:`& "$PSScriptRoot/../tools/lint-ps-compat.ps1" -ErrorAction Stop`(`$LASTEXITCODE` 0 才繼續)
   - Pester 3.4 invoke:`Invoke-Pester -Script $caseFile -OutputFile "<tmp>.xml" -OutputFormat NUnitXml -PassThru`,parse `$result.TestResult` 取每 It result + Error message
-  - Bash invoke:`& "C:\Program Files\Git\bin\bash.exe" -c "./plugins/turbo-plugin/tests/phase1/<script>.sh.test.sh"`,collect exit code + stdout 最後 `OK|FAIL: <msg>` 行
+  - Bash invoke:`& "C:\Program Files\Git\bin\bash.exe" -c "./plugins/turbo-plugin/tests/unit/scripts/<script>.sh.test.sh"`,collect exit code + stdout 最後 `OK|FAIL: <msg>` 行
   - Tracking doc row format:`| case ID | section | fixture | expected | actual | result | evidence |`,row append 到 `runs/v1.0.0/phase1-results.md` 對應 script section(schema 來源 `docs/phase1-scripts-schema.md`)
 - **Patterns to follow**:
   - PS 5.1 path:`[System.IO.Path]::Combine` 不用 3-arg Join-Path
@@ -189,7 +189,7 @@ flowchart TD
 - **Test scenarios**:
   - **Pre-flight 偵測 violation**:故意 commit 一個 3-arg `Join-Path` 到 `scripts/lib/common.ps1` 上方註解區(stub)→ `Run-Phase1.ps1` 在 pre-flight 階段 exit 非 0 + stderr 含 violation 位置
   - **Pre-flight 全 clean**:乾淨 codebase → pre-flight exit 0,進 Pester discovery
-  - **Pester happy case**:故意建一個 `plugins/turbo-plugin/tests/phase1/_smoke.Tests.ps1`(Describe / It / Should -Be `1 | Should -Be 1`)→ tracking doc 新增 row 標 PASS
+  - **Pester happy case**:故意建一個 `plugins/turbo-plugin/tests/unit/scripts/_smoke.Tests.ps1`(Describe / It / Should -Be `1 | Should -Be 1`)→ tracking doc 新增 row 標 PASS
   - **Pester throw case**:`Should -Throw` against 一個會 throw 的 stub → PASS
   - **Pester FAIL case**:`Should -Be 1 | Should -Be 2`(故意 fail)→ tracking doc 新增 row 標 FAIL + error message 在 evidence 欄
   - **Bash happy**:`./_smoke.sh.test.sh`(exit 0, echo OK)→ tracking doc row PASS
@@ -208,25 +208,25 @@ flowchart TD
 - **Requirements**:R1, R2(含 e), R3, R4, R18, R31 + AE1, AE2, AE3, AE6
 - **Dependencies**:U1, U2
 - **Files**:
-  - `plugins/turbo-plugin/tests/phase1/compute-project-identity.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/get-target-url.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/check-iis-listening.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/check-encoding-support.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/resolve-iis-settings.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/push-to-svn-prepare.Tests.ps1` + `.sh.test.sh`(SVN-touching 但 read-only,reset 必要但 dump/load 不必)
-  - `plugins/turbo-plugin/tests/phase1/svn-log.Tests.ps1` + `.sh.test.sh`(SVN-read,reset 必要)
-  - `plugins/turbo-plugin/tests/phase1/start-iis.Tests.ps1` + `.sh.test.sh`(含 `[iis] enabled=false` **canonical disabled fixture**)
-  - `plugins/turbo-plugin/tests/phase1/stop-iis.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/cleanup-orphan-iis.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/build-web.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/publish-web.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/compute-project-identity.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/get-target-url.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/check-iis-listening.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/check-encoding-support.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/resolve-iis-settings.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/push-to-svn-prepare.Tests.ps1` + `.sh.test.sh`(SVN-touching 但 read-only,reset 必要但 dump/load 不必)
+  - `plugins/turbo-plugin/tests/unit/scripts/svn-log.Tests.ps1` + `.sh.test.sh`(SVN-read,reset 必要)
+  - `plugins/turbo-plugin/tests/unit/scripts/start-iis.Tests.ps1` + `.sh.test.sh`(含 `[iis] enabled=false` **canonical disabled fixture**)
+  - `plugins/turbo-plugin/tests/unit/scripts/stop-iis.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/cleanup-orphan-iis.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/build-web.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/publish-web.Tests.ps1` + `.sh.test.sh`
 - **Approach**:
   - 12 script × ~3-4 case 各 ≈ 45 PS cases + 45 Bash cases
   - `[iis] enabled = false` dedup pattern:`start-iis.Tests.ps1` 的 disabled fixture 為 canonical case,其他 4 個 IIS script(stop / cleanup / build / publish)用 `Should -Match` 對 stderr 確認「IIS 已停用」訊息一致(不重複 fixture build)
   - R2(e) SKILL entry path:每 script 至少 1 case 用 `$env:TGS_*` / `$env:RUN_IIS_*` 預設 env var invoke,模擬 agent 透過 SKILL.md 觸發
   - 中文 case:每 script 1 個,從中文字典挑樣本(路徑 / 檔名 / commit msg / source 註解 / source string literal as applicable)
 - **Patterns to follow**:
-  - 既有 `tests/lib-tests/test_find_tools_strict_cut.ps1` 對 Find-MSBuild / Find-IisExpressPath 的 strict cut + auto-probe + throw 三層 case 模式
+  - 既有 `tests/unit/scripts-lib/test_find_tools_strict_cut.ps1` 對 Find-MSBuild / Find-IisExpressPath 的 strict cut + auto-probe + throw 三層 case 模式
 - **Test scenarios**(per-script,illustrative;完整列表在實作時逐 case 寫入):
   - **`compute-project-identity` happy**:標準 `.csproj` + git common-dir → identity hash 16-char hex
   - **`compute-project-identity` SKILL entry**:`$env:TGS_PROJECT_ROOT` 預設 → hash = direct call hash(一致性)
@@ -253,12 +253,12 @@ flowchart TD
 - **Requirements**:R1, R2(含 e), R7a, R18, R31, AE5, AE7, AE13(F4 rewritten)
 - **Dependencies**:U1, U2, U3 中文字典使用模式
 - **Files**:
-  - `plugins/turbo-plugin/tests/phase1/pull-from-svn.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/push-to-svn-commit.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/create-remote-test.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/reset-remote-test.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/svn-ignore.Tests.ps1` + `.sh.test.sh`
-  - `plugins/turbo-plugin/tests/phase1/pack-content.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/pull-from-svn.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/push-to-svn-commit.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/create-remote-test.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/reset-remote-test.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/svn-ignore.Tests.ps1` + `.sh.test.sh`
+  - `plugins/turbo-plugin/tests/unit/scripts/pack-content.Tests.ps1` + `.sh.test.sh`
 - **Approach**:
   - 6 script × ~4 case 各 ≈ 24 PS cases + 24 Bash cases
   - 每 case 自動跑 `svnadmin load < seed.dump` 還原 SVN repo + `svn update` remote-* worktree
@@ -433,8 +433,23 @@ flowchart TD
 
 ```
 plugins/turbo-plugin/tests/
-├── Run-Phase1.ps1                 ← 持久 orchestrator entry(支援 -RunDir / -TargetDoc)
-├── lib-tests/                     ← 既有(scripts/lib 單元測試,不變)
+├── Run-Phase1.ps1                 ← 持久 orchestrator entry(支援 -RunDir / -TargetDoc)。
+│                                    名稱保留(Phase 1 / Phase 2 是 plan-level 概念);
+│                                    discovery target 改成 unit/scripts/(含 hooks/ 子目錄)。
+├── unit/                          ← 持久 script-level 單元測試(plan-time rename from lib-tests/ + phase1/)
+│   ├── scripts-lib/               ← 既有(scripts/lib 單元測試,plan-time 從 tests/unit/scripts-lib/ rename)
+│   └── scripts/                   ← 持久 regression test cases(18 對 .Tests.ps1 + .sh.test.sh,plan-time 從 tests/unit/scripts/ rename)
+│       ├── _Common.ps1
+│       ├── compute-project-identity.Tests.ps1 + .sh.test.sh
+│       ├── get-target-url.Tests.ps1 + .sh.test.sh
+│       ├── check-iis-listening / check-encoding-support / resolve-iis-settings
+│       ├── push-to-svn-prepare / svn-log / start-iis / stop-iis / cleanup-orphan-iis
+│       ├── build-web / publish-web / pull-from-svn / push-to-svn-commit
+│       ├── create-remote-test / reset-remote-test / svn-ignore / pack-content
+│       ├── (each: .Tests.ps1 + .sh.test.sh)
+│       └── hooks/                 ← plan-time 補測(2 對 .Tests.ps1 + .sh.test.sh,涵蓋 scripts/hooks/)
+│           ├── posttooluse-enterworktree.Tests.ps1 + .sh.test.sh
+│           └── sessionstart.Tests.ps1 + .sh.test.sh
 ├── lib/                           ← 持久 harness(從舊 tests/v1.0/lib/ 搬)
 │   ├── Assert-Helpers.ps1
 │   ├── Emit-TrackingRow.ps1
@@ -457,15 +472,6 @@ plugins/turbo-plugin/tests/
 │   └── reset/
 │       ├── Reset-Fixture.ps1 / reset_fixture.sh
 │       └── test_reset_fixture.ps1
-├── phase1/                        ← 持久 regression test cases(18 對 .Tests.ps1 + .sh.test.sh)
-│   ├── _Common.ps1
-│   ├── compute-project-identity.Tests.ps1 + .sh.test.sh
-│   ├── get-target-url.Tests.ps1 + .sh.test.sh
-│   ├── check-iis-listening / check-encoding-support / resolve-iis-settings
-│   ├── push-to-svn-prepare / svn-log / start-iis / stop-iis / cleanup-orphan-iis
-│   ├── build-web / publish-web / pull-from-svn / push-to-svn-commit
-│   ├── create-remote-test / reset-remote-test / svn-ignore / pack-content
-│   └── (each: .Tests.ps1 + .sh.test.sh)
 ├── docs/                          ← 持久 schema + framework docs
 │   ├── phase1-scripts-schema.md   ← 中文字典 + schema + per-script section TEMPLATE(空 placeholder)
 │   ├── phase2-skills.md           ← 14 skill case spec + prompt + 失敗 patterns + 空 row table template
@@ -526,8 +532,8 @@ plugins/turbo-plugin/tests/
 - **AE1-AE16**:照 origin(已在 ce-doc-review 修完版本)。AE16 plan correction:`zh-samples.md` 描述改為「inline 中文字典 section 在 `phase1-scripts-schema.md`」對齊 R19。
 - **AE17** *(new — Covers U1, R31)*. Given fixture mid-state with `test-turbo-plugin/extras/garbage.txt` + SVN repo at r25(extra 5 commits),when orchestrator 跑 `Reset-Fixture.ps1`,then `test-turbo-plugin` diff vs `plugins/turbo-plugin/tests/fixtures/base/` = empty + `svn log -r 20` 為 base seed last revision + 沒有 r21+。
 - **AE18** *(new — Covers U2, R30)*. Given orchestrator 故意 inject 一個 3-arg `Join-Path` 到 `scripts/svn-log.ps1` 上方 stub 註解,when 跑 `Run-Phase1.ps1`,then pre-flight 階段 exit 非 0、stderr 含「svn-log.ps1:1: 3+ arg Join-Path 違規」、Pester 階段未啟動。
-- **AE19** *(new — Covers U3, R2(e))*. Given `plugins/turbo-plugin/tests/phase1/compute-project-identity.Tests.ps1` 的 SKILL entry case,fixture 預設 `$env:TGS_PROJECT_ROOT = "C:\Turbo\test-turbo-plugin"`,when test 跑該 case,then identity hash 與 direct call(無 env)的 hash 完全相同(SKILL/script env contract 一致)。
-- **AE20** *(new — Covers U4, R7a, AE13)*. Given fixture mid-state(r21 已 mutate),when `plugins/turbo-plugin/tests/phase1/svn-ignore.Tests.ps1` cross-worktree case 開始 → orchestrator 先 `svnadmin load < seed.dump` reset → 跑 svn-ignore → 結束驗證 `svn log` 顯示 r21 + r22(per-worktree commit),then case 結束後下一個 case 開始前 reset 再次跑,SVN repo 回到 r20 baseline。
+- **AE19** *(new — Covers U3, R2(e))*. Given `plugins/turbo-plugin/tests/unit/scripts/compute-project-identity.Tests.ps1` 的 SKILL entry case,fixture 預設 `$env:TGS_PROJECT_ROOT = "C:\Turbo\test-turbo-plugin"`,when test 跑該 case,then identity hash 與 direct call(無 env)的 hash 完全相同(SKILL/script env contract 一致)。
+- **AE20** *(new — Covers U4, R7a, AE13)*. Given fixture mid-state(r21 已 mutate),when `plugins/turbo-plugin/tests/unit/scripts/svn-ignore.Tests.ps1` cross-worktree case 開始 → orchestrator 先 `svnadmin load < seed.dump` reset → 跑 svn-ignore → 結束驗證 `svn log` 顯示 r21 + r22(per-worktree commit),then case 結束後下一個 case 開始前 reset 再次跑,SVN repo 回到 r20 baseline。
 - **AE21** *(new — Covers U5, R12 floor)*. Given `plugins/turbo-plugin/tests/docs/phase2-session-plan.md` 列 per-skill case-count table,when orchestrator 在 Phase 2 開跑前 emit「session 1 預計測 tp-setup 5 cases」,then 使用者轉述「我看到 5 cases:1 happy / 2 IIS 未裝 / 3 中文 path / 4 + 5 real-install LSP / CE / agent teams」對齊 table。
 - **AE22** *(new — Covers U7, R32, R33)*. Given Phase 1 case `P1-svn-log-中文` fail 3 次後 mark `FAIL-known`,when 使用者打開 `runs/v1.0.0/phase1-results.md`,then row 顯示 `result: FAIL-known | evidence: 修復 attempt #1 commit abc, #2 def, #3 ghi 仍 FAIL | escalation: user-confirmed not blocking 1.0 PR`;`runs/v1.0.0/known-issues.md` 列入該 case 摘要 + planning 階段建議的 follow-up issue。
 
@@ -604,7 +610,7 @@ plugins/turbo-plugin/tests/
 - **F5 plan-time correction (2026-05-28) — directory restructure**:U2 / U3 / U4 / U5 / U7
   完成後做 F5 校正:把 `tests/v1.0/` 與 `docs/test-plans/v1.0/` 兩個 repo-root 目錄重整成
   per-plugin `plugins/turbo-plugin/tests/`,並拆 **持久 vs per-release** 兩類:
-  - 持久(跨 release 共用):`tests/lib/`、`tests/fixtures/`、`tests/phase1/`、
+  - 持久(跨 release 共用):`tests/lib/`、`tests/fixtures/`、`tests/unit/scripts/`、
     `tests/Run-Phase1.ps1`、`tests/docs/<schema templates>`。
   - Per-release(本次 v1.0.0 PR validation):`tests/runs/v1.0.0/<results + session-log
     + budget-tracker + known-issues>`。
@@ -620,6 +626,22 @@ plugins/turbo-plugin/tests/
   - `docs/phase1-scripts.md` rename 為 `phase1-scripts-schema.md`(stripped of execution
     rows);`docs/budget-tracker.md` rename 為 `budget-tracker-template.md`。
   - `.gitattributes` 更新 binary 規則路徑。
+- **Plan-time correction (2026-05-28) — unit/ naming + hooks/ scope fix**:R1 原列 18 script
+  漏算 `scripts/hooks/posttooluse-enterworktree` + `sessionstart` 兩個 hook script;同時 plan
+  期間 `tests/phase1/` / `tests/lib-tests/` 兩個目錄命名與「Phase 1 / Phase 2」plan-level 概念
+  混淆(目錄應該以 **testing target** 命名,不是 plan phase)。一次性處理:
+  - `git mv plugins/turbo-plugin/tests/phase1 plugins/turbo-plugin/tests/unit/scripts`
+    (testing target = scripts/ 底下的被測 script)。
+  - `git mv plugins/turbo-plugin/tests/lib-tests plugins/turbo-plugin/tests/unit/scripts-lib`
+    (testing target = scripts/lib/ 底下的 helper module)。
+  - 在 `tests/unit/scripts/hooks/` 新增 2 對 `.Tests.ps1` + `.sh.test.sh` 涵蓋
+    `scripts/hooks/posttooluse-enterworktree` 與 `sessionstart`(R1 + R28 對應 scope correction)。
+  - `Run-Phase1.ps1` discovery 仍為 `-Recurse`,自動撿到 `unit/scripts/hooks/` 子目錄。
+  - 名稱保留 `Run-Phase1.ps1` 不變,因為 Phase 1 / Phase 2 是 plan-level 概念 ubiquitous,
+    Run-Phase1 = 「跑 Phase 1 對應的測試」(target = `tests/unit/scripts/`),clean separation
+    of plan concept vs. directory layout。
+  - 18 對既有 test 的 walk-up 從 `..\..` 改為 `..\..\..`(scripts/ → unit/ → tests/ → turbo-plugin
+    root),`.sh.test.sh` 的 `cd $SCRIPT_DIR/../..` 改為 `$SCRIPT_DIR/../../..`,同樣多一層。
 
 ---
 
@@ -627,7 +649,7 @@ plugins/turbo-plugin/tests/
 
 - **Origin doc**:`docs/brainstorms/2026-05-27-turbo-plugin-v1.0-manual-test-plan-requirements.md`(ce-doc-review 修完版本,含 5 個 deferred trade-off 在 Outstanding Questions From 2026-05-27 ce-doc-review)
 - **既有 plan(reference for structure)**:`docs/plans/2026-05-26-001-feat-turbo-plugin-v1.0-refinements-plan.md`
-- **既有 test pattern**:`plugins/turbo-plugin/tests/lib-tests/test_resolve_config_value_merge.ps1` + `test_find_tools_strict_cut.ps1`(hand-rolled `Assert-Equal` pattern → U2 fallback library reuses)
+- **既有 test pattern**:`plugins/turbo-plugin/tests/unit/scripts-lib/test_resolve_config_value_merge.ps1` + `test_find_tools_strict_cut.ps1`(hand-rolled `Assert-Equal` pattern → U2 fallback library reuses)
 - **既有 static linter**:`tools/lint-ps-compat.ps1` + `tools/lint-ps-compat.sh`(U2 pre-flight reuses)
 - **`scripts/lib/common.ps1`** 已 ship helpers(`Write-Utf8NoBom`、`[System.IO.Path]::Combine` 路徑模式、`$PSScriptRoot` 引用)— U1 / U2 / U3 / U4 follow
 - **CLAUDE.md** "Windows PowerShell 5.1 相容性" section(line 81-91)— 5 個 banned pattern 作為 lint-ps-compat 規則來源,test case 對應驗證

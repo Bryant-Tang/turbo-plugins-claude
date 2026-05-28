@@ -6,7 +6,7 @@
 #   Plan 原本 mention Pester 3.4，但 doc-review 確認 Pester 3.4 的
 #   `Should -Be / -Throw / -Match` dash-syntax 是 Pester 4+ 才有的。為了避免被
 #   API 落差咬到，本 v1.0 採「純手刻 only」路線 — 維持與既有
-#   plugins/turbo-plugin/tests/lib-tests/test_resolve_config_value_merge.ps1
+#   plugins/turbo-plugin/tests/unit/scripts-lib/test_resolve_config_value_merge.ps1
 #   同樣 shape:plain Assert-* helpers + try/finally + 模組層級 $script:Passed /
 #   $script:Failed counters + 最後 exit ($script:Failed -eq 0 ? 0 : 1) (PS 5.1
 #   沒 ternary，用 if 模仿)。

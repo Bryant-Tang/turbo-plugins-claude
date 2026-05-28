@@ -8,8 +8,9 @@
 #        - tools/lint-ps-compat.sh  對同一目錄 (走 PowerShell 內部再 invoke ps1)
 #      任一 violation → 整個 Phase 1 abort,不進 discovery。
 #   2. Discovery:
-#        - PowerShell  cases:Get-ChildItem -Recurse <scriptDir>/phase1/*.Tests.ps1
-#        - Bash        cases:Get-ChildItem -Recurse <scriptDir>/phase1/*.sh.test.sh
+#        - PowerShell  cases:Get-ChildItem -Recurse <scriptDir>/unit/scripts/*.Tests.ps1
+#        - Bash        cases:Get-ChildItem -Recurse <scriptDir>/unit/scripts/*.sh.test.sh
+#          (Recurse picks up unit/scripts/hooks/ subdir too.)
 #   3. Per-case loop:
 #        for each .Tests.ps1
 #            -> 呼叫 <scriptDir>/fixtures/reset/Reset-Fixture.ps1 重設 fixture
@@ -59,7 +60,10 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '..', '..', '..'))
 }
 $libDir       = [System.IO.Path]::Combine($scriptDir, 'lib')
-$phase1Dir    = [System.IO.Path]::Combine($scriptDir, 'phase1')
+# Phase 1 (per plan) script-level tests live under tests/unit/scripts/ (including hooks/ subdir).
+# Directory was renamed from tests/phase1/ to tests/unit/scripts/ at plan time to align naming
+# with testing target. Run-Phase1 name preserved because Phase 1 / Phase 2 are plan-level concepts.
+$phase1Dir    = [System.IO.Path]::Combine($scriptDir, 'unit', 'scripts')
 $fixturesDir  = [System.IO.Path]::Combine($scriptDir, 'fixtures')
 $resetPs1     = [System.IO.Path]::Combine($fixturesDir, 'reset', 'Reset-Fixture.ps1')
 $assertLib    = [System.IO.Path]::Combine($libDir, 'Assert-Helpers.ps1')
@@ -78,7 +82,7 @@ if ([string]::IsNullOrWhiteSpace($TargetDoc)) {
 }
 
 Write-Output "Run-Phase1: RepoRoot = $RepoRoot"
-Write-Output "Run-Phase1: phase1Dir = $phase1Dir"
+Write-Output "Run-Phase1: phase1Dir = $phase1Dir (unit/scripts)"
 Write-Output "Run-Phase1: RunDir = $RunDir"
 Write-Output "Run-Phase1: TargetDoc = $TargetDoc"
 Write-Output ''
@@ -145,7 +149,7 @@ if ([System.IO.Directory]::Exists($phase1Dir)) {
     $psCases   = @(Get-ChildItem -Path $phase1Dir -Recurse -Filter '*.Tests.ps1'  -ErrorAction SilentlyContinue)
     $bashCases = @(Get-ChildItem -Path $phase1Dir -Recurse -Filter '*.sh.test.sh' -ErrorAction SilentlyContinue)
 } else {
-    Write-Output "  (phase1 dir does not exist yet: $phase1Dir)"
+    Write-Output "  (unit/scripts dir does not exist yet: $phase1Dir)"
 }
 
 Write-Output "  PS .Tests.ps1 cases:   $($psCases.Count)"
@@ -154,7 +158,7 @@ Write-Output ''
 
 if ($psCases.Count -eq 0 -and $bashCases.Count -eq 0) {
     Write-Output '─── Summary ─────────────────────────────────────────────────────────'
-    Write-Output 'No Phase 1 test cases discovered (phase1/ empty — U2-only state).'
+    Write-Output 'No Phase 1 test cases discovered (unit/scripts/ empty — U2-only state).'
     Write-Output 'Pre-flight passed. Exiting 0.'
     exit 0
 }

@@ -28,8 +28,8 @@ escalate (R32)。
 1. 讀 case 對應的 script(`plugins/turbo-plugin/scripts/<name>.ps1` / `.sh`)或 SKILL.md
    (`plugins/turbo-plugin/skills/<skill>/SKILL.md`),找出測 case 期待的行為 vs. 實際輸出
    差異。
-2. 讀 case 對應的 test driver(Phase 1:`plugins/turbo-plugin/tests/phase1/<script>.Tests.ps1` 或
-   `<script>.sh.test.sh`;Phase 2:U5 產生的 `prompts/<skill>-case-<N>.md`),確認測試
+2. 讀 case 對應的 test driver(Phase 1:`plugins/turbo-plugin/tests/unit/scripts/<script>.Tests.ps1` 或
+   `<script>.sh.test.sh`(hook script 在 `unit/scripts/hooks/` 子目錄);Phase 2:U5 產生的 `prompts/<skill>-case-<N>.md`),確認測試
    本身沒有 bug。
 3. 在 fresh fixture 上 manual 重現 FAIL:
    - Phase 1:`plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` 重置 →

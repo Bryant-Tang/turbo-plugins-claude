@@ -172,7 +172,7 @@ User next turn: "其他" / "幫我看 build.ps1" / 完全 unrelated
 - `plugins/turbo-plugin/default-files/.turbo-plugin/config.toml` — 加 `[iis]` section 預設 `enabled = true`;`[tools]` section 保持註解狀態(machine-specific 不該進 git)
 - `plugins/turbo-plugin/scripts/lib/common.ps1` — 修改 `Resolve-ConfigValue` 讀取邏輯:讀 `config.toml` 後再 merge `config.local.toml` over it(key-level shallow merge);extend `Read-TurboPluginConfig` 支援讀第二個 path
 - `plugins/turbo-plugin/scripts/lib/common.sh` — bash 等價 merge 邏輯
-- `plugins/turbo-plugin/tests/lib-tests/test_resolve_config_value_merge.ps1`(新檔)— unit test
+- `plugins/turbo-plugin/tests/unit/scripts-lib/test_resolve_config_value_merge.ps1`(新檔)— unit test
 
 **Approach:**
 - 既有 `Read-TurboPluginConfig` 接 1 個 path,改成接 array of paths,依序讀,後者覆寫前者(in-place hashtable update)
