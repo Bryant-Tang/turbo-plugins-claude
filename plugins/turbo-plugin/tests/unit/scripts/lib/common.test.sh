@@ -69,12 +69,16 @@ trap 'rm -rf "$TMPDIR_GMW" 2>/dev/null || true' EXIT
     git commit -q --allow-empty -m 'init' >/dev/null 2>&1
 
     mw="$(get_main_worktree 2>/dev/null || true)"
-    expected="$(get_normalized_absolute_path "$TMPDIR_GMW")"
-    if [[ -n "$mw" && "$mw" == "$expected" ]]; then
+    # Match by basename — Windows 8.3 short name (mktemp via $TMPDIR /MELWU~1/) vs
+    # git rev-parse --show-toplevel (long /Mel Wu/) make literal-equal comparison
+    # unreliable. Verify mw is non-empty, starts with normalized drive, and contains
+    # the unique tmpdir basename.
+    tmpdir_basename="${TMPDIR_GMW##*/}"
+    if [[ -n "$mw" && "$mw" =~ ^[a-z]:.* && "$mw" == *"$tmpdir_basename"* ]]; then
         echo "  [PASS] get_main_worktree returns normalized top-level inside git repo (got: $mw)"
         exit 0
     fi
-    echo "  [FAIL] get_main_worktree: expected '$expected', got '$mw'"
+    echo "  [FAIL] get_main_worktree: expected path containing '$tmpdir_basename' on lowercased drive, got '$mw'"
     exit 1
 )
 case3_rc=$?

@@ -57,8 +57,10 @@ else
     record_fail "Case 1: happy dispatch" "rc=$rc_c1, out='${out_c1:0:200}'"
 fi
 
-# Case 2: missing .ps1 — delegate to a script that does not exist
-out_c2="$("$DELEGATE_FAKE" no-such-script-here 2>&1 || true)"
+# Case 2: missing .ps1 — delegate to a script that does not exist.
+# NOTE: do NOT use `|| true` here — it masks the non-zero rc we are testing for.
+# `set -u` is on but `set -e` is not, so bash continues on non-zero exit naturally.
+out_c2="$("$DELEGATE_FAKE" no-such-script-here 2>&1)"
 rc_c2=$?
 # powershell -File on a missing path exits non-zero; rc must NOT be 0.
 if [[ "$rc_c2" -ne 0 ]]; then

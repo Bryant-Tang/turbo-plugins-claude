@@ -82,19 +82,19 @@ try {
     $xml.PreserveWhitespace = $true
     $xml.Load($apphostPath)
     $site = Find-ApplicationhostSite -Xml $xml -SiteName 'HelloApp-deadbeef'
-    Assert-True -Name 'Case1: Find-ApplicationhostSite returns non-null for existing site' -Condition ($null -ne $site) -Detail ('got: ' + ($null -eq $site))
+    Assert-True -Name 'Case1: Find-ApplicationhostSite returns non-null for existing site' -Condition ($null -ne $site) -Message('got: ' + ($null -eq $site))
     if ($null -ne $site) {
         Assert-Equal -Name 'Case1: returned site name matches' -Expected 'HelloApp-deadbeef' -Actual ($site.GetAttribute('name'))
     }
 
     # ── Case 2: Find-ApplicationhostSite miss ──
     $missing = Find-ApplicationhostSite -Xml $xml -SiteName 'NoSuchSite-00000000'
-    Assert-True -Name 'Case2: Find-ApplicationhostSite returns null for non-existent site' -Condition ($null -eq $missing) -Detail ("got: " + ($missing | Out-String).Trim())
+    Assert-True -Name 'Case2: Find-ApplicationhostSite returns null for non-existent site' -Condition ($null -eq $missing) -Message("got: " + ($missing | Out-String).Trim())
 
     # ── Case 3: read apphost + find binding + parse port ──
     # XPath drill-down then split bindingInformation "*:5000:localhost" on ':' → port = element[1].
     $bindingNode = $xml.SelectSingleNode('/configuration/system.applicationHost/sites/site/bindings/binding')
-    Assert-True -Name 'Case3a: binding node found via XPath' -Condition ($null -ne $bindingNode) -Detail ($null -ne $bindingNode)
+    Assert-True -Name 'Case3a: binding node found via XPath' -Condition ($null -ne $bindingNode) -Message($null -ne $bindingNode)
     if ($null -ne $bindingNode) {
         $bindingInfo = $bindingNode.GetAttribute('bindingInformation')
         Assert-Equal -Name 'Case3b: bindingInformation literal' -Expected '*:5000:localhost' -Actual $bindingInfo
@@ -106,10 +106,10 @@ try {
     # ── Case 4: Update-ApplicationhostConfig changes physicalPath then is idempotent ──
     $newPath = [System.IO.Path]::Combine($sb, 'new', 'physical', 'path')
     $r1 = Update-ApplicationhostConfig -ConfigPath $apphostPath -SiteName 'HelloApp-deadbeef' -NewPhysicalPath $newPath
-    Assert-True -Name 'Case4a: first call returns Updated=$true' -Condition ([bool]$r1.Updated) -Detail ("got: " + ($r1 | Out-String).Trim())
+    Assert-True -Name 'Case4a: first call returns Updated=$true' -Condition ([bool]$r1.Updated) -Message("got: " + ($r1 | Out-String).Trim())
 
     $r2 = Update-ApplicationhostConfig -ConfigPath $apphostPath -SiteName 'HelloApp-deadbeef' -NewPhysicalPath $newPath
-    Assert-True -Name 'Case4b: second call (idempotent) returns Updated=$false' -Condition (-not [bool]$r2.Updated) -Detail ("got: " + ($r2 | Out-String).Trim())
+    Assert-True -Name 'Case4b: second call (idempotent) returns Updated=$false' -Condition (-not [bool]$r2.Updated) -Message("got: " + ($r2 | Out-String).Trim())
 }
 finally {
     Remove-Sandbox $sb
