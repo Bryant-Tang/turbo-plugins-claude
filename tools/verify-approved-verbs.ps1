@@ -56,7 +56,18 @@ if (-not (Test-Path -LiteralPath $Path)) {
 }
 
 # Cache approved verbs once. (Get-Verb).Verb returns PascalCase strings.
-$approvedVerbs = (Get-Verb).Verb
+#
+# Policy extension: 'Build' is in PS 7.3+ Get-Verb but NOT in PS 5.1's. We
+# approve it by policy because:
+#   - Plan KD-2 / KD-3 chose `Build-Web.ps1` / `Build-SvnCommit.ps1` for
+#     semantic precision (msbuild artifact / sync git→svn commit candidate).
+#   - PSScriptAnalyzer's PSUseApprovedVerbs rule (when run with the PS 7.3+
+#     module installed) accepts these too.
+#   - Renaming to PS 5.1 alternatives (New-Web / New-SvnCommit) was considered
+#     and rejected in ce-work U2 — Build is more semantically precise.
+# 'Deploy' (also PS 7.3+) is included for parity; no current script uses it.
+$policyApprovedExtras = @('Build', 'Deploy')
+$approvedVerbs = @((Get-Verb).Verb) + $policyApprovedExtras
 
 $violations = @()
 
