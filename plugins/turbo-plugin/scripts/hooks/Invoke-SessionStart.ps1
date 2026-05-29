@@ -67,7 +67,7 @@ try {
     }
     exit 0
 } catch {
-    [Console]::Error.WriteLine("turbo-plugin sessionstart: $($_.Exception.Message)")
+    [Console]::Error.WriteLine("turbo-plugin Invoke-SessionStart: $($_.Exception.Message)")
     Emit-Json @{}
     exit 0
 }

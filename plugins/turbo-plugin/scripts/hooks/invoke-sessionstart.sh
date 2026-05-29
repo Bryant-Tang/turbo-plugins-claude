@@ -14,7 +14,7 @@ uname_s="$(uname -s 2>/dev/null || echo unknown)"
 
 if [[ "$uname_s" =~ ^(MINGW|MSYS|CYGWIN) || "$uname_s" == "Windows_NT" ]]; then
   PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
-  PS1_PATH="${PLUGIN_ROOT}/scripts/hooks/sessionstart.ps1"
+  PS1_PATH="${PLUGIN_ROOT}/scripts/hooks/Invoke-SessionStart.ps1"
   if [[ "$PS1_PATH" =~ ^/([a-zA-Z])/(.*)$ ]]; then
     PS1_PATH="${BASH_REMATCH[1]^^}:/${BASH_REMATCH[2]}"
   fi
@@ -27,7 +27,7 @@ if [[ "$uname_s" =~ ^(MINGW|MSYS|CYGWIN) || "$uname_s" == "Windows_NT" ]]; then
     exit_code=$?
   fi
   if [[ $exit_code -ne 0 ]]; then
-    echo "turbo-plugin sessionstart: powershell exited $exit_code" >&2
+    echo "turbo-plugin invoke-sessionstart: powershell exited $exit_code" >&2
   fi
   exit 0
 fi

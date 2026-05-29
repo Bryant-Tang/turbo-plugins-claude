@@ -32,7 +32,7 @@ try {
     Emit-Json @{}
     exit 0
 } catch {
-    [Console]::Error.WriteLine("turbo-plugin posttooluse-enterworktree: $($_.Exception.Message)")
+    [Console]::Error.WriteLine("turbo-plugin Invoke-PostToolUseEnterWorktree: $($_.Exception.Message)")
     Emit-Json @{}
     exit 0
 }

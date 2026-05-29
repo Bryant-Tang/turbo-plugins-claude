@@ -545,7 +545,7 @@ JSON merge 規則同 3.4.B,寫入:
 
 ## Test Scenarios
 
-- **sessionstart.sh ERR trap**: 在 `scripts/hooks/sessionstart.sh` 的 trap 宣告之後暫時插入 `false` 一行,開新 Claude session。確認 (a) session 正常啟動沒 block、(b) stderr 沒漏出 trap 之外的錯誤訊息(`{}` 是預期 fallback)、(c) 沒 systemMessage prompt 出現。驗完拔掉 `false`。
+- **invoke-sessionstart.sh ERR trap**: 在 `scripts/hooks/invoke-sessionstart.sh` 的 trap 宣告之後暫時插入 `false` 一行,開新 Claude session。確認 (a) session 正常啟動沒 block、(b) stderr 沒漏出 trap 之外的錯誤訊息(`{}` 是預期 fallback)、(c) 沒 systemMessage prompt 出現。驗完拔掉 `false`。
 
 ## Tool Preference
 

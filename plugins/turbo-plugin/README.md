@@ -69,7 +69,7 @@ enabled = false
 
 - **`.turbo-plugin/applicationhost.config`(canonical)**:turbo-plugin 自管,進 git。所有 `<site>` 的 `physicalPath` 屬性值為佔位符 `__TURBO_PLUGIN_PHYSICAL_PATH__`,跨機器 / 跨同事 portable。**canonical 永遠不被 physicalPath 改寫污染**。
 - **`%TEMP%\turbo-plugin-iis-<identity-hash>.config`(transient)**:每次 `tp-run` 啟動時由 `Start-Iis.ps1` 從 canonical 複製一份到 temp 並把佔位符替換為當前 worktree 的 csproj 所在目錄,以 `iisexpress -config:<temp>` 啟動。`tp-stop` 停掉 process 後刪除對應 temp file;`tp-cleanup-orphan-iis` 順手清掉孤兒 temp file。
-- **`.vs/<sln>/config/applicationhost.config`(VS 自管)**:VS UI 自己維護的 IIS 設定,turbo-plugin 從本版起**完全不讀不寫**(`posttooluse-enterworktree.ps1` / `sessionstart.ps1` / `Remove-OrphanIis.ps1` 對該檔的處理皆已移除)。VS 內改了 IIS port / binding 不會自動回流到 `.turbo-plugin/applicationhost.config`,需要手動 copy(future brainstorm 議題)。
+- **`.vs/<sln>/config/applicationhost.config`(VS 自管)**:VS UI 自己維護的 IIS 設定,turbo-plugin 從本版起**完全不讀不寫**(`Invoke-PostToolUseEnterWorktree.ps1` / `Invoke-SessionStart.ps1` / `Remove-OrphanIis.ps1` 對該檔的處理皆已移除)。VS 內改了 IIS port / binding 不會自動回流到 `.turbo-plugin/applicationhost.config`,需要手動 copy(future brainstorm 議題)。
 
 同一專案在所有 worktree 之間仍只能啟動一個 IIS Express instance(port / site 從專案檔產生,跨 worktree 算出相同值,物理上不可能並發);切換 worktree 跑 `tp-run` 走「同 site 已存在則先 stop 再用新 physicalPath 重啟」邏輯。
 
