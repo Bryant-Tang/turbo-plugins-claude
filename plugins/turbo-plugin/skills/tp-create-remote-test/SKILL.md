@@ -31,7 +31,7 @@ allowed-tools: Bash, Read, AskUserQuestion
    - **Cancel** — 終止,不動 SVN。
 
    使用者若選 Cancel,直接結束,**不**呼叫 script。這個 gate 與 `tp-reset-remote-test` 的破壞性操作確認模式一致。
-4. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/create-remote-test.{ps1,sh}` 帶上參數。
+4. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteTest.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/new-remote-test.sh`)帶上參數。
 5. Script 會:
    - check branch / worktree 名稱不衝突
    - 從 init commit 建 `remote/test-<n>` branch(避免 SVN obstruction)

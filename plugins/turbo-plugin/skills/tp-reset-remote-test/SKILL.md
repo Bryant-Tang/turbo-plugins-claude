@@ -19,7 +19,7 @@ allowed-tools: Bash, Read, AskUserQuestion
 Run the script with `--diff-only` to compute and print the LOSE / GAIN summary without performing the reset.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.ps1" --diff-only
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Reset-RemoteTest.ps1" --diff-only
 ```
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.sh" --diff-only
@@ -56,7 +56,7 @@ If Step 1 was not the "already equal" early exit:
 
 Re-run the script without `--diff-only`:
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.ps1"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Reset-RemoteTest.ps1"
 ```
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.sh"

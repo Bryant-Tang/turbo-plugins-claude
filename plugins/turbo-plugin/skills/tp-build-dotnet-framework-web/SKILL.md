@@ -28,12 +28,12 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ### Step 1 — 執行 build
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/build-web.{ps1,sh}` 帶 optional `-Configuration <name>` / `-Platform <name>` / `-Project <path>`(`.sh` 為 thin wrapper 轉呼叫 `.ps1`)。
+1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Build-Web.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/build-web.sh`)帶 optional `-Configuration <name>` / `-Platform <name>` / `-Project <path>`(`.sh` 為 thin wrapper 轉呼叫 `.ps1`)。
 2. Script 會:
    - 偵測 `.csproj`(CLI arg → `config.toml [build].project` → 自動找單一 .csproj)
    - 偵測 MSBuild(user-level env `TURBO_PLUGIN_MSBUILD_PATH` → 標準 VS 安裝路徑)
    - 跑 `msbuild /restore /t:Build /p:SolutionDir=<repo>\` 帶 configuration + platform
-   - build 成功後跑 `pack-content.ps1`(自動偵測 `[frontend]` 設定;省略則 skip)
+   - build 成功後跑 `Compress-Content.ps1`(自動偵測 `[frontend]` 設定;省略則 skip)
 3. 解讀輸出,將 build error 直接回傳給使用者。
 
 ## Decision Rules

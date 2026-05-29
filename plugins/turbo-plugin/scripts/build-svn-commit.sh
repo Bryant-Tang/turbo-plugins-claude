@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: push-to-svn-prepare.sh --branch <main|test-<n>>
+# Usage: build-svn-commit.sh --branch <main|test-<n>>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

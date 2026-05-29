@@ -54,7 +54,7 @@ turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `t
 
 ### Added
 
-- **`scripts/check-encoding-support.ps1`(+ `.sh` delegate)**:偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。輸出結構化 token(`PS_VERSION` / `ANSI_CODEPAGE` / `ARGV_SAFE_FOR_UNICODE` / `RECOMMENDATION`)讓 SKILL parse,搭配 byte-level evidence 後修正的精確訊息(見 Documented)。
+- **`scripts/Test-EncodingSupport.ps1`(+ `.sh` delegate)**:偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。輸出結構化 token(`PS_VERSION` / `ANSI_CODEPAGE` / `ARGV_SAFE_FOR_UNICODE` / `RECOMMENDATION`)讓 SKILL parse,搭配 byte-level evidence 後修正的精確訊息(見 Documented)。
 - **`tp-setup` SKILL Step 0.5 — Encoding support check**(plan 002 U16.enc 環境性限制 user-side remediation):tp-setup 跑時 detect codepage,若非 UTF-8(PS 5.1 + zh-TW/zh-CN/ja-JP Windows 常態)→ 用 `AskUserQuestion` 依「團隊性質」三選一:(a) 同質中文 Windows 團隊 → 接受 SVN repo 存 DBCS bytes、SVN 中文檔名操作走 `.sh`(plugin sibling)/ (b) 跨 OS 團隊 → nested `AskUserQuestion` 選 winget PS 7+ 或 Win10 UTF-8 codepage / (c) 避用中文檔名。記載於 `.turbo-plugin/encoding-status.local.md`(gitignored,user-specific)。
 
 ### Documented
@@ -131,8 +131,8 @@ turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `t
 ### Added
 
 - `tp-cleanup-orphan-iis` skill：清除孤兒 IIS Express process 及 applicationhost.config site 條目（worktree rename / project 搬移後遺留）
-- `scripts/cleanup-orphan-iis.ps1`：掃描同 csproj-stem 不同 hash 的 orphan process + XML site,支援 `-RemoveSite` / `-RemoveAll`
-- `scripts/cleanup-orphan-iis.sh`：thin ps1-delegate wrapper(Windows-only)
+- `scripts/Remove-OrphanIis.ps1`：掃描同 csproj-stem 不同 hash 的 orphan process + XML site,支援 `-RemoveSite` / `-RemoveAll`
+- `scripts/remove-orphan-iis.sh`：thin ps1-delegate wrapper(Windows-only)
 - `Remove-ApplicationhostSite` helper(`scripts/lib/applicationhost-helpers.ps1`)
 
 ## [0.1.0] - 2026-05-22

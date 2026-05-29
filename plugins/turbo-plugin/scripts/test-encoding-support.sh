@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec "$(dirname -- "${BASH_SOURCE[0]}")/lib/ps1-delegate.sh" check-encoding-support "$@"
+exec "$(dirname -- "${BASH_SOURCE[0]}")/lib/ps1-delegate.sh" Test-EncodingSupport "$@"

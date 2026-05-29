@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: create-remote-test.sh --svn-url <url> [--n <number>]
+# Usage: new-remote-test.sh --svn-url <url> [--n <number>]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

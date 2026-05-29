@@ -17,10 +17,10 @@ allowed-tools: Bash, Read
 1. 跑 script,參數依平台:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-log.ps1" [-Branch <main|test-<n>>] [-Limit <n>] [-Revision <spec>] [-VerboseOutput]
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Get-SvnLog.ps1" [-Branch <main|test-<n>>] [-Limit <n>] [-Revision <spec>] [-VerboseOutput]
    ```
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-log.sh" [--branch <main|test-<n>>] [--limit <n>] [--revision <spec>] [--verbose]
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-svn-log.sh" [--branch <main|test-<n>>] [--limit <n>] [--revision <spec>] [--verbose]
    ```
 
    可選參數(logical 名稱與行為):

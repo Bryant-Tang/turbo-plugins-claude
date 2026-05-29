@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec "$(dirname -- "${BASH_SOURCE[0]}")/lib/ps1-delegate.sh" publish-web "$@"
+exec "$(dirname -- "${BASH_SOURCE[0]}")/lib/ps1-delegate.sh" Publish-Web "$@"

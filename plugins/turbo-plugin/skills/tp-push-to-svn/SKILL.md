@@ -23,7 +23,7 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 
 ### Step 2 — Prepare merge
 
-跑 `${CLAUDE_PLUGIN_ROOT}/scripts/push-to-svn-prepare.{ps1,sh}` 帶 `--branch <name>`。Script 會:
+跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Build-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/build-svn-commit.sh`)帶 `--branch <name>`。Script 會:
 - check remote SVN up-to-date(local rev == HEAD rev)
 - check 是否有 pending merge state(見下方 PENDING_MERGE_DETECTED 處理)
 - 跑 `git merge --no-ff --no-commit` stage merge
@@ -140,7 +140,7 @@ feat, fix, refactor, perf, revert
 
 ### Step 6 — Commit to SVN
 
-跑 `${CLAUDE_PLUGIN_ROOT}/scripts/push-to-svn-commit.{ps1,sh}` 帶 `--branch <name> --message "<完整 SVN message>"`。Script 會:
+跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Submit-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/submit-svn-commit.sh`)帶 `--branch <name> --message "<完整 SVN message>"`。Script 會:
 - 再次 re-validate SVN HEAD(防止 race condition)
 - `git commit --no-edit` 完成 stage merge
 - 處理 `?` `!` `M` 的 svn add / delete

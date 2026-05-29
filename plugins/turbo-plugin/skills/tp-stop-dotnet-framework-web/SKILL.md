@@ -28,7 +28,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ### Step 1 — 停止 IIS Express
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/stop-iis.{ps1,sh}` 帶 optional `-Project <path>`。Script 流程:
+1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Stop-Iis.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/stop-iis.sh`)帶 optional `-Project <path>`。Script 流程:
    - 偵測 `.csproj`(同 `tp-build`)
    - 計算 project identity + site name
    - 用 `Get-CimInstance Win32_Process` 找 `iisexpress.exe` instance,filter commandLine 含 `/site:<name>`
@@ -49,7 +49,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ## Test Scenarios
 
-- Manual: 主 worktree 跑 `compute-project-identity.ps1` 記下 IDENTITY_HASH → 切到 peer worktree 跑同一個 → 兩值完全相同。不同 → 先修 Get-NormalizedAbsolutePath / git-common-dir 處理再跑後續 stop 測試(AE1)。
+- Manual: 主 worktree 跑 `Get-ProjectIdentity.ps1` 記下 IDENTITY_HASH → 切到 peer worktree 跑同一個 → 兩值完全相同。不同 → 先修 Get-NormalizedAbsolutePath / git-common-dir 處理再跑後續 stop 測試(AE1)。
 - **Cross-worktree stop**: 主 worktree 啟 iisexpress → 切到 peer worktree 跑 /tp-stop,確認該 PID 不見、`Get-Process iisexpress` 在主 worktree 也撈不到。
 - **No-op when not running**: 沒 iisexpress 跑時呼叫 /tp-stop,輸出 `No IIS Express process found for site '<name>'.`、exit 0、無 error。
 - **不誤殺別 project**: project A iisexpress 跑在 port X、project B iisexpress 跑在 port Y → /tp-stop project A 只殺 A,B 仍 LISTENING port Y。

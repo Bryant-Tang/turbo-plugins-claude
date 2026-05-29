@@ -43,7 +43,7 @@ turbo-plugin 唯一設定入口,自動偵測當前狀態並進入對應的 case�
 
 #### 1.2 Encoding profile detect(zh-TW Windows 中文檔名 SVN 相容性)
 
-跑 `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/check-encoding-support.ps1"` 偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。
+跑 `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Test-EncodingSupport.ps1"` 偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。
 
 parse stdout 取 `ARGV_SAFE_FOR_UNICODE` 值:
 - `True` → 略過此 step

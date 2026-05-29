@@ -62,11 +62,11 @@ Constraints: only one direct-mode flag per invocation; `--path` is ignored for g
 ### `--add-svn <pattern> [<pattern>…] [--path <dir>]`
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…] [-Path "<dir>"]
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…] [-Path "<dir>"]
 ```
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --add "<pattern1>" [--add "<pattern2>"…] [--path "<dir>"]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-svn-ignore.sh" --add "<pattern1>" [--add "<pattern2>"…] [--path "<dir>"]
 ```
 
 Forward the script output to the user.
@@ -74,11 +74,11 @@ Forward the script output to the user.
 ### `--remove-svn <pattern> [<pattern>…] [--path <dir>]`
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Remove "<pattern1>" [-Remove "<pattern2>"…] [-Path "<dir>"]
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1" -Remove "<pattern1>" [-Remove "<pattern2>"…] [-Path "<dir>"]
 ```
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --remove "<pattern1>" [--remove "<pattern2>"…] [--path "<dir>"]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-svn-ignore.sh" --remove "<pattern1>" [--remove "<pattern2>"…] [--path "<dir>"]
 ```
 
 Forward the script output to the user.
@@ -102,7 +102,7 @@ Run the following (all read-only):
 git -C <main-worktree> status --short
 git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1"   # lists svn:ignore from remote-main (canonical)
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1"   # lists svn:ignore from remote-main (canonical)
 # For each remote worktree (remote-main, remote-test-*):
 git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
@@ -111,7 +111,7 @@ git -C <remote-worktree> ls-files -o -i --exclude-standard
 git -C <main-worktree> status --short
 git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh"   # lists svn:ignore from remote-main (canonical)
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-svn-ignore.sh"   # lists svn:ignore from remote-main (canonical)
 # For each remote worktree (remote-main, remote-test-*):
 git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
@@ -198,10 +198,10 @@ If main worktree has uncommitted changes, report the error and ask user to commi
 **SVN Ignore (add to `svn:ignore`):**
 Pass all approved patterns in a single call:
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
 ```
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.sh" --add "<pattern1>" [--add "<pattern2>"…]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-svn-ignore.sh" --add "<pattern1>" [--add "<pattern2>"…]
 ```
 
 **Inconsistency — Option A (remove from `.gitignore`):**
@@ -212,7 +212,7 @@ In the remote worktree:
 ```powershell
 svn delete "<file>"
 svn commit -m "remove <file> (no longer tracked in git)"
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
 ```
 
 **Un-track — Option A (full cleanup):**
@@ -227,7 +227,7 @@ Then in remote worktree:
 ```powershell
 svn delete "<file>"
 svn commit -m "remove <file>"
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/svn-ignore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1" -Add "<pattern1>" [-Add "<pattern2>"…]
 ```
 
 **Un-track — Option B (git stops, SVN keeps):**

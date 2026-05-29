@@ -28,11 +28,11 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ### Step 1 — 執行 publish
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.{ps1,sh}` 帶 optional 參數。Script 會:
+1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶 optional 參數。Script 會:
    - 偵測 `.csproj`(同 `tp-build`)
    - 偵測 MSBuild(同 `tp-build`)
    - 偵測 `.pubxml`(CLI arg → `config.toml [publish].default_pubxml` → 自動找 `<project>/Properties/PublishProfiles/` 單一 `.pubxml`)
-   - 跑 `pack-content.ps1`(若 `[frontend]` 設定齊備)
+   - 跑 `Compress-Content.ps1`(若 `[frontend]` 設定齊備)
    - 跑 `msbuild /p:DeployOnBuild=true /p:PublishProfile=<name> /p:PublishProfileRootFolder=<dir> /p:Configuration=<cfg> /p:Platform=<plat>`
    - 後處理:parse `.pubxml` 取 `<PublishUrl>` + `<WebPublishMethod>`,回報實際產出位置(`FileSystem` 落地路徑 / FTP URL 等)
 2. 解讀輸出,把 `Published to: <path>` / `PUBLISH_OUTPUT_PATH=<path>` 直接呈現給使用者。

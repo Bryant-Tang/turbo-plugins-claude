@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: svn-log.sh [--branch <main|test-<n>>] [--limit <n>] [--revision <spec>] [--verbose]
+# Usage: get-svn-log.sh [--branch <main|test-<n>>] [--limit <n>] [--revision <spec>] [--verbose]
 #
 # Always invokes `svn log --xml`: SVN emits UTF-8 XML regardless of console
 # codepage / locale, avoiding mojibake (e.g. zh-TW commit messages turning

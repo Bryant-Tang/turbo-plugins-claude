@@ -28,7 +28,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ### Step 1 — 啟動 IIS Express
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/start-iis.{ps1,sh}` 帶 optional `-Project <path>` / `-Timeout <seconds>`。Script 流程:
+1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Start-Iis.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/start-iis.sh`)帶 optional `-Project <path>` / `-Timeout <seconds>`。Script 流程:
    - 偵測 `.csproj`(同 `tp-build`)
    - parse `<IISUrl>` 取 port / scheme
    - 計算 project identity hash + site name(`<csproj-stem>-<sha256前8字元>`)
@@ -57,7 +57,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 - 如果有跨 worktree self-heal 觸發,輸出含 `Stopping previous instance(s)`。
 - Manual: 兩次連續觸發 EnterWorktree 進同 worktree → `(Get-Item <apphost-target>).LastWriteTime` 兩次相同(idempotent skip 驗證;若有 Write-Verbose 輸出可見「idempotent skip: applicationhost.config already correct」)。
 - Manual: 設 `[run] listening_timeout_seconds = 0` 於 .turbo-plugin/config.toml → /tp-run 應採用 0 為值(立即 timeout),**不**退回 default 30。驗 ps1 + sh 兩條路徑行為一致。
-- Manual: 主 worktree 跑 `compute-project-identity.ps1` 記下 IDENTITY_HASH → 切到 peer worktree 跑同一個 → 兩值完全相同。不同 → 先修 Get-NormalizedAbsolutePath / git-common-dir 處理再跑 AE1。
+- Manual: 主 worktree 跑 `Get-ProjectIdentity.ps1` 記下 IDENTITY_HASH → 切到 peer worktree 跑同一個 → 兩值完全相同。不同 → 先修 Get-NormalizedAbsolutePath / git-common-dir 處理再跑 AE1。
 
 ## Test Scenarios
 

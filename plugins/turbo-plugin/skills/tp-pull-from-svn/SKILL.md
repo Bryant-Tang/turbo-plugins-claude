@@ -14,7 +14,7 @@ allowed-tools: Bash, Read
 
 ## Procedure
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/pull-from-svn.{ps1,sh}` 帶 `--branch <main|test-<n>>` 參數。
+1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Sync-FromSvn.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/sync-from-svn.sh`)帶 `--branch <main|test-<n>>` 參數。
 2. 解讀 script 輸出:
    - `Already up to date at SVN r<rev>` → 完成
    - `Pulled SVN r<rev> into <branch>` → 完成

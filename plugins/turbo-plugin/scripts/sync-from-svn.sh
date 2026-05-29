@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: pull-from-svn.sh --branch <main|test-<n>>
+# Usage: sync-from-svn.sh --branch <main|test-<n>>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

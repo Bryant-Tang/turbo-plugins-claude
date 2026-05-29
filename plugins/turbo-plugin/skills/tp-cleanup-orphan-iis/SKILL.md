@@ -12,7 +12,7 @@ allowed-tools: Bash, Read, Grep, AskUserQuestion
 
 清除因 worktree rename / project 搬移留下的孤兒 IIS Express instance 與 applicationhost.config `<site>` 條目。turbo-plugin 以 `<csproj-stem>-<sha256前8字元>` 格式命名 site,hash 改變後舊條目 / 舊 process 不會自動清除。
 
-實際掃描與移除動作都在 `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-orphan-iis.ps1`(Windows-only;非 Windows 沒有 IIS Express)。Skill 只負責呼叫 script、解析輸出、跟使用者確認後再次呼叫 script 執行刪除。
+實際掃描與移除動作都在 `${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1`(Windows-only;非 Windows 沒有 IIS Express)。Skill 只負責呼叫 script、解析輸出、跟使用者確認後再次呼叫 script 執行刪除。
 
 ## Procedure
 
@@ -33,7 +33,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 執行(無刪除參數;若使用者帶 `--project <path>` 則一併轉發 `-Project <path>`):
 
 ```
-${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-orphan-iis.ps1 [-Project <path>]
+${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 [-Project <path>]
 ```
 
 stdout 會是以下其中之一:
@@ -68,8 +68,8 @@ Parse into `{ site_name: string, kind: 'process'|'xml'|'both', pid: number|null 
 
 ### Step 3 — 執行清除
 
-- 若使用者選「全部清除」,執行:`${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-orphan-iis.ps1 -RemoveAll`
-- 否則對每個被勾選的 site 依序執行:`${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-orphan-iis.ps1 -RemoveSite <site_name>`
+- 若使用者選「全部清除」,執行:`${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 -RemoveAll`
+- 否則對每個被勾選的 site 依序執行:`${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 -RemoveSite <site_name>`
 
 把 script 的 stdout / stderr 直接呈現給使用者。
 
@@ -89,7 +89,7 @@ Both `-RemoveSite` and `-RemoveAll` honor the same exit code contract. For the a
 
 ## Completion Checks
 
-- 對使用者選擇要刪除的每個 site:再跑一次 `cleanup-orphan-iis.ps1`(不帶刪除參數)的 stdout 應不再包含對應 `ORPHAN:` 行。
+- 對使用者選擇要刪除的每個 site:再跑一次 `Remove-OrphanIis.ps1`(不帶刪除參數)的 stdout 應不再包含對應 `ORPHAN:` 行。
 - 未被選到的孤兒應仍出現在重跑後的列表中(只移除使用者明確選擇的項目)。
 
 ## Test Scenarios
