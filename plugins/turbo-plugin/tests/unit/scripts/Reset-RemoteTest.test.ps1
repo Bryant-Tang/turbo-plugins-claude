@@ -1,6 +1,6 @@
 ﻿# reset-remote-test.Tests.ps1
 #
-# Hand-rolled tests for plugins/turbo-plugin/scripts/reset-remote-test.ps1.
+# Hand-rolled tests for plugins/turbo-plugin/scripts/Reset-RemoteTest.ps1.
 #
 # Scope (U4 plan):
 #   - happy:               test-N branch ahead of main → reset → test-N HEAD = main HEAD
@@ -20,7 +20,7 @@ $libDir = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot,
 Reset-Counters
 
 $pluginRoot      = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'reset-remote-test.ps1')
+$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Reset-RemoteTest.ps1')
 
 if (-not [System.IO.File]::Exists($scriptUnderTest)) {
     Write-Output "[FAIL] reset-remote-test.ps1 not found at $scriptUnderTest"

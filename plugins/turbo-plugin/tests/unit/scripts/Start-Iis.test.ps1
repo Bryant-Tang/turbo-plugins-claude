@@ -1,6 +1,6 @@
 ﻿# start-iis.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/start-iis.ps1
+# Script: plugins/turbo-plugin/scripts/Start-Iis.ps1
 # Behavior:
 #   - Defensive layer:.turbo-plugin/config.toml [iis] enabled = false → throw with bilingual msg
 #   - Else:resolve IIS settings → render temp apphost.config (placeholder substitution) → launch
@@ -45,7 +45,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'start-iis.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Start-Iis.ps1')
 
 $testRoot = 'C:\Turbo\test-turbo-plugin'
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')

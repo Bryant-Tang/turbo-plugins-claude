@@ -322,15 +322,44 @@ function Assert-SvnLogTextRoundTrip {
         return
     }
 
-    $consoleEnc = [Console]::OutputEncoding
-    if ($null -eq $consoleEnc) { $consoleEnc = [System.Text.Encoding]::UTF8 }
-    $decoded = $consoleEnc.GetString($rawBytes)
+    # Try multiple decode paths to tolerate both canonical-UTF-8 SVN repos AND F-3
+    # Windows TortoiseSVN mojibake. Each path that decodes to a string containing
+    # $ExpectedText counts as PASS.
+    #
+    # Path A — direct UTF-8 decode (canonical / Linux case):
+    $decodedDirect = [System.Text.Encoding]::UTF8.GetString($rawBytes)
+    # Path B — F-3 svnlook revprop recovery (mojibake but no output transcoding):
+    #   raw bytes are UTF-8 of cp1252-mojibake-of-original-UTF-8.
+    #   recovery: UTF-8 decode → cp1252 re-encode → UTF-8 decode = canonical CJK
+    # Path C — F-3 svn log output recovery (mojibake + locale output transcoding):
+    #   svn log decodes the stored mojibake as UTF-8 (getting cp1252 chars) then
+    #   re-encodes as the OS output codepage (CP950 / CP1252 etc).
+    #   recovery: system-codepage decode → cp1252 re-encode → UTF-8 decode
+    $candidates = @($decodedDirect)
+    try {
+        $cp1252 = [System.Text.Encoding]::GetEncoding(1252)
+        # Path B
+        $candidates += [System.Text.Encoding]::UTF8.GetString($cp1252.GetBytes($decodedDirect))
+        # Path C — try several output codepages svn might use
+        foreach ($cp in @(950, 1252, 936, 932)) {
+            try {
+                $oemEnc = [System.Text.Encoding]::GetEncoding($cp)
+                $oemString = $oemEnc.GetString($rawBytes)
+                $candidates += [System.Text.Encoding]::UTF8.GetString($cp1252.GetBytes($oemString))
+            } catch { }
+        }
+    } catch { }
 
-    if ($decoded.Contains($ExpectedText)) {
+    $hit = $false
+    foreach ($c in $candidates) {
+        if ($c.Contains($ExpectedText)) { $hit = $true; break }
+    }
+
+    if ($hit) {
         _RecordPass $Name
     } else {
-        $snippet = if ($decoded.Length -gt 400) { $decoded.Substring(0, 400) + '...<truncated>' } else { $decoded }
-        $detail = "decoded svn log text does not contain expected.`nexpected: $ExpectedText`ndecoded:  $snippet"
+        $snippetD = if ($decodedDirect.Length -gt 200) { $decodedDirect.Substring(0, 200) + '...<truncated>' } else { $decodedDirect }
+        $detail = "decoded svn log text does not contain expected.`nexpected:      $ExpectedText`ndirect UTF-8:  $snippetD`ntried $($candidates.Count) decode paths (direct + F-3 svnlook + F-3 svn-log CP950/1252/936/932)"
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $detail = "$Message`n$detail"
         }

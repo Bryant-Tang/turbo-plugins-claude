@@ -1,6 +1,6 @@
 ﻿# compute-project-identity.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/compute-project-identity.ps1
+# Script: plugins/turbo-plugin/scripts/Get-ProjectIdentity.ps1
 #
 # Cases:
 #   1. Happy: 標準 .csproj + git common-dir 下,output 含 PROJECT/IDENTITY_HASH/SITE_NAME，
@@ -44,7 +44,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'compute-project-identity.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Get-ProjectIdentity.ps1')
 if (-not [System.IO.File]::Exists($ScriptUnderTest)) {
     Write-Output "  [FAIL] script-under-test not found: $ScriptUnderTest"
     exit 1

@@ -11,7 +11,7 @@ set -u
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT="$PLUGIN_ROOT/scripts/push-to-svn-commit.sh"
+SCRIPT="$PLUGIN_ROOT/scripts/submit-svn-commit.sh"
 
 passed=0
 failed=0

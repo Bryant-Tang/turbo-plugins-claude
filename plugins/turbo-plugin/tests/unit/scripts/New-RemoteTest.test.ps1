@@ -1,6 +1,6 @@
 ﻿# create-remote-test.Tests.ps1
 #
-# Hand-rolled tests for plugins/turbo-plugin/scripts/create-remote-test.ps1.
+# Hand-rolled tests for plugins/turbo-plugin/scripts/New-RemoteTest.ps1.
 #
 # Scope (U4 plan):
 #   - missing arg:  -SvnUrl required → script throws.
@@ -27,7 +27,7 @@ $libDir = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot,
 Reset-Counters
 
 $pluginRoot      = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'create-remote-test.ps1')
+$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'New-RemoteTest.ps1')
 
 if (-not [System.IO.File]::Exists($scriptUnderTest)) {
     Write-Output "[FAIL] create-remote-test.ps1 not found at $scriptUnderTest"

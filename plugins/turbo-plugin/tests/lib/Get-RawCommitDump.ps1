@@ -36,7 +36,10 @@ if ($repoArg -notmatch '^[a-z]+://') {
 # string 轉換 (那會經過 [Console]::OutputEncoding，丟掉原 bytes 資訊)。
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName               = 'svn'
-$psi.Arguments              = "log -r $RevN `"$repoArg`""
+# `svn log --xml` returns canonical UTF-8 XML regardless of locale/console codepage.
+# Non-XML svn log transcodes msg bytes through the system OEM codepage on Windows,
+# losing F-3 mojibake fidelity. XML form preserves the stored bytes as UTF-8.
+$psi.Arguments              = "log -r $RevN --xml `"$repoArg`""
 $psi.UseShellExecute        = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError  = $true

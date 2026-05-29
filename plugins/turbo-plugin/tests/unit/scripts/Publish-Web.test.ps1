@@ -1,6 +1,6 @@
 ﻿# publish-web.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/publish-web.ps1
+# Script: plugins/turbo-plugin/scripts/Publish-Web.ps1
 # Behavior: 找 csproj → 找 MSBuild → 找 .pubxml → pack-content → msbuild /p:DeployOnBuild=true
 #
 # 同 build-web,script **沒有** [iis] enabled gate。SKILL.md 是 gatekeeper。
@@ -36,7 +36,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'publish-web.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Publish-Web.ps1')
 
 function New-Sandbox { param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)

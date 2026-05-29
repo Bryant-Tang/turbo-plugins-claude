@@ -1,6 +1,6 @@
 ﻿# push-to-svn-commit.Tests.ps1
 #
-# Hand-rolled tests for plugins/turbo-plugin/scripts/push-to-svn-commit.ps1.
+# Hand-rolled tests for plugins/turbo-plugin/scripts/Submit-SvnCommit.ps1.
 #
 # Scope (U4 plan):
 #   - missing -Branch → required-arg error
@@ -22,7 +22,7 @@ $libDir = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot,
 Reset-Counters
 
 $pluginRoot      = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'push-to-svn-commit.ps1')
+$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Submit-SvnCommit.ps1')
 
 if (-not [System.IO.File]::Exists($scriptUnderTest)) {
     Write-Output "[FAIL] push-to-svn-commit.ps1 not found at $scriptUnderTest"

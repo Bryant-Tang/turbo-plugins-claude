@@ -7,7 +7,7 @@ set -uo pipefail  # not -e: we capture exit codes ourselves
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/compute-project-identity.sh"
+SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/get-project-identity.sh"
 
 passed=0
 failed=0

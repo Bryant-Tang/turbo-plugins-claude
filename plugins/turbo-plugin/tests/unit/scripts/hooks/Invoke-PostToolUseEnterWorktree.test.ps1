@@ -1,6 +1,6 @@
 ﻿# posttooluse-enterworktree.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/hooks/posttooluse-enterworktree.ps1
+# Script: plugins/turbo-plugin/scripts/hooks/Invoke-PostToolUseEnterWorktree.ps1
 # Behavior: v1.0 (U3) — fully no-op. Drain stdin, emit empty JSON `{}`, exit 0.
 #   原本（v0.x）會把 .turbo-plugin/applicationhost.config 複製進 .vs/<sln>/config/,
 #   v1.0 separates concerns（canonical / runtime / VS UI 三層分離），hook 無事可做。
@@ -22,7 +22,7 @@ $LibPath = [System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..', 'lib', 'As
 Reset-Counters
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'hooks', 'posttooluse-enterworktree.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'hooks', 'Invoke-PostToolUseEnterWorktree.ps1')
 
 function New-Sandbox { param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)

@@ -1,6 +1,6 @@
 ﻿# push-to-svn-prepare.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/push-to-svn-prepare.ps1
+# Script: plugins/turbo-plugin/scripts/Build-SvnCommit.ps1
 # Behavior: 從 main worktree (cwd) 與 remote-<branch> worktree 對比;準備 push 的 git→svn
 #   bridge (merge git branch into remote-* worktree)。Read-mostly,但會跑 svn-side commands。
 #
@@ -34,7 +34,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'push-to-svn-prepare.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Build-SvnCommit.ps1')
 
 # The fixture has been reset by Run-Phase1 (Reset-Fixture.ps1) prior to invocation.
 $testRoot = 'C:\Turbo\test-turbo-plugin'

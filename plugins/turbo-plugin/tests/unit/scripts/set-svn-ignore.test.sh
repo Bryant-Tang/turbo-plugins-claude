@@ -12,7 +12,7 @@ set -u
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT="$PLUGIN_ROOT/scripts/svn-ignore.sh"
+SCRIPT="$PLUGIN_ROOT/scripts/set-svn-ignore.sh"
 
 passed=0
 failed=0

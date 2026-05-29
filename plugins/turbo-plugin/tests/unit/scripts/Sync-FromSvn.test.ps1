@@ -1,6 +1,6 @@
 ﻿# pull-from-svn.Tests.ps1
 #
-# Hand-rolled tests for plugins/turbo-plugin/scripts/pull-from-svn.ps1.
+# Hand-rolled tests for plugins/turbo-plugin/scripts/Sync-FromSvn.ps1.
 #
 # Scope (U4 plan):
 #   - missing -Branch arg → fail-loudly
@@ -27,7 +27,7 @@ $libDir = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot,
 Reset-Counters
 
 $pluginRoot      = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'pull-from-svn.ps1')
+$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Sync-FromSvn.ps1')
 $resetScript     = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'reset', 'Reset-Fixture.ps1'))
 $dumpPath        = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'seed', 'svn-repo-r1-r20.dump'))
 

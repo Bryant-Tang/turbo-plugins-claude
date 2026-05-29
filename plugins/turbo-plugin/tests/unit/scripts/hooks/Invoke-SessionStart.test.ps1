@@ -1,6 +1,6 @@
 ﻿# sessionstart.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/hooks/sessionstart.ps1
+# Script: plugins/turbo-plugin/scripts/hooks/Invoke-SessionStart.ps1
 # Behavior: 3-branch advisory hook(全部走 advisory message,不會 block session):
 #   pre-check (1) — 非 git work tree → silent emit `{}` exit 0
 #   pre-check (2) — 在 git submodule → silent emit `{}` exit 0
@@ -30,7 +30,7 @@ $LibPath = [System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..', 'lib', 'As
 Reset-Counters
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'hooks', 'sessionstart.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'hooks', 'Invoke-SessionStart.ps1')
 
 function New-Sandbox { param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)

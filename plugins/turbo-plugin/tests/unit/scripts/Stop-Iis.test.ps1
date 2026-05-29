@@ -1,6 +1,6 @@
 ﻿# stop-iis.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/stop-iis.ps1
+# Script: plugins/turbo-plugin/scripts/Stop-Iis.ps1
 # Behavior: 跑 [iis] enabled gate;若 enabled,從 CIM 找 iisexpress.exe 並用 /site:<name> match 殺。
 #   無 instance → echo 提示 + exit 0;temp apphost 也順便清掉。
 #
@@ -35,7 +35,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'stop-iis.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Stop-Iis.ps1')
 
 $testRoot = 'C:\Turbo\test-turbo-plugin'
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')

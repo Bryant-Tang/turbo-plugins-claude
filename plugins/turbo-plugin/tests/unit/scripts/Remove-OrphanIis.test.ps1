@@ -1,6 +1,6 @@
 ﻿# cleanup-orphan-iis.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/cleanup-orphan-iis.ps1
+# Script: plugins/turbo-plugin/scripts/Remove-OrphanIis.ps1
 # Behavior: 找與 current site name 不同 hash 的 stale iisexpress 進程 + 沒人在用的 temp apphost 檔。
 #   無 orphan → exit 0 + echo「No orphan...」。
 #
@@ -40,7 +40,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'cleanup-orphan-iis.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Remove-OrphanIis.ps1')
 
 $testRoot = 'C:\Turbo\test-turbo-plugin'
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')

@@ -5,7 +5,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/cleanup-orphan-iis.sh"
+SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/remove-orphan-iis.sh"
 TEST_ROOT="/c/Turbo/test-turbo-plugin"
 CFG="$TEST_ROOT/.turbo-plugin/config.toml"
 

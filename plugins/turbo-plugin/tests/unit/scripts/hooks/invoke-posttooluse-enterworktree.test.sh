@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# invoke-posttooluse-enterworktree.test.sh — bash sibling for posttooluse-enterworktree.sh (v1.0 no-op hook)
+# invoke-posttooluse-enterworktree.test.sh — bash sibling for invoke-posttooluse-enterworktree.sh (v1.0 no-op hook)
 #
 # Behavior: 在 Windows / Git Bash 把 stdin pipe 給 .ps1 native impl;非 Windows
 # 直接印 `{}` exit 0。兩條路徑 always exit 0(hook 是 advisory,不可 block session)。
@@ -11,7 +11,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
-SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/hooks/posttooluse-enterworktree.sh"
+SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/hooks/invoke-posttooluse-enterworktree.sh"
 
 passed=0
 failed=0
@@ -58,7 +58,7 @@ assert_match 'case2: 中文 cwd stdout empty JSON' '^\{[[:space:]]*\}[[:space:]]
 rm_sandbox "$sb2"
 
 echo ""
-echo "posttooluse-enterworktree.sh.test: passed=$passed failed=$failed"
+echo "invoke-posttooluse-enterworktree.sh.test: passed=$passed failed=$failed"
 if (( failed > 0 )); then echo "FAIL"; exit 1; fi
 echo "OK"
 exit 0

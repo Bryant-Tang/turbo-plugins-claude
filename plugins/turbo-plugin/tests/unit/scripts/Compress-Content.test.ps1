@@ -1,6 +1,6 @@
 ﻿# pack-content.Tests.ps1
 #
-# Hand-rolled tests for plugins/turbo-plugin/scripts/pack-content.ps1.
+# Hand-rolled tests for plugins/turbo-plugin/scripts/Compress-Content.ps1.
 #
 # Scope (U4 plan):
 #   - no [frontend] section in config.toml → skip + exit 0
@@ -22,7 +22,7 @@ $libDir = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot,
 Reset-Counters
 
 $pluginRoot      = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'pack-content.ps1')
+$scriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Compress-Content.ps1')
 $baseDir         = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'base'))
 $resetScript     = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'reset', 'Reset-Fixture.ps1'))
 

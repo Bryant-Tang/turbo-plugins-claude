@@ -1,6 +1,6 @@
 ﻿# get-target-url.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/get-target-url.ps1
+# Script: plugins/turbo-plugin/scripts/Get-TargetUrl.ps1
 # Behavior: 從 csproj 的 <IISUrl> 解析 URL,Resolve-IisSettings 提供
 #   IisUrl;script 直接 echo「IIS URL: <url>」。
 #
@@ -35,7 +35,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'get-target-url.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Get-TargetUrl.ps1')
 
 function New-Sandbox {
     param([string]$Purpose)

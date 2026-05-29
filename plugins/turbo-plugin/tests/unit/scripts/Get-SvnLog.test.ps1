@@ -1,6 +1,6 @@
 ﻿# svn-log.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/svn-log.ps1
+# Script: plugins/turbo-plugin/scripts/Get-SvnLog.ps1
 # Behavior: 走 main worktree → `<proj>.worktrees/remote-<branch>` → 跑 `svn log --xml`,parse XML
 #   後 emit「rN | author | date | msg」+ trailer `# LAST_SHOWN_REV=<minRev>`。
 #
@@ -38,7 +38,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'svn-log.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Get-SvnLog.ps1')
 
 $testRoot = 'C:\Turbo\test-turbo-plugin'
 # Reset-Fixture (F5 fix 2026-05-28)已改為直接創 sibling layout

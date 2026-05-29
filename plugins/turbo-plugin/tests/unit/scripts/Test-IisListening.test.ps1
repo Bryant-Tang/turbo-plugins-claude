@@ -1,6 +1,6 @@
 ﻿# check-iis-listening.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/check-iis-listening.ps1
+# Script: plugins/turbo-plugin/scripts/Test-IisListening.ps1
 # Behavior: 由 Resolve-IisSettings 取 port,然後 netstat -ano 篩出 ":<port>" + LISTENING 行;
 #   無 listening 則 exit 1 + 寫對應訊息 stdout。
 #
@@ -38,7 +38,7 @@ function Invoke-GitSilent {
 }
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'check-iis-listening.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Test-IisListening.ps1')
 
 function New-Sandbox { param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)

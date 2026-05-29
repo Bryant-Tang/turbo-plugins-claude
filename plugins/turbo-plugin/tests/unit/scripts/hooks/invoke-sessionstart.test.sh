@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# invoke-sessionstart.test.sh — bash sibling for sessionstart.sh (3-branch advisory hook)
+# invoke-sessionstart.test.sh — bash sibling for invoke-sessionstart.sh (3-branch advisory hook)
 #
 # Behavior on Windows / Git Bash: delegate to .ps1 native impl(同樣的 3 條 branch)。
 # 在 Linux / macOS:跑 .sh native impl(branch i applicationhost.config 跳過,
@@ -14,7 +14,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
-SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/hooks/sessionstart.sh"
+SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/hooks/invoke-sessionstart.sh"
 
 passed=0
 failed=0
@@ -94,7 +94,7 @@ assert_match 'case3: 訊息提到 /tp-setup' '/tp-setup' "$out3"
 rm_sandbox "$sb3"
 
 echo ""
-echo "sessionstart.sh.test: passed=$passed failed=$failed"
+echo "invoke-sessionstart.sh.test: passed=$passed failed=$failed"
 if (( failed > 0 )); then echo "FAIL"; exit 1; fi
 echo "OK"
 exit 0

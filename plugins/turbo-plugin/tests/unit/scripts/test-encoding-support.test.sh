@@ -4,7 +4,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/check-encoding-support.sh"
+SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/test-encoding-support.sh"
 
 passed=0
 failed=0

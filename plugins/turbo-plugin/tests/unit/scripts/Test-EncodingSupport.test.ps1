@@ -1,6 +1,6 @@
 ﻿# check-encoding-support.Tests.ps1
 #
-# Script: plugins/turbo-plugin/scripts/check-encoding-support.ps1
+# Script: plugins/turbo-plugin/scripts/Test-EncodingSupport.ps1
 # Behavior: Emit PS_VERSION / ANSI_CODEPAGE / OEM_CODEPAGE / ARGV_SAFE_FOR_UNICODE / RECOMMENDATION;
 #   非 UTF-8 ANSI → 額外印 WARNING + 3-選一 (a) (b) (c) 建議。
 #
@@ -17,7 +17,7 @@ $LibPath = [System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'lib', 'AssertHe
 Reset-Counters
 
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'check-encoding-support.ps1')
+$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Test-EncodingSupport.ps1')
 
 function Invoke-Script {
     $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
