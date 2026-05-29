@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# reset_fixture.sh
+# reset-fixture.sh
 #
 # Bash equivalent of Reset-Fixture.ps1. Uses rsync -a --delete instead of robocopy.
 #

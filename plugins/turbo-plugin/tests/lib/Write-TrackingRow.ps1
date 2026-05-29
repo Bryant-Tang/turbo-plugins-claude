@@ -1,8 +1,8 @@
-﻿# Emit-TrackingRow.ps1
+﻿# Write-TrackingRow.ps1
 #
-# 把一個 Phase 1 case 結果 append 為一個 Markdown table row 到 tracking doc 對應
+# 把一個 script test case 結果 append 為一個 Markdown table row 到 tracking doc 對應
 # section 下方。Schema 對應 plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md
-# 的 `## Tracking schema` 段:
+# (U7 會 rename 為 script-tests-schema.md)的 `## Tracking schema` 段:
 #
 #   | case ID | section | fixture | expected | actual | result | evidence |
 #
@@ -12,21 +12,21 @@
 #      若 section 下方還沒有 table，補一個 markdown table header 再 append。
 #   3. Cell 內 escape:literal `|` → `\|`，newline (`\r\n` / `\n`) → `<br>`。
 #   4. Append-only:絕不蓋掉既有 row;同 case ID 跑多次會留多 row (R29 後寫者
-#      authoritative 由 Get-Phase1Status 處理)。
+#      authoritative 由 Get-ScriptTestStatus 處理)。
 #
 # Result 允許值:`PASS` / `FAIL` / `FAIL-known` / `SKIP` / `BLOCKED-BY:<id>`
-# (Get-Phase1Status.ps1 統計時依此 enum 分桶)
+# (Get-ScriptTestStatus.ps1 統計時依此 enum 分桶)
 #
-# 用法 (caller — Run-Phase1.ps1 — 透過 -RunDir 算出 -TargetDoc 路徑後傳入):
-#   & .\Emit-TrackingRow.ps1 `
+# 用法 (caller — Invoke-ScriptTests.ps1 — 透過 -RunDir 算出 -TargetDoc 路徑後傳入):
+#   & .\Write-TrackingRow.ps1 `
 #     -CaseId    'P1-svn-log-中文' `
 #     -Section   'svn-log' `
 #     -Fixture   'fresh-base + r5 中文 commit' `
 #     -Expected  'stdout 顯示 r5 訊息 byte-level 等於字典 3.1' `
 #     -Actual    'exit 0;byte-compare OK' `
 #     -Result    'PASS' `
-#     -Evidence  '<RunDir>/_artifacts/phase1/svn-log/zh.nunit.xml' `
-#     -TargetDoc '<RunDir>/phase1-results.md'
+#     -Evidence  '<RunDir>/_artifacts/svn-log/zh.nunit.xml' `
+#     -TargetDoc '<RunDir>/script-tests-results.md'
 
 [CmdletBinding()]
 param(
@@ -147,4 +147,4 @@ $out = ($newLines -join "`n")
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($TargetDoc, $out, $utf8NoBom)
 
-Write-Output "Emitted row to '### $Section' in $TargetDoc"
+Write-Output "Wrote row to '### $Section' in $TargetDoc"

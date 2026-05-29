@@ -1,6 +1,6 @@
-﻿# Meta-test for Assert-Helpers.ps1 itself.
+﻿# Meta-test for AssertHelpers.ps1 itself.
 #
-# 為什麼:Phase 1 把 case 結果歸 PASS / FAIL 完全靠這幾個 helper。如果它們本身有
+# 為什麼:script tests 把 case 結果歸 PASS / FAIL 完全靠這幾個 helper。如果它們本身有
 # bug (例如 Assert-Equal 把 $null vs '' 當相等),所有 case 結果都不可信。本檔對
 # 每個 helper 都跑 known-pass 與 known-fail 兩種 input,確認:
 #   * 真正應該 PASS 的 input 不會被誤判 FAIL
@@ -20,10 +20,10 @@ $ErrorActionPreference = 'Stop'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Locate Assert-Helpers.ps1 relative to this file
-$assertLib = [System.IO.Path]::Combine($PSScriptRoot, 'Assert-Helpers.ps1')
+# Locate AssertHelpers.ps1 relative to this file
+$assertLib = [System.IO.Path]::Combine($PSScriptRoot, 'AssertHelpers.ps1')
 if (-not [System.IO.File]::Exists($assertLib)) {
-    Write-Error "Assert-Helpers.ps1 not found at $assertLib"
+    Write-Error "AssertHelpers.ps1 not found at $assertLib"
     exit 1
 }
 . $assertLib
@@ -54,7 +54,7 @@ function Meta-Assert {
 
 function Run-WithInnerCounters {
     param([scriptblock]$Block)
-    # 把 $script:Passed/Failed 借走 (它們就是 Assert-Helpers 用的 module-scope counter),
+    # 把 $script:Passed/Failed 借走 (它們就是 AssertHelpers 用的 module-scope counter),
     # 跑完 capture 狀態,然後還原。
     $savedPassed   = $script:Passed
     $savedFailed   = $script:Failed
@@ -248,7 +248,7 @@ try {
 
 Write-Output ''
 Write-Output '─────────────────────────────────────────────────────────────────────'
-Write-Output "test_assert_helpers: meta_passed=$meta_passed meta_failed=$meta_failed"
+Write-Output "AssertHelpers.test: meta_passed=$meta_passed meta_failed=$meta_failed"
 if ($meta_failed -gt 0) {
     Write-Output ''
     Write-Output 'Meta-failures:'

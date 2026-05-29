@@ -1,7 +1,7 @@
 ﻿# Get-RawCommitDump.ps1
 #
 # 從 SVN repo 對指定 revision 取 commit message 的 raw bytes / decoded text。
-# 給 Assert-SvnLogTextRoundTrip 與 U4 Phase 1 中文 case 使用。
+# 給 Assert-SvnLogTextRoundTrip 與 script tests 中文 case 使用。
 #
 # 為什麼需要 raw bytes:
 #   PS 5.1 + Windows console (Big5 / CP950) 處理 `svn log` stdout 的 codepage 在不同

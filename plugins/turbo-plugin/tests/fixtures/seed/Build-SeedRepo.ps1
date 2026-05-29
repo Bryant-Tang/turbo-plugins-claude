@@ -1,6 +1,6 @@
-﻿# build-seed-repo.ps1
+﻿# Build-SeedRepo.ps1
 #
-# Idempotent seed builder for turbo-plugin v1.0 Phase 1 SVN fixture.
+# Idempotent seed builder for turbo-plugin v1.0 script tests SVN fixture.
 #
 # 產出:
 #   plugins/turbo-plugin/tests/fixtures/seed/svn-repo-r1-r20.dump

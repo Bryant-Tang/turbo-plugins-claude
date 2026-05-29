@@ -1,6 +1,6 @@
-﻿# Get-Phase1Status.ps1
+﻿# Get-ScriptTestStatus.ps1
 #
-# 讀 caller 傳入的 -TargetDoc(通常為 <RunDir>/phase1-results.md)的 tracking row,
+# 讀 caller 傳入的 -TargetDoc(通常為 <RunDir>/script-tests-results.md)的 tracking row,
 # 統計 PASS / FAIL / FAIL-known / SKIP / BLOCKED-BY 各幾個,輸出 console summary,
 # 並回傳合適 exit code。
 #
@@ -12,7 +12,7 @@
 # R29 dedup:同 case ID 跑多次留多 row → 取最後一個為 authoritative。
 #
 # 用法:
-#   & .\Get-Phase1Status.ps1 -TargetDoc 'plugins/turbo-plugin/tests/runs/v1.0.0/phase1-results.md'
+#   & .\Get-ScriptTestStatus.ps1 -TargetDoc 'plugins/turbo-plugin/tests/runs/v1.0.0/script-tests-results.md'
 
 [CmdletBinding()]
 param(
@@ -79,7 +79,7 @@ foreach ($k in $rowsByCase.Keys) {
 
 Write-Output ''
 Write-Output '─────────────────────────────────────────────────────────────────────'
-Write-Output "Phase 1 status (source: $TargetDoc)"
+Write-Output "Script tests status (source: $TargetDoc)"
 Write-Output '─────────────────────────────────────────────────────────────────────'
 Write-Output "  Total unique cases:  $total"
 Write-Output "  PASS:                $pass"

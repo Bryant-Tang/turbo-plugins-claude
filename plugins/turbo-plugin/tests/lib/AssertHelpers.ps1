@@ -1,6 +1,6 @@
-﻿# Assert-Helpers.ps1
+﻿# AssertHelpers.ps1
 #
-# 純手刻的 assertion helper library，給 turbo-plugin v1.0 Phase 1 測試使用。
+# 純手刻的 assertion helper library，給 turbo-plugin v1.0 script tests 使用。
 #
 # 設計取捨 (plan correction F-1):
 #   Plan 原本 mention Pester 3.4，但 doc-review 確認 Pester 3.4 的
@@ -37,7 +37,7 @@
 #   - Get-CounterSummary                回傳 hashtable @{ Passed=N; Failed=N; Failures=@(...) }
 #
 # 用法 (在 test .ps1 裡):
-#   . "$PSScriptRoot\..\lib\Assert-Helpers.ps1"
+#   . "$PSScriptRoot\..\lib\AssertHelpers.ps1"
 #   Reset-Counters
 #   Assert-Equal -Name 'foo' -Expected 1 -Actual 1
 #   ...

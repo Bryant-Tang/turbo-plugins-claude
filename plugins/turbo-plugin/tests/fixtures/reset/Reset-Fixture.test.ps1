@@ -1,7 +1,8 @@
-﻿# test_reset_fixture.ps1
+﻿# Reset-Fixture.test.ps1
 #
 # Hand-rolled assertion tests for Reset-Fixture.ps1 (style matches
-# plugins/turbo-plugin/tests/unit/scripts-lib/test_resolve_config_value_merge.ps1).
+# plugins/turbo-plugin/tests/unit/scripts-lib/test_resolve_config_value_merge.ps1
+# — that file is renamed/merged in U6).
 #
 # 不用 Pester。直接 Describe-less script with Assert-Equal / Assert-True / counters.
 #
@@ -24,10 +25,10 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # ─── Locate sibling scripts ───────────────────────────────────────────────────
 #
-# <repo>/plugins/turbo-plugin/tests/fixtures/reset/test_reset_fixture.ps1
+# <repo>/plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.test.ps1
 #   -> ../base                                       (base fixture dir)
 #   -> ./Reset-Fixture.ps1                           (system under test)
-#   -> ../seed/svn-repo-r1-r20.dump                  (seed dump produced by build-seed-repo.ps1)
+#   -> ../seed/svn-repo-r1-r20.dump                  (seed dump produced by Build-SeedRepo.ps1)
 
 $resetScript = [System.IO.Path]::Combine($PSScriptRoot, 'Reset-Fixture.ps1')
 $baseDir     = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'base'))
@@ -46,7 +47,7 @@ $dumpExists = Test-Path -LiteralPath $dumpPath -PathType Leaf
 if (-not $dumpExists) {
     Write-Output "NOTE: seed dump not found at $dumpPath."
     Write-Output "      Scenarios using -SkipSvn will run; SVN-touching scenarios (4) will be SKIPped."
-    Write-Output "      Run plugins/turbo-plugin/tests/fixtures/seed/build-seed-repo.ps1 first for full coverage."
+    Write-Output "      Run plugins/turbo-plugin/tests/fixtures/seed/Build-SeedRepo.ps1 first for full coverage."
     Write-Output ""
 }
 
@@ -270,7 +271,7 @@ try {
 Write-Output ''
 Write-Output 'Scenario 4: SVN seed 中文 commit msg r5 byte-level == 字典 #3 第 1 條'
 if (-not $dumpExists) {
-    Mark-Skip -Name 'scenario 4' -Reason 'dump not yet built — run build-seed-repo.ps1 first'
+    Mark-Skip -Name 'scenario 4' -Reason 'dump not yet built — run Build-SeedRepo.ps1 first'
 } else {
     $sb4 = New-IsolatedFixtureRoot
     try {
@@ -301,7 +302,7 @@ if (-not $dumpExists) {
             $rawBytes = $rawAll[0..($rawAll.Length - 2)]
         }
 
-        # Expected message = dict #3 entry #1 (kept in sync with build-seed-repo.ps1 / phase1-scripts-schema.md)
+        # Expected message = dict #3 entry #1 (kept in sync with Build-SeedRepo.ps1 / phase1-scripts-schema.md)
         $expectedMsg = '修正中文 commit 訊息亂碼'
         $expectedBytes = [System.Text.Encoding]::UTF8.GetBytes($expectedMsg)
 
@@ -345,7 +346,7 @@ try {
 
 Write-Output ''
 Write-Output '─────────────────────────────────────────────────────────────────────'
-Write-Output "test_reset_fixture: passed=$script:Passed failed=$script:Failed skipped=$script:Skipped"
+Write-Output "Reset-Fixture.test: passed=$script:Passed failed=$script:Failed skipped=$script:Skipped"
 if ($script:Failed -gt 0) {
     Write-Output ''
     Write-Output 'Failures:'
