@@ -1,7 +1,7 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
-. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'common.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, '..', 'lib', 'Common.ps1'))
 
 function Emit-Json {
     param([hashtable]$Payload)

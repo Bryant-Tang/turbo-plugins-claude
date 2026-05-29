@@ -6,9 +6,9 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
-. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'applicationhost-helpers.ps1'))
-. (Join-Path $PSScriptRoot 'resolve-iis-settings.ps1')
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'ApplicationHostHelpers.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'IisHelpers.ps1'))
 
 function Find-IisInstanceByPort {
     param([string]$Port, [string]$ApphostConfigFile)
@@ -92,7 +92,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     if ([string]::IsNullOrWhiteSpace($settings.ApplicationhostConfigFile)) {
         throw "applicationhost.config 路徑無法解析。請執行 /tp-setup 建立 .turbo-plugin/applicationhost.config。"
     }
-    # Find-IisExpressPath (in resolve-iis-settings.ps1) throws on missing/invalid path
+    # Find-IisExpressPath (in lib/IisHelpers.ps1) throws on missing/invalid path
     # since v1.0 (U2); guard kept as defensive layer in case caller short-circuits the helper.
     if (-not (Test-Path -LiteralPath $settings.IisExpressPath -PathType Leaf)) {
         throw "IIS Express executable does not exist: $($settings.IisExpressPath)"

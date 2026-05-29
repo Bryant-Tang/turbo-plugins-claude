@@ -233,7 +233,7 @@ check_turbo_plugin_config_schema() {
 #
 # v1.0+ U1: config.local.toml (gitignored, machine-specific) is consulted BEFORE
 # config.toml so its key-level values override the canonical version-controlled file.
-# This is the bash equivalent of common.ps1's "read config.toml then merge local on top"
+# This is the bash equivalent of Common.ps1's "read config.toml then merge local on top"
 # — semantically identical for the get-one-key API surface.
 resolve_config_value() {
   local repo_root="$1"

@@ -6,7 +6,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
 
 try {
     Probe-GitVersion

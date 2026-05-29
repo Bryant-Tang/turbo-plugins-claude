@@ -38,7 +38,7 @@ turbo-plugin 唯一設定入口,自動偵測當前狀態並進入對應的 case�
 
 依以下順序,任一失敗就停下並回報:
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.ps1`(PowerShell)或 `common.sh`(Bash)的 `Probe-GitVersion` / `probe_git_version`。Git < 2.31 → fail loudly 帶升級提示。
+1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/lib/Common.ps1`(PowerShell)或 `common.sh`(Bash)的 `Probe-GitVersion` / `probe_git_version`。Git < 2.31 → fail loudly 帶升級提示。
 2. 跑 `git rev-parse --show-superproject-working-tree`。非空 → 拒跑,提示「submodule 不在 turbo-plugin 管理範圍內,請在 superproject root 設定」。
 
 #### 1.2 Encoding profile detect(zh-TW Windows 中文檔名 SVN 相容性)
@@ -258,8 +258,8 @@ Phase 3 把使用者本機環境(工具路徑、Claude Code 開發體驗功能)�
 
 | 項目 | 偵測方式 | 用途 |
 |---|---|---|
-| **MSBuild** | call `Find-MSBuild` from `${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.ps1`;throw 視為「未配置」(會問) | tp-build / tp-publish 前置 |
-| **IIS Express** | call `Find-IisExpressPath` from `${CLAUDE_PLUGIN_ROOT}/scripts/resolve-iis-settings.ps1`;throw 視為「未配置」(會問) | tp-run / tp-stop 前置 |
+| **MSBuild** | call `Find-MSBuild` from `${CLAUDE_PLUGIN_ROOT}/scripts/lib/Common.ps1`;throw 視為「未配置」(會問) | tp-build / tp-publish 前置 |
+| **IIS Express** | call `Find-IisExpressPath` from `${CLAUDE_PLUGIN_ROOT}/scripts/lib/IisHelpers.ps1`;throw 視為「未配置」(會問) | tp-run / tp-stop 前置 |
 | **dotnet SDK** | `dotnet --version`(exit code 0 + 非空 stdout 視為 ✓) | C# LSP server (`csharp-ls`) 安裝前置條件 |
 | **npm** | `npm --version`(exit code 0 + 非空 stdout 視為 ✓) | TS/JS LSP server (`typescript-language-server`) 安裝前置條件 |
 | **docker** | `docker --version`(exit code 0 視為 ✓) | dbhub MCP server 前置(僅提示) |

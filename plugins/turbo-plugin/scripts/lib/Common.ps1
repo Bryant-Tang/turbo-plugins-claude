@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 # Without this, Windows PowerShell 5.1 uses the system code page (Big5 / CP950 on Chinese
 # Windows), and output from native exes (svn / msbuild / iisexpress) that emit UTF-8
 # bytes renders as mojibake (`?` chars or garbage). Affects every script that
-# dot-sources common.ps1.
+# dot-sources Common.ps1.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 

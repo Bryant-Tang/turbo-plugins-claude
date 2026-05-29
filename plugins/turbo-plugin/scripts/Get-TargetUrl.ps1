@@ -5,8 +5,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
-. (Join-Path $PSScriptRoot 'resolve-iis-settings.ps1')
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'IisHelpers.ps1'))
 
 try {
     $settings = Resolve-IisSettings -Project $Project

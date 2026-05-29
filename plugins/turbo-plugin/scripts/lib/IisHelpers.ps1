@@ -1,7 +1,7 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'common.ps1'))
+. ([System.IO.Path]::Combine($PSScriptRoot, 'Common.ps1'))
 
 # Locate iisexpress.exe. Lookup order (v1.0+ U2 — strict cut, no env fallback):
 #   1. .turbo-plugin/config.local.toml [tools] iis_express_path  (machine-specific, gitignored)
