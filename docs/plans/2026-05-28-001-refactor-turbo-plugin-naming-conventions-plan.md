@@ -1,7 +1,7 @@
 ---
 date: 2026-05-28
 type: refactor
-status: active
+status: completed
 origin: docs/brainstorms/2026-05-28-turbo-plugin-naming-conventions-requirements.md
 ---
 
