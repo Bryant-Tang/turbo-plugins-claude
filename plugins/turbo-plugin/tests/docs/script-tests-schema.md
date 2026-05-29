@@ -1,21 +1,21 @@
-# Phase 1 — Script Test Tracking SCHEMA
+# Script tests — Tracking SCHEMA
 
-turbo-plugin v1.0+ PR-readiness Phase 1 自動測試的 **schema + 中文字典 + per-script
+turbo-plugin v1.0+ PR-readiness Script tests 自動測試的 **schema + 中文字典 + per-script
 section template**。本檔為持久 schema reference;per-release 的實際執行結果寫在
-`plugins/turbo-plugin/tests/runs/<release>/phase1-results.md`(由 `Run-Phase1.ps1`
-append rows)。
+`plugins/turbo-plugin/tests/runs/<release>/script-tests-results.md`(由
+`Invoke-ScriptTests.ps1` append rows)。
 
 > 本檔 **不會被 orchestrator append rows**;若看到 row 出現代表 -TargetDoc 設錯。
-> Per-release 執行結果應寫到 `runs/<release>/phase1-results.md`。
+> Per-release 執行結果應寫到 `runs/<release>/script-tests-results.md`。
 
 ---
 
 ## 中文 fixture 樣本
 
-下方 25 條為 turbo-plugin Phase 1 + Phase 2 測試共用的 **single source of truth**
+下方 25 條為 turbo-plugin Script tests + Skill tests 共用的 **single source of truth**
 中文字典。任何 script / SKILL / fixture 要用中文 sample 時都從這裡抽,不要 inline 自己的版本。
 
-`build-seed-repo.ps1` 內 `$zhDict` 必須與本表保持一致 (commit msg #1 / #2 / #3 對應
+`Build-SeedRepo.ps1` 內 `$zhDict` 必須與本表保持一致 (commit msg #1 / #2 / #3 對應
 SVN seed r5 / r10 / r15)。
 
 ### #1 路徑 (folder path 含中文)
@@ -42,9 +42,9 @@ SVN seed r5 / r10 / r15)。
 
 | # | 樣本 | SVN seed mapping |
 |---|---|---|
-| 3.1 | `修正中文 commit 訊息亂碼` | **r5** (build-seed-repo.ps1 `$Revisions[4].Msg`) |
-| 3.2 | `新增繁體中文範例文件` | **r10** (build-seed-repo.ps1 `$Revisions[9].Msg`) |
-| 3.3 | `重構伺服器組態載入流程` | **r15** (build-seed-repo.ps1 `$Revisions[14].Msg`) |
+| 3.1 | `修正中文 commit 訊息亂碼` | **r5** (Build-SeedRepo.ps1 `$Revisions[4].Msg`) |
+| 3.2 | `新增繁體中文範例文件` | **r10** (Build-SeedRepo.ps1 `$Revisions[9].Msg`) |
+| 3.3 | `重構伺服器組態載入流程` | **r15** (Build-SeedRepo.ps1 `$Revisions[14].Msg`) |
 | 3.4 | `處理 SVN 中文檔名相容性` | reserved for /tp-push-to-svn case |
 | 3.5 | `加入中文 Razor view 範本` | reserved for /tp-push-to-svn case |
 
@@ -54,7 +54,7 @@ SVN seed r5 / r10 / r15)。
 |---|---|---|
 | 4.1 | `// 中文註解:確認 HelloController 回傳值 byte-level 一致` | C# / JS line comment |
 | 4.2 | `// 中文註解:此函式處理中文 commit msg 的編碼問題` | C# / JS line comment |
-| 4.3 | `# 中文 PS 註解:本 script 由 build-seed-repo.ps1 產生` | PowerShell / Bash |
+| 4.3 | `# 中文 PS 註解:本 script 由 Build-SeedRepo.ps1 產生` | PowerShell / Bash |
 | 4.4 | `// 中文註解:相容 Big5 / CP950 Windows` | C# / JS line comment |
 | 4.5 | `// 中文註解:加入中文 string literal 測試` | C# / JS line comment |
 
@@ -72,7 +72,7 @@ SVN seed r5 / r10 / r15)。
 
 ## Tracking schema
 
-每個 phase 1 case 跑完後 orchestrator emit 一個 row 到 `runs/<release>/phase1-results.md`
+每個 Script tests case 跑完後 orchestrator emit 一個 row 到 `runs/<release>/script-tests-results.md`
 對應 script section。schema:
 
 | 欄 | 說明 |
@@ -90,7 +90,7 @@ SVN seed r5 / r10 / r15)。
 ```markdown
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-svn-log-中文 | svn-log | fresh-base + r5 中文 commit | stdout 顯示 r5 訊息 byte-level 等於字典 3.1 | exit 0;byte-compare OK | PASS | `<RunDir>/_artifacts/phase1/svn-log/zh.nunit.xml` |
+| P1-svn-log-中文 | svn-log | fresh-base + r5 中文 commit | stdout 顯示 r5 訊息 byte-level 等於字典 3.1 | exit 0;byte-compare OK | PASS | `<RunDir>/_artifacts/script-tests/svn-log/zh.nunit.xml` |
 | P1-svn-log-pagination | svn-log | fresh-base | 第 1 頁 5 筆 + `LAST_SHOWN_REV=16` trailer | exit 0;trailer 正確 | PASS | `... pagination.nunit.xml` |
 ```
 
@@ -101,7 +101,7 @@ SVN seed r5 / r10 / r15)。
 
 ## 預留 per-script section
 
-下方 18 個 script 各保留一個 section。Per-release runs/ 版本的 doc 在執行 `Run-Phase1.ps1`
+下方 18 個 script 各保留一個 section。Per-release runs/ 版本的 doc 在執行 `Invoke-ScriptTests.ps1`
 之後 emit row 到對應 section 下方。
 
 ### compute-project-identity

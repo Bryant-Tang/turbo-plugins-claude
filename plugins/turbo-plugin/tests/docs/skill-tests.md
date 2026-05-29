@@ -1,31 +1,31 @@
-# Phase 2 — Skill Manual Test Tracking SCHEMA
+# Skill tests — Manual Test Tracking SCHEMA
 
-turbo-plugin v1.0+ PR-readiness Phase 2 手動測試的 **schema + 14 skill case spec +
+turbo-plugin v1.0+ PR-readiness Skill tests 手動測試的 **schema + 14 skill case spec +
 prompt 範本 + 失敗 patterns**。本檔為持久 schema reference;per-release 的實際執行
-結果寫在 `plugins/turbo-plugin/tests/runs/<release>/phase2-results.md`(使用者跑每個
+結果寫在 `plugins/turbo-plugin/tests/runs/<release>/skill-tests-results.md`(使用者跑每個
 session 後手動 append rows)。
 
 > 本檔下方各 skill section 的 `### Row table` 保留為空 template,不會被填;
-> 實際 row 寫到 `runs/<release>/phase2-results.md`。
+> 實際 row 寫到 `runs/<release>/skill-tests-results.md`。
 
-Phase 2 case 由使用者貼 prompt 進 `C:\Turbo\test-turbo-plugin` 內的 Claude Code
+Skill tests case 由使用者貼 prompt 進 `C:\Turbo\test-turbo-plugin` 內的 Claude Code
 session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / FAIL / PARTIAL。
 
 > 中文 fixture 字典(#1 路徑 / #2 檔名 / #3 commit msg / #4 source 註解 /
 > #5 source string literal)— **single source of truth** 在
-> [`phase1-scripts-schema.md`](./phase1-scripts-schema.md) 開頭 `## 中文 fixture
+> [`script-tests-schema.md`](./script-tests-schema.md) 開頭 `## 中文 fixture
 > 樣本` section,本檔不重複(R19 inline 字典 reference)。
 
-> Phase 2 session 切分建議與 case-count 對照表見
-> [`phase2-session-plan.md`](./phase2-session-plan.md)。Phase 2 結束的 rollback
+> Skill tests session 切分建議與 case-count 對照表見
+> [`skill-tests-session-plan.md`](./skill-tests-session-plan.md)。Skill tests 結束的 rollback
 > 痕跡清單見 [`rollback-checklist.md`](./rollback-checklist.md)(per RBP Q3 = (b)
-> — Phase 2 全部跑完才一次性 rollback)。
+> — Skill tests 全部跑完才一次性 rollback)。
 
 ---
 
 ## Tracking schema
 
-每個 Phase 2 case 跑完後 orchestrator emit 一個 row 到下方對應 skill section。schema:
+每個 Skill tests case 跑完後 orchestrator emit 一個 row 到下方對應 skill section。schema:
 
 | 欄 | 說明 |
 |---|---|
@@ -1267,7 +1267,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ## Summary
 
-Phase 2 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
+Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
 
 | Skill | Cases | PASS | FAIL | SKIP / FAIL-known | 備註 |
 |---|---|---|---|---|---|

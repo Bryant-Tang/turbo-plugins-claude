@@ -1,14 +1,14 @@
-# Phase 2 結束 Rollback Checklist
+# Skill tests 結束 Rollback Checklist
 
-per RBP Q3 resolution = **(b)** — Phase 2 tp-setup 推薦項目實際安裝後**留到 Phase 2
-全部結束再一次性 rollback**(K-Decision trade-off 2)。本檔列出所有 Phase 2 期間
+per RBP Q3 resolution = **(b)** — Skill tests tp-setup 推薦項目實際安裝後**留到 Skill tests
+全部結束再一次性 rollback**(K-Decision trade-off 2)。本檔列出所有 Skill tests 期間
 留在使用者主機上的痕跡 + 對應的還原指令 + verify step。
 
-> 執行時機:`phase2-session-plan.md` 「Phase 2 結束 checklist」全部勾完之後。
+> 執行時機:`skill-tests-session-plan.md` 「Skill tests 結束 checklist」全部勾完之後。
 >
 > 執行者:使用者(orchestrator 引導,但實際指令要在使用者主機跑)。
 
-> **Pre-flight 備份**:Phase 2 開始前推薦使用者跑
+> **Pre-flight 備份**:Skill tests 開始前推薦使用者跑
 > `Copy-Item ~/.claude/settings.json ~/.claude/settings.json.pre-turbo-plugin-test`,
 > 完事後若這個 checklist 漏掉什麼可以直接還原。
 
@@ -88,12 +88,12 @@ per RBP Q3 resolution = **(b)** — Phase 2 tp-setup 推薦項目實際安裝後
 
 ### 2.1 移除 `env.ENABLE_LSP_TOOL`
 
-- [ ] 用 editor 開 `~/.claude/settings.json`,從 `env` 物件移除 `ENABLE_LSP_TOOL` key(若 Phase 2 前不存在;若 Phase 2 前是「1」其它原因,**保留**)。
+- [ ] 用 editor 開 `~/.claude/settings.json`,從 `env` 物件移除 `ENABLE_LSP_TOOL` key(若 Skill tests 前不存在;若 Skill tests 前是「1」其它原因,**保留**)。
 - [ ] **Verify**:
   ```powershell
   (Get-Content ~/.claude/settings.json | ConvertFrom-Json).env.ENABLE_LSP_TOOL
   ```
-  輸出為 `$null` 或空(若使用者 Phase 2 前該值是 `1`,本 step 不該動)。
+  輸出為 `$null` 或空(若使用者 Skill tests 前該值是 `1`,本 step 不該動)。
 
 ### 2.2 移除 `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`
 
@@ -106,12 +106,12 @@ per RBP Q3 resolution = **(b)** — Phase 2 tp-setup 推薦項目實際安裝後
 
 ### 2.3 移除 top-level `tui = "fullscreen"`
 
-- [ ] 用 editor 開 `~/.claude/settings.json`,移除 top-level `tui` key(或還原成使用者 Phase 2 前的值)。
+- [ ] 用 editor 開 `~/.claude/settings.json`,移除 top-level `tui` key(或還原成使用者 Skill tests 前的值)。
 - [ ] **Verify**:
   ```powershell
   (Get-Content ~/.claude/settings.json | ConvertFrom-Json).tui
   ```
-  輸出為 `$null` 或使用者 Phase 2 前的值。
+  輸出為 `$null` 或使用者 Skill tests 前的值。
 
 > **若難以人工 diff**:直接拿 `Copy-Item ~/.claude/settings.json.pre-turbo-plugin-test ~/.claude/settings.json` 還原備份檔(若 Pre-flight 備份有做),省事。
 
@@ -150,7 +150,7 @@ per RBP Q3 resolution = **(b)** — Phase 2 tp-setup 推薦項目實際安裝後
   ```
   npm list -g --depth=0 | findstr "^.--.typescript@"
   ```
-  輸出**為空**(若使用者 Phase 2 前有自己裝 typescript,該行可能仍在 — 確認使用者意願再決定是否還原該 install)。
+  輸出**為空**(若使用者 Skill tests 前有自己裝 typescript,該行可能仍在 — 確認使用者意願再決定是否還原該 install)。
 
 ---
 
@@ -173,10 +173,10 @@ per RBP Q3 resolution = **(b)** — Phase 2 tp-setup 推薦項目實際安裝後
 
 ## 6. test 環境清理(optional,不影響使用者 daily-driver)
 
-這些是 Phase 1 + Phase 2 過程中 orchestrator 在 fixture 主機上建出來的痕跡,Phase 2 結束後可選擇保留(下次測試重用)或清掉:
+這些是 Script tests + Skill tests 過程中 orchestrator 在 fixture 主機上建出來的痕跡,Skill tests 結束後可選擇保留(下次測試重用)或清掉:
 
 - [ ] `C:\Turbo\test-turbo-plugin` 整個資料夾(下次測試 `Reset-Fixture.ps1` 會重建,所以可砍可留)
-- [ ] `C:\Turbo\test-turbo-plugin-svn-repo` SVN repo(下次測試 `build-seed-repo.ps1` 會重建)
+- [ ] `C:\Turbo\test-turbo-plugin-svn-repo` SVN repo(下次測試 `Build-SeedRepo.ps1` 會重建)
 
 > 這兩個目錄不在「使用者主機污染」範疇 — 是測試專用沙盒。保留亦可,作為下次 v1.x 測試重用。
 
@@ -186,11 +186,11 @@ per RBP Q3 resolution = **(b)** — Phase 2 tp-setup 推薦項目實際安裝後
 
 - [ ] 關掉所有正在跑的 Claude Code session
 - [ ] 重新啟動 Claude Code
-- [ ] 跑 `/plugin list`,確認 Phase 2 啟用的 3 個 plugin 都不在 list:
+- [ ] 跑 `/plugin list`,確認 Skill tests 啟用的 3 個 plugin 都不在 list:
   - csharp-lsp@claude-plugins-official
   - typescript-lsp@claude-plugins-official
   - compound-engineering@compound-engineering-plugin
-- [ ] 確認 TUI 不是 fullscreen(若 Phase 2 前不是)
+- [ ] 確認 TUI 不是 fullscreen(若 Skill tests 前不是)
 - [ ] 確認沒 agent teams env(`echo $env:CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 應為空)
 
 ---

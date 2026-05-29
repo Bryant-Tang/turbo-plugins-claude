@@ -1,6 +1,6 @@
-# Budget Tracker — Phase 1 + Phase 2 (TEMPLATE)
+# Budget Tracker — Script tests + Skill tests (TEMPLATE)
 
-turbo-plugin PR-readiness 手動測試 Phase 1(orchestrator wall time hr)與 Phase 2
+turbo-plugin PR-readiness 手動測試 Script tests(orchestrator wall time hr)與 Skill tests
 (使用者 session 計數)的 budget 累計與 escalation trigger 紀錄 **template**。
 Per-release 實際填值的 copy 在 `../runs/<release>/budget-tracker.md`。
 
@@ -14,22 +14,22 @@ Per-release 實際填值的 copy 在 `../runs/<release>/budget-tracker.md`。
 
 ## Budget caps
 
-| Phase | 度量單位 | Cap | 超過動作 |
+| 類別 | 度量單位 | Cap | 超過動作 |
 |---|---|---|---|
-| Phase 1 | orchestrator wall time (hr) | ~20 hr | AskUserQuestion「scope-cut?」三選 |
-| Phase 2 | 使用者 session 次數 | ~12 session | AskUserQuestion「scope-cut?」三選 |
+| Script tests | orchestrator wall time (hr) | ~20 hr | AskUserQuestion「scope-cut?」三選 |
+| Skill tests | 使用者 session 次數 | ~12 session | AskUserQuestion「scope-cut?」三選 |
 
 「scope-cut?」三選選項:
 
 - **(a)** 砍剩下 case scope(明示哪些 script / skill 進 follow-up)
-- **(b)** 繼續但跳過 X 類別(例:跳過所有 IIS lifecycle Phase 2 case)
+- **(b)** 繼續但跳過 X 類別(例:跳過所有 IIS lifecycle Skill tests case)
 - **(c)** 取消 PR 等下次(回 plan 階段重新切分 v1.0 / v1.1 scope)
 
 ---
 
-## Phase 1 hour log
+## Script tests hour log
 
-orchestrator session 跑 Phase 1 case 時的 wall time 累計。每次中斷 / 切換 / 繼續都 append 一 row。
+orchestrator session 跑 Script tests case 時的 wall time 累計。每次中斷 / 切換 / 繼續都 append 一 row。
 
 | session | start time | end time | duration (hr) | scripts touched | notes |
 |---|---|---|---|---|---|
@@ -46,9 +46,9 @@ orchestrator session 跑 Phase 1 case 時的 wall time 累計。每次中斷 / �
 
 ---
 
-## Phase 2 session log
+## Skill tests session log
 
-使用者執行 Phase 2(skill prompt 走 real session)的 session 計數。每個 session
+使用者執行 Skill tests(skill prompt 走 real session)的 session 計數。每個 session
 不論時長都算一次,duration 為估計值供 reconciliation 用。
 
 | session # | duration (min) | skills (cases) covered | result PASS / FAIL / PARTIAL | notes |
@@ -76,9 +76,9 @@ orchestrator session 跑 Phase 1 case 時的 wall time 累計。每次中斷 / �
 每跑完一個 case / session 後 orchestrator 檢查下方 checkbox。任一被 tick 立即 emit
 AskUserQuestion / 切 batch mode / mark FAIL-known。
 
-- [ ] **Phase 1 累計 hour > 20** → orchestrator emit AskUserQuestion「scope-cut?」三選
+- [ ] **Script tests 累計 hour > 20** → orchestrator emit AskUserQuestion「scope-cut?」三選
   (砍剩下 scope / 繼續但跳過 X 類別 / 取消 PR 等下次)。(R33)
-- [ ] **Phase 2 累計 session > 12** → 同上 AskUserQuestion「scope-cut?」三選。(R33)
+- [ ] **Skill tests 累計 session > 12** → 同上 AskUserQuestion「scope-cut?」三選。(R33)
 - [ ] **同 case fix > 3 次仍 FAIL** → mark `FAIL-known` 在對應 tracking doc + Known
   Issues section + AskUserQuestion 確認是否 block PR。(R32,細節見
   [`fail-then-fix-process.md`](./fail-then-fix-process.md) §R32 Escalation)
@@ -91,12 +91,12 @@ AskUserQuestion / 切 batch mode / mark FAIL-known。
 
 ## Final budget reconciliation
 
-> Phase 1 + Phase 2 全部跑完 + v1.0 PR 開出後填本 section。
+> Script tests + Skill tests 全部跑完 + v1.0 PR 開出後填本 section。
 
 | 項目 | 計畫 | 實際 | 偏差 | 原因 |
 |---|---|---|---|---|
-| Phase 1 wall time (hr) | ~20 | _(actual)_ | _(diff)_ | _(notes)_ |
-| Phase 2 session count | ~12 | _(actual)_ | _(diff)_ | _(notes)_ |
+| Script tests wall time (hr) | ~20 | _(actual)_ | _(diff)_ | _(notes)_ |
+| Skill tests session count | ~12 | _(actual)_ | _(diff)_ | _(notes)_ |
 | FAIL-known case 數 | 0 | _(actual)_ | _(diff)_ | _(notes)_ |
 | 觸發 suspension trigger 次數 | 0 | _(actual)_ | _(diff)_ | _(notes)_ |
 | 觸發 scope-cut AskUserQuestion | 0 | _(actual)_ | _(diff)_ | _(notes)_ |

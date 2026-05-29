@@ -1,7 +1,7 @@
 # F5 Fail-then-Fix Process
 
 turbo-plugin v1.0 PR-readiness 手動測試的 **F5 fail-then-fix loop** 流程細節。
-任 Phase 1 / Phase 2 case 標 FAIL → 走本流程修復 → re-run 直到 PASS,或在 3 次仍 FAIL 後
+任 Script tests / Skill tests case 標 FAIL → 走本流程修復 → re-run 直到 PASS,或在 3 次仍 FAIL 後
 escalate (R32)。
 
 > 對應 plan:
@@ -13,12 +13,12 @@ escalate (R32)。
 
 ## F5 觸發條件
 
-- 任一 Phase 1 case(`P1-<script>-<case>`)在 per-release tracking doc
-  (`runs/<release>/phase1-results.md`,schema 來源 `phase1-scripts-schema.md`)的對應
+- 任一 Script tests case(`P1-<script>-<case>`)在 per-release tracking doc
+  (`runs/<release>/script-tests-results.md`,schema 來源 `script-tests-schema.md`)的對應
   row 出現 `result: FAIL`。
-- 任一 Phase 2 case(`P2-<skill>-<case>`)在 tracking doc(`phase2-skills.md` —— U5 產生)
+- 任一 Skill tests case(`P2-<skill>-<case>`)在 tracking doc(`skill-tests.md` —— U5 產生)
   的對應 row 出現 `result: FAIL` 或 `PARTIAL` 且使用者判定為 bug 而非 prompt 不清。
-- 觸發後 **立即停止 current phase 的後續 case 推進**(orchestrator 不繼續排程下一個 case
+- 觸發後 **立即停止 current 測試類別的後續 case 推進**(orchestrator 不繼續排程下一個 case
   ,避免 fixture / shared state 污染擴散),先走 root-cause 流程。
 
 ---
@@ -28,13 +28,13 @@ escalate (R32)。
 1. 讀 case 對應的 script(`plugins/turbo-plugin/scripts/<name>.ps1` / `.sh`)或 SKILL.md
    (`plugins/turbo-plugin/skills/<skill>/SKILL.md`),找出測 case 期待的行為 vs. 實際輸出
    差異。
-2. 讀 case 對應的 test driver(Phase 1:`plugins/turbo-plugin/tests/unit/scripts/<script>.Tests.ps1` 或
-   `<script>.sh.test.sh`(hook script 在 `unit/scripts/hooks/` 子目錄);Phase 2:U5 產生的 `prompts/<skill>-case-<N>.md`),確認測試
+2. 讀 case 對應的 test driver(Script tests:`plugins/turbo-plugin/tests/unit/scripts/<script>.Tests.ps1` 或
+   `<script>.sh.test.sh`(hook script 在 `unit/scripts/hooks/` 子目錄);Skill tests:U5 產生的 `prompts/<skill>-case-<N>.md`),確認測試
    本身沒有 bug。
 3. 在 fresh fixture 上 manual 重現 FAIL:
-   - Phase 1:`plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` 重置 →
+   - Script tests:`plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` 重置 →
      直接跑該 script + 相同 args(test driver 第一段 `arrange` block 已記錄)。
-   - Phase 2:照 prompt 重跑 skill(注意 fixture 延續策略,見 Trade-off 1 resolution)。
+   - Skill tests:照 prompt 重跑 skill(注意 fixture 延續策略,見 Trade-off 1 resolution)。
 4. 鎖定 bug 範圍:
    - `scripts/<name>.ps1` / `.sh` 內部邏輯
    - `scripts/lib/common.ps1` / `common.sh` shared helper(影響面大,見下文 Suspension trigger)
@@ -81,11 +81,11 @@ escalate (R32)。
 | 改動 scope | re-run 範圍 | 理由 |
 |---|---|---|
 | 單一 `scripts/<name>.ps1` / `.sh` 內部邏輯 | 該 script 所有 case(`P1-<script>-*`) | bug 可能不只觸發在當前 case |
-| `scripts/lib/common.ps1` / `common.sh`(shared helper) | **此 unit(U3 / U4)所有 prior PASS case** + Phase 2 已跑過受影響 skill case | helper 改動 blast radius = 全部呼叫者 |
+| `scripts/lib/common.ps1` / `common.sh`(shared helper) | **此 unit(U3 / U4)所有 prior PASS case** + Skill tests 已跑過受影響 skill case | helper 改動 blast radius = 全部呼叫者 |
 | `scripts/lib/applicationhost-helpers.ps1` | 所有 IIS lifecycle scripts(`start-iis` / `stop-iis` / `cleanup-orphan-iis` / `resolve-iis-settings` / `check-iis-listening`)的 prior PASS case | helper 專屬 IIS scripts |
-| `skills/<skill>/SKILL.md` 流程描述 | 該 skill 所有 Phase 2 prior PASS case | skill flow 改變 |
-| env-var contract(SKILL ↔ script 欄位名 / 預設值) | **跨 unit** 所有 prior PASS case(Phase 1 + Phase 2 都要 re-run) | contract 改動跨整個 plugin |
-| `plugins/turbo-plugin/tests/fixtures/base/` 內容(真實補檔案) | 已跑過所有 Phase 1 case + Phase 2 已跑過 skill case | fixture 變更影響全部後續 case |
+| `skills/<skill>/SKILL.md` 流程描述 | 該 skill 所有 Skill tests prior PASS case | skill flow 改變 |
+| env-var contract(SKILL ↔ script 欄位名 / 預設值) | **跨 unit** 所有 prior PASS case(Script tests + Skill tests 都要 re-run) | contract 改動跨整個 plugin |
+| `plugins/turbo-plugin/tests/fixtures/base/` 內容(真實補檔案) | 已跑過所有 Script tests case + Skill tests 已跑過 skill case | fixture 變更影響全部後續 case |
 | 單一 case 的 test driver(`.Tests.ps1` / `.sh.test.sh`) | 該 case only | test logic only |
 | Tracking doc / process doc | 不 re-run(純 doc) | 無 runtime impact |
 
@@ -99,6 +99,7 @@ escalate (R32)。
 4. **rest of unit**:該 unit 內剩餘 prior PASS case。
 5. **cross-unit**:其他 unit 已跑完 case(只在 env-var contract / common.ps1 改動時觸發)。
 
+
 跨 case 影響不確定時 default conservative 全 re-run;budget 緊則 surface 給使用者
 AskUserQuestion 確認跳過哪一層。
 
@@ -110,8 +111,8 @@ AskUserQuestion 確認跳過哪一層。
 
 當同一 case 已 fix **3 次** 仍 FAIL:
 
-1. orchestrator 在 per-release tracking doc(`runs/<release>/phase1-results.md` 對應 script
-   section / `runs/<release>/phase2-results.md` 對應 skill section)的該 case row 把
+1. orchestrator 在 per-release tracking doc(`runs/<release>/script-tests-results.md` 對應 script
+   section / `runs/<release>/skill-tests-results.md` 對應 skill section)的該 case row 把
    `result` 改為 `FAIL-known`。
 2. 同 row `evidence` 欄寫 `修復 attempt #1 commit <hash1>, #2 <hash2>, #3 <hash3> 仍 FAIL;
    escalation: pending user confirmation`。
@@ -138,7 +139,7 @@ AskUserQuestion 確認跳過哪一層。
 
 > 對應 plan Trade-off 4 partial resolution(R20 / K-Decision 5)。
 
-**觸發條件**:在跑某個 unit(U3 / U4 / Phase 2 某 skill group)期間,
+**觸發條件**:在跑某個 unit(U3 / U4 / Skill tests 某 skill group)期間,
 **連續 3 次** fix 改到 shared code(`common.ps1` / `common.sh` / SKILL.md framework /
 env-var contract)。
 
@@ -160,7 +161,7 @@ env-var contract)。
 模擬 case `P1-svn-log-中文`:
 
 1. **FAIL**:tracking doc emit `result: FAIL | actual: stdout 中文變 ?????`。
-2. **F5 觸發**:orchestrator 停 Phase 1 後續 case,進 root-cause。
+2. **F5 觸發**:orchestrator 停 Script tests 後續 case,進 root-cause。
 3. **Root-cause**:讀 `svn-log.ps1` → 發現某段 `Out-String` 沒走 UTF-8 → 中文在
    PS 5.1 + codepage 950 console 變 `?`。
 4. **Fix**:`svn-log.ps1` 改用 `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()`
@@ -172,7 +173,7 @@ env-var contract)。
 5. **Re-run**:`P1-svn-log-中文` PASS。
 6. **Impact 評估**:改動只在 `svn-log.ps1`(不在 common.ps1) → 只 re-run 該 script 其他 case
    (`P1-svn-log-pagination` 等)。全 PASS。
-7. **Phase 1 繼續**:orchestrator 繼續排下一個 case。
+7. **Script tests 繼續**:orchestrator 繼續排下一個 case。
 
 若上述 step 4 / 5 在 1st fix 仍 FAIL → 走 2nd fix(改 XML parser 路徑);仍 FAIL → 3rd
 fix(改 `svn log --xml`);3 次仍 FAIL → **R32**:tracking doc `result: FAIL-known` + Known

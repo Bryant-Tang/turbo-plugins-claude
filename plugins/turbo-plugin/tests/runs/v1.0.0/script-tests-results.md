@@ -1,18 +1,18 @@
-# Phase 1 — Script Test Results (v1.0.0 PR validation)
+# Script tests — Results (v1.0.0 PR validation)
 
 > **Per-release execution evidence** — turbo-plugin v1.0.0 release PR validation 的
-> Phase 1 自動測試實際執行紀錄。Row schema + 中文字典 + per-script section 來源見
-> [`../../docs/phase1-scripts-schema.md`](../../docs/phase1-scripts-schema.md)。
+> Script tests 自動測試實際執行紀錄。Row schema + 中文字典 + per-script section 來源見
+> [`../../docs/script-tests-schema.md`](../../docs/script-tests-schema.md)。
 >
-> 本檔 append-only,`Run-Phase1.ps1` 每跑一個 case emit 一個 markdown table row 到
-> 對應 `### <script>` section 下方。同 case 跑多次留多 row;Get-Phase1Status.ps1
+> 本檔 append-only,`Invoke-ScriptTests.ps1` 每跑一個 case emit 一個 markdown table row 到
+> 對應 `### <script>` section 下方。同 case 跑多次留多 row;Get-ScriptTestStatus.ps1
 > dedup 時取最後一個為 authoritative(R29)。
 
 ---
 
 ## Tracking schema
 
-每個 phase 1 case 跑完後 orchestrator emit 一個 row 到下方對應 script section。schema:
+每個 Script tests case 跑完後 orchestrator emit 一個 row 到下方對應 script section。schema:
 
 | 欄 | 說明 |
 |---|---|
@@ -25,7 +25,7 @@
 | `evidence` | NUnit XML 行 / stdout snippet / 修復 commit hash |
 
 > 完整 schema 說明 + 中文字典 + Row 範例見
-> [`../../docs/phase1-scripts-schema.md`](../../docs/phase1-scripts-schema.md)。
+> [`../../docs/script-tests-schema.md`](../../docs/script-tests-schema.md)。
 
 ---
 

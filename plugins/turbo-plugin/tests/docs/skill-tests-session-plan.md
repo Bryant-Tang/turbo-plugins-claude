@@ -1,8 +1,8 @@
-# Phase 2 — Session 切分建議
+# Skill tests — Session 切分建議
 
-turbo-plugin v1.0 PR-readiness Phase 2 是 **使用者主導** 的測試階段:每個 case
+turbo-plugin v1.0 PR-readiness Skill tests 是 **使用者主導** 的測試階段:每個 case
 都需要在 `C:\Turbo\test-turbo-plugin` 內開一個 Claude Code session,使用者貼
-`phase2-skills.md` 的 prompt 範本進去,觀察 agent 行為並轉述給 orchestrator
+`skill-tests.md` 的 prompt 範本進去,觀察 agent 行為並轉述給 orchestrator
 判讀 PASS / FAIL。本檔規劃 8-12 個建議 session(分 9 主場 + 3 reserved
 fail-then-fix re-run = 12 個 session slot)。
 
@@ -12,7 +12,7 @@ fail-then-fix re-run = 12 個 session slot)。
 
 ## Per-skill case 數對照表
 
-(per-skill 詳細 case spec 與 prompt 範本見 `phase2-skills.md` 對應 section)
+(per-skill 詳細 case spec 與 prompt 範本見 `skill-tests.md` 對應 section)
 
 | Skill | Case count | 備註 |
 |---|---|---|
@@ -60,7 +60,7 @@ fail-then-fix re-run = 12 個 session slot)。
 - **cases**:
   - P2-tp-setup-4(Phase 3 LSP 兩個 real-install)
   - P2-tp-setup-5(Phase 3 CE + agent teams + TUI fullscreen real-install)
-- **session 結束 state**:`~/.claude/settings.json` 含 5 個推薦項目 keys;`dotnet tool -g` + `npm -g` 各裝一個 binary。**不要 rollback,留到 Phase 2 全部結束才一次性 rollback**(per RBP Q3 resolution)。
+- **session 結束 state**:`~/.claude/settings.json` 含 5 個推薦項目 keys;`dotnet tool -g` + `npm -g` 各裝一個 binary。**不要 rollback,留到 Skill tests 全部結束才一次性 rollback**(per RBP Q3 resolution)。
 
 ### Session 3 — tp-pull-from-svn + tp-create-remote-test
 
@@ -121,7 +121,7 @@ fail-then-fix re-run = 12 個 session slot)。
 ### Session 9 — tp-csharp-comment + tp-js-comment
 
 - **預估時間**:15-25 分鐘
-- **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup(a) + 預製 case stub(per `phase2-skills.md` Setup 段)
+- **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup(a) + 預製 case stub(per `skill-tests.md` Setup 段)
 - **cases**:
   - P2-tp-csharp-comment-1 / 2
   - P2-tp-js-comment-1 / 2
@@ -129,10 +129,10 @@ fail-then-fix re-run = 12 個 session slot)。
 
 ### Session 10-12(reserved — fail-then-fix re-run)
 
-- **觸發條件**:Phase 2 session 1-9 中任何 case FAIL,orchestrator 跑 F5 fail-then-fix loop 修完 bug 後 re-run 失敗 case 與受影響的 cross-skill case
+- **觸發條件**:Skill tests session 1-9 中任何 case FAIL,orchestrator 跑 F5 fail-then-fix loop 修完 bug 後 re-run 失敗 case 與受影響的 cross-skill case
 - **預估時間**:每 session 15-30 分鐘(視修復 commit 影響範圍)
-- **若沒用到** → 跳過,直接進 Phase 2 結束 rollback checklist
-- **若用到 3 個都還不夠** → R33 budget cap 觸發(Phase 2 ~12 session 上限),orchestrator surface scope-cut question 給使用者
+- **若沒用到** → 跳過,直接進 Skill tests 結束 rollback checklist
+- **若用到 3 個都還不夠** → R33 budget cap 觸發(Skill tests ~12 session 上限),orchestrator surface scope-cut question 給使用者
 
 ---
 
@@ -148,41 +148,41 @@ flowchart LR
   S6 --> S7[Session 7<br>push-to-svn + reset-remote-test]
   S7 --> S8[Session 8<br>tp-svn-log]
   S8 --> S9[Session 9<br>csharp-comment + js-comment]
-  S9 --> RB["Phase 2 結束<br>rollback-checklist.md"]
+  S9 --> RB["Skill tests 結束<br>rollback-checklist.md"]
   S1 -.fail-then-fix.-> S10[Session 10<br>reserved]
   S5 -.fail-then-fix.-> S11[Session 11<br>reserved]
   S8 -.fail-then-fix.-> S12[Session 12<br>reserved]
 ```
 
-- **session 2 → session 3 之間** 推薦做 `Reset-Fixture.ps1` 但**不**動 `~/.claude/settings.json`(LSP / CE / agent teams / TUI 留著到 Phase 2 結束)
+- **session 2 → session 3 之間** 推薦做 `Reset-Fixture.ps1` 但**不**動 `~/.claude/settings.json`(LSP / CE / agent teams / TUI 留著到 Skill tests 結束)
 - **session 4 → session 5** 不必 reset(同 fixture 連續測)
 - **session 6 → session 7** 推薦 `Reset-Fixture.ps1` 重置 SVN history(避免 session 4 的 svn-ignore commits 影響 push test 結果)
 - **session 7 → session 8 → session 9** 各自獨立 fixture(都需要 reset)
 
 ---
 
-## Phase 2 開始前 checklist
+## Skill tests 開始前 checklist
 
 orchestrator 在 session 1 開始前確認:
 
 - [ ] `C:\Turbo\test-turbo-plugin` 已存在或可建立
 - [ ] `C:\Turbo\test-turbo-plugin-svn-repo` SVN repo 已 seed(r1-r20 含中文 commit msg)
-- [ ] `plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` 可正常跑(Phase 1 已驗證 idempotency)
+- [ ] `plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` 可正常跑(Script tests 已驗證 idempotency)
 - [ ] 使用者主機已裝:VS / IIS Express / .NET Framework SDK / Git for Windows / svn cli
 - [ ] 使用者主機**尚未**裝 `csharp-ls`(`dotnet tool list -g` 不含)
 - [ ] 使用者主機**尚未**裝 `typescript-language-server`(`npm list -g --depth=0` 不含)
 - [ ] 使用者 `~/.claude/settings.json` 已備份(rollback 用 — 推薦 `Copy-Item ~/.claude/settings.json ~/.claude/settings.json.pre-turbo-plugin-test`)
-- [ ] 使用者同意 Phase 2 進行期間不要在其它 worktree 動 `~/.claude/settings.json`(R-4 mitigation)
-- [ ] `phase2-skills.md` 與 `rollback-checklist.md` 已 commit 在 `feat/turbo-plugin-v1.0` branch
+- [ ] 使用者同意 Skill tests 進行期間不要在其它 worktree 動 `~/.claude/settings.json`(R-4 mitigation)
+- [ ] `skill-tests.md` 與 `rollback-checklist.md` 已 commit 在 `feat/turbo-plugin-v1.0` branch
 
 ---
 
-## Phase 2 結束 checklist
+## Skill tests 結束 checklist
 
 session 9 跑完(或 session 10-12 fail-then-fix 都修完)後:
 
-- [ ] `phase2-skills.md` `## Summary` section 已填(45 case 統計)
-- [ ] `phase2-skills.md` `## Known Issues` 列入 `FAIL-known` case(若有,per R32 escalation)
+- [ ] `skill-tests.md` `## Summary` section 已填(45 case 統計)
+- [ ] `skill-tests.md` `## Known Issues` 列入 `FAIL-known` case(若有,per R32 escalation)
 - [ ] 使用者確認哪些 `FAIL-known` 不 block v1.0 PR
-- [ ] **執行 `rollback-checklist.md`** 還原使用者主機(per RBP Q3 = (b) — Phase 2 全部結束才一次性 rollback)
+- [ ] **執行 `rollback-checklist.md`** 還原使用者主機(per RBP Q3 = (b) — Skill tests 全部結束才一次性 rollback)
 - [ ] rollback 完 commit「fix(turbo-plugin): mark v1.0.0 test plan complete + rollback restored」進 `feat/turbo-plugin-v1.0` branch

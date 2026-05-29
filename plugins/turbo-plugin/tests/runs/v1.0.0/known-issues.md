@@ -2,9 +2,9 @@
 
 本檔記錄 v1.0.0 PR validation 期間發現的 known issue:
 
-1. **R32 FAIL-known**:Phase 1 / Phase 2 case 經 3 次 fix attempt 仍 FAIL,被升級為
+1. **R32 FAIL-known**:Script tests / Skill tests case 經 3 次 fix attempt 仍 FAIL,被升級為
    `FAIL-known` 並 acknowledge 為「不 block PR,進 follow-up backlog」。
-2. **Phase 2 manual case 確認的 plugin bug**:Phase 2 跑 real Claude Code session
+2. **Skill tests manual case 確認的 plugin bug**:Skill tests 跑 real Claude Code session
    時觀察到 agent / skill / script 的問題,記為待修 backlog。
 
 > Fail-then-fix 流程細節見
@@ -20,7 +20,7 @@
 ## I-<n> — <一句話描述>
 
 - 發現時間: YYYY-MM-DD
-- Phase: 1 / 2
+- 類別: Script tests / Skill tests
 - 對應 case ID: P1-... / P2-...
 - 症狀: ...
 - Fix attempts: ...

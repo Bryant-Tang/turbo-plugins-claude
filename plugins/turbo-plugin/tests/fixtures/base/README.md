@@ -1,10 +1,10 @@
 # plugins/turbo-plugin/tests/fixtures/base/
 
-turbo-plugin v1.0 PR-readiness Phase 1 測試的 **fixture base mirror source**。
+turbo-plugin v1.0 PR-readiness Script tests 測試的 **fixture base mirror source**。
 
 ## 用途
 
-此目錄是 `Reset-Fixture.ps1` 跑 `robocopy /MIR` 的 source。每個 Phase 1 case 開始前
+此目錄是 `Reset-Fixture.ps1` 跑 `robocopy /MIR` 的 source。每個 Script tests case 開始前
 orchestrator 會把這個目錄完整 mirror 到 `C:\Turbo\test-turbo-plugin\`,讓每 case 在
 完全乾淨的 fixture 上跑。
 

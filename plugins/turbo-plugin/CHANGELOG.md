@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- refactor: 全 plugin scripts + tests 改名符合 PowerShell `Get-Verb` 規範(Verb-Noun PascalCase / lib noun-only / Bash kebab),Phase 1/2 jargon 改 Script/Skill tests
+- refactor: orchestrator `Run-Phase1.ps1` 重寫為 `Invoke-ScriptTests.ps1`,加 lint pre-flight + infra gate (AssertHelpers FIRST + fixture skip-only) + path-based routing + Bash sibling `invoke-script-tests.sh`
+- refactor: `_Common.ps1` 從 `tests/unit/scripts/` 搬到 `tests/lib/ScriptsCommon.ps1` (KD-8)
+- refactor: `resolve-iis-settings.ps1` 重新分類為 lib (`scripts/lib/IisHelpers.ps1`)
+- refactor: `tools/verify-approved-verbs.ps1` 新增 — 用 `Get-Verb` + Build/Deploy policy whitelist 強制命名規範
+
+(無 fix / feat — 純 internal refactor 無 user-facing 行為改變)
+
 ## [1.0.0] - 2026-05-27
 
 turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `tnf` / `tgs` / `tpi`）的 dev 流程進單一 plugin,加上 v1.0 refinements(apphost 跟 VS 分離、tp-setup 4-Phase 重組、Claude Code 友善功能推薦、svn-log 中文亂碼修正 + 互動分頁、tp-suggest-ignore 文件修正)。

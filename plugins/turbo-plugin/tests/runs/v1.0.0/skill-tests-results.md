@@ -1,10 +1,10 @@
-# Phase 2 — Skill Manual Test Results (v1.0.0 PR validation)
+# Skill tests — Manual Test Results (v1.0.0 PR validation)
 
 > **Per-release execution evidence** — turbo-plugin v1.0.0 release PR validation 的
-> Phase 2 手動測試實際執行紀錄。Per-skill case spec / prompt 範本 / 失敗 patterns 來源見
-> [`../../docs/phase2-skills.md`](../../docs/phase2-skills.md)。
+> Skill tests 手動測試實際執行紀錄。Per-skill case spec / prompt 範本 / 失敗 patterns 來源見
+> [`../../docs/skill-tests.md`](../../docs/skill-tests.md)。
 >
-> 本檔由使用者跑每個 Phase 2 session 時手動 append row 到對應 `### <skill>` section
+> 本檔由使用者跑每個 Skill tests session 時手動 append row 到對應 `### <skill>` section
 > 下方的 `### Row table`。每跑完一個 case row 即新增一筆。
 
 ---
@@ -23,7 +23,7 @@
 | `evidence` | chat snippet / file diff path / agent 輸出 snippet / 修復 commit hash |
 
 完整 schema + 案例 + Row 範例見
-[`../../docs/phase2-skills.md`](../../docs/phase2-skills.md)。
+[`../../docs/skill-tests.md`](../../docs/skill-tests.md)。
 
 ---
 
@@ -103,5 +103,5 @@
 
 ## Known Issues
 
-(R32 escalation 用 — Phase 2 manual case 確認的 plugin bug 列在此。完整 cross-release
+(R32 escalation 用 — Skill tests manual case 確認的 plugin bug 列在此。完整 cross-release
 known issue 整理見 [`known-issues.md`](./known-issues.md)。)

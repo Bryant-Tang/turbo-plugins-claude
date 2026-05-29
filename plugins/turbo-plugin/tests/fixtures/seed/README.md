@@ -1,20 +1,20 @@
 # plugins/turbo-plugin/tests/fixtures/seed/
 
-turbo-plugin v1.0 PR-readiness Phase 1 測試的 **SVN seed dump source**。
+turbo-plugin v1.0 PR-readiness Script tests 測試的 **SVN seed dump source**。
 
 ## 內容
 
 ```
 seed/
-├── build-seed-repo.ps1     # PowerShell 5.1 — orchestrator 跑這個
+├── Build-SeedRepo.ps1      # PowerShell 5.1 — orchestrator 跑這個
 ├── build-seed-repo.sh      # Bash mirror (Windows delegates to PS;Linux/macOS deferred)
-├── svn-repo-r1-r20.dump    # ← 產出物;由 build-seed-repo.ps1 寫入
+├── svn-repo-r1-r20.dump    # ← 產出物;由 Build-SeedRepo.ps1 寫入
 └── README.md
 ```
 
 ## svn-repo-r1-r20.dump 是怎麼生出來的
 
-由 `build-seed-repo.ps1` 自動產生。流程:
+由 `Build-SeedRepo.ps1` 自動產生。流程:
 
 1. 建臨時 SVN repo 在 `$env:TEMP\turbo-plugin-seed-build\repo`
 2. 建 `trunk` / `branches` / `tags` (r1)
@@ -33,21 +33,21 @@ seed/
 
 ```powershell
 # 從 worktree root
-.\plugins\turbo-plugin\tests\fixtures\seed\build-seed-repo.ps1            # idempotent skip if dump exists
-.\plugins\turbo-plugin\tests\fixtures\seed\build-seed-repo.ps1 -Force     # 強制重建
+.\plugins\turbo-plugin\tests\fixtures\seed\Build-SeedRepo.ps1            # idempotent skip if dump exists
+.\plugins\turbo-plugin\tests\fixtures\seed\Build-SeedRepo.ps1 -Force     # 強制重建
 ```
 
 ## 25 條中文字典 mapping
 
-build-seed-repo.ps1 取 `$zhDict.commit_messages` 前 3 條給 r5 / r10 / r15。完整 25 條字典
-inline 在 `plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md` 開頭 — 那是 single
-source of truth。seed script 的 `$zhDict` 內容必須與 phase1-scripts-schema.md 一致;
+Build-SeedRepo.ps1 取 `$zhDict.commit_messages` 前 3 條給 r5 / r10 / r15。完整 25 條字典
+inline 在 `plugins/turbo-plugin/tests/docs/script-tests-schema.md` 開頭 — 那是 single
+source of truth。seed script 的 `$zhDict` 內容必須與 script-tests-schema.md 一致;
 如果改一邊請同步另一邊。
 
 ## 為什麼 dump 進 git?
 
 ~10KB,可重現但每次重產要 ~5-10 sec + svn cli。把 dump commit 進 git 讓:
 
-- CI / 新環境 clone repo 即可跑 Phase 1 reset
+- CI / 新環境 clone repo 即可跑 Script tests reset
 - 不依賴 svn cli 在每個 user 機器上 build 順利
 - diff-able (`git diff` 看 dump 變動,catch unintended seed drift)
