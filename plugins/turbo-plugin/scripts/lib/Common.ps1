@@ -128,6 +128,106 @@ function Resolve-RemoteWorktree {
     throw "Unsupported branch '$BranchName'. Only 'main' and 'test-<n>' branches can be synced from SVN."
 }
 
+# Normalize an SVN URL for boundary-safe trust comparison:
+#   - trim a single trailing slash
+#   - lowercase scheme + authority (host[:port]); for file:// also lowercase the
+#     Windows drive letter immediately after the leading slash(es)
+#   - percent-decode the whole thing
+# Returns the normalized string. Does NOT validate the URL beyond this; callers
+# must still apply the boundary-prefix check.
+function ConvertTo-NormalizedSvnUrl {
+    param([Parameter(Mandatory = $true)][string]$Url)
+
+    $u = $Url.Trim()
+    # percent-decode first so encoded slashes / drive letters normalize too.
+    $u = [System.Uri]::UnescapeDataString($u)
+    # split scheme://rest so we only lowercase scheme + authority, not the path.
+    if ($u -match '^([A-Za-z][A-Za-z0-9+.\-]*://)([^/]*)(/.*)?$') {
+        $scheme = $Matches[1].ToLowerInvariant()
+        $authority = $Matches[2].ToLowerInvariant()
+        $rest = if ($null -ne $Matches[3]) { $Matches[3] } else { '' }
+        $u = "$scheme$authority$rest"
+    } elseif ($u -match '^([A-Za-z][A-Za-z0-9+.\-]*:)(.*)$') {
+        # scheme without authority (rare); lowercase scheme only.
+        $u = $Matches[1].ToLowerInvariant() + $Matches[2]
+    }
+    # file:// drive letter — lowercase the drive letter after the leading slashes
+    # (e.g. file:///C:/Repo -> file:///c:/Repo). Authority is empty for file URLs.
+    if ($u -match '^(file://)(/*)([A-Za-z])(:.*)$') {
+        $u = $Matches[1] + $Matches[2] + $Matches[3].ToLowerInvariant() + $Matches[4]
+    }
+    # trim a single trailing slash
+    if ($u.Length -gt 1 -and $u.EndsWith('/')) {
+        $u = $u.Substring(0, $u.Length - 1)
+    }
+    return $u
+}
+
+# Assert that a caller-supplied SVN URL falls under the trusted repository root.
+# Inputs:
+#   -TrustedWorkingCopy: path to a working copy we trust (e.g. remote-main). Its
+#       `svn info --show-item repos-root-url` defines the trust base. MUST be
+#       repos-root-url (not the trunk url) so legitimate sibling branches under
+#       branches/ aren't falsely rejected.
+#   -CandidateUrl: the untrusted URL to validate before any svn side effect.
+# Behavior (fail closed):
+#   - If repos-root-url can't be obtained (path missing / not a WC / server
+#     unreachable) -> throw. The caller MUST NOT be able to swallow this and proceed.
+#   - Candidate containing `..` traversal -> throw.
+#   - After normalizing both ends (trailing slash, scheme/host case, file:// drive
+#     letter, percent-decode), pass only when candidate == base OR
+#     candidate startswith (base + '/'). Bare StartsWith(base) is rejected to stop
+#     `repos` matching `repos-evil` (prefix confusion).
+# On success: returns the normalized trusted base (for diagnostics); on any failure: throw.
+function Assert-TrustedSvnUrl {
+    param(
+        [Parameter(Mandatory = $true)][string]$TrustedWorkingCopy,
+        [Parameter(Mandatory = $true)][string]$CandidateUrl
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CandidateUrl)) {
+        throw 'Assert-TrustedSvnUrl: empty candidate URL.'
+    }
+
+    # Reject path traversal outright — `..` must never appear in a trusted URL.
+    if ($CandidateUrl -match '(^|[/\\])\.\.([/\\]|$)') {
+        throw "Untrusted SVN URL (path traversal '..' not allowed): $CandidateUrl"
+    }
+
+    # Obtain the trust base from the trusted working copy. Fail closed on any error.
+    $base = ''
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $base = (& svn info --show-item repos-root-url $TrustedWorkingCopy 2>$null | Out-String).Trim()
+    } catch {
+        $base = ''
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($base)) {
+        throw "Assert-TrustedSvnUrl: could not determine trusted repos-root-url from '$TrustedWorkingCopy' (path missing, not a working copy, or SVN unreachable). Refusing to proceed (fail closed). Run /tp-setup to bootstrap remote-main."
+    }
+
+    $normBase = ConvertTo-NormalizedSvnUrl -Url $base
+    $normCand = ConvertTo-NormalizedSvnUrl -Url $CandidateUrl
+
+    # Re-check traversal AFTER percent-decoding — a percent-encoded `..` (%2e%2e)
+    # passes the raw check above but decodes here; without this it could slip under
+    # the boundary prefix as `<base>/../...`.
+    if ($normCand -match '(^|[/\\])\.\.([/\\]|$)') {
+        throw "Untrusted SVN URL (encoded path traversal '..' not allowed): $CandidateUrl"
+    }
+
+    # Boundary-safe ordinal comparison (both ends already lowercased where it matters).
+    $isTrusted = ($normCand -eq $normBase) -or $normCand.StartsWith($normBase + '/', [System.StringComparison]::Ordinal)
+    if (-not $isTrusted) {
+        throw "Untrusted SVN URL: '$CandidateUrl' is not under trusted repository root '$base'. Refusing to proceed."
+    }
+
+    return $normBase
+}
+
 function Write-Utf8NoBom {
     param(
         [Parameter(Mandatory = $true)][string]$Path,

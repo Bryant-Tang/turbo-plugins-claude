@@ -121,6 +121,97 @@ resolve_remote_worktree() {
   return 1
 }
 
+# Percent-decode a string (RFC 3986 %XX). Pure-bash; no external deps.
+_svn_percent_decode() {
+  local s="$1"
+  # Turn + into literal (we don't treat + as space for paths) and decode %XX.
+  printf '%b' "${s//%/\\x}"
+}
+
+# Normalize an SVN URL for boundary-safe trust comparison:
+#   - percent-decode
+#   - lowercase scheme + authority (host[:port]); file:// also lowercases the
+#     Windows drive letter after the leading slash(es)
+#   - trim a single trailing slash
+# Echoes the normalized string.
+normalize_svn_url() {
+  local url="$1"
+  url="$(_svn_percent_decode "$url")"
+  # Lowercase scheme + authority, preserve path case.
+  if [[ "$url" =~ ^([A-Za-z][A-Za-z0-9+.-]*://)([^/]*)(/.*)?$ ]]; then
+    local scheme="${BASH_REMATCH[1],,}"
+    local authority="${BASH_REMATCH[2],,}"
+    local rest="${BASH_REMATCH[3]}"
+    url="${scheme}${authority}${rest}"
+  elif [[ "$url" =~ ^([A-Za-z][A-Za-z0-9+.-]*:)(.*)$ ]]; then
+    url="${BASH_REMATCH[1],,}${BASH_REMATCH[2]}"
+  fi
+  # file:// drive letter lowercase (file:///C:/... -> file:///c:/...)
+  if [[ "$url" =~ ^(file://)(/*)([A-Za-z])(:.*)$ ]]; then
+    url="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3],,}${BASH_REMATCH[4]}"
+  fi
+  # Trim a single trailing slash (keep a lone "/").
+  if [[ ${#url} -gt 1 && "$url" == */ ]]; then
+    url="${url%/}"
+  fi
+  printf '%s' "$url"
+}
+
+# Assert a caller-supplied SVN URL falls under the trusted repository root.
+# Args: <trusted_working_copy> <candidate_url>
+# Trust base is `svn info --show-item repos-root-url <wc>` (MUST be repos-root-url,
+# not the trunk url) so legitimate sibling branches aren't falsely rejected.
+# Fail closed: if repos-root-url can't be obtained, or candidate has `..` traversal,
+# or candidate isn't (== base) / (startswith base + '/') after normalization,
+# write to stderr and return non-zero. Echoes the normalized base on success.
+assert_trusted_svn_url() {
+  local trusted_wc="$1"
+  local candidate="$2"
+
+  if [[ -z "$candidate" ]]; then
+    echo "Error: assert_trusted_svn_url: empty candidate URL." >&2
+    return 1
+  fi
+
+  # Reject path traversal outright.
+  if [[ "$candidate" == *"/../"* || "$candidate" == *"/.." || "$candidate" == "../"* || "$candidate" == *"\\..\\"* ]]; then
+    echo "Error: untrusted SVN URL (path traversal '..' not allowed): $candidate" >&2
+    return 1
+  fi
+
+  # Obtain trust base; fail closed on any error. Capture svn's real exit (don't
+  # mask it with `|| true`, which would make rc always 0); guard errexit by testing
+  # the command in the `if` condition.
+  local base
+  if ! base="$(svn info --show-item repos-root-url "$trusted_wc" 2>/dev/null)"; then
+    base=""
+  fi
+  base="$(printf '%s' "$base" | tr -d '\r\n')"
+  if [[ -z "$base" ]]; then
+    echo "Error: assert_trusted_svn_url: could not determine trusted repos-root-url from '$trusted_wc' (path missing, not a working copy, or SVN unreachable). Refusing to proceed (fail closed). Run /tp-setup to bootstrap remote-main." >&2
+    return 1
+  fi
+
+  local norm_base norm_cand
+  norm_base="$(normalize_svn_url "$base")"
+  norm_cand="$(normalize_svn_url "$candidate")"
+
+  # Re-check traversal AFTER percent-decoding (a %2e%2e candidate passes the raw
+  # check above but decodes to `..` here).
+  if [[ "$norm_cand" == *"/../"* || "$norm_cand" == *"/.." || "$norm_cand" == "../"* ]]; then
+    echo "Error: untrusted SVN URL (encoded path traversal '..' not allowed): $candidate" >&2
+    return 1
+  fi
+
+  # Boundary-safe: equal OR startswith (base + '/').
+  if [[ "$norm_cand" == "$norm_base" || "$norm_cand" == "$norm_base"/* ]]; then
+    printf '%s' "$norm_base"
+    return 0
+  fi
+  echo "Error: untrusted SVN URL: '$candidate' is not under trusted repository root '$base'. Refusing to proceed." >&2
+  return 1
+}
+
 # Write content to a file as UTF-8 without BOM. Args: <path> <content>
 write_utf8_no_bom() {
   local path="$1"

@@ -535,6 +535,135 @@ iis_express_path = "C:/this/path/does/not/exist/iisexpress.exe"
     Remove-IsolatedRepoRoot -Dir $repoI5
 }
 
+# =============================================================================
+# === assert-trusted-svn-url feature (U1) =====================================
+# =============================================================================
+#
+# Verifies Assert-TrustedSvnUrl: boundary-safe + case-normalized + traversal-reject
+# trust check anchored on the trusted working copy's repos-root-url (NOT trunk url).
+#
+# Uses the seed SVN dump (fixtures/seed/svn-repo-r1-r20.dump) loaded into a throwaway
+# repo, checked out as a trusted working copy. The repo has trunk/ + branches/test-1/
+# so we can prove a legitimate sibling branch passes (= repos-root, not trunk url).
+# Fail-closed case uses an empty non-WC temp dir as the trusted reference.
+
+Write-Output ''
+Write-Output '═════════════════════════════════════════════════════════════════════'
+Write-Output '═══ assert-trusted-svn-url feature (U1) ═══'
+Write-Output '═════════════════════════════════════════════════════════════════════'
+
+$svnAvailable = $false
+try {
+    $null = (& svn --version --quiet 2>$null)
+    $svnAvailable = ($LASTEXITCODE -eq 0)
+} catch {
+    $svnAvailable = $false
+}
+
+$dumpPathU1 = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..', 'fixtures', 'seed', 'svn-repo-r1-r20.dump'))
+
+function Invoke-AssertTrusted {
+    # Returns @{ Threw = <bool>; Result = <string>; Message = <string> }
+    param([string]$Wc, [string]$Candidate)
+    $threw = $false; $result = ''; $msg = ''
+    try {
+        $result = Assert-TrustedSvnUrl -TrustedWorkingCopy $Wc -CandidateUrl $Candidate
+    } catch {
+        $threw = $true
+        $msg = $_.Exception.Message
+    }
+    return @{ Threw = $threw; Result = $result; Message = $msg }
+}
+
+if (-not $svnAvailable) {
+    Write-Output '  [SKIP] svn not on PATH — Assert-TrustedSvnUrl seed-backed cases skipped.'
+} elseif (-not [System.IO.File]::Exists($dumpPathU1)) {
+    Write-Output "  [SKIP] seed dump missing at $dumpPathU1 — run Build-SeedRepo.ps1."
+} else {
+    $sandboxU1 = New-IsolatedRepoRoot 'trusturl'
+    $svnRepo = $null
+    try {
+        $svnRepo = [System.IO.Path]::Combine($sandboxU1, 'svnrepo')
+        $wc      = [System.IO.Path]::Combine($sandboxU1, 'wc')
+        $emptyNonWc = [System.IO.Path]::Combine($sandboxU1, 'empty-non-wc')
+        $null = New-Item -ItemType Directory -Path $emptyNonWc -Force
+
+        & svnadmin create $svnRepo
+        $createOk = ($LASTEXITCODE -eq 0)
+
+        # Load the seed dump via cmd /c stdin redirect (mirrors Reset-Fixture's F-2 symmetry).
+        $loadOk = $false
+        if ($createOk) {
+            $loadCmd = "svnadmin load `"$svnRepo`" < `"$dumpPathU1`""
+            & cmd.exe /c $loadCmd > $null 2>&1
+            $loadOk = ($LASTEXITCODE -eq 0)
+        }
+
+        if (-not $loadOk) {
+            Write-Output '  [SKIP] svnadmin create/load failed (likely dump LF→CRLF mangle); cannot build trust fixture.'
+        } else {
+            $repoUri = 'file:///' + ($svnRepo -replace '\\', '/')
+            & svn checkout "$repoUri/trunk" $wc > $null 2>&1
+            $coOk = ($LASTEXITCODE -eq 0)
+            $reposRoot = (& svn info --show-item repos-root-url $wc 2>$null | Out-String).Trim()
+
+            if (-not $coOk -or [string]::IsNullOrWhiteSpace($reposRoot)) {
+                Write-Output '  [SKIP] svn checkout of trusted WC failed; cannot build trust fixture.'
+            } else {
+                Write-Output ''
+                Write-Output "  (trusted repos-root-url = $reposRoot)"
+
+                # Case 1: same-repo trunk URL → pass
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate "$reposRoot/trunk"
+                Assert-True -Name 'same-repo trunk URL is trusted' -Condition (-not $r.Threw) -Detail $r.Message
+
+                # Case 2: legitimate sibling branch (branches/test-1) → pass
+                #         (proves trust base is repos-root, not trunk url)
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate "$reposRoot/branches/test-1"
+                Assert-True -Name 'legit sibling branches/test-1 is trusted (repos-root, not trunk)' -Condition (-not $r.Threw) -Detail $r.Message
+
+                # Case 3: prefix-confusion <root>-evil/trunk → reject
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate "$reposRoot-evil/trunk"
+                Assert-True -Name 'prefix-confusion <root>-evil/trunk is rejected (R10)' -Condition $r.Threw -Detail "unexpectedly accepted: $($r.Result)"
+
+                # Case 4: uppercase scheme variant FILE:///... → normalized, still trusted
+                $upperScheme = $reposRoot -replace '^file://', 'FILE://'
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate "$upperScheme/trunk"
+                Assert-True -Name 'uppercase scheme FILE:// normalizes and is trusted (R11)' -Condition (-not $r.Threw) -Detail $r.Message
+
+                # Case 5: candidate trailing-slash variant → same result as no trailing slash
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate "$reposRoot/branches/test-1/"
+                Assert-True -Name 'trailing-slash candidate matches no-slash result (trusted)' -Condition (-not $r.Threw) -Detail $r.Message
+
+                # Case 6: out-of-bounds file:///C:/Windows/... → reject
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate 'file:///C:/Windows/System32/'
+                Assert-True -Name 'out-of-bounds file:///C:/Windows/... is rejected' -Condition $r.Threw -Detail "unexpectedly accepted: $($r.Result)"
+
+                # Case 7: different host/scheme http://attacker/... → reject
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate 'http://attacker.example/repo'
+                Assert-True -Name 'different scheme/host http://attacker/... is rejected' -Condition $r.Threw -Detail "unexpectedly accepted: $($r.Result)"
+
+                # Case 8: path traversal in candidate → reject
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate "$reposRoot/trunk/../../etc"
+                Assert-True -Name "candidate with '..' traversal is rejected" -Condition $r.Threw -Detail "unexpectedly accepted: $($r.Result)"
+
+                # Case 8b: percent-encoded traversal %2e%2e under base → reject (decode-then-recheck)
+                $r = Invoke-AssertTrusted -Wc $wc -Candidate "$reposRoot/trunk/%2e%2e/%2e%2e/etc"
+                Assert-True -Name 'percent-encoded ..(%2e%2e) traversal is rejected after decode' -Condition $r.Threw -Detail "unexpectedly accepted: $($r.Result)"
+
+                # Case 9: fail-closed — empty non-WC reference dir → throw (cannot be bypassed)
+                $r = Invoke-AssertTrusted -Wc $emptyNonWc -Candidate "$reposRoot/trunk"
+                Assert-True -Name 'fail-closed: non-WC trusted reference throws (not silently passes)' -Condition $r.Threw -Detail "unexpectedly accepted: $($r.Result)"
+                if ($r.Threw) {
+                    Assert-True -Name 'fail-closed message mentions fail closed / repos-root-url' -Condition ($r.Message -match '(fail closed|repos-root-url)') -Detail $r.Message
+                }
+            }
+        }
+    } finally {
+        Remove-IsolatedRepoRoot -Dir $sandboxU1
+    }
+}
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 
 Write-Output ''

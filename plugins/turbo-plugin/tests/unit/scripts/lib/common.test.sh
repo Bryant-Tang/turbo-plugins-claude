@@ -110,6 +110,112 @@ else
     fail_msgs+=("test_is_submodule: see [FAIL] above")
 fi
 
+# ─── assert_trusted_svn_url (U1) ─────────────────────────────────────────────
+#
+# Boundary-safe + case-normalized + traversal-reject trust check anchored on the
+# trusted working copy's repos-root-url (NOT trunk url). Uses the seed SVN dump
+# loaded into a throwaway repo; trunk/ + branches/test-1/ let us prove a legit
+# sibling branch passes (= repos-root). Fail-closed uses an empty non-WC dir.
+
+assert_trusted_ok() {
+    # $1=name $2=wc $3=candidate ; expect exit 0
+    local name="$1" wc="$2" cand="$3"
+    # `set +e` locally so a failing helper never aborts the test under common.sh's set -e.
+    set +e
+    assert_trusted_svn_url "$wc" "$cand" >/dev/null 2>&1
+    local rc=$?
+    set -e
+    if [[ $rc -eq 0 ]]; then
+        record_pass "$name"
+    else
+        record_fail "$name" "expected trusted (exit 0), got non-zero for '$cand'"
+    fi
+}
+assert_trusted_reject() {
+    # $1=name $2=wc $3=candidate $4=stderr-substr(optional) ; expect non-zero
+    local name="$1" wc="$2" cand="$3" want="${4:-}"
+    local err rc
+    set +e
+    err="$(assert_trusted_svn_url "$wc" "$cand" 2>&1 >/dev/null)"
+    rc=$?
+    set -e
+    if [[ $rc -eq 0 ]]; then
+        record_fail "$name" "expected reject (non-zero), got exit 0 for '$cand'"
+    elif [[ -n "$want" && "$err" != *"$want"* ]]; then
+        record_fail "$name" "rejected but stderr missing '$want': $err"
+    else
+        record_pass "$name"
+    fi
+}
+
+if ! command -v svn >/dev/null 2>&1 || ! command -v svnadmin >/dev/null 2>&1; then
+    echo "  [SKIP] svn/svnadmin not on PATH — assert_trusted_svn_url cases skipped."
+else
+    DUMP_U1="$(cd -- "$PLUGIN_ROOT" && pwd)/tests/fixtures/seed/svn-repo-r1-r20.dump"
+    if [[ ! -f "$DUMP_U1" ]]; then
+        echo "  [SKIP] seed dump missing at $DUMP_U1 — run build-seed-repo.sh."
+    else
+        TMPDIR_U1="$(mktemp -d -t turbo-common-trusturl-XXXXXX)"
+        trap 'rm -rf "$TMPDIR_GMW" "$TMPDIR_TIS" "$TMPDIR_U1" 2>/dev/null || true' EXIT
+        SVN_REPO="$TMPDIR_U1/repo"
+        WC_U1="$TMPDIR_U1/wc"
+        EMPTY_NONWC="$TMPDIR_U1/empty-non-wc"
+        mkdir -p "$EMPTY_NONWC"
+
+        load_ok=1
+        svnadmin create "$SVN_REPO" >/dev/null 2>&1 || load_ok=0
+        # The dump is committed as binary (LF preserved — no CRLF mangle), so a native
+        # bash stdin redirect loads cleanly without the cmd.exe / cygpath dance.
+        if [[ $load_ok -eq 1 ]]; then
+            svnadmin load "$SVN_REPO" < "$DUMP_U1" >/dev/null 2>&1 || load_ok=0
+        fi
+
+        if [[ $load_ok -eq 0 ]]; then
+            echo "  [SKIP] svnadmin create/load failed (likely dump LF→CRLF mangle); cannot build trust fixture."
+        else
+            # Build a file:// URI with Windows drive form when under Git Bash.
+            repo_for_uri="$SVN_REPO"
+            if [[ "$repo_for_uri" =~ ^/([a-zA-Z])/(.*)$ ]]; then
+                repo_for_uri="${BASH_REMATCH[1]}:/${BASH_REMATCH[2]}"
+            fi
+            REPO_URI="file:///$repo_for_uri"
+
+            svn checkout "$REPO_URI/trunk" "$WC_U1" >/dev/null 2>&1 || true
+            REPOS_ROOT="$(svn info --show-item repos-root-url "$WC_U1" 2>/dev/null | tr -d '\r\n' || true)"
+
+            if [[ -z "$REPOS_ROOT" ]]; then
+                echo "  [SKIP] svn checkout of trusted WC failed; cannot build trust fixture."
+            else
+                echo "  (trusted repos-root-url = $REPOS_ROOT)"
+
+                # Confirm the helper queries repos-root-url (not url): a legit sibling
+                # branch under branches/ must be accepted — only repos-root makes that true.
+                assert_trusted_ok     "same-repo trunk URL is trusted"                       "$WC_U1" "$REPOS_ROOT/trunk"
+                assert_trusted_ok     "legit sibling branches/test-1 is trusted (repos-root)" "$WC_U1" "$REPOS_ROOT/branches/test-1"
+                assert_trusted_reject "prefix-confusion <root>-evil/trunk is rejected (R10)"  "$WC_U1" "${REPOS_ROOT}-evil/trunk"
+
+                # Uppercase scheme → normalized, still trusted (R11)
+                UPPER_ROOT="${REPOS_ROOT/#file:\/\//FILE://}"
+                assert_trusted_ok     "uppercase scheme FILE:// normalizes and is trusted (R11)" "$WC_U1" "$UPPER_ROOT/trunk"
+
+                # Trailing-slash candidate variant → same as no slash
+                assert_trusted_ok     "trailing-slash candidate matches no-slash result"     "$WC_U1" "$REPOS_ROOT/branches/test-1/"
+
+                # Out-of-bounds + different scheme/host → reject
+                assert_trusted_reject "out-of-bounds file:///C:/Windows/... is rejected"      "$WC_U1" "file:///C:/Windows/System32/"
+                assert_trusted_reject "different scheme/host http://attacker/... is rejected" "$WC_U1" "http://attacker.example/repo"
+
+                # Path traversal → reject
+                assert_trusted_reject "candidate with '..' traversal is rejected"             "$WC_U1" "$REPOS_ROOT/trunk/../../etc"
+                assert_trusted_reject "percent-encoded ..(%2e%2e) traversal rejected after decode" "$WC_U1" "$REPOS_ROOT/trunk/%2e%2e/%2e%2e/etc"
+
+                # Fail-closed: empty non-WC reference → reject, with explanatory stderr
+                assert_trusted_reject "fail-closed: non-WC trusted reference rejects"         "$EMPTY_NONWC" "$REPOS_ROOT/trunk" "fail closed"
+            fi
+        fi
+    fi
+fi
+
 echo ''
 echo '────────────────────────────────────────────────────────────────────────'
 echo "common.test: passed=$passed failed=$failed"
