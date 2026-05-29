@@ -181,3 +181,32 @@ _(rows TBD)_
 ## Known Issues
 
 (R32 escalation 用 — 同 case fix 3 次仍 FAIL 列在此。空白 schema template。)
+
+---
+
+## Build-SeedRepo audit
+
+KD-13 規定 `Build-SeedRepo.ps1` 是 frozen-output builder,不寫 runtime smoke test;**改以一次性 audit** 確認當前已 commit 進 git 的 dump 結構 + 語意正確,後續若 regenerate dump 要重做 audit。
+
+| Field | Value |
+|---|---|
+| Dump file | `plugins/turbo-plugin/tests/fixtures/seed/svn-repo-r1-r20.dump` |
+| Dump size | 10196 bytes |
+| Dump SHA-256 | `45D9795A2AEADAC6CCD8BA9097FA77292EEAECB81DCB8461C653D91CAF32F132` |
+| Audited at commit | `4f1be95`(branch `feat/turbo-plugin-v1.0`)|
+| Audited by | Claude Code(ce-work U1 execution)|
+| Audit date | 2026-05-28 |
+
+**Verified facts:**
+
+1. **Revision sequence complete** — dump 內 21 個 `Revision-number:` marker(r0 到 r20),數字連續無缺號
+2. **20 substantive revisions** — r1 至 r20 對應 `Build-SeedRepo.ps1` 內 `$Revisions` 表 20 條 spec(r1 init / r2 README / r3 HelloController / r4 Index view / r5 site.js + CJK msg / r6-r7 Web.config / r8 HelloController v2 / r9 Index v2 / r10 site.js v2 + CJK msg / r11-r13 Models / r14-r15 Logger + CJK msg / r16 smoke test / r17 Web.config debug / r18 LICENSE / r19 .editorconfig / r20 copy branch test-1)
+3. **English commit message spot-check** — 4 條代表性英文 commit msg 各出現恰好一次:`r1: initial trunk` / `r3: add HelloController` / `r18: add LICENSE` / `r20: branch test-1`
+4. **CJK revisions identified** — r5 / r10 / r15(per `$CjkRevs` mapping)。其 commit msg 對應 `$zhDict.commit_messages[0..2]`(本 schema doc 上方「#3 Commit message」表的 3.1 / 3.2 / 3.3):
+   - r5 = `修正中文 commit 訊息亂碼`
+   - r10 = `新增繁體中文範例文件`
+   - r15 = `重構伺服器組態載入流程`
+5. **CJK encoding(已知 F-3 reality)**:Windows + TortoiseSVN 把中文 commit msg 存的是「cp1252 → UTF-8」mojibake form(非 canonical UTF-8 bytes);測試端 round-trip 至 console codepage 仍會還原正確中文,production 觀察不到差異。Round-trip 行為由 `Assert-SvnLogTextRoundTrip` helper 驗證,不是 byte-equal
+6. **Revision 20 是 copy 操作** — `^/trunk@HEAD` → `^/branches/test-1` per spec
+
+**重新 build 後須重做 audit:** 若 `Build-SeedRepo.ps1 -Force` 重新產 dump,SHA 會改變,本段須更新為新 SHA + 新 commit hash + 重跑 verified facts。U8 final verification step 7 會比對「當前 dump file SHA = 本段記錄 SHA」確保 audit 未失效。
