@@ -386,15 +386,36 @@ $caseSummary = @{
 $fixtureDependent = $true   # treat all prod tests as fixture-dependent in v1.0
 
 function Get-SectionName {
-    param([string]$Name)
-    # build-web.test.ps1 -> build-web (strip .test.ps1)
-    # build-web.test.sh  -> build-web (strip .test.sh)
+    param(
+        [string]$Name,
+        [string]$Directory = ''
+    )
+    # Strip .test.{ps1,sh} suffix; for .test.sh, try to map kebab to PascalCase
+    # canonical via sibling .test.ps1 so .ps1 + .sh tests emit to same section.
     $n = $Name
     if ($n.EndsWith('.test.ps1', [System.StringComparison]::OrdinalIgnoreCase)) {
         return $n.Substring(0, $n.Length - 9)
     }
     if ($n.EndsWith('.test.sh', [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $n.Substring(0, $n.Length - 8)
+        $kebab = $n.Substring(0, $n.Length - 8)
+        # Find sibling .test.ps1 in same directory whose basename matches kebab
+        # case-insensitively after PascalCase-to-kebab normalization.
+        if ($Directory -and (Test-Path -LiteralPath $Directory -PathType Container)) {
+            $candidates = @(Get-ChildItem -LiteralPath $Directory -Filter '*.test.ps1' -ErrorAction SilentlyContinue)
+            foreach ($c in $candidates) {
+                $psBase = $c.Name.Substring(0, $c.Name.Length - 9)
+                # Normalize: strip all hyphens, lowercase. Handles both conventions:
+                # - 'Build-SvnCommit' / 'build-svn-commit' both → 'buildsvncommit'
+                # - 'Invoke-PostToolUseEnterWorktree' / 'invoke-posttooluse-enterworktree'
+                #   both → 'invokeposttooluseenterworktree'
+                $pseudoKebab = ($psBase -replace '-', '').ToLowerInvariant()
+                $kebabNormalized = ($kebab -replace '-', '').ToLowerInvariant()
+                if ($pseudoKebab -eq $kebabNormalized) {
+                    return $psBase
+                }
+            }
+        }
+        return $kebab
     }
     return [System.IO.Path]::GetFileNameWithoutExtension($n)
 }
@@ -414,7 +435,7 @@ function Invoke-ProdPsCase {
         if (Test-TargetDocAvailable) {
             & $writeRowPs1 `
                 -CaseId   ('P1-' + $CaseFile.BaseName) `
-                -Section  (Get-SectionName $CaseFile.Name) `
+                -Section  (Get-SectionName $CaseFile.Name -Directory $CaseFile.DirectoryName) `
                 -Fixture  'skipped-fixture-gate' `
                 -Expected 'fixture meta-test PASS' `
                 -Actual   $skippedFixtureReason `
@@ -434,7 +455,7 @@ function Invoke-ProdPsCase {
             if (Test-TargetDocAvailable) {
                 & $writeRowPs1 `
                     -CaseId   ('P1-' + $CaseFile.BaseName) `
-                    -Section  (Get-SectionName $CaseFile.Name) `
+                    -Section  (Get-SectionName $CaseFile.Name -Directory $CaseFile.DirectoryName) `
                     -Fixture  'reset-failed' `
                     -Expected 'fixture reset to base' `
                     -Actual   "Reset-Fixture exit $LASTEXITCODE" `
@@ -454,7 +475,7 @@ function Invoke-ProdPsCase {
     if (Test-TargetDocAvailable) {
         & $writeRowPs1 `
             -CaseId   ('P1-' + $CaseFile.BaseName) `
-            -Section  (Get-SectionName $CaseFile.Name) `
+            -Section  (Get-SectionName $CaseFile.Name -Directory $CaseFile.DirectoryName) `
             -Fixture  'fresh-base' `
             -Expected 'all Assert-* PASS' `
             -Actual   "exit $($r.ExitCode)" `
@@ -475,7 +496,7 @@ function Invoke-ProdShCase {
         if (Test-TargetDocAvailable) {
             & $writeRowPs1 `
                 -CaseId   ('P1-' + $CaseFile.BaseName) `
-                -Section  (Get-SectionName $CaseFile.Name) `
+                -Section  (Get-SectionName $CaseFile.Name -Directory $CaseFile.DirectoryName) `
                 -Fixture  'skipped-fixture-gate' `
                 -Expected 'fixture meta-test PASS' `
                 -Actual   $skippedFixtureReason `
@@ -501,7 +522,7 @@ function Invoke-ProdShCase {
             if (Test-TargetDocAvailable) {
                 & $writeRowPs1 `
                     -CaseId   ('P1-' + $CaseFile.BaseName) `
-                    -Section  (Get-SectionName $CaseFile.Name) `
+                    -Section  (Get-SectionName $CaseFile.Name -Directory $CaseFile.DirectoryName) `
                     -Fixture  'reset-failed' `
                     -Expected 'fixture reset to base' `
                     -Actual   "Reset-Fixture exit $LASTEXITCODE" `
@@ -538,7 +559,7 @@ function Invoke-ProdShCase {
     if (Test-TargetDocAvailable) {
         & $writeRowPs1 `
             -CaseId   ('P1-' + $CaseFile.BaseName) `
-            -Section  (Get-SectionName $CaseFile.Name) `
+            -Section  (Get-SectionName $CaseFile.Name -Directory $CaseFile.DirectoryName) `
             -Fixture  'fresh-base' `
             -Expected 'script exit 0 + last line OK' `
             -Actual   "exit $($r.ExitCode); last: $lastLine" `

@@ -48,14 +48,25 @@ if [[ $SKIP_SVN -eq 0 ]] && [[ ! -f "$DUMP_PATH" ]]; then
     exit 1
 fi
 
-# ─── Step 1: rsync -a --delete (bash equivalent of robocopy /MIR) ─────────────
+# ─── Step 1: mirror copy from base (bash equivalent of robocopy /MIR) ────────
 
 mkdir -p "$TEST_ROOT"
 
-echo "Step 1: rsync -a --delete  $BASE_DIR/  ->  $TEST_ROOT/"
-# Note trailing slash on source: copy CONTENTS of base/, not base/ itself.
-rsync -a --delete "$BASE_DIR/" "$TEST_ROOT/"
-echo "  rsync OK"
+if command -v rsync >/dev/null 2>&1; then
+    echo "Step 1: rsync -a --delete  $BASE_DIR/  ->  $TEST_ROOT/"
+    # Note trailing slash on source: copy CONTENTS of base/, not base/ itself.
+    rsync -a --delete "$BASE_DIR/" "$TEST_ROOT/"
+    echo "  rsync OK"
+else
+    # Fallback for environments without rsync (e.g., Git Bash on Windows).
+    # Nuke + recopy achieves the same end state (mirror) as rsync --delete
+    # since this is a fixture reset — we want clean state from base.
+    echo "Step 1: rm -rf + cp -a (rsync not available)  $BASE_DIR/  ->  $TEST_ROOT/"
+    rm -rf "$TEST_ROOT"
+    mkdir -p "$TEST_ROOT"
+    cp -a "$BASE_DIR/." "$TEST_ROOT/"
+    echo "  cp -a OK"
+fi
 
 # ─── Step 2: SVN repo reset ───────────────────────────────────────────────────
 

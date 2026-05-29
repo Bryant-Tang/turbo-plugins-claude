@@ -194,8 +194,13 @@ function Invoke-Reset {
     $extra = @()
     if ($SkipSvn) { $extra += '-SkipSvn' }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $resetScript `
+    # Capture stdout to a variable so it does NOT flow into this function's
+    # output stream — otherwise `return $LASTEXITCODE` ends up returning
+    # `[string..., int]` (Object[]) and Assert-Equal type-fails.
+    # The captured $resetOutput is intentionally unused (test only needs exit code).
+    $resetOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $resetScript `
         -TestRoot $TestRoot -SvnRepo $SvnRepo @extra
+    $null = $resetOutput
     return $LASTEXITCODE
 }
 
