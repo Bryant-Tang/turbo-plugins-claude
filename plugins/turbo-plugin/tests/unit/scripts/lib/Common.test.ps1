@@ -664,6 +664,356 @@ if (-not $svnAvailable) {
     }
 }
 
+# =============================================================================
+# === lib helper unit coverage (U7) ===========================================
+# =============================================================================
+#
+# Direct unit tests for the previously-untested Common.ps1 helpers (R7) plus the
+# Write-Utf8NoBom CJK no-BOM byte gate (R6). Every case calls the real dot-sourced
+# function — no logic is reproduced in the test.
+#
+# Helpers covered:
+#   Get-RelativePathSafe       (P0 regression: $From == $To -> '', per F-U2.9)
+#   Get-ProjectIdentityHash    (determinism / case-normalization / cross-repo isolation)
+#   Get-NormalizedAbsolutePath (Git-Bash /c/... + drive-letter lowercase + empty throw)
+#   Resolve-RemoteWorktree     (main / test-<n> / unsupported throw)
+#   Format-IisExpressSiteName  (ASCII + CJK csproj stem preserved)
+#   Find-SingleCsproj          (single / zero throw / multiple throw)
+#   schema_version warning     (=1/=2 silent, =3 stderr warning per actual code)
+#   Write-Utf8NoBom            (CJK content -> no BOM + canonical UTF-8 bytes, R6)
+
+# Two extra inline asserts mirroring AssertHelpers shape but wired to this file's
+# own $script:Passed/$script:Failed counters (this test does NOT dot-source
+# AssertHelpers.ps1 — it keeps its self-contained counter style).
+function Assert-Match2 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Pattern,
+        [string]$InputText
+    )
+    $text = if ($null -eq $InputText) { '' } else { [string]$InputText }
+    if ($text -match $Pattern) {
+        $script:Passed++
+        Write-Output "  [PASS] $Name"
+    } else {
+        $script:Failed++
+        $script:Failures += "${Name}: pattern '$Pattern' did not match '$text'"
+        Write-Output "  [FAIL] $Name"
+        Write-Output "         pattern: $Pattern"
+        Write-Output "         input:   $text"
+    }
+}
+
+function Assert-Throws2 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock,
+        [string]$ExpectedMessagePattern = ''
+    )
+    $threw = $false; $msg = ''
+    try {
+        & $ScriptBlock | Out-Null
+    } catch {
+        $threw = $true; $msg = $_.Exception.Message
+    }
+    if (-not $threw) {
+        $script:Failed++
+        $script:Failures += "${Name}: expected throw, none occurred"
+        Write-Output "  [FAIL] $Name (expected throw, none occurred)"
+        return
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedMessagePattern) -and ($msg -notmatch $ExpectedMessagePattern)) {
+        $script:Failed++
+        $script:Failures += "${Name}: threw but message '$msg' did not match '$ExpectedMessagePattern'"
+        Write-Output "  [FAIL] $Name (message mismatch)"
+        Write-Output "         pattern: $ExpectedMessagePattern"
+        Write-Output "         message: $msg"
+        return
+    }
+    $script:Passed++
+    Write-Output "  [PASS] $Name"
+}
+
+function Assert-FileBytesEqual {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][byte[]]$ExpectedBytes,
+        [Parameter(Mandatory = $true)][string]$ActualFilePath
+    )
+    if (-not [System.IO.File]::Exists($ActualFilePath)) {
+        $script:Failed++
+        $script:Failures += "${Name}: file does not exist: $ActualFilePath"
+        Write-Output "  [FAIL] $Name (file missing: $ActualFilePath)"
+        return
+    }
+    $actual = [System.IO.File]::ReadAllBytes($ActualFilePath)
+    if ($actual.Length -ne $ExpectedBytes.Length) {
+        $script:Failed++
+        $script:Failures += "${Name}: byte length mismatch exp=$($ExpectedBytes.Length) act=$($actual.Length)"
+        Write-Output "  [FAIL] $Name (length exp=$($ExpectedBytes.Length) act=$($actual.Length))"
+        return
+    }
+    for ($i = 0; $i -lt $ExpectedBytes.Length; $i++) {
+        if ($ExpectedBytes[$i] -ne $actual[$i]) {
+            $script:Failed++
+            $script:Failures += "${Name}: byte mismatch at offset $i exp=0x$('{0:X2}' -f $ExpectedBytes[$i]) act=0x$('{0:X2}' -f $actual[$i])"
+            Write-Output "  [FAIL] $Name (offset $i exp=0x$('{0:X2}' -f $ExpectedBytes[$i]) act=0x$('{0:X2}' -f $actual[$i]))"
+            return
+        }
+    }
+    $script:Passed++
+    Write-Output "  [PASS] $Name"
+}
+
+Write-Output ''
+Write-Output '═════════════════════════════════════════════════════════════════════'
+Write-Output '═══ lib helper unit coverage (U7) ═══'
+Write-Output '═════════════════════════════════════════════════════════════════════'
+
+# ─── Get-RelativePathSafe (P0 regression — F-U2.9) ─────────────────────────────
+
+Write-Output ''
+Write-Output '─── Get-RelativePathSafe ───'
+
+# Three normal path inputs.
+$relChild = Get-RelativePathSafe -From 'C:\proj' -To 'C:\proj\sub\file.txt'
+Assert-Equal -Name 'child path -> sub\file.txt' -Expected ('sub' + [System.IO.Path]::DirectorySeparatorChar + 'file.txt') -Actual $relChild
+
+$relSibling = Get-RelativePathSafe -From 'C:\proj\a' -To 'C:\proj\b\x.cs'
+Assert-Equal -Name 'sibling path -> ..\b\x.cs' -Expected ('..' + [System.IO.Path]::DirectorySeparatorChar + 'b' + [System.IO.Path]::DirectorySeparatorChar + 'x.cs') -Actual $relSibling
+
+$relNested = Get-RelativePathSafe -From 'C:\a\b\c' -To 'C:\a\d\e.txt'
+Assert-Equal -Name 'nested up-then-down -> ..\..\d\e.txt' -Expected ('..' + [System.IO.Path]::DirectorySeparatorChar + '..' + [System.IO.Path]::DirectorySeparatorChar + 'd' + [System.IO.Path]::DirectorySeparatorChar + 'e.txt') -Actual $relNested
+
+# REGRESSION (F-U2.9, commit 25fb77a): the original triggering input was
+# `Get-RelativePathSafe -From X -To X` (same path). Before the fix MakeRelativeUri's
+# result was ambiguous (could be '' or '../<basename>') depending on trailing-separator
+# state; the fix defines the same-path contract as returning ''.
+$regSame = Get-RelativePathSafe -From 'C:\proj\sub' -To 'C:\proj\sub'
+Assert-Equal -Name 'REGRESSION F-U2.9: From==To returns empty string' -Expected '' -Actual $regSame
+
+# Same regression, trailing-slash variant on one side — must still normalize to ''
+# (the fix trims trailing separators on BOTH ends before the same-path check).
+$regSameSlash = Get-RelativePathSafe -From 'C:\proj\sub' -To 'C:\proj\sub\'
+Assert-Equal -Name 'REGRESSION F-U2.9: From==To (trailing-slash variant) returns empty string' -Expected '' -Actual $regSameSlash
+
+# ─── Get-ProjectIdentityHash ───────────────────────────────────────────────────
+
+Write-Output ''
+Write-Output '─── Get-ProjectIdentityHash ───'
+
+function New-GitRepoFixture {
+    param([string]$Tag = 'hash')
+    $dir = New-IsolatedRepoRoot $Tag
+    & git -C $dir init --quiet 2>$null | Out-Null
+    return $dir
+}
+
+$ghGitOk = $true
+try { $null = (& git --version 2>$null); $ghGitOk = ($LASTEXITCODE -eq 0) } catch { $ghGitOk = $false }
+
+if (-not $ghGitOk) {
+    Write-Output '  [SKIP] git not on PATH — Get-ProjectIdentityHash cases skipped.'
+} else {
+    $ghRepoA = New-GitRepoFixture 'hashA'
+    $ghRepoB = New-GitRepoFixture 'hashB'
+    try {
+        # Determinism: same repo + same csproj relpath -> identical hash.
+        $hA1 = Get-ProjectIdentityHash -RepoPath $ghRepoA -CsprojRelPath 'src/App.csproj'
+        $hA2 = Get-ProjectIdentityHash -RepoPath $ghRepoA -CsprojRelPath 'src/App.csproj'
+        Assert-Equal -Name 'determinism: same inputs -> same hash' -Expected $hA1 -Actual $hA2
+        Assert-Match2 -Name 'hash is 8 lowercase hex chars' -Pattern '^[0-9a-f]{8}$' -InputText $hA1
+
+        # Case-normalization: csproj relpath case + slash direction folded -> same hash.
+        $hCaseLower = Get-ProjectIdentityHash -RepoPath $ghRepoA -CsprojRelPath 'src/app.csproj'
+        $hCaseUpper = Get-ProjectIdentityHash -RepoPath $ghRepoA -CsprojRelPath 'SRC/APP.CSPROJ'
+        Assert-Equal -Name 'case-normalization: lower/upper csproj relpath -> same hash' -Expected $hCaseLower -Actual $hCaseUpper
+
+        # Backslash vs forward-slash relpath also folds to the same identity.
+        $hBackslash = Get-ProjectIdentityHash -RepoPath $ghRepoA -CsprojRelPath 'src\App.csproj'
+        Assert-Equal -Name 'slash-normalization: back/forward slash -> same hash' -Expected $hA1 -Actual $hBackslash
+
+        # Cross-repo isolation: two DIFFERENT git repos, identical csproj relpath -> DIFFERENT hash
+        # (proves the git-common-dir is folded into the identity, not just the relpath).
+        $hB1 = Get-ProjectIdentityHash -RepoPath $ghRepoB -CsprojRelPath 'src/App.csproj'
+        Assert-True -Name 'cross-repo isolation: distinct repos, same relpath -> distinct hash' -Condition ($hA1 -ne $hB1) -Detail "repoA=$hA1 repoB=$hB1"
+
+        # Non-git path -> throw.
+        $ghNonGit = New-IsolatedRepoRoot 'hashNonGit'
+        try {
+            Assert-Throws2 -Name 'non-git RepoPath throws' -ScriptBlock { Get-ProjectIdentityHash -RepoPath $ghNonGit -CsprojRelPath 'src/App.csproj' } -ExpectedMessagePattern 'Not a git repository'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $ghNonGit
+        }
+    } finally {
+        Remove-IsolatedRepoRoot -Dir $ghRepoA
+        Remove-IsolatedRepoRoot -Dir $ghRepoB
+    }
+}
+
+# ─── Get-NormalizedAbsolutePath ────────────────────────────────────────────────
+
+Write-Output ''
+Write-Output '─── Get-NormalizedAbsolutePath ───'
+
+# Git-Bash style /c/Users/... -> C:\Users\... with lowercase drive letter.
+$gnGitBash = Get-NormalizedAbsolutePath -Path '/c/Users/test/proj'
+Assert-Match2 -Name 'Git-Bash /c/... -> c:\... (drive lowercased, backslashes)' -Pattern '^c:\\Users\\test\\proj$' -InputText $gnGitBash
+
+# Uppercase drive letter input is lowercased.
+$gnUpper = Get-NormalizedAbsolutePath -Path 'C:\Temp\Thing'
+Assert-Match2 -Name 'uppercase drive C:\ lowercased to c:\' -Pattern '^c:\\' -InputText $gnUpper
+
+# Mixed forward slashes get a full normalized absolute path back.
+$gnFwd = Get-NormalizedAbsolutePath -Path 'D:/data/sub'
+Assert-Match2 -Name 'forward-slash absolute path normalizes to d:\data\sub' -Pattern '^d:\\data\\sub$' -InputText $gnFwd
+
+# Empty / whitespace input throws. ('' is rejected at Mandatory-param binding before
+# the body runs; whitespace reaches the function's own 'empty path' guard.)
+Assert-Throws2 -Name 'empty path throws (param binding)' -ScriptBlock { Get-NormalizedAbsolutePath -Path '' }
+Assert-Throws2 -Name 'whitespace path throws (function guard)' -ScriptBlock { Get-NormalizedAbsolutePath -Path '   ' } -ExpectedMessagePattern 'empty path'
+
+# ─── Resolve-RemoteWorktree ────────────────────────────────────────────────────
+
+Write-Output ''
+Write-Output '─── Resolve-RemoteWorktree ───'
+
+$wtDir = 'C:\proj.worktrees'
+
+$rwMain = Resolve-RemoteWorktree -BranchName 'main' -WorktreesDir $wtDir
+Assert-Equal -Name 'main -> Name remote-main' -Expected 'remote-main' -Actual $rwMain.Name
+Assert-Equal -Name 'main -> Branch remote/main' -Expected 'remote/main' -Actual $rwMain.Branch
+Assert-Equal -Name 'main -> Path <wt>\remote-main' -Expected (Join-Path $wtDir 'remote-main') -Actual $rwMain.Path
+
+$rwTest = Resolve-RemoteWorktree -BranchName 'test-3' -WorktreesDir $wtDir
+Assert-Equal -Name 'test-3 -> Name remote-test-3' -Expected 'remote-test-3' -Actual $rwTest.Name
+Assert-Equal -Name 'test-3 -> Branch remote/test-3' -Expected 'remote/test-3' -Actual $rwTest.Branch
+Assert-Equal -Name 'test-3 -> Path <wt>\remote-test-3' -Expected (Join-Path $wtDir 'remote-test-3') -Actual $rwTest.Path
+
+Assert-Throws2 -Name 'unsupported branch (feature/x) throws' -ScriptBlock { Resolve-RemoteWorktree -BranchName 'feature/x' -WorktreesDir $wtDir } -ExpectedMessagePattern "Only 'main' and 'test-<n>'"
+
+# ─── Format-IisExpressSiteName ─────────────────────────────────────────────────
+
+Write-Output ''
+Write-Output '─── Format-IisExpressSiteName ───'
+
+# ASCII csproj stem.
+$siteAscii = Format-IisExpressSiteName -CsprojPath 'C:\proj\src\HelloApp.csproj' -IdentityHash 'deadbeef'
+Assert-Equal -Name 'ASCII csproj stem -> HelloApp-deadbeef' -Expected 'HelloApp-deadbeef' -Actual $siteAscii
+
+# CJK csproj stem (dictionary 2.3 stem `報表範本`) — non-ASCII must be preserved verbatim.
+$cjkStemName = '報表範本'
+$siteCjk = Format-IisExpressSiteName -CsprojPath ("C:\proj\src\$cjkStemName.csproj") -IdentityHash 'cafe1234'
+Assert-Equal -Name 'CJK csproj stem preserved (報表範本-cafe1234)' -Expected ("$cjkStemName-cafe1234") -Actual $siteCjk
+
+# ─── Find-SingleCsproj ─────────────────────────────────────────────────────────
+
+Write-Output ''
+Write-Output '─── Find-SingleCsproj ───'
+
+# Single .csproj present (no config / no CLI) -> returns it.
+$fcSingle = New-IsolatedRepoRoot 'csproj-single'
+try {
+    $onlyCsproj = Join-Path $fcSingle 'OnlyOne.csproj'
+    Set-Content -LiteralPath $onlyCsproj -Value '<Project/>' -Encoding ASCII
+    $found = Find-SingleCsproj -RepoRoot $fcSingle -CliProjectValue ''
+    Assert-Equal -Name 'single .csproj is returned' -Expected ([System.IO.Path]::GetFullPath($onlyCsproj)) -Actual ([System.IO.Path]::GetFullPath($found))
+} finally {
+    Remove-IsolatedRepoRoot -Dir $fcSingle
+}
+
+# Zero .csproj -> throw.
+$fcZero = New-IsolatedRepoRoot 'csproj-zero'
+try {
+    Assert-Throws2 -Name 'zero .csproj throws' -ScriptBlock { Find-SingleCsproj -RepoRoot $fcZero -CliProjectValue '' } -ExpectedMessagePattern 'No \.csproj found'
+} finally {
+    Remove-IsolatedRepoRoot -Dir $fcZero
+}
+
+# Multiple .csproj -> throw.
+$fcMulti = New-IsolatedRepoRoot 'csproj-multi'
+try {
+    Set-Content -LiteralPath (Join-Path $fcMulti 'A.csproj') -Value '<Project/>' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $fcMulti 'B.csproj') -Value '<Project/>' -Encoding ASCII
+    Assert-Throws2 -Name 'multiple .csproj throws' -ScriptBlock { Find-SingleCsproj -RepoRoot $fcMulti -CliProjectValue '' } -ExpectedMessagePattern 'Multiple \.csproj'
+} finally {
+    Remove-IsolatedRepoRoot -Dir $fcMulti
+}
+
+# ─── schema_version warning (Read-TurboPluginConfig / Test-TurboPluginConfigSchema) ─
+#
+# Actual code (Test-TurboPluginConfigSchema): versions 1 AND 2 are recognized
+# (no warning); only an UNrecognized version (e.g. 3) emits a stderr warning, and
+# only ONCE per process (guarded by $script:_TpSchemaWarned). The test resets that
+# module-scope guard between cases so each is observed independently.
+
+Write-Output ''
+Write-Output '─── schema_version warning ───'
+
+function Get-SchemaWarningStderr {
+    param([Parameter(Mandatory = $true)][int]$Version)
+    # Reset the once-per-process guard so this invocation can warn.
+    Set-Variable -Name '_TpSchemaWarned' -Scope Script -Value $false
+    $repo = New-IsolatedRepoRoot 'schema'
+    $stderrFile = Join-Path $repo 'stderr.txt'
+    try {
+        Write-Utf8NoBom -Path (Join-Path $repo '.turbo-plugin\config.toml') -Content @"
+schema_version = $Version
+[tools]
+msbuild_path = "C:/x.exe"
+"@
+        # Capture [Console]::Error output by redirecting the process stderr stream.
+        $prevErr = [Console]::Error
+        $sw = New-Object System.IO.StringWriter
+        [Console]::SetError($sw)
+        try {
+            $null = Resolve-ConfigValue -RepoRoot $repo -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null
+        } finally {
+            [Console]::SetError($prevErr)
+        }
+        return $sw.ToString()
+    } finally {
+        Remove-IsolatedRepoRoot -Dir $repo
+    }
+}
+
+$stderrV1 = Get-SchemaWarningStderr -Version 1
+Assert-True -Name 'schema_version=1 emits NO warning' -Condition ([string]::IsNullOrWhiteSpace($stderrV1)) -Detail "stderr: $stderrV1"
+
+$stderrV2 = Get-SchemaWarningStderr -Version 2
+Assert-True -Name 'schema_version=2 emits NO warning' -Condition ([string]::IsNullOrWhiteSpace($stderrV2)) -Detail "stderr: $stderrV2"
+
+$stderrV3 = Get-SchemaWarningStderr -Version 3
+Assert-Match2 -Name 'schema_version=3 (unrecognized) emits stderr warning' -Pattern 'schema_version=3 is not recognized' -InputText $stderrV3
+
+# ─── Write-Utf8NoBom (R6 — CJK no-BOM byte gate) ───────────────────────────────
+#
+# The real encoding gate Submit-SvnCommit depends on when writing a CJK commit
+# message to the UTF-8 temp file handed to `svn commit --file ... --encoding UTF-8`.
+# CJK content (dictionary 5.5, includes an em-dash) must be written WITHOUT a BOM
+# and byte-identical to canonical UTF-8.
+
+Write-Output ''
+Write-Output '─── Write-Utf8NoBom (R6) ───'
+
+$wuRepo = New-IsolatedRepoRoot 'utf8nobom'
+try {
+    $cjkContent = '組態載入完成 — 中文路徑支援已啟用'   # schema dict 5.5 (CJK + em-dash)
+    $wuFile = Join-Path $wuRepo 'msg.txt'
+    Write-Utf8NoBom -Path $wuFile -Content $cjkContent
+
+    $bytes = [System.IO.File]::ReadAllBytes($wuFile)
+    # First 3 bytes must NOT be the UTF-8 BOM EF BB BF.
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    Assert-True -Name 'Write-Utf8NoBom: file does NOT start with UTF-8 BOM (EF BB BF)' -Condition (-not $hasBom) -Detail ("first bytes: " + (($bytes | Select-Object -First 3 | ForEach-Object { '{0:X2}' -f $_ }) -join ' '))
+
+    # Byte content equals canonical UTF-8 (no-BOM) encoding of the CJK string.
+    $canonical = (New-Object System.Text.UTF8Encoding($false)).GetBytes($cjkContent)
+    Assert-FileBytesEqual -Name 'Write-Utf8NoBom: bytes equal canonical UTF-8 (no BOM)' -ExpectedBytes $canonical -ActualFilePath $wuFile
+} finally {
+    Remove-IsolatedRepoRoot -Dir $wuRepo
+}
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 
 Write-Output ''
