@@ -42,6 +42,11 @@ function Invoke-GitSilent {
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
 $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Remove-OrphanIis.ps1')
 
+# Dot-source the production IIS helpers so we call the *real* Test-OrphanSiteNameMatch
+# (which builds the same $stemPattern Remove-OrphanIis.ps1 uses). This guarantees that if
+# anyone removes [regex]::Escape from production, the metacharacter cases below go red.
+. ([System.IO.Path]::Combine($pluginRoot, 'scripts', 'lib', 'IisHelpers.ps1'))
+
 $testRoot = 'C:\Turbo\test-turbo-plugin'
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')
 
@@ -124,6 +129,72 @@ try {
     } finally {
         Set-IisEnabled -Enabled $true
     }
+
+    # ─── R5: regex-metacharacter誤殺防護 (canonical 斷言) ───────────────────────
+    # v1.0 的 Remove-OrphanIis 比對 running iisexpress.exe 的 /site:<name> 命令列,
+    # 用 "^<csprojStem>-<8hex>$" pattern。stem 須被當 literal (regex-escape),否則含
+    # metachar 的 stem (如 My.Test) 會誤 match 別的站台 (如 MyXTest-deadbeef) → 把不該
+    # 清的站台當 orphan 殺掉。以下證明 escape 生效:每個 metachar stem 對一個 near-miss
+    # 站台名斷言「不」match (escape 生效),並對自己對應的 <stem>-<8hex> 斷言「要」match。
+    #
+    # near-miss 構造原則:把 metachar 換成「若當 regex 會 match、當 literal 不會」的字元。
+    #   $stem        : 含 metachar 的 csproj stem
+    #   $nearMiss    : 一個 near-miss 站台名 (literal 不該 match;若沒 escape 則 regex 會 match)
+    # 每案的 NearMiss 在「未 escape 的 buggy pattern」下會誤 match (RawWouldMatch 標明),
+    # 在 production 的 escaped pattern 下不該 match。標 RawWouldMatch=$false 的 (anchor / 結束
+    # metachar) 表示未 escape 時該 metachar 反而破壞 pattern → 連自己對應站台都 match 不到 (under-kill);
+    # 兩種失效模式都靠 escape 修掉,故仍納入矩陣。escape 真正有效性由 verification 的「暫拿掉 escape
+    # 應使本檔變紅」驗證(見回報)。
+    $metacharCases = @(
+        # '.' regex = any char → 'My.Test' 當 regex 會 match 'MyXTest'
+        @{ Char = '.';  Stem = 'My.Test';  NearMiss = 'MyXTest-deadbeef'; RawWouldMatch = $true }
+        # '+' regex = 前字元一個以上 → 'Sva+b' 當 regex 會 match 'Svaab'
+        @{ Char = '+';  Stem = 'Sva+b';    NearMiss = 'Svaab-deadbeef';  RawWouldMatch = $true }
+        # '[' regex = char class 開始 → 'App[0-9]' 當 regex 會 match 'App5'
+        @{ Char = '[';  Stem = 'App[0-9]'; NearMiss = 'App5-deadbeef';   RawWouldMatch = $true }
+        # ']' 單獨結束 metachar → 'A[BC]D' 當 regex 會 match 'ABD' (char class [BC])
+        @{ Char = ']';  Stem = 'A[BC]D';   NearMiss = 'ABD-deadbeef';    RawWouldMatch = $true }
+        # '(' regex = group 開始 → '(App)' 當 regex 會 match 'App'
+        @{ Char = '(';  Stem = '(App)';    NearMiss = 'App-deadbeef';    RawWouldMatch = $true }
+        # ')' group 結束 → '(Foo)Bar' 當 regex 會 match 'FooBar'
+        @{ Char = ')';  Stem = '(Foo)Bar'; NearMiss = 'FooBar-deadbeef'; RawWouldMatch = $true }
+        # '{' regex = quantifier 開始 → 'Ap{1,2}' 當 regex 會 match 'App'
+        @{ Char = '{';  Stem = 'Ap{1,2}';  NearMiss = 'App-deadbeef';    RawWouldMatch = $true }
+        # '}' quantifier 結束 → 'a{2}b' 當 regex 會 match 'aab'
+        @{ Char = '}';  Stem = 'a{2}b';    NearMiss = 'aab-deadbeef';    RawWouldMatch = $true }
+        # '^' regex = 起始 anchor (零寬) → '^App' 未 escape 時 anchor 破壞 pattern,
+        #   self-site 'App-...' 反而 match 不到 (under-kill);escape 後 self 正常 match。
+        @{ Char = '^';  Stem = '^App';     NearMiss = 'XApp-deadbeef';   RawWouldMatch = $false }
+        # '$' regex = 結束 anchor → 'App$X' 未 escape 時 'App' 後接 end-anchor 再接 'X' 為不可能 regex,
+        #   self-site 'App$X-...' match 不到 (under-kill);escape 後 self 正常 match。
+        @{ Char = '$';  Stem = 'App$X';    NearMiss = 'App-deadbeefX';   RawWouldMatch = $false }
+    )
+
+    foreach ($mc in $metacharCases) {
+        # near-miss: stem 當 literal 不該 match (escape 生效);若 escape 被拿掉則會誤 match。
+        $nm = Test-OrphanSiteNameMatch -CsprojStem $mc.Stem -SiteName $mc.NearMiss
+        Assert-True -Name "R5 metachar '$($mc.Char)': near-miss '$($mc.NearMiss)' NOT matched (literal stem '$($mc.Stem)')" `
+                    -Condition (-not $nm)
+
+        # 對照組:該 stem 對自己對應的站台名 (<stem>-<8hex>) 一定要 match,
+        # 證明不是「全部都不 match」才過。
+        $selfSite = "$($mc.Stem)-deadbeef"
+        $self = Test-OrphanSiteNameMatch -CsprojStem $mc.Stem -SiteName $selfSite
+        Assert-True -Name "R5 metachar '$($mc.Char)': self-site '$selfSite' DOES match" `
+                    -Condition $self
+    }
+
+    # 對照組 (seam (a)):真 orphan — stem 完全不對應的站台名仍被判定屬該 stem 家族時應 match,
+    # 而毫不相干的站台名不該 match (證明 helper 不是恆真)。
+    $realOrphan = Test-OrphanSiteNameMatch -CsprojStem 'HelloApp' -SiteName 'HelloApp-0badf00d'
+    Assert-True -Name 'R5 control: real orphan HelloApp-0badf00d matches stem HelloApp' -Condition $realOrphan
+
+    $unrelated = Test-OrphanSiteNameMatch -CsprojStem 'HelloApp' -SiteName 'OtherApp-0badf00d'
+    Assert-True -Name 'R5 control: unrelated OtherApp-0badf00d does NOT match stem HelloApp' -Condition (-not $unrelated)
+
+    # 邊界:正確 stem 但 hash 非 8 hex → 不該 match (pattern 的 hash 段仍有效)。
+    $badHash = Test-OrphanSiteNameMatch -CsprojStem 'HelloApp' -SiteName 'HelloApp-zzzzzzzz'
+    Assert-True -Name 'R5 control: non-hex hash does NOT match' -Condition (-not $badHash)
 }
 catch {
     Write-Output "  [FAIL] unhandled: $($_.Exception.Message)"

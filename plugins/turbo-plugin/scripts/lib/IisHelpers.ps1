@@ -48,6 +48,25 @@ IIS Express 路徑未設定且找不到標準安裝。請跑 /tp-setup 互動填
 "@
 }
 
+# Decide whether a running iisexpress.exe /site:<name> belongs to the given project's
+# stem-hash family (i.e. is a candidate orphan for that project).
+#
+# Match rule: the site name must be exactly "<csprojStem>-<8 hex>" where <csprojStem> is
+# treated as a LITERAL (regex-escaped). Escaping is the load-bearing protection: a stem
+# containing regex metacharacters (e.g. "My.Test") must NOT match a near-miss site name
+# (e.g. "MyXTest-deadbeef"); without [regex]::Escape the '.' would match the 'X' and we
+# would mistake an unrelated site for an orphan and kill it.
+#
+# Returns $true when $SiteName is in the stem-hash family of $CsprojStem, else $false.
+function Test-OrphanSiteNameMatch {
+    param(
+        [Parameter(Mandatory = $true)][string]$CsprojStem,
+        [Parameter(Mandatory = $true)][string]$SiteName
+    )
+    $stemPattern = "^$([regex]::Escape($CsprojStem))-[0-9a-f]{8}$"
+    return ($SiteName -match $stemPattern)
+}
+
 function Find-ApplicationhostTarget {
     param([string]$RepoRoot, [string]$ProjectFile)
     # v1.0 (U3) — canonical applicationhost.config lives at .turbo-plugin/applicationhost.config

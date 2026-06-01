@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# remove-orphan-iis.test.sh — bash sibling for cleanup-orphan-iis.sh
+# remove-orphan-iis.test.sh — bash sibling for remove-orphan-iis.sh
 # Note: script has NO [iis] gate at script level (by design — gate is SKILL-level).
+#
+# U5 / R5 — delegate-smoke only: remove-orphan-iis.sh is a ps1-delegate (forwards to
+#   Remove-OrphanIis.ps1 via lib/ps1-delegate.sh; no independent regex logic). The canonical
+#   regex-escape "誤殺防護" assertions (Test-OrphanSiteNameMatch with metacharacter stems) live
+#   in Remove-OrphanIis.test.ps1. Here we only verify the delegate dispatches and surfaces the
+#   No-orphan happy path / exit codes (errors bubble up).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

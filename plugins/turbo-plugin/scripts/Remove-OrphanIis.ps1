@@ -19,7 +19,6 @@ try {
     $settings = Resolve-IisSettings -Project $Project
     $currentSiteName = $settings.IisConfigSiteName
     $csprojStem      = [System.IO.Path]::GetFileNameWithoutExtension($settings.ProjectFile)
-    $stemPattern     = "^$([regex]::Escape($csprojStem))-[0-9a-f]{8}$"
 
     # 1. Collect orphan processes: iisexpress.exe whose /site:<name> matches the stem-hash
     #    format but has a different hash than current.
@@ -32,7 +31,7 @@ try {
         if ([string]::IsNullOrWhiteSpace($p.CommandLine)) { continue }
         if ($p.CommandLine -notmatch '/site:([^\s"]+)') { continue }
         $candidateSite = $Matches[1]
-        if ($candidateSite -match $stemPattern -and $candidateSite -ne $currentSiteName) {
+        if ((Test-OrphanSiteNameMatch -CsprojStem $csprojStem -SiteName $candidateSite) -and $candidateSite -ne $currentSiteName) {
             $orphanProcs += [pscustomobject]@{
                 SiteName = $candidateSite
                 Pid      = $p.ProcessId
