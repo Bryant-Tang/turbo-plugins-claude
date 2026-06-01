@@ -35,7 +35,7 @@ function Mirror-Base-To {
     # Run Reset-Fixture with -SkipSvn to mirror base/ into TestRoot.
     param([string]$TestRoot)
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 10)
-    $outFile = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-reset-out-$stamp.txt")
+    $outFile = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-reset-out-$stamp.txt")
     try {
         # `2>&1` 在 cmd.exe shell context 內,**不是** PS-level — cmd.exe 做 shell
         # 重導向,PS 看到的是 single stream,不會 trigger NativeCommandError。把字串

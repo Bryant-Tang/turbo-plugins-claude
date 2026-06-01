@@ -37,7 +37,7 @@ function Invoke-GitSilent {
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
 $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Stop-Iis.ps1')
 
-$testRoot = 'C:\Turbo\test-turbo-plugin'
+$testRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin'
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')
 
 function Ensure-FixtureGit {

@@ -116,7 +116,7 @@ if (-not [System.IO.File]::Exists($dumpPath)) {
     try {
         $testRoot = [System.IO.Path]::Combine($sb5, 'test-turbo-plugin')
         $svnRepo  = [System.IO.Path]::Combine($sb5, 'test-turbo-plugin-svn-repo')
-        $resetOut = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-reset-out-$([Guid]::NewGuid().ToString('N').Substring(0,10)).txt")
+        $resetOut = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-reset-out-$([Guid]::NewGuid().ToString('N').Substring(0,10)).txt")
         # 2>&1 是 cmd.exe shell redirect(非 PS-level)— 拉到變數避開 lint 規則 4 false positive。
         $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$testRoot`" -SvnRepo `"$svnRepo`" > `"$resetOut`" 2>&1"
         & cmd.exe /c $cmdStr

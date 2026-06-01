@@ -8,7 +8,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/start-iis.sh"
-TEST_ROOT="/c/Turbo/test-turbo-plugin"
+TEST_ROOT="/c/Turbo/test-turbo-plugin/test-turbo-plugin"
 CFG="$TEST_ROOT/.turbo-plugin/config.toml"
 APPHOST="$TEST_ROOT/.turbo-plugin/applicationhost.config"
 
@@ -68,7 +68,7 @@ fi
 
 # Case 3: missing csproj sandbox
 guid="$(powershell -NoProfile -Command '[guid]::NewGuid().ToString("N").Substring(0,12)' | tr -d '\r')"
-sb="/c/Turbo/turbo-plugin-test-startiis-sh-$guid"
+sb="/c/Turbo/test-turbo-plugin/sandboxes/turbo-plugin-test-startiis-sh-$guid"
 mkdir -p "$sb/.turbo-plugin"
 echo "[iis]" > "$sb/.turbo-plugin/config.toml"
 echo "enabled = true" >> "$sb/.turbo-plugin/config.toml"

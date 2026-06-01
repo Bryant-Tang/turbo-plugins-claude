@@ -1,5 +1,5 @@
 # turbo-plugin Phase 1 fixture config.toml
-# 此檔由 Reset-Fixture.ps1 mirror 進 C:\Turbo\test-turbo-plugin\.turbo-plugin\config.toml
+# 此檔由 Reset-Fixture.ps1 mirror 進 C:\Turbo\test-turbo-plugin\test-turbo-plugin\.turbo-plugin\config.toml
 # 不要直接編輯 — 修改請改 plugins/turbo-plugin/tests/fixtures/base/.turbo-plugin/config.toml 並重跑 reset。
 
 schema_version = 2

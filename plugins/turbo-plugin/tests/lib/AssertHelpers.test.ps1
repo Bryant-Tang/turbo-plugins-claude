@@ -73,7 +73,7 @@ function Run-WithInnerCounters {
 function Make-TempFile {
     param([byte[]]$Bytes)
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $path = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-test-asserthelpers-$stamp.bin")
+    $path = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-asserthelpers-$stamp.bin")
     $parent = [System.IO.Path]::GetDirectoryName($path)
     if (-not [System.IO.Directory]::Exists($parent)) {
         $null = New-Item -ItemType Directory -Path $parent -Force

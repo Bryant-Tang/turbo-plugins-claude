@@ -37,7 +37,7 @@ $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptR
 $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Build-SvnCommit.ps1')
 
 # The fixture has been reset by Run-Phase1 (Reset-Fixture.ps1) prior to invocation.
-$testRoot = 'C:\Turbo\test-turbo-plugin'
+$testRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin'
 
 # Need a git repo for Get-MainWorktree to work — fixture base has no .git, so init one.
 function Ensure-FixtureGit {

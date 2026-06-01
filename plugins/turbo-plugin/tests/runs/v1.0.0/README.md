@@ -45,7 +45,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File `
 
 依 `../../docs/skill-tests-session-plan.md` 的 session 切分,使用者:
 
-1. 開新的 Claude Code session(在 `C:\Turbo\test-turbo-plugin` cwd)
+1. 開新的 Claude Code session(在 `C:\Turbo\test-turbo-plugin\test-turbo-plugin` cwd)
 2. 從 `../../docs/skill-tests.md` 對應 skill section 抄 prompt 範本
 3. 跑該 case,觀察錨點(觸發 / agent invocation / file write 等)
 4. 轉述觀察給 orchestrator → orchestrator 寫 row 到 `skill-tests-results.md` 對應 skill section

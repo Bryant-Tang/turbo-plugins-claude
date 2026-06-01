@@ -5,7 +5,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/build-svn-commit.sh"
-TEST_ROOT="/c/Turbo/test-turbo-plugin"
+TEST_ROOT="/c/Turbo/test-turbo-plugin/test-turbo-plugin"
 
 passed=0
 failed=0

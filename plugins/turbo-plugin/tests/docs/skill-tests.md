@@ -8,7 +8,7 @@ session 後手動 append rows)。
 > 本檔下方各 skill section 的 `### Row table` 保留為空 template,不會被填;
 > 實際 row 寫到 `runs/<release>/skill-tests-results.md`。
 
-Skill tests case 由使用者貼 prompt 進 `C:\Turbo\test-turbo-plugin` 內的 Claude Code
+Skill tests case 由使用者貼 prompt 進 `C:\Turbo\test-turbo-plugin\test-turbo-plugin` 內的 Claude Code
 session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / FAIL / PARTIAL。
 
 > 中文 fixture 字典(#1 路徑 / #2 檔名 / #3 commit msg / #4 source 註解 /
@@ -68,7 +68,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 |---|---|---|---|---|---|
 | P2-tp-setup-1 | case (a) 新建 git+SVN happy | fresh-base 但移除 `.git/` + 移除 `.turbo-plugin/` | Phase 1 detect → case (a) → 6 sub-step + apphost bootstrap 三選一(選 (1) 暫停 — 因 fresh fixture 無 `.vs/`) | `.git/` 重建 / `.gitignore` 含 turbo-plugin pattern / `.turbo-plugin/` 目錄三檔齊 / `remote/main` orphan branch + worktree / svn checkout 完成 | AE8, AE9(case-detect happy) |
 | P2-tp-setup-2 | case (c) 主 worktree 補設定(idempotent) | fresh-base 完整(`.turbo-plugin/` 已存在) | Phase 1 detect → case (c) → 6 個 idempotent sub-step 全 skip(已存在不覆寫)→ apphost bootstrap canonical-exists 分支 | 沒有新檔 / 既有 shared file 內容 byte-unchanged / Phase 4 報告「全部已存在,無變動」/ 第二次跑結果完全一致 | AE10(idempotency) |
-| P2-tp-setup-3 | 中文 workspace path | fresh-base 複製到 `C:\Turbo\test-turbo-plugin 測試 ™\` | Phase 1 detect → 中文路徑不 crash → case (c) 補設定 → apphost bootstrap → Phase 4 報告路徑 round-trip 正確 | `.turbo-plugin/config.toml` 寫入路徑顯示為中文 / agent chat 中顯示中文路徑無 mojibake / `applicationhost.config` 路徑替換不破壞 | AE9 extended(中文 path) |
+| P2-tp-setup-3 | 中文 workspace path | fresh-base 複製到 `C:\Turbo\test-turbo-plugin\test-turbo-plugin 測試 ™\` | Phase 1 detect → 中文路徑不 crash → case (c) 補設定 → apphost bootstrap → Phase 4 報告路徑 round-trip 正確 | `.turbo-plugin/config.toml` 寫入路徑顯示為中文 / agent chat 中顯示中文路徑無 mojibake / `applicationhost.config` 路徑替換不破壞 | AE9 extended(中文 path) |
 | P2-tp-setup-4 | Phase 3 推薦項目實際安裝 — LSP(C# + TS/JS) | 已跑完 case 1 或 case 2 + dotnet / npm 兩個 CLI 都 ✓ | Phase 3 detect → batch 1 prompt(C# LSP / TS/JS LSP 兩題)→ 使用者選 user-level → `~/.claude/settings.json` 寫入 enabledPlugins + env.ENABLE_LSP_TOOL → `dotnet tool install -g csharp-ls` + `npm install -g typescript-language-server typescript` 兩個外部安裝實際跑 | `dotnet tool list -g` 含 csharp-ls / `npm list -g` 含 typescript-language-server / `~/.claude/settings.json` 含兩個 enabledPlugins / Phase 4 報告「✓ 已安裝」兩條 | AE15(real-install) |
 | P2-tp-setup-5 | Phase 3 推薦項目實際安裝 — compound-engineering + agent teams + TUI fullscreen | 接續 case 4 完成後 | Phase 3 detect → batch 2 prompt(CE 三選一 / agent teams 四選一 / TUI fullscreen 四選一)→ 使用者選 CE「安裝(不自動更新)」+ agent teams user-level + TUI fullscreen user-level → `~/.claude/settings.json` 寫入 extraKnownMarketplaces + env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS + top-level tui | `~/.claude/settings.json` 含 `extraKnownMarketplaces["compound-engineering-plugin"]` + `enabledPlugins["compound-engineering@compound-engineering-plugin"] = true` + `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"` + `tui = "fullscreen"` / Phase 4 提示「請重啟 Claude Code 後才會生效」 | AE15(real-install) |
 
@@ -84,11 +84,11 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1`,然後手動 `Remove-Item -Recurse -Force C:\Turbo\test-turbo-plugin\.git` 與 `Remove-Item -Recurse -Force C:\Turbo\test-turbo-plugin\.turbo-plugin`。然後在 `C:\Turbo\test-turbo-plugin\` 開 Claude Code session,確認 turbo-plugin 已啟用。
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1`,然後手動 `Remove-Item -Recurse -Force C:\Turbo\test-turbo-plugin\test-turbo-plugin\.git` 與 `Remove-Item -Recurse -Force C:\Turbo\test-turbo-plugin\test-turbo-plugin\.turbo-plugin`。然後在 `C:\Turbo\test-turbo-plugin\test-turbo-plugin\` 開 Claude Code session,確認 turbo-plugin 已啟用。
 >
 > **Prompt**:
 > ```
-> 請幫我跑 /tp-setup,SVN URL 是 file:///C:/Turbo/test-turbo-plugin-svn-repo/trunk
+> 請幫我跑 /tp-setup,SVN URL 是 file:///C:/Turbo/test-turbo-plugin/svn-repo/trunk
 > ```
 >
 > **觀察重點**:
@@ -113,7 +113,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - 沒有新檔出現(`git status --porcelain` 為空)
 > - 隔幾秒重跑同 prompt → 第二次結果完全相同(idempotent 驗證)
 
-> **Setup**(case 3):orchestrator 跑 `Reset-Fixture.ps1`,然後 `Rename-Item C:\Turbo\test-turbo-plugin C:\Turbo\"test-turbo-plugin 測試 ™"`,在新路徑下開 Claude Code。
+> **Setup**(case 3):orchestrator 跑 `Reset-Fixture.ps1`,然後 `Rename-Item C:\Turbo\test-turbo-plugin\test-turbo-plugin C:\Turbo\"test-turbo-plugin 測試 ™"`,在新路徑下開 Claude Code。
 >
 > **Prompt**:
 > ```
@@ -194,7 +194,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑完一輪 `/tp-setup` case (a)(在 orchestrator session 預先做)。然後 orchestrator 在 `C:\Turbo\test-turbo-plugin-svn-repo` 上手動 `svn import` 多一個 r21 commit。確認 main worktree clean。
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑完一輪 `/tp-setup` case (a)(在 orchestrator session 預先做)。然後 orchestrator 在 `C:\Turbo\test-turbo-plugin\svn-repo` 上手動 `svn import` 多一個 r21 commit。確認 main worktree clean。
 >
 > **Prompt**:
 > ```
@@ -210,7 +210,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 > **Setup**(case 2):case 1 跑完之後,orchestrator 在 `test-turbo-plugin-svn-repo` 推 r22 中文 commit:
 > ```
-> cd C:\Turbo\test-turbo-plugin-svn-repo  # SVN repo root
+> cd C:\Turbo\test-turbo-plugin\svn-repo  # SVN repo root
 > # orchestrator 用 svn commit with --message "修正中文 commit 訊息亂碼" 推 r22
 > ```
 >
@@ -381,11 +381,11 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) 完成。確認 SVN trunk 在 `file:///C:/Turbo/test-turbo-plugin-svn-repo/trunk`,還沒有任何 `branches/`。
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) 完成。確認 SVN trunk 在 `file:///C:/Turbo/test-turbo-plugin/svn-repo/trunk`,還沒有任何 `branches/`。
 >
 > **Prompt**:
 > ```
-> 幫我建一個 SVN test branch,SVN URL 是 file:///C:/Turbo/test-turbo-plugin-svn-repo/branches/test-1
+> 幫我建一個 SVN test branch,SVN URL 是 file:///C:/Turbo/test-turbo-plugin/svn-repo/branches/test-1
 > ```
 >
 > **觀察重點**:
@@ -401,7 +401,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 >
 > **Prompt**:
 > ```
-> 幫我建一個 SVN test branch,SVN URL 是 file:///C:/Turbo/test-turbo-plugin-svn-repo/branches/test-1
+> 幫我建一個 SVN test branch,SVN URL 是 file:///C:/Turbo/test-turbo-plugin/svn-repo/branches/test-1
 > ```
 >
 > **觀察重點**:
@@ -629,7 +629,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > **Setup**(case 2):case 1 跑完(iisexpress 跑在主 worktree)。orchestrator 切換 cwd:
 > ```
 > # 在 dev-1 peer worktree 開 Claude Code session
-> cd C:\Turbo\test-turbo-plugin.worktrees\dev-1
+> cd C:\Turbo\test-turbo-plugin\test-turbo-plugin.worktrees\dev-1
 > ```
 > 確認 peer worktree 已過 `/tp-setup` case (d) peer-mode(orchestrator 預先做)。
 >
@@ -943,7 +943,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > **Setup**(case 3):orchestrator 跑 reset + setup + tp-create-remote-test。然後手動 corrupt remote-test-1 的 SVN working copy:
 > ```
 > # 刪除 .svn/wc.db 讓 svn propset 失敗
-> Remove-Item C:\Turbo\test-turbo-plugin.worktrees\remote-test-1\.svn\wc.db
+> Remove-Item C:\Turbo\test-turbo-plugin\test-turbo-plugin.worktrees\remote-test-1\.svn\wc.db
 > ```
 >
 > **Prompt**:

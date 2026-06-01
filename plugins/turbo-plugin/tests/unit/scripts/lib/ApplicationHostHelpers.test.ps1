@@ -37,7 +37,7 @@ if (-not [System.IO.File]::Exists($ScriptUnderTest)) {
 function New-Sandbox {
     param([string]$Tag = 'apphost')
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $dir = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-test-$Tag-$stamp")
+    $dir = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-$Tag-$stamp")
     $null = New-Item -ItemType Directory -Path $dir -Force
     return $dir
 }

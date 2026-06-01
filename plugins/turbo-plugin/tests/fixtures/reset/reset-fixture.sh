@@ -8,15 +8,15 @@
 # for v1.0 — see plan K-Decision).
 #
 # Defaults match the PS version:
-#   --test-root C:\Turbo\test-turbo-plugin       (override with --test-root <path>)
-#   --svn-repo  C:\Turbo\test-turbo-plugin-svn-repo
+#   --test-root C:\Turbo\test-turbo-plugin\test-turbo-plugin       (override with --test-root <path>)
+#   --svn-repo  C:\Turbo\test-turbo-plugin\svn-repo
 #
 # Idempotent: any prior state restored to base.
 
 set -euo pipefail
 
-TEST_ROOT="C:/Turbo/test-turbo-plugin"
-SVN_REPO="C:/Turbo/test-turbo-plugin-svn-repo"
+TEST_ROOT="C:/Turbo/test-turbo-plugin/test-turbo-plugin"
+SVN_REPO="C:/Turbo/test-turbo-plugin/svn-repo"
 BASE_DIR=""
 DUMP_PATH=""
 SKIP_SVN=0

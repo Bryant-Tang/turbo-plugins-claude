@@ -5,7 +5,7 @@ turbo-plugin v1.0 PR-readiness Script tests 測試的 **fixture base mirror sour
 ## 用途
 
 此目錄是 `Reset-Fixture.ps1` 跑 `robocopy /MIR` 的 source。每個 Script tests case 開始前
-orchestrator 會把這個目錄完整 mirror 到 `C:\Turbo\test-turbo-plugin\`,讓每 case 在
+orchestrator 會把這個目錄完整 mirror 到 `C:\Turbo\test-turbo-plugin\test-turbo-plugin\`,讓每 case 在
 完全乾淨的 fixture 上跑。
 
 ## 內容
@@ -24,7 +24,7 @@ base/
 └── README.md                       # 你正在讀這個
 ```
 
-## **不要直接編輯運行中的 fixture(`C:\Turbo\test-turbo-plugin\`)**
+## **不要直接編輯運行中的 fixture(`C:\Turbo\test-turbo-plugin\test-turbo-plugin\`)**
 
 那個 workspace 由 `Reset-Fixture.ps1` 隨時可能被砍掉重建。任何永久性改動請改這個
 `base/` 目錄,並重跑:

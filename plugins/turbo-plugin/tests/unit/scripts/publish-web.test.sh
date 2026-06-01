@@ -18,7 +18,7 @@ assert_neq0() { if [[ "$2" != "0" ]]; then echo "  [PASS] $1"; ((passed++)); els
 new_sb() {
     local guid
     guid="$(powershell -NoProfile -Command '[guid]::NewGuid().ToString("N").Substring(0,12)' | tr -d '\r')"
-    local d="/c/Turbo/turbo-plugin-test-$1-$guid"
+    local d="/c/Turbo/test-turbo-plugin/sandboxes/turbo-plugin-test-$1-$guid"
     mkdir -p "$d"
     echo "$d"
 }

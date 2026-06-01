@@ -96,6 +96,11 @@ Write-Output "Invoke-ScriptTests: RunDir     = $RunDir"
 Write-Output "Invoke-ScriptTests: TargetDoc  = $TargetDoc"
 Write-Output ''
 
+# Ensure the test sandbox base exists before any test runs (AssertHelpers.test.ps1 in the
+# infra gate writes a tempfile there). All test artifacts live UNDER the container so nothing
+# pollutes C:\Turbo directly.
+$null = New-Item -ItemType Directory -Path 'C:\Turbo\test-turbo-plugin\sandboxes' -Force
+
 # ─── Step 1: Pre-flight lint ─────────────────────────────────────────────────
 
 if (-not $SkipPreflight) {

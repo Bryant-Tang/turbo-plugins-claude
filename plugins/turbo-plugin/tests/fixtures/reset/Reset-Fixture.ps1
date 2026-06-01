@@ -3,7 +3,7 @@
 # Per-case fixture reset entry for turbo-plugin v1.0 Phase 1 tests.
 #
 # 做三件事:
-#   1. robocopy /MIR  plugins/turbo-plugin/tests/fixtures/base  ->  $TestRoot (default C:\Turbo\test-turbo-plugin)
+#   1. robocopy /MIR  plugins/turbo-plugin/tests/fixtures/base  ->  $TestRoot (default C:\Turbo\test-turbo-plugin\test-turbo-plugin)
 #      (F-4 fix: robocopy exit 0-7 都是 success;只 ≥ 8 才 throw,且每次跑完 reset $LASTEXITCODE = 0)
 #   2. svnadmin create $SvnRepo; svnadmin load < seed.dump  (via cmd /c redirect, F-2 一致)
 #   3. svn checkout trunk -> <TestRoot>.worktrees\remote-main
@@ -20,8 +20,8 @@
 
 [CmdletBinding()]
 param(
-    [string]$TestRoot = 'C:\Turbo\test-turbo-plugin',
-    [string]$SvnRepo  = 'C:\Turbo\test-turbo-plugin-svn-repo',
+    [string]$TestRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin',
+    [string]$SvnRepo  = 'C:\Turbo\test-turbo-plugin\svn-repo',
     [string]$BaseDir,
     [string]$DumpPath,
     [switch]$SkipSvn

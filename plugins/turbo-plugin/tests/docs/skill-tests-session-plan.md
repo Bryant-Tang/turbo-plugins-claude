@@ -1,7 +1,7 @@
 # Skill tests — Session 切分建議
 
 turbo-plugin v1.0 PR-readiness Skill tests 是 **使用者主導** 的測試階段:每個 case
-都需要在 `C:\Turbo\test-turbo-plugin` 內開一個 Claude Code session,使用者貼
+都需要在 `C:\Turbo\test-turbo-plugin\test-turbo-plugin` 內開一個 Claude Code session,使用者貼
 `skill-tests.md` 的 prompt 範本進去,觀察 agent 行為並轉述給 orchestrator
 判讀 PASS / FAIL。本檔規劃 8-12 個建議 session(分 9 主場 + 3 reserved
 fail-then-fix re-run = 12 個 session slot)。
@@ -165,8 +165,8 @@ flowchart LR
 
 orchestrator 在 session 1 開始前確認:
 
-- [ ] `C:\Turbo\test-turbo-plugin` 已存在或可建立
-- [ ] `C:\Turbo\test-turbo-plugin-svn-repo` SVN repo 已 seed(r1-r20 含中文 commit msg)
+- [ ] `C:\Turbo\test-turbo-plugin\test-turbo-plugin` 已存在或可建立
+- [ ] `C:\Turbo\test-turbo-plugin\svn-repo` SVN repo 已 seed(r1-r20 含中文 commit msg)
 - [ ] `plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` 可正常跑(Script tests 已驗證 idempotency)
 - [ ] 使用者主機已裝:VS / IIS Express / .NET Framework SDK / Git for Windows / svn cli
 - [ ] 使用者主機**尚未**裝 `csharp-ls`(`dotnet tool list -g` 不含)

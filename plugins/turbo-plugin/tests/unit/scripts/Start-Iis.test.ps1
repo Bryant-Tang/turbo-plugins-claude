@@ -47,7 +47,7 @@ function Invoke-GitSilent {
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
 $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Start-Iis.ps1')
 
-$testRoot = 'C:\Turbo\test-turbo-plugin'
+$testRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin'
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')
 $apphostPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'applicationhost.config')
 
@@ -150,7 +150,7 @@ try {
 
     # Case 3: missing csproj — temp dir without csproj
     $sandboxGuid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $sandbox = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-test-startiis-$sandboxGuid")
+    $sandbox = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-startiis-$sandboxGuid")
     $null = New-Item -ItemType Directory -Path $sandbox -Force
     try {
         $tpDir = [System.IO.Path]::Combine($sandbox, '.turbo-plugin')

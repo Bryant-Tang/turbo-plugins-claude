@@ -59,10 +59,13 @@ function Run-Git-Capture {
 
 # ─── Sandbox helpers ────────────────────────────────────────────────────────
 
+# All test sandboxes live UNDER the test container so nothing pollutes C:\Turbo directly.
+$script:TpSandboxBase = 'C:\Turbo\test-turbo-plugin\sandboxes'
+
 function New-Sandbox {
     param([string]$Tag = 'sandbox')
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $sb = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-test-$Tag-$stamp")
+    $sb = [System.IO.Path]::Combine($script:TpSandboxBase, "turbo-plugin-test-$Tag-$stamp")
     $null = New-Item -ItemType Directory -Path $sb -Force
     return $sb
 }
@@ -125,8 +128,10 @@ function Invoke-PsScript {
         Push-Location $Cwd
     }
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 10)
-    $outFile = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-test-stdout-$stamp.txt")
-    $errFile = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-test-stderr-$stamp.txt")
+    # cmd redirect (> "$outFile") does NOT create parent dirs — ensure the sandbox base exists.
+    $null = New-Item -ItemType Directory -Path $script:TpSandboxBase -Force
+    $outFile = [System.IO.Path]::Combine($script:TpSandboxBase, "turbo-plugin-test-stdout-$stamp.txt")
+    $errFile = [System.IO.Path]::Combine($script:TpSandboxBase, "turbo-plugin-test-stderr-$stamp.txt")
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {

@@ -40,7 +40,7 @@ function Invoke-GitSilent {
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
 $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Get-SvnLog.ps1')
 
-$testRoot = 'C:\Turbo\test-turbo-plugin'
+$testRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin'
 # Reset-Fixture (F5 fix 2026-05-28)已改為直接創 sibling layout
 # `<testRoot>.worktrees/`,跟 turbo-plugin production tgs convention 對齊。
 # 早期的 Ensure-WorktreesSibling junction workaround 已移除。
@@ -119,7 +119,7 @@ try {
     # re-decode the captured stdout. Capture bytes via the captured string round-trip:
     # we can't get raw bytes back from $r2.Stdout (already string), so call the
     # underlying script via svn directly and pass bytes.
-    $svnRepo = 'C:\Turbo\test-turbo-plugin-svn-repo'
+    $svnRepo = 'C:\Turbo\test-turbo-plugin\svn-repo'
     $svnUri = 'file:///' + ($svnRepo -replace '\\', '/') + '/trunk'
     # Use Get-RawCommitDump indirectly via Assert-SvnLogTextRoundTrip (it knows how to
     # invoke). Pass the SvnRepo path (sibling 'remote-main' is a working copy):

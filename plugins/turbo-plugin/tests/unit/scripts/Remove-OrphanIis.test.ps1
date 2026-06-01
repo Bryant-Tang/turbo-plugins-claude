@@ -47,7 +47,7 @@ $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Remove-Orp
 # anyone removes [regex]::Escape from production, the metacharacter cases below go red.
 . ([System.IO.Path]::Combine($pluginRoot, 'scripts', 'lib', 'IisHelpers.ps1'))
 
-$testRoot = 'C:\Turbo\test-turbo-plugin'
+$testRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin'
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')
 
 function Ensure-FixtureGit {

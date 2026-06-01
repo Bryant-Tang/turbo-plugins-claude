@@ -44,7 +44,7 @@ function Run-ResetFixture {
     # got LF→CRLF mangled by git autocrlf (E200004 — U1 fixture infra bug).
     param([string]$TestRoot, [string]$SvnRepo)
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 10)
-    $outFile = [System.IO.Path]::Combine('C:\Turbo', "turbo-plugin-reset-out-$stamp.txt")
+    $outFile = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-reset-out-$stamp.txt")
     try {
         # 2>&1 是 cmd.exe shell redirect(非 PS-level)— 拉到變數避開 lint 規則 4 false positive。
         $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$TestRoot`" -SvnRepo `"$SvnRepo`" > `"$outFile`" 2>&1"
