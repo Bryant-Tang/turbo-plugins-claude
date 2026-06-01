@@ -58,6 +58,18 @@ if [[ -e "$REMOTE_PATH" ]]; then
   echo "Error: worktree '$REMOTE_NAME' already exists at: $REMOTE_PATH" >&2; exit 1
 fi
 
+# SECURITY (U2 / R1): validate the caller-supplied $SVN_URL falls under the trusted
+# repository root BEFORE any git mutation, before any svn sink, and before the ERR
+# rollback trap is registered. Trust base = remote-main's repos-root-url. Running this
+# before the trap means a rejected URL produces ZERO side effects and does NOT trigger
+# rollback. If remote-main is absent / not a working copy, assert_trusted_svn_url fails
+# closed (non-zero) and we exit here — still before any branch/worktree is created.
+REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-main"
+if ! assert_trusted_svn_url "$REMOTE_MAIN_PATH" "$SVN_URL" >/dev/null; then
+  echo "Error: refusing to create test environment with untrusted/unverifiable SVN URL." >&2
+  exit 1
+fi
+
 echo "Creating test environment $IDX..."
 
 INIT_COMMIT="$(git -C "$MAIN_WORKTREE" rev-list --max-parents=0 HEAD)"

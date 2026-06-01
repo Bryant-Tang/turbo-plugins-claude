@@ -43,6 +43,16 @@ try {
     if ($existingBranches) { throw "Branch '$testBranch' already exists." }
     if (Test-Path -LiteralPath $remoteWorktreePath) { throw "Worktree '$remoteWorktreeName' already exists at: $remoteWorktreePath" }
 
+    # SECURITY (U2 / R1): validate the caller-supplied $SvnUrl falls under the trusted
+    # repository root BEFORE any git mutation or any svn sink (svn info / svn copy /
+    # svn checkout --force). Trust base = remote-main's repos-root-url. This MUST run
+    # outside (before) the rollback try below so a rejected URL produces ZERO side
+    # effects and does NOT trigger rollback. If remote-main is absent / not a working
+    # copy, Assert-TrustedSvnUrl fails closed (throws) and is caught by the outer catch
+    # — still before any branch/worktree is created.
+    $remotemainPath = Join-Path $worktreesDir 'remote-main'
+    $null = Assert-TrustedSvnUrl -TrustedWorkingCopy $remotemainPath -CandidateUrl $SvnUrl
+
     Write-Output "Creating test environment $idx..."
 
     $initCommit = (& git -C $mainWorktree rev-list --max-parents=0 HEAD | Out-String).Trim()
