@@ -1,7 +1,7 @@
 ---
 date: 2026-05-25
 type: feat
-origin: docs/brainstorms/turbo-plugin-requirements.md
+origin: docs/brainstorms/2026-05-20-turbo-plugin-rewrite-requirements.md
 status: active
 ---
 
@@ -265,11 +265,11 @@ function 跑 happy + edge + failure case。所有 Assert 失敗即 finding。
 - **U2.11 `Format-IisExpressSiteName`**:
   - `-CsprojPath 'X.csproj' -IdentityHash 'abc123de'` → `X-abc123de`
   - 中文 csproj `測試.csproj` + hash → `測試-abc123de`(non-ASCII preserve)
-- **U2.12 `Find-MSBuild`**:
-  - env `TURBO_PLUGIN_MSBUILD_PATH` set valid → return that
-  - env set invalid → throw
-  - env unset → walk VS 2022 candidates,return first found
-  - no env + no VS → throw `MSBuild not found`
+- **U2.12 `Find-MSBuild`** — **[N/A(已過時),見 follow-up `2026-05-29-001`]**：以下 env 情境在 v1.0 已作廢。`Find-MSBuild` 改為 strict-cut,`$env:TURBO_PLUGIN_MSBUILD_PATH` **一律不讀**(見 `plugins/turbo-plugin/scripts/lib/Common.ps1` `Find-MSBuild` 註解),只走 `config.local.toml` + VS probe + throw。原規格的「env set valid → return that / env set invalid → throw / env unset → walk」前三項不再適用;僅「no config + no VS → throw」仍有意義(由 U7 lib 測試 / config 解析涵蓋)。
+  - ~~env `TURBO_PLUGIN_MSBUILD_PATH` set valid → return that~~(N/A)
+  - ~~env set invalid → throw~~(N/A)
+  - ~~env unset → walk VS 2022 candidates,return first found~~(改為 config.local.toml + VS probe)
+  - no env + no VS → throw `MSBuild not found`(仍適用)
 - **U2.13 `Find-SingleCsproj`**:
   - single csproj in repo → return it
   - 0 csproj → throw
@@ -314,15 +314,14 @@ PS side 行為一致。
 - **U3.6 `resolve_remote_worktree`** — pipe-separated triple output `name|branch|path`
 - **U3.7 `write_utf8_no_bom`** — file 寫無 BOM
 - **U3.8 `format_iis_express_site_name`** — `<stem>-<hash>`
-- **U3.9 `get_project_identity_hash`** — 跟 PS `Get-ProjectIdentityHash` **bit-for-bit identical** for same input(critical!)
+- **U3.9 `get_project_identity_hash`** — **[N/A(孤兒需求),見 follow-up `2026-05-29-001`]**：bash `get_project_identity_hash()` 已於 v0.2.7+ **刻意移除**(見 `plugins/turbo-plugin/scripts/lib/common.sh` 移除註解)——它是死碼(IIS/build script 皆 ps1-delegate,hash 一律在 PS 端算),且因 slash vs backslash 正規化差異本就算不出與 PS bit-for-bit 一致的 hash。PS↔bash parity 已無對照對象,此 sub-test 無法成立,標 N/A。 ~~跟 PS `Get-ProjectIdentityHash` bit-for-bit identical for same input(critical!)~~
 - **U3.10 `read_turbo_plugin_config`**:
   - 無 args → 全 flat-text output(legacy)
   - 帶 section + key → 該 key 值帶 `__TP_FOUND__:` 前綴(found-empty vs not-found 分辨,v0.2.0 C3 sentinel)
 - **U3.11 schema_version stderr warning** — 同 U2.15
 - **U3.12 UTF-8 output behavior** — 中文不亂碼
 
-**Verification**:每 sub-test PASS。U3.9 cross-language hash match 是 hard
-requirement — fail 等於設計失敗。
+**Verification**:每 sub-test PASS(U3.9 除外 — 已標 N/A,bash hash function 於 v0.2.7+ 移除,無 cross-language parity 可驗)。
 
 ---
 
@@ -935,7 +934,7 @@ UTF-8 console output fix regression。
 - **U21.5c pathological JSON 大 payload**(SEC-006):
   - 10 MB deeply-nested JSON(`{"a":{"a":{...}}}` 10000 層)→ hook 5 秒內結束、無 OOM、emit `{}` exit 0
 - **U21.5d null byte injection**(SEC-006):
-  - 餵 `{"tool_response": {"worktreePath": "C:\\valid evil"}}` → `ConvertFrom-Json` 應 reject 或 `Get-NormalizedAbsolutePath` throw 乾淨;不該 silent accept
+  - 餵 `{"tool_response": {"worktreePath": "C:\\valid\u0000evil"}}` → `ConvertFrom-Json` 應 reject 或 `Get-NormalizedAbsolutePath` throw 乾淨;不該 silent accept
 - **U21.6 marker .turbo-plugin/ missing**:emit `{}` exit 0
 - **U21.7 apphost source missing**:emit `{}` exit 0
 - **U21.8 no csproj in worktree**:emit `{}` exit 0
