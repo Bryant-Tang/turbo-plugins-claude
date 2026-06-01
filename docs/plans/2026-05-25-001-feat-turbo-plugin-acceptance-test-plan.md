@@ -2,10 +2,12 @@
 date: 2026-05-25
 type: feat
 origin: docs/brainstorms/2026-05-20-turbo-plugin-rewrite-requirements.md
-status: active
+status: superseded
 ---
 
 # feat: turbo-plugin v0.2.4 acceptance test plan
+
+> **Status note (2026-05-29):** superseded。本 plan 為 v0.2.4 / 4-plugin 時代的手動 acceptance 步驟,從未依此執行;其測試目標已由 `2026-05-27-001`(v1.0 兩階段手動測試計畫)重新規格化承接。保留供歷史追溯。
 
 ## Summary
 

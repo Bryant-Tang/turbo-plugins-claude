@@ -2,10 +2,12 @@
 date: 2026-05-25
 type: feat
 origin: docs/brainstorms/2026-05-20-turbo-plugin-rewrite-requirements.md
-status: active
+status: completed
 ---
 
 # feat: turbo-plugin v0.2.4 script-level autonomous test plan
+
+> **Status note (2026-05-29):** 廣度目標(每 script 配對 test + orchestrator + 全綠)已由 v1.0 `tests/` 重寫達成;深度缺口(安全 U17.4b / lib helper / 注入 / regex / 編碼)已由 follow-up `2026-05-29-001` 補完並通過完整 orchestrator(36/36)。唯一 deferred 項為中文檔名 push 的 server-byte 驗證(skill-level,歸 `2026-05-27-001` Phase 2)。故標 completed。
 
 ## Summary
 

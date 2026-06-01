@@ -1,7 +1,7 @@
 ---
 date: 2026-05-28
 topic: turbo-plugin-naming-conventions
-status: ready-to-plan
+status: planned
 ---
 
 # turbo-plugin 全 script + test infra 命名統一
