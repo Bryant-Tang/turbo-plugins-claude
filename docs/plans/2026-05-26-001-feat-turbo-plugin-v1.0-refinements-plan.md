@@ -2,7 +2,7 @@
 date: 2026-05-26
 type: feat
 origin: docs/brainstorms/2026-05-26-turbo-plugin-v1.0-refinements-requirements.md
-status: active
+status: completed
 ---
 
 # feat: turbo-plugin v1.0 refinements

@@ -1,8 +1,8 @@
 ---
 date: 2026-05-22
 type: feat
-origin: docs/brainstorms/turbo-plugin-requirements.md
-status: active
+origin: docs/brainstorms/2026-05-20-turbo-plugin-rewrite-requirements.md
+status: completed
 ---
 
 # feat: turbo-plugin consolidation (4 plugins → 1)
@@ -17,7 +17,7 @@ status: active
 
 ## Problem Frame
 
-兩類痛點需解決(見 origin: `docs/brainstorms/turbo-plugin-requirements.md`):
+兩類痛點需解決(見 origin: `docs/brainstorms/2026-05-20-turbo-plugin-rewrite-requirements.md`):
 
 1. **自製開發流程維護成本太高** — `tdp` 嘗試做 goal → plan → implement → finish-dev skill 鏈,實際 bug 多在 goal/plan 階段就出現;撤退主要動機是「自己維護成本超過可投入時間」。turbo-plugin **撤出開發流程責任**,使用者搭配自選 dev flow plugin(建議 compound-engineering 但不綁定)。
 2. **操作摩擦與真實 bug**:四個 plugin 各自獨立 setup + 每 worktree `.claude/settings.local.json` 不共享 → 主 worktree session 無法處理 peer worktree;`tnf` 的 `stop-iis` 以 worktree 為識別單位 → worktree A 跑 stop 殺不到 worktree B 啟的 IIS,且 `run-iis` 還會「假回報成功」。Skill 多 = 學習負擔;四個 plugin 職責邊界對使用者無意義。
@@ -67,7 +67,7 @@ status: active
 
 ## Key Technical Decisions
 
-每個決策都有 origin 對應條目;見 `docs/brainstorms/turbo-plugin-requirements.md` Key Decisions 段為完整理由。本段只摘 plan 階段定案。
+每個決策都有 origin 對應條目;見 `docs/brainstorms/2026-05-20-turbo-plugin-rewrite-requirements.md` Key Decisions 段為完整理由。本段只摘 plan 階段定案。
 
 1. **激進縮減 over 單純搬家**(Approach 2)— 每個 skill 都要為 trigger mode 寫精準 description,保留將砍 skill = 浪費。
 2. **三層 trigger mode 判準「做錯好不好救」**(可逆性)— R2 完整定義。

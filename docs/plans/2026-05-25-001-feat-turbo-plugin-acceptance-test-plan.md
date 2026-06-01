@@ -1,7 +1,7 @@
 ---
 date: 2026-05-25
 type: feat
-origin: docs/brainstorms/turbo-plugin-requirements.md
+origin: docs/brainstorms/2026-05-20-turbo-plugin-rewrite-requirements.md
 status: active
 ---
 
