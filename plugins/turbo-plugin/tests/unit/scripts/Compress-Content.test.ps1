@@ -176,6 +176,102 @@ try {
     Remove-Sandbox -Dir $sb4
 }
 
+# ─── Trust-gate side-effect cases (U4 / R4) ──────────────────────────────────
+#
+# The real security property of pack-content is: install/build commands must clear the
+# trust-hash gate BEFORE they execute. The 002 U8.3 shell-metachar canary is a no-op
+# (tokenized `& $tokens[0] @tokenArgs` never goes through a shell), so we instead prove
+# the gate itself. To distinguish "blocked" from "ran" we point install_command at a
+# command that leaves an observable trace (creates a sentinel file) and assert presence
+# / absence of the sentinel.
+#
+# Helper: build a [frontend] config whose install_command touches $SentinelPath via a
+# token-split-safe `cmd /c type nul > <abs-path>` invocation. The sentinel path lives
+# under the sandbox (no spaces), so tokenization on whitespace stays correct.
+
+function New-FrontendWithSentinel {
+    param([string]$TestRoot, [string]$SentinelPath)
+    $frontendDir = [System.IO.Path]::Combine($TestRoot, 'frontend')
+    $null = New-Item -ItemType Directory -Path $frontendDir -Force
+    [System.IO.File]::WriteAllText([System.IO.Path]::Combine($frontendDir, 'package.json'), '{"name":"x"}')
+    # `cmd /c type nul > <path>` creates an empty sentinel file. No spaces in the path.
+    $installCmd = "cmd /c type nul > $SentinelPath"
+    $buildCmd   = ''
+    $cfg = [System.IO.Path]::Combine($TestRoot, '.turbo-plugin', 'config.toml')
+    Append-Utf8 -Path $cfg -Content "`n[frontend]`ndir = `"./frontend`"`ninstall_command = `"$installCmd`"`nbuild_command = `"$buildCmd`"`n"
+    return [PSCustomObject]@{ InstallCmd = $installCmd; BuildCmd = $buildCmd }
+}
+
+# ─── Case 5: unapproved command (no trust file) → blocked, sentinel NOT created ──
+
+Write-Output ''
+Write-Output 'Case 5: unapproved install_command → blocked before execution (sentinel absent)'
+$sb5 = New-Sandbox -Tag 'pc-5'
+try {
+    $testRoot = [System.IO.Path]::Combine($sb5, 'test-turbo-plugin')
+    $null = Mirror-Base-To -TestRoot $testRoot
+    $sentinel = [System.IO.Path]::Combine($sb5, 'sentinel-unapproved.txt')
+    $null = New-FrontendWithSentinel -TestRoot $testRoot -SentinelPath $sentinel
+    # No pack-content-trust.local.toml written → gate must reject.
+    $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $testRoot -ScriptArgs @()
+    Assert-True -Name 'unapproved exit != 0' -Condition ($res.ExitCode -ne 0)
+    Assert-Match -Name 'unapproved emits TRUST_REQUIRED' -Pattern 'TRUST_REQUIRED' -InputText $res.Stdout
+    Assert-True -Name 'unapproved: sentinel NOT created (command did not run)' `
+                -Condition (-not [System.IO.File]::Exists($sentinel)) `
+                -Message "sentinel unexpectedly present at $sentinel"
+} finally {
+    Remove-Sandbox -Dir $sb5
+}
+
+# ─── Case 6: trust hash stale (config changed since approval) → blocked ──────
+
+Write-Output ''
+Write-Output 'Case 6: trust file present but hash does not match config → blocked (sentinel absent)'
+$sb6 = New-Sandbox -Tag 'pc-6'
+try {
+    $testRoot = [System.IO.Path]::Combine($sb6, 'test-turbo-plugin')
+    $null = Mirror-Base-To -TestRoot $testRoot
+    $sentinel = [System.IO.Path]::Combine($sb6, 'sentinel-stale.txt')
+    $null = New-FrontendWithSentinel -TestRoot $testRoot -SentinelPath $sentinel
+    # Write a trust file whose approved_hash is for *different* (old) commands —
+    # simulates "config edited after approval". Hash must therefore mismatch.
+    $staleHash = Compute-TrustHash -InstallCmd 'cmd /c echo old-install' -BuildCmd 'cmd /c echo old-build'
+    $trustFile = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
+    Write-Utf8NoBom-Local -Path $trustFile -Content "approved_hash = `"$staleHash`"`n"
+    $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $testRoot -ScriptArgs @()
+    Assert-True -Name 'stale-hash exit != 0' -Condition ($res.ExitCode -ne 0)
+    Assert-Match -Name 'stale-hash emits TRUST_REQUIRED' -Pattern 'TRUST_REQUIRED' -InputText $res.Stdout
+    Assert-True -Name 'stale-hash: sentinel NOT created (command did not run)' `
+                -Condition (-not [System.IO.File]::Exists($sentinel)) `
+                -Message "sentinel unexpectedly present at $sentinel"
+} finally {
+    Remove-Sandbox -Dir $sb6
+}
+
+# ─── Case 7: approved command (control) → runs, sentinel IS created ──────────
+
+Write-Output ''
+Write-Output 'Case 7: approved hash matches config → command runs (sentinel present, control group)'
+$sb7 = New-Sandbox -Tag 'pc-7'
+try {
+    $testRoot = [System.IO.Path]::Combine($sb7, 'test-turbo-plugin')
+    $null = Mirror-Base-To -TestRoot $testRoot
+    $sentinel = [System.IO.Path]::Combine($sb7, 'sentinel-approved.txt')
+    $cmds = New-FrontendWithSentinel -TestRoot $testRoot -SentinelPath $sentinel
+    # Write a trust file whose approved_hash matches the *actual* configured commands.
+    $hash = Compute-TrustHash -InstallCmd $cmds.InstallCmd -BuildCmd $cmds.BuildCmd
+    $trustFile = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
+    Write-Utf8NoBom-Local -Path $trustFile -Content "approved_hash = `"$hash`"`n"
+    $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $testRoot -ScriptArgs @()
+    Assert-Equal -Name 'approved exit 0' -Expected 0 -Actual $res.ExitCode `
+        -Message "stdout:`n$($res.Stdout)`nstderr:`n$($res.Stderr)"
+    Assert-True -Name 'approved: sentinel created (command ran — gate did not over-block)' `
+                -Condition ([System.IO.File]::Exists($sentinel)) `
+                -Message "sentinel missing at $sentinel; stdout:`n$($res.Stdout)`nstderr:`n$($res.Stderr)"
+} finally {
+    Remove-Sandbox -Dir $sb7
+}
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
 Write-Output ''
