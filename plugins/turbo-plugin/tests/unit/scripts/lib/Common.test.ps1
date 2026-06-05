@@ -881,14 +881,14 @@ Write-Output '─── Resolve-RemoteWorktree ───'
 $wtDir = 'C:\proj.worktrees'
 
 $rwMain = Resolve-RemoteWorktree -BranchName 'main' -WorktreesDir $wtDir
-Assert-Equal -Name 'main -> Name remote-main' -Expected 'remote-main' -Actual $rwMain.Name
-Assert-Equal -Name 'main -> Branch remote/main' -Expected 'remote/main' -Actual $rwMain.Branch
-Assert-Equal -Name 'main -> Path <wt>\remote-main' -Expected (Join-Path $wtDir 'remote-main') -Actual $rwMain.Path
+Assert-Equal -Name 'main -> Name remote-svn-main' -Expected 'remote-svn-main' -Actual $rwMain.Name
+Assert-Equal -Name 'main -> Branch remote-svn/main' -Expected 'remote-svn/main' -Actual $rwMain.Branch
+Assert-Equal -Name 'main -> Path <wt>\remote-svn-main' -Expected (Join-Path $wtDir 'remote-svn-main') -Actual $rwMain.Path
 
 $rwTest = Resolve-RemoteWorktree -BranchName 'test-3' -WorktreesDir $wtDir
-Assert-Equal -Name 'test-3 -> Name remote-test-3' -Expected 'remote-test-3' -Actual $rwTest.Name
-Assert-Equal -Name 'test-3 -> Branch remote/test-3' -Expected 'remote/test-3' -Actual $rwTest.Branch
-Assert-Equal -Name 'test-3 -> Path <wt>\remote-test-3' -Expected (Join-Path $wtDir 'remote-test-3') -Actual $rwTest.Path
+Assert-Equal -Name 'test-3 -> Name remote-svn-test-3' -Expected 'remote-svn-test-3' -Actual $rwTest.Name
+Assert-Equal -Name 'test-3 -> Branch remote-svn/test-3' -Expected 'remote-svn/test-3' -Actual $rwTest.Branch
+Assert-Equal -Name 'test-3 -> Path <wt>\remote-svn-test-3' -Expected (Join-Path $wtDir 'remote-svn-test-3') -Actual $rwTest.Path
 
 Assert-Throws2 -Name 'unsupported branch (feature/x) throws' -ScriptBlock { Resolve-RemoteWorktree -BranchName 'feature/x' -WorktreesDir $wtDir } -ExpectedMessagePattern "Only 'main' and 'test-<n>'"
 

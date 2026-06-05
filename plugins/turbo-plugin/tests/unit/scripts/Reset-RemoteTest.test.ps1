@@ -28,7 +28,7 @@ if (-not [System.IO.File]::Exists($scriptUnderTest)) {
 }
 
 function New-RepoWithTestBranchAhead {
-    # main has 1 commit; test-N branch has main + 1 extra; remote-test-N linked worktree on remote/test-N.
+    # main has 1 commit; test-N branch has main + 1 extra; remote-svn-test-N linked worktree on remote-svn/test-N.
     param([string]$Root, [int]$N = 1)
     New-GitMainRepo -Root $Root
     $tb = "test-$N"
@@ -42,9 +42,9 @@ function New-RepoWithTestBranchAhead {
     # v1.0 (U1): container inside the main worktree at <Root>/.turbo-plugin/worktrees.
     $wtDir = [System.IO.Path]::Combine($Root, '.turbo-plugin', 'worktrees')
     $null = New-Item -ItemType Directory -Path $wtDir -Force
-    $remoteTestDir = [System.IO.Path]::Combine($wtDir, "remote-test-$N")
-    $null = Run-Git -Cwd $Root -GitArgs @('branch', "remote/test-$N", 'main')
-    $null = Run-Git -Cwd $Root -GitArgs @('worktree', 'add', $remoteTestDir, "remote/test-$N")
+    $remoteTestDir = [System.IO.Path]::Combine($wtDir, "remote-svn-test-$N")
+    $null = Run-Git -Cwd $Root -GitArgs @('branch', "remote-svn/test-$N", 'main')
+    $null = Run-Git -Cwd $Root -GitArgs @('worktree', 'add', $remoteTestDir, "remote-svn/test-$N")
 }
 
 # ─── Case 1: happy ───────────────────────────────────────────────────────────

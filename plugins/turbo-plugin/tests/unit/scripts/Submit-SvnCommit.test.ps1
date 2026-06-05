@@ -77,7 +77,7 @@ try {
 # ─── Case 4: no MERGE_HEAD → fails with "No pending merge" (中文 -Message in arg) ─
 
 Write-Output ''
-Write-Output 'Case 4: -Branch main with remote-main but no MERGE_HEAD → "No pending merge" (中文 -Message)'
+Write-Output 'Case 4: -Branch main with remote-svn-main but no MERGE_HEAD → "No pending merge" (中文 -Message)'
 $sb4 = New-Sandbox -Tag 'ptsc-4'
 try {
     $root = [System.IO.Path]::Combine($sb4, 'test-turbo-plugin')

@@ -10,13 +10,13 @@
 #   - prefix-confusion (R10): <repos-root>-evil/... rejected.
 #   - legitimate sibling branch URL (<repos-root>/branches/test-N) → passes trust check
 #     (does not regress; proves trust base is repos-root, not trunk url).
-#   - remote-main absent / not a working copy → fail-closed BEFORE any side effect.
-#   - rollback regression (R8 / 002:U17.5): pre-create remote/test-<n> so the FIRST git
-#     mutation inside the rollback try (`git branch remote/test-N`) fails → assert the
+#   - remote-svn-main absent / not a working copy → fail-closed BEFORE any side effect.
+#   - rollback regression (R8 / 002:U17.5): pre-create remote-svn/test-<n> so the FIRST git
+#     mutation inside the rollback try (`git branch remote-svn/test-N`) fails → assert the
 #     rollback trap actually fired (partial git state cleaned up), not a mere rejection.
 #
-# The trust-validation cases require remote-main to be a real svn working copy, so we
-# build a throwaway svn repo from the seed dump and check out trunk into remote-main.
+# The trust-validation cases require remote-svn-main to be a real svn working copy, so we
+# build a throwaway svn repo from the seed dump and check out trunk into remote-svn-main.
 # Cases that need NO svn (missing-arg, worktrees-missing, fail-closed, rollback) use the
 # plain git sandbox and do not depend on svn.exe.
 
@@ -48,7 +48,7 @@ function Get-WorktreesDir {
 }
 
 # Build a throwaway svn repo (from the seed dump) and check out trunk into
-# <worktreesDir>/remote-main so it becomes a valid trusted working copy. Returns the
+# <worktreesDir>/remote-svn-main so it becomes a valid trusted working copy. Returns the
 # repos-root-url, or $null if svn/svnadmin/load/checkout couldn't be set up.
 function Initialize-RemoteMainWc {
     param([string]$Root, [string]$Sandbox)
@@ -63,7 +63,7 @@ function Initialize-RemoteMainWc {
     if ($LASTEXITCODE -ne 0) { return $null }
 
     $repoUri = 'file:///' + ($svnRepo -replace '\\', '/')
-    $remoteMain = [System.IO.Path]::Combine($worktreesDir, 'remote-main')
+    $remoteMain = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-main')
     & svn checkout "$repoUri/trunk" $remoteMain > $null 2>&1
     if ($LASTEXITCODE -ne 0) { return $null }
 
@@ -75,13 +75,13 @@ function Initialize-RemoteMainWc {
 # Assert no partial git state (branches / worktree dir) for the given index remains.
 function Assert-NoOrphanState {
     param([string]$Root, [int]$Idx, [string]$Label)
-    $remoteBranchListing = Run-Git-Capture -Cwd $Root -GitArgs @('branch', '--list', "remote/test-$Idx")
+    $remoteBranchListing = Run-Git-Capture -Cwd $Root -GitArgs @('branch', '--list', "remote-svn/test-$Idx")
     $testBranchListing   = Run-Git-Capture -Cwd $Root -GitArgs @('branch', '--list', "test-$Idx")
-    Assert-Equal -Name "$Label : no orphan remote/test-$Idx branch" -Expected '' -Actual $remoteBranchListing
+    Assert-Equal -Name "$Label : no orphan remote-svn/test-$Idx branch" -Expected '' -Actual $remoteBranchListing
     Assert-Equal -Name "$Label : no orphan test-$Idx branch" -Expected '' -Actual $testBranchListing
     $worktreesDir = Get-WorktreesDir -Root $Root
-    $remoteWtPath = [System.IO.Path]::Combine($worktreesDir, "remote-test-$Idx")
-    Assert-True -Name "$Label : no orphan remote-test-$Idx worktree dir" `
+    $remoteWtPath = [System.IO.Path]::Combine($worktreesDir, "remote-svn-test-$Idx")
+    Assert-True -Name "$Label : no orphan remote-svn-test-$Idx worktree dir" `
                 -Condition (-not [System.IO.Directory]::Exists($remoteWtPath))
 }
 
@@ -126,25 +126,25 @@ try {
     Remove-Sandbox -Dir $sb2
 }
 
-# ─── Case 3: remote-main absent / not a WC → fail-closed BEFORE any side effect ──
+# ─── Case 3: remote-svn-main absent / not a WC → fail-closed BEFORE any side effect ──
 #
 # Retargeted from the old "bogus file:// URL → rollback" case. With U2 validation in
-# place, the trust check now runs BEFORE the rollback try. remote-main does NOT exist
+# place, the trust check now runs BEFORE the rollback try. remote-svn-main does NOT exist
 # here (only the worktrees dir), so Assert-TrustedSvnUrl fails closed (can't read
 # repos-root-url) and the script exits with NO branch / worktree created and WITHOUT
 # entering rollback. This proves rejection happens before side effects — it is NOT a
 # rollback case (rollback regression is Case 8 below).
 
 Write-Output ''
-Write-Output 'Case 3: remote-main absent → fail-closed, no side effects, no rollback'
+Write-Output 'Case 3: remote-svn-main absent → fail-closed, no side effects, no rollback'
 $sb3 = New-Sandbox -Tag 'crt-3'
 try {
     $root = [System.IO.Path]::Combine($sb3, 'test-turbo-plugin')
-    New-GitMainRepo -Root $root -CreateWorktreesDir   # worktrees dir exists, but NO remote-main
+    New-GitMainRepo -Root $root -CreateWorktreesDir   # worktrees dir exists, but NO remote-svn-main
     $url = 'file:///C:/Turbo/no-such-repo/branches/test-99'
     $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root `
                            -ScriptArgs @('-N', '99', '-SvnUrl', $url)
-    Assert-True -Name 'exit != 0 (fail-closed: remote-main absent)' -Condition ($res.ExitCode -ne 0)
+    Assert-True -Name 'exit != 0 (fail-closed: remote-svn-main absent)' -Condition ($res.ExitCode -ne 0)
     Assert-Match -Name 'stderr mentions fail closed / repos-root-url' `
                  -Pattern '(fail closed|repos-root-url)' -InputText $res.Combined
     # Must NOT have rolled back (because it never started) — and must NOT show "Creating".
@@ -157,7 +157,7 @@ try {
     Remove-Sandbox -Dir $sb3
 }
 
-# ─── Case 4-6: malicious / out-of-trust URLs rejected (need valid remote-main WC) ──
+# ─── Case 4-6: malicious / out-of-trust URLs rejected (need valid remote-svn-main WC) ──
 #
 # Covers 002:U17.4b. file:///C:/Windows/System32/  → reject, no side effect, no rollback
 # Covers 002:U17.4b. http://attacker.example/repo  → reject, no side effect
@@ -178,7 +178,7 @@ if (-not $svnAvailable) {
         New-GitMainRepo -Root $root -CreateWorktreesDir
         $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb4
         if ($null -eq $reposRoot) {
-            Write-Output '  [SKIP] could not build remote-main svn WC (svnadmin load/checkout failed).'
+            Write-Output '  [SKIP] could not build remote-svn-main svn WC (svnadmin load/checkout failed).'
         } else {
             $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root `
                                    -ScriptArgs @('-N', '4', '-SvnUrl', 'file:///C:/Windows/System32/')
@@ -201,7 +201,7 @@ if (-not $svnAvailable) {
         New-GitMainRepo -Root $root -CreateWorktreesDir
         $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb5
         if ($null -eq $reposRoot) {
-            Write-Output '  [SKIP] could not build remote-main svn WC.'
+            Write-Output '  [SKIP] could not build remote-svn-main svn WC.'
         } else {
             $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root `
                                    -ScriptArgs @('-N', '5', '-SvnUrl', 'http://attacker.example/repo')
@@ -222,7 +222,7 @@ if (-not $svnAvailable) {
         New-GitMainRepo -Root $root -CreateWorktreesDir
         $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb6
         if ($null -eq $reposRoot) {
-            Write-Output '  [SKIP] could not build remote-main svn WC.'
+            Write-Output '  [SKIP] could not build remote-svn-main svn WC.'
         } else {
             $evilUrl = "$reposRoot-evil/branches/test-1"
             $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root `
@@ -253,7 +253,7 @@ if (-not $svnAvailable) {
         New-GitMainRepo -Root $root -CreateWorktreesDir
         $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb7
         if ($null -eq $reposRoot) {
-            Write-Output '  [SKIP] could not build remote-main svn WC.'
+            Write-Output '  [SKIP] could not build remote-svn-main svn WC.'
         } else {
             $legitUrl = "$reposRoot/branches/test-7"
             $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root `
@@ -272,9 +272,9 @@ if (-not $svnAvailable) {
 
 # ─── Case 8: rollback regression — git mutation failure triggers rollback (R8 / 002:U17.5) ──
 #
-# Pre-create remote/test-<n> so the FIRST git mutation inside the rollback try
-# (`git branch remote/test-N`) fails. This needs a VALID trusted URL to get past the
-# new trust gate first; we use a real remote-main WC and a legit sibling branch URL.
+# Pre-create remote-svn/test-<n> so the FIRST git mutation inside the rollback try
+# (`git branch remote-svn/test-N`) fails. This needs a VALID trusted URL to get past the
+# new trust gate first; we use a real remote-svn-main WC and a legit sibling branch URL.
 # We assert the rollback actually executed: the script must print the rollback message
 # AND any partially-created state (the test-N branch / worktree) must be cleaned up —
 # NOT merely a non-zero exit, and NOT a trust rejection.
@@ -284,19 +284,19 @@ if (-not $svnAvailable -or -not [System.IO.File]::Exists($dumpPath)) {
     Write-Output '  [SKIP] Case 8 rollback regression needs svn + seed dump.'
 } else {
     Write-Output ''
-    Write-Output 'Case 8: pre-existing remote/test-8 collision → git branch fails → rollback fires (R8)'
+    Write-Output 'Case 8: pre-existing remote-svn/test-8 collision → git branch fails → rollback fires (R8)'
     $sb8 = New-Sandbox -Tag 'crt-8'
     try {
         $root = [System.IO.Path]::Combine($sb8, 'test-turbo-plugin')
         New-GitMainRepo -Root $root -CreateWorktreesDir
         $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb8
         if ($null -eq $reposRoot) {
-            Write-Output '  [SKIP] could not build remote-main svn WC.'
+            Write-Output '  [SKIP] could not build remote-svn-main svn WC.'
         } else {
-            # Pre-create remote/test-8 so the inner `git branch remote/test-8` fails.
-            # NOTE: we collide remote/test-8 (the FIRST inner mutation), NOT test-8 —
+            # Pre-create remote-svn/test-8 so the inner `git branch remote-svn/test-8` fails.
+            # NOTE: we collide remote-svn/test-8 (the FIRST inner mutation), NOT test-8 —
             # test-8 is caught by the try-OUTSIDE pre-check and would never reach rollback.
-            $null = Run-Git -Cwd $root -GitArgs @('branch', 'remote/test-8', 'main')
+            $null = Run-Git -Cwd $root -GitArgs @('branch', 'remote-svn/test-8', 'main')
 
             $legitUrl = "$reposRoot/branches/test-8"
             $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root `
@@ -310,14 +310,14 @@ if (-not $svnAvailable -or -not [System.IO.File]::Exists($dumpPath)) {
                         -Condition ($res.Combined -match 'rolling back')
             Assert-True -Name 'NOT a trust rejection' `
                         -Condition (-not ($res.Combined -match 'Untrusted SVN URL'))
-            # The pre-existing remote/test-8 we created must survive (rollback -D only
+            # The pre-existing remote-svn/test-8 we created must survive (rollback -D only
             # removes what THIS run created; but the failing `git branch` did not create
             # it). The test-8 branch must NOT have been left behind, and no worktree dir.
             $testBranchListing = Run-Git-Capture -Cwd $root -GitArgs @('branch', '--list', 'test-8')
             Assert-Equal -Name 'rollback removed partial test-8 branch' -Expected '' -Actual $testBranchListing
             $worktreesDir = Get-WorktreesDir -Root $root
-            $remoteWtPath = [System.IO.Path]::Combine($worktreesDir, 'remote-test-8')
-            Assert-True -Name 'rollback removed partial remote-test-8 worktree dir' `
+            $remoteWtPath = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-test-8')
+            Assert-True -Name 'rollback removed partial remote-svn-test-8 worktree dir' `
                         -Condition (-not [System.IO.Directory]::Exists($remoteWtPath))
         }
     } finally {

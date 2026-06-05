@@ -3,8 +3,8 @@
 # Hand-rolled tests for plugins/turbo-plugin/scripts/Set-SvnIgnore.ps1.
 #
 # Scope (U4 plan, F4 rewritten — 2-worktree propset, NOT 3):
-#   - cross-worktree happy ADD:    main + remote-main + remote-test-1 worktrees exist.
-#                                  svn-ignore --Add obj/ → propset on remote-main + remote-test-1 ONLY
+#   - cross-worktree happy ADD:    main + remote-svn-main + remote-svn-test-1 worktrees exist.
+#                                  svn-ignore --Add obj/ → propset on remote-svn-main + remote-svn-test-1 ONLY
 #                                  (main is filtered out by `^remote-(main|test-\d+)$`).
 #                                  Expected: exactly **2** SVN commits (r21 + r22).
 #   - 中文 pattern ADD:            --Add 中文資料夾/ → both remote-* propset + 2 SVN commits.
@@ -15,7 +15,7 @@
 #   - missing worktrees-dir error: cwd is git repo but no .worktrees/ dir → fail-loudly.
 #
 # Fixture wiring:
-#   Reset-Fixture seeds: .worktrees/{remote-main, remote-test-1} as SVN checkouts from the seed dump.
+#   Reset-Fixture seeds: .worktrees/{remote-svn-main, remote-svn-test-1} as SVN checkouts from the seed dump.
 #   We additionally `git init` + commit in the workspace root so Get-MainWorktree resolves.
 
 Set-StrictMode -Version Latest
@@ -186,12 +186,12 @@ if (-not [System.IO.File]::Exists($dumpPath)) {
                 Assert-Equal -Name 'SVN advanced exactly 2 revisions (main excluded by filter)' `
                              -Expected ($revBefore + 2) -Actual $revAfter
 
-                $remoteMain  = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-main')
-                $remoteTest1 = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-test-1')
+                $remoteMain  = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-svn-main')
+                $remoteTest1 = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-svn-test-1')
                 $ig_main_text  = Get-SvnIgnore-Text -WorktreePath $remoteMain
                 $ig_test1_text = Get-SvnIgnore-Text -WorktreePath $remoteTest1
-                Assert-Match -Name 'remote-main svn:ignore contains obj/' -Pattern 'obj/' -InputText $ig_main_text
-                Assert-Match -Name 'remote-test-1 svn:ignore contains obj/' -Pattern 'obj/' -InputText $ig_test1_text
+                Assert-Match -Name 'remote-svn-main svn:ignore contains obj/' -Pattern 'obj/' -InputText $ig_main_text
+                Assert-Match -Name 'remote-svn-test-1 svn:ignore contains obj/' -Pattern 'obj/' -InputText $ig_test1_text
             }
         }
     } finally {
@@ -221,8 +221,8 @@ if (-not [System.IO.File]::Exists($dumpPath)) {
                 $revAfter = Get-SvnRev -SvnRepoPath $svnRepo
                 Assert-Equal -Name '中文 add: SVN advanced by 2 revisions' -Expected ($revBefore + 2) -Actual $revAfter
 
-                $remoteMain  = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-main')
-                $remoteTest1 = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-test-1')
+                $remoteMain  = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-svn-main')
+                $remoteTest1 = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-svn-test-1')
                 $ig_main  = Get-SvnIgnore-Text -WorktreePath $remoteMain
                 $ig_test1 = Get-SvnIgnore-Text -WorktreePath $remoteTest1
                 # F-3 reality at the production-script level: `svn propset --file <utf-8-file>`
@@ -238,8 +238,8 @@ if (-not [System.IO.File]::Exists($dumpPath)) {
                 # Compromise verification: confirm propget returned NON-EMPTY (proves the
                 # propset+commit cycle worked) AND contains the trailing '/' from the pattern.
                 # Tracks intent ("ignore was set") without asserting impossible byte fidelity.
-                Assert-True -Name 'remote-main svn:ignore non-empty + contains /' -Condition ($ig_main.Length -gt 0 -and $ig_main.Contains('/'))
-                Assert-True -Name 'remote-test-1 svn:ignore non-empty + contains /' -Condition ($ig_test1.Length -gt 0 -and $ig_test1.Contains('/'))
+                Assert-True -Name 'remote-svn-main svn:ignore non-empty + contains /' -Condition ($ig_main.Length -gt 0 -and $ig_main.Contains('/'))
+                Assert-True -Name 'remote-svn-test-1 svn:ignore non-empty + contains /' -Condition ($ig_test1.Length -gt 0 -and $ig_test1.Contains('/'))
             }
         }
     } finally {
@@ -275,9 +275,9 @@ if (-not [System.IO.File]::Exists($dumpPath)) {
                 Assert-Equal -Name 'SVN advanced by 4 revisions (2 add + 2 remove)' `
                              -Expected ($revBefore + 4) -Actual $revAfter
 
-                $remoteMain = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-main')
+                $remoteMain = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees', 'remote-svn-main')
                 $ig_after = Get-SvnIgnore-Text -WorktreePath $remoteMain
-                Assert-True -Name 'remote-main svn:ignore obj/ removed after --Remove' `
+                Assert-True -Name 'remote-svn-main svn:ignore obj/ removed after --Remove' `
                             -Condition (-not $ig_after.Contains('obj/'))
             }
         }

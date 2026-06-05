@@ -82,15 +82,15 @@ if [[ $SKIP_SVN -eq 0 ]]; then
     svnadmin load "$SVN_REPO" < "$DUMP_PATH" > /dev/null
     echo "  svnadmin load OK"
 
-    # ─── Step 3: svn checkout remote-main / remote-test-1 ─────────────────────
+    # ─── Step 3: svn checkout remote-svn-main / remote-svn-test-1 ─────────────
     #
     # v1.0 (U1) nested layout (matches get_worktrees_dir): the container lives INSIDE
     # the main worktree at <TEST_ROOT>/.turbo-plugin/worktrees/. All turbo-plugin
     # scripts read this nested path.
 
     worktrees_dir="${TEST_ROOT}/.turbo-plugin/worktrees"
-    remote_main_dir="$worktrees_dir/remote-main"
-    remote_test1_dir="$worktrees_dir/remote-test-1"
+    remote_main_dir="$worktrees_dir/remote-svn-main"
+    remote_test1_dir="$worktrees_dir/remote-svn-test-1"
 
     # Wipe entire sibling worktrees container for per-case clean slate
     [[ -d "$worktrees_dir" ]] && rm -rf "$worktrees_dir"
@@ -111,7 +111,7 @@ echo "✔ Fixture reset complete."
 echo "  Workspace: $TEST_ROOT"
 if [[ $SKIP_SVN -eq 0 ]]; then
     echo "  SVN repo:  $SVN_REPO (loaded from $DUMP_PATH)"
-    echo "  Remote-*:  ${TEST_ROOT}/.turbo-plugin/worktrees/{remote-main, remote-test-1}"
+    echo "  Remote-*:  ${TEST_ROOT}/.turbo-plugin/worktrees/{remote-svn-main, remote-svn-test-1}"
 else
     echo "  (SVN reset skipped)"
 fi

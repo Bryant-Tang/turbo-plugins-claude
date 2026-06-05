@@ -125,17 +125,17 @@ function Resolve-RemoteWorktree {
 
     if ($BranchName -eq 'main') {
         return @{
-            Name   = 'remote-main'
-            Branch = 'remote/main'
-            Path   = Join-Path $WorktreesDir 'remote-main'
+            Name   = 'remote-svn-main'
+            Branch = 'remote-svn/main'
+            Path   = Join-Path $WorktreesDir 'remote-svn-main'
         }
     }
     if ($BranchName -match '^test-(\d+)$') {
         $n = $Matches[1]
         return @{
-            Name   = "remote-test-$n"
-            Branch = "remote/test-$n"
-            Path   = Join-Path $WorktreesDir "remote-test-$n"
+            Name   = "remote-svn-test-$n"
+            Branch = "remote-svn/test-$n"
+            Path   = Join-Path $WorktreesDir "remote-svn-test-$n"
         }
     }
     throw "Unsupported branch '$BranchName'. Only 'main' and 'test-<n>' branches can be synced from SVN."
@@ -178,7 +178,7 @@ function ConvertTo-NormalizedSvnUrl {
 
 # Assert that a caller-supplied SVN URL falls under the trusted repository root.
 # Inputs:
-#   -TrustedWorkingCopy: path to a working copy we trust (e.g. remote-main). Its
+#   -TrustedWorkingCopy: path to a working copy we trust (e.g. remote-svn-main). Its
 #       `svn info --show-item repos-root-url` defines the trust base. MUST be
 #       repos-root-url (not the trunk url) so legitimate sibling branches under
 #       branches/ aren't falsely rejected.
@@ -219,7 +219,7 @@ function Assert-TrustedSvnUrl {
         $ErrorActionPreference = $prevEAP
     }
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($base)) {
-        throw "Assert-TrustedSvnUrl: could not determine trusted repos-root-url from '$TrustedWorkingCopy' (path missing, not a working copy, or SVN unreachable). Refusing to proceed (fail closed). Run /tp-setup to bootstrap remote-main."
+        throw "Assert-TrustedSvnUrl: could not determine trusted repos-root-url from '$TrustedWorkingCopy' (path missing, not a working copy, or SVN unreachable). Refusing to proceed (fail closed). Run /tp-setup to bootstrap remote-svn-main."
     }
 
     $normBase = ConvertTo-NormalizedSvnUrl -Url $base

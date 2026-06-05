@@ -23,7 +23,7 @@ try {
 
     if ([string]::IsNullOrWhiteSpace($N)) {
         $maxN = 0
-        Get-ChildItem -LiteralPath $worktreesDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^remote-test-(\d+)$' } | ForEach-Object {
+        Get-ChildItem -LiteralPath $worktreesDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^remote-svn-test-(\d+)$' } | ForEach-Object {
             $num = [int]$Matches[1]
             if ($num -gt $maxN) { $maxN = $num }
         }
@@ -34,8 +34,8 @@ try {
     }
 
     $testBranch = "test-$idx"
-    $remoteBranch = "remote/test-$idx"
-    $remoteWorktreeName = "remote-test-$idx"
+    $remoteBranch = "remote-svn/test-$idx"
+    $remoteWorktreeName = "remote-svn-test-$idx"
     $remoteWorktreePath = Join-Path $worktreesDir $remoteWorktreeName
 
     $existingBranches = (& git -C $mainWorktree branch --list $testBranch | Out-String).Trim()
@@ -44,12 +44,12 @@ try {
 
     # SECURITY (U2 / R1): validate the caller-supplied $SvnUrl falls under the trusted
     # repository root BEFORE any git mutation or any svn sink (svn info / svn copy /
-    # svn checkout --force). Trust base = remote-main's repos-root-url. This MUST run
+    # svn checkout --force). Trust base = remote-svn-main's repos-root-url. This MUST run
     # outside (before) the rollback try below so a rejected URL produces ZERO side
-    # effects and does NOT trigger rollback. If remote-main is absent / not a working
+    # effects and does NOT trigger rollback. If remote-svn-main is absent / not a working
     # copy, Assert-TrustedSvnUrl fails closed (throws) and is caught by the outer catch
     # — still before any branch/worktree is created.
-    $remotemainPath = Join-Path $worktreesDir 'remote-main'
+    $remotemainPath = Join-Path $worktreesDir 'remote-svn-main'
     $null = Assert-TrustedSvnUrl -TrustedWorkingCopy $remotemainPath -CandidateUrl $SvnUrl
 
     Write-Output "Creating test environment $idx..."
@@ -77,9 +77,9 @@ try {
         $ErrorActionPreference = $prevEAP
 
         if (-not $svnExists) {
-            $remotemainPath = Join-Path $worktreesDir 'remote-main'
+            $remotemainPath = Join-Path $worktreesDir 'remote-svn-main'
             $mainSvnUrl = (& svn info --show-item url $remotemainPath | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0) { throw "Could not get main SVN URL from remote-main worktree." }
+            if ($LASTEXITCODE -ne 0) { throw "Could not get main SVN URL from remote-svn-main worktree." }
             Write-Output "SVN path '$SvnUrl' does not exist. Creating from '$mainSvnUrl'..."
             & svn copy $mainSvnUrl $SvnUrl -m "create $testBranch branch"
             if ($LASTEXITCODE -ne 0) { throw "svn copy failed" }
@@ -112,7 +112,7 @@ try {
             Pop-Location
         }
 
-        $remotemainPath = Join-Path $worktreesDir 'remote-main'
+        $remotemainPath = Join-Path $worktreesDir 'remote-svn-main'
         $ignoreToApply = '.git' + [System.Environment]::NewLine + '.gitignore'
         if (Test-Path -LiteralPath $remotemainPath -PathType Container) {
             # v0.2.6 fix: `2>$null` alone does NOT prevent PS 5.1 + StrictMode + EAP=Stop from
@@ -123,7 +123,7 @@ try {
             try {
                 $inherited = (& svn propget svn:ignore $remotemainPath 2>$null | Out-String).Trim()
             } catch {
-                # W200017 ("Property 'svn:ignore' not found") is normal for a clean remote-main;
+                # W200017 ("Property 'svn:ignore' not found") is normal for a clean remote-svn-main;
                 # keep $inherited as empty so default $ignoreToApply is used below.
                 $inherited = ''
             }
@@ -131,16 +131,16 @@ try {
                 $ignoreToApply = $inherited
             }
         }
-        # v0.2.7+ F-U16.bridge fix: sync main's current .gitignore into remote-test-N BEFORE
+        # v0.2.7+ F-U16.bridge fix: sync main's current .gitignore into remote-svn-test-N BEFORE
         # svn commit. SVN's test-N was svn-copied from main SVN whose .gitignore may be older
         # than main git's current .gitignore. Without this sync, test-N (= main HEAD .gitignore vN)
-        # and remote/test-N (svn checkout .gitignore vN-k) diverge → first tp-push-to-svn必撞
+        # and remote-svn/test-N (svn checkout .gitignore vN-k) diverge → first tp-push-to-svn必撞
         # add/add merge conflict on .gitignore + .svn/wc.db(後者因 .gitignore 沒含 .svn/* rule)。
         $mainGitignore = Join-Path $mainWorktree '.gitignore'
         $peerGitignore = Join-Path $remoteWorktreePath '.gitignore'
         if (Test-Path -LiteralPath $mainGitignore -PathType Leaf) {
             Copy-Item -LiteralPath $mainGitignore -Destination $peerGitignore -Force
-            Write-Output "Synced main's .gitignore into remote-test-$idx for first-push consistency."
+            Write-Output "Synced main's .gitignore into remote-svn-test-$idx for first-push consistency."
         }
 
         Push-Location $remoteWorktreePath
@@ -148,7 +148,7 @@ try {
             & svn propset svn:ignore $ignoreToApply '.'
             if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
             # svn commit picks up both the propset and the .gitignore content sync (if main differs).
-            & svn commit -m 'svn:ignore: copy from remote-main; sync .gitignore from main'
+            & svn commit -m 'svn:ignore: copy from remote-svn-main; sync .gitignore from main'
             if ($LASTEXITCODE -ne 0) { throw 'svn commit svn:ignore failed' }
         } finally {
             Pop-Location

@@ -5,13 +5,13 @@
 # Scope (U4 plan):
 #   - missing -Branch arg → fail-loudly
 #   - unsupported branch name (-Branch foo) → "Unsupported branch"
-#   - remote-main worktree missing → fail-loudly
+#   - remote-svn-main worktree missing → fail-loudly
 #   - main dirty (uncommitted change) → fail-loudly + no SVN op
 #   - 中文 commit msg presence in SVN seed → Assert-SvnLogTextRoundTrip round-trip on r5
 #
 # Notes:
 #   The full happy pull-then-rebase path requires a fully wired SVN bridge: real SVN repo, git repo
-#   committed with same content as remote-main checkout, etc. That's exercised at the integration
+#   committed with same content as remote-svn-main checkout, etc. That's exercised at the integration
 #   level (Phase 2 manual). Here we cover the fail-loudly user-protection paths + fixture-readiness
 #   verification of the 中文 commit msg axis.
 
@@ -66,18 +66,18 @@ try {
     Remove-Sandbox -Dir $sb2
 }
 
-# ─── Case 3: remote-main missing ─────────────────────────────────────────────
+# ─── Case 3: remote-svn-main missing ─────────────────────────────────────────
 
 Write-Output ''
-Write-Output 'Case 3: -Branch main, no remote-main worktree → "Remote worktree ... not found"'
+Write-Output 'Case 3: -Branch main, no remote-svn-main worktree → "Remote worktree ... not found"'
 $sb3 = New-Sandbox -Tag 'pfs-3'
 try {
     $root = [System.IO.Path]::Combine($sb3, 'test-turbo-plugin')
     New-GitMainRepo -Root $root -CreateWorktreesDir
     $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'main')
-    Assert-True -Name 'exit != 0 (remote-main missing)' -Condition ($res.ExitCode -ne 0)
-    Assert-Match -Name 'stderr mentions remote-main not found' `
-                 -Pattern "Remote worktree 'remote-main' not found" -InputText $res.Combined
+    Assert-True -Name 'exit != 0 (remote-svn-main missing)' -Condition ($res.ExitCode -ne 0)
+    Assert-Match -Name 'stderr mentions remote-svn-main not found' `
+                 -Pattern "Remote worktree 'remote-svn-main' not found" -InputText $res.Combined
 } finally {
     Remove-Sandbox -Dir $sb3
 }

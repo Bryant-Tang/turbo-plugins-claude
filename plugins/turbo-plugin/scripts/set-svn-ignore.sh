@@ -32,10 +32,10 @@ fi
 
 # Collect all remote worktrees
 REMOTE_WORKTREES=()
-for d in "$WORKTREES_DIR"/remote-main "$WORKTREES_DIR"/remote-test-*/; do
+for d in "$WORKTREES_DIR"/remote-svn-main "$WORKTREES_DIR"/remote-svn-test-*/; do
   [[ -d "$d" ]] || continue
   name="$(basename "$d")"
-  if [[ "$name" == 'remote-main' || "$name" =~ ^remote-test-[0-9]+$ ]]; then
+  if [[ "$name" == 'remote-svn-main' || "$name" =~ ^remote-svn-test-[0-9]+$ ]]; then
     REMOTE_WORKTREES+=("${d%/}")
   fi
 done
@@ -51,9 +51,9 @@ get_patterns() {
 
 # ── LIST ──────────────────────────────────────────────────────────────────────
 if [[ ${#ADD[@]} -eq 0 && ${#REMOVE[@]} -eq 0 ]]; then
-  REMOTE_MAIN="$WORKTREES_DIR/remote-main"
+  REMOTE_MAIN="$WORKTREES_DIR/remote-svn-main"
   if [[ ! -d "$REMOTE_MAIN" ]]; then
-    echo "Error: remote-main worktree not found at: $REMOTE_MAIN" >&2; exit 1
+    echo "Error: remote-svn-main worktree not found at: $REMOTE_MAIN" >&2; exit 1
   fi
   CANONICAL="$(get_patterns "$REMOTE_MAIN")"
   if [[ -z "$CANONICAL" ]]; then
@@ -65,10 +65,10 @@ if [[ ${#ADD[@]} -eq 0 && ${#REMOVE[@]} -eq 0 ]]; then
 
   for wt in "${REMOTE_WORKTREES[@]}"; do
     name="$(basename "$wt")"
-    [[ "$name" == 'remote-main' ]] && continue
+    [[ "$name" == 'remote-svn-main' ]] && continue
     WT_PATTERNS="$(get_patterns "$wt")"
     if [[ "$WT_PATTERNS" != "$CANONICAL" ]]; then
-      echo "Warning: svn:ignore in '$name' differs from remote-main — run 'svn-ignore --add/--remove' to re-sync"
+      echo "Warning: svn:ignore in '$name' differs from remote-svn-main — run 'svn-ignore --add/--remove' to re-sync"
     fi
   done
   exit 0

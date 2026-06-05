@@ -337,16 +337,16 @@ fi
 # ─── resolve_remote_worktree — main / test-<n> / unsupported ──────────────────
 WT_DIR='C:/proj.worktrees'
 rrw_main="$(resolve_remote_worktree 'main' "$WT_DIR" 2>/dev/null || true)"
-if [[ "$rrw_main" == "remote-main|remote/main|$WT_DIR/remote-main" ]]; then
-    record_pass "resolve_remote_worktree main → remote-main triple (got: $rrw_main)"
+if [[ "$rrw_main" == "remote-svn-main|remote-svn/main|$WT_DIR/remote-svn-main" ]]; then
+    record_pass "resolve_remote_worktree main → remote-svn-main triple (got: $rrw_main)"
 else
-    record_fail "resolve_remote_worktree main" "expected remote-main triple, got '$rrw_main'"
+    record_fail "resolve_remote_worktree main" "expected remote-svn-main triple, got '$rrw_main'"
 fi
 rrw_test="$(resolve_remote_worktree 'test-7' "$WT_DIR" 2>/dev/null || true)"
-if [[ "$rrw_test" == "remote-test-7|remote/test-7|$WT_DIR/remote-test-7" ]]; then
-    record_pass "resolve_remote_worktree test-7 → remote-test-7 triple (got: $rrw_test)"
+if [[ "$rrw_test" == "remote-svn-test-7|remote-svn/test-7|$WT_DIR/remote-svn-test-7" ]]; then
+    record_pass "resolve_remote_worktree test-7 → remote-svn-test-7 triple (got: $rrw_test)"
 else
-    record_fail "resolve_remote_worktree test-7" "expected remote-test-7 triple, got '$rrw_test'"
+    record_fail "resolve_remote_worktree test-7" "expected remote-svn-test-7 triple, got '$rrw_test'"
 fi
 # Unsupported branch → non-zero + stderr.
 set +e

@@ -5,7 +5,7 @@
 #   後 emit「rN | author | date | msg」+ trailer `# LAST_SHOWN_REV=<minRev>`。
 #
 # Cases:
-#   1. Happy: fixture (Reset-Fixture seeded r1-r20 + remote-main + remote-test-1) → 預設 --branch main
+#   1. Happy: fixture (Reset-Fixture seeded r1-r20 + remote-svn-main + remote-svn-test-1) → 預設 --branch main
 #      --limit 5 → 顯示 r20-r16 + trailer LAST_SHOWN_REV=16
 #   2. 中文 commit (r5):跑 `-Revision 5` → stdout 含字典 #3.1「修正中文 commit 訊息亂碼」(text round-trip
 #      via [Console]::OutputEncoding decode);用 Assert-SvnLogTextRoundTrip
@@ -95,7 +95,7 @@ if (-not (Ensure-FixtureGit)) {
 
 try {
     # Note: Seed dump goes r1..r19 (r20 was 'svn copy trunk@HEAD branches/test-1' but
-    # does not always survive dump/load; observed actual remote-main HEAD = r19).
+    # does not always survive dump/load; observed actual remote-svn-main HEAD = r19).
     # Adjusted expectations: top entry = r19, default --limit 5 trailer = r15.
 
     # Case 1: happy — default --branch main, --limit 5
@@ -122,7 +122,7 @@ try {
     $svnRepo = 'C:\Turbo\test-turbo-plugin\svn-repo'
     $svnUri = 'file:///' + ($svnRepo -replace '\\', '/') + '/trunk'
     # Use Get-RawCommitDump indirectly via Assert-SvnLogTextRoundTrip (it knows how to
-    # invoke). Pass the SvnRepo path (sibling 'remote-main' is a working copy):
+    # invoke). Pass the SvnRepo path (sibling 'remote-svn-main' is a working copy):
     Assert-SvnLogTextRoundTrip `
         -Name 'case2: 中文 commit msg present (text round-trip)' `
         -ExpectedText '修正中文 commit 訊息亂碼' `

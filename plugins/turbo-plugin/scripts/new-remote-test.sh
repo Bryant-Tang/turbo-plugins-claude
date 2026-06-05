@@ -30,10 +30,10 @@ fi
 
 if [[ -z "$N" ]]; then
   MAX_N=0
-  for d in "$WORKTREES_DIR"/remote-test-*; do
+  for d in "$WORKTREES_DIR"/remote-svn-test-*; do
     [[ -d "$d" ]] || continue
     name="$(basename "$d")"
-    if [[ "$name" =~ ^remote-test-([0-9]+)$ ]]; then
+    if [[ "$name" =~ ^remote-svn-test-([0-9]+)$ ]]; then
       num="${BASH_REMATCH[1]}"
       (( num > MAX_N )) && MAX_N="$num"
     fi
@@ -45,8 +45,8 @@ else
 fi
 
 TEST_BRANCH="test-$IDX"
-REMOTE_BRANCH="remote/test-$IDX"
-REMOTE_NAME="remote-test-$IDX"
+REMOTE_BRANCH="remote-svn/test-$IDX"
+REMOTE_NAME="remote-svn-test-$IDX"
 REMOTE_PATH="$WORKTREES_DIR/$REMOTE_NAME"
 
 if git -C "$MAIN_WORKTREE" branch --list "$TEST_BRANCH" | grep -q .; then
@@ -58,11 +58,11 @@ fi
 
 # SECURITY (U2 / R1): validate the caller-supplied $SVN_URL falls under the trusted
 # repository root BEFORE any git mutation, before any svn sink, and before the ERR
-# rollback trap is registered. Trust base = remote-main's repos-root-url. Running this
+# rollback trap is registered. Trust base = remote-svn-main's repos-root-url. Running this
 # before the trap means a rejected URL produces ZERO side effects and does NOT trigger
-# rollback. If remote-main is absent / not a working copy, assert_trusted_svn_url fails
+# rollback. If remote-svn-main is absent / not a working copy, assert_trusted_svn_url fails
 # closed (non-zero) and we exit here — still before any branch/worktree is created.
-REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-main"
+REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-svn-main"
 if ! assert_trusted_svn_url "$REMOTE_MAIN_PATH" "$SVN_URL" >/dev/null; then
   echo "Error: refusing to create test environment with untrusted/unverifiable SVN URL." >&2
   exit 1
@@ -101,7 +101,7 @@ git -C "$MAIN_WORKTREE" worktree add "$REMOTE_PATH" "$REMOTE_BRANCH"
 if svn info "$SVN_URL" >/dev/null 2>&1; then
   echo "SVN path exists, will checkout: $SVN_URL"
 else
-  REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-main"
+  REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-svn-main"
   MAIN_SVN_URL="$(svn info --show-item url "$REMOTE_MAIN_PATH")"
   echo "SVN path '$SVN_URL' does not exist. Creating from '$MAIN_SVN_URL'..."
   svn copy "$MAIN_SVN_URL" "$SVN_URL" -m "create $TEST_BRANCH branch"
@@ -121,16 +121,16 @@ if [[ -e "$REMOTE_PATH/.git" ]]; then
   (cd "$REMOTE_PATH" && svn rm --keep-local '.git' 2>/dev/null || true)
 fi
 
-REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-main"
+REMOTE_MAIN_PATH="$WORKTREES_DIR/remote-svn-main"
 IGNORE_TO_APPLY=$'.git\n.gitignore'
 if [[ -d "$REMOTE_MAIN_PATH" ]]; then
   INHERITED="$(svn propget svn:ignore "$REMOTE_MAIN_PATH" 2>/dev/null || true)"
   if [[ -n "$INHERITED" ]]; then IGNORE_TO_APPLY="$INHERITED"; fi
 fi
 
-# v0.2.7+ F-U16.bridge fix: sync main's current .gitignore into remote-test-N BEFORE
+# v0.2.7+ F-U16.bridge fix: sync main's current .gitignore into remote-svn-test-N BEFORE
 # svn commit. SVN's test-N was svn-copied from main SVN whose .gitignore may be older
-# than main git's current .gitignore. Without this sync, test-N and remote/test-N
+# than main git's current .gitignore. Without this sync, test-N and remote-svn/test-N
 # diverge on .gitignore content → first tp-push-to-svn 必撞 add/add merge conflict.
 if [[ -f "$MAIN_WORKTREE/.gitignore" ]]; then
   cp -f "$MAIN_WORKTREE/.gitignore" "$REMOTE_PATH/.gitignore"
@@ -141,7 +141,7 @@ fi
   cd "$REMOTE_PATH"
   svn propset svn:ignore "$IGNORE_TO_APPLY" '.'
   # svn commit picks up both the propset and the .gitignore content sync (if main differs).
-  svn commit -m 'svn:ignore: copy from remote-main; sync .gitignore from main'
+  svn commit -m 'svn:ignore: copy from remote-svn-main; sync .gitignore from main'
 )
 
 # All SVN steps succeeded; disable the rollback trap.

@@ -289,8 +289,8 @@ if (-not $dumpExists) {
         # v1.0 (U1): container nested inside the main worktree at
         # <TestRoot>/.turbo-plugin/worktrees/ (matches Get-WorktreesDir + Reset-Fixture.ps1).
         $worktreesDir = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees')
-        Assert-True -Name 'remote-main worktree checked out' -Condition (Test-Path -LiteralPath ([System.IO.Path]::Combine($worktreesDir, 'remote-main', '.svn')))
-        Assert-True -Name 'remote-test-1 worktree checked out' -Condition (Test-Path -LiteralPath ([System.IO.Path]::Combine($worktreesDir, 'remote-test-1', '.svn')))
+        Assert-True -Name 'remote-svn-main worktree checked out' -Condition (Test-Path -LiteralPath ([System.IO.Path]::Combine($worktreesDir, 'remote-svn-main', '.svn')))
+        Assert-True -Name 'remote-svn-test-1 worktree checked out' -Condition (Test-Path -LiteralPath ([System.IO.Path]::Combine($worktreesDir, 'remote-svn-test-1', '.svn')))
 
         # r5 svn:log content check — round-trip via console codepage per brainstorm F-3
         # reality: Windows + TortoiseSVN stores CJK commit msgs as cp1252→UTF-8 mojibake

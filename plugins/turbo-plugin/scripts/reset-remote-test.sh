@@ -27,7 +27,7 @@ TEST_BRANCH="test-$IDX"
 
 MAIN_WORKTREE="$(get_main_worktree)"
 WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
-REMOTE_PATH="$WORKTREES_DIR/remote-test-$IDX"
+REMOTE_PATH="$WORKTREES_DIR/remote-svn-test-$IDX"
 
 if ! git -C "$MAIN_WORKTREE" branch --list "$TEST_BRANCH" | grep -q .; then
   echo "Error: branch '$TEST_BRANCH' does not exist." >&2; exit 1
@@ -68,7 +68,7 @@ echo 'GAIN'
 
 # F25: emit file-impact preview — list files that would be svn-deleted on the next push.
 # This lets the SKILL prompt the user before they commit to the reset.
-FILES_LOST_RAW="$(git -C "$MAIN_WORKTREE" diff --name-status "main..remote/test-$IDX" 2>/dev/null || true)"
+FILES_LOST_RAW="$(git -C "$MAIN_WORKTREE" diff --name-status "main..remote-svn/test-$IDX" 2>/dev/null || true)"
 echo ''
 echo 'FILES_LOST_AFTER_PUSH'
 [[ -n "$FILES_LOST_RAW" ]] && echo "$FILES_LOST_RAW"

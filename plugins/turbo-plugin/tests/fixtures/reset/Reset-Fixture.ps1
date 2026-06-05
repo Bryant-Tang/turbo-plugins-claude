@@ -6,8 +6,8 @@
 #   1. robocopy /MIR  plugins/turbo-plugin/tests/fixtures/base  ->  $TestRoot (default C:\Turbo\test-turbo-plugin\test-turbo-plugin)
 #      (F-4 fix: robocopy exit 0-7 都是 success;只 ≥ 8 才 throw,且每次跑完 reset $LASTEXITCODE = 0)
 #   2. svnadmin create $SvnRepo; svnadmin load < seed.dump  (via cmd /c redirect, F-2 一致)
-#   3. svn checkout trunk -> <TestRoot>\.turbo-plugin\worktrees\remote-main
-#      svn checkout branches/test-1 -> <TestRoot>\.turbo-plugin\worktrees\remote-test-1
+#   3. svn checkout trunk -> <TestRoot>\.turbo-plugin\worktrees\remote-svn-main
+#      svn checkout branches/test-1 -> <TestRoot>\.turbo-plugin\worktrees\remote-svn-test-1
 #      (v1.0 U1 nested layout: container lives INSIDE the main worktree at
 #       <TestRoot>\.turbo-plugin\worktrees\。所有 turbo-plugin script — resolve-iis-settings /
 #       svn-log / pull-from-svn 等 — 都讀這個 nested 路徑。)
@@ -144,19 +144,19 @@ if (-not $SkipSvn) {
     }
     Write-Output "  svnadmin load OK"
 
-    # ─── Step 3: svn checkout remote-main / remote-test-1 ─────────────────────
+    # ─── Step 3: svn checkout remote-svn-main / remote-svn-test-1 ─────────────
     #
     # v1.0 (U1) nested layout (matches Get-WorktreesDir):
     #   <TestRoot>                              main project
     #   <TestRoot>/.turbo-plugin/worktrees/     worktrees container (inside main)
-    #     ├── remote-main/
-    #     └── remote-test-1/
+    #     ├── remote-svn-main/
+    #     └── remote-svn-test-1/
     # turbo-plugin scripts(resolve-iis-settings / svn-log / pull-from-svn etc.)
     # 都讀 `<TestRoot>/.turbo-plugin/worktrees/` 這個 nested 路徑。
 
     $worktreesDir   = [System.IO.Path]::Combine($TestRoot, '.turbo-plugin', 'worktrees')
-    $remoteMainDir  = [System.IO.Path]::Combine($worktreesDir, 'remote-main')
-    $remoteTest1Dir = [System.IO.Path]::Combine($worktreesDir, 'remote-test-1')
+    $remoteMainDir  = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-main')
+    $remoteTest1Dir = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-test-1')
 
     # 整個 sibling worktrees container 砍掉重建(per-case clean slate)。
     # ReadOnly attr clear 由 Remove-DirTree helper 處理(`.svn/` 內含 ReadOnly file)。
@@ -187,7 +187,7 @@ Write-Output "✔ Fixture reset complete."
 Write-Output "  Workspace: $TestRoot"
 if (-not $SkipSvn) {
     Write-Output "  SVN repo:  $SvnRepo (loaded from $DumpPath)"
-    Write-Output "  Remote-*:  ${TestRoot}\.turbo-plugin\worktrees\{remote-main, remote-test-1}"
+    Write-Output "  Remote-*:  ${TestRoot}\.turbo-plugin\worktrees\{remote-svn-main, remote-svn-test-1}"
 } else {
     Write-Output "  (SVN reset skipped)"
 }

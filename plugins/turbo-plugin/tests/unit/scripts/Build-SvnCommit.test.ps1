@@ -6,7 +6,7 @@
 #
 # 本測試只測 read-only / error 分支:
 #   1. Missing -Branch: 不傳 -Branch → exit 非 0,訊息提及「Missing required argument」
-#   2. Branch not found: -Branch test-99 (沒有 remote-test-99 worktree) → 訊息提及不存在
+#   2. Branch not found: -Branch test-99 (沒有 remote-svn-test-99 worktree) → 訊息提及不存在
 #   3. SKILL entry path consistency: 同一 case(missing arg)再呼叫 → 行為一致
 
 Set-StrictMode -Version Latest
@@ -101,7 +101,7 @@ try {
     $r3 = Invoke-Script -WorkDir $testRoot -ExtraArgs @('-Branch', 'test-99')
     Assert-True -Name 'case3: branch test-99 unknown exit ≠ 0' -Condition ($r3.Exit -ne 0)
     Assert-Match -Name 'case3: 訊息提及 remote / not found / worktree' `
-                 -Pattern '(not found|Unknown branch|worktree|remote-test-99)' -InputText ($r3.Stdout + "`n" + $r3.Stderr)
+                 -Pattern '(not found|Unknown branch|worktree|remote-svn-test-99)' -InputText ($r3.Stdout + "`n" + $r3.Stderr)
 }
 catch {
     Write-Output "  [FAIL] unhandled: $($_.Exception.Message)"

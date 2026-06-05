@@ -5,12 +5,12 @@
 #   1. file exists
 #   2. missing --svn-url → exit non-zero + stderr mentions svn-url required
 #   3. unknown arg → exit non-zero
-#   4. (U2/R1) remote-main absent → fail-closed BEFORE any side effect (no branch/worktree)
+#   4. (U2/R1) remote-svn-main absent → fail-closed BEFORE any side effect (no branch/worktree)
 #   5. (U2/R1, 002:U17.4b) out-of-trust URL (file:///C:/Windows/...) → reject, no side effect
 #   6. (R10) prefix-confusion <repos-root>-evil/... → reject
-#   7. (R8/002:U17.5) pre-existing remote/test-N collision → rollback fires (saw "rolling back")
+#   7. (R8/002:U17.5) pre-existing remote-svn/test-N collision → rollback fires (saw "rolling back")
 #
-# Cases 5-7 need a real remote-main svn working copy built from the seed dump; they SKIP
+# Cases 5-7 need a real remote-svn-main svn working copy built from the seed dump; they SKIP
 # (counted as pass) if svn/svnadmin or the dump is unavailable.
 # The canonical, exhaustive assertions live in New-RemoteTest.test.ps1; this file mirrors
 # the key reject / fail-closed / rollback behaviors for parity.
@@ -48,8 +48,8 @@ make_main_repo() {
   printf '%s' "$root"
 }
 
-# Build a real remote-main svn WC from the seed dump under
-# <root>/.turbo-plugin/worktrees/remote-main.
+# Build a real remote-svn-main svn WC from the seed dump under
+# <root>/.turbo-plugin/worktrees/remote-svn-main.
 # Echoes repos-root-url on success; returns non-zero (empty) on failure.
 make_remote_main_wc() {
   local sandbox="$1" root="$2"
@@ -61,9 +61,9 @@ make_remote_main_wc() {
   local uri winpath
   winpath="$(cygpath -m "$svnrepo" 2>/dev/null || printf '%s' "$svnrepo")"
   uri="file:///$winpath"
-  svn checkout "$uri/trunk" "$worktrees/remote-main" >/dev/null 2>&1 || return 1
+  svn checkout "$uri/trunk" "$worktrees/remote-svn-main" >/dev/null 2>&1 || return 1
   local reposroot
-  reposroot="$(svn info --show-item repos-root-url "$worktrees/remote-main" 2>/dev/null | tr -d '\r\n')"
+  reposroot="$(svn info --show-item repos-root-url "$worktrees/remote-svn-main" 2>/dev/null | tr -d '\r\n')"
   [[ -n "$reposroot" ]] || return 1
   printf '%s' "$reposroot"
 }
@@ -116,15 +116,15 @@ else
     record_fail "unknown arg stderr" "unexpected: $out2"
 fi
 
-# Case 4: (U2/R1) remote-main absent → fail-closed before any side effect.
+# Case 4: (U2/R1) remote-svn-main absent → fail-closed before any side effect.
 SB4="$(mktemp -d -t turbo-crt4-XXXXXX)"
-ROOT4="$(make_main_repo "$SB4")"   # worktrees dir exists but NO remote-main
+ROOT4="$(make_main_repo "$SB4")"   # worktrees dir exists but NO remote-svn-main
 out4=$(cd "$ROOT4" && bash "$SCRIPT" --n 99 --svn-url 'file:///C:/Turbo/no-such-repo/branches/test-99' 2>&1)
 rc4=$?
 if [[ $rc4 -ne 0 ]]; then
-    record_pass "remote-main absent exits non-zero (fail-closed, rc=$rc4)"
+    record_pass "remote-svn-main absent exits non-zero (fail-closed, rc=$rc4)"
 else
-    record_fail "remote-main absent fail-closed" "expected non-zero exit"
+    record_fail "remote-svn-main absent fail-closed" "expected non-zero exit"
 fi
 # Must not have entered rollback nor created branches.
 if [[ "$out4" != *"rolling back"* ]]; then
@@ -139,7 +139,7 @@ else
 fi
 rm -rf "$SB4" 2>/dev/null || true
 
-# Cases 5-7: trust-validation behaviors needing a real remote-main svn WC.
+# Cases 5-7: trust-validation behaviors needing a real remote-svn-main svn WC.
 if ! svn_available; then
     echo "  [SKIP] svn/svnadmin not on PATH — trust-validation cases 5-7 skipped (counted pass)."
     passed=$((passed + 3))
@@ -159,7 +159,7 @@ else
             record_fail "out-of-trust file:// reject" "rc=$rc5 out=$out5"
         fi
     else
-        echo "  [SKIP] case 5: could not build remote-main WC (counted pass)."
+        echo "  [SKIP] case 5: could not build remote-svn-main WC (counted pass)."
         passed=$((passed + 1))
     fi
     rm -rf "$SB5" 2>/dev/null || true
@@ -176,18 +176,18 @@ else
             record_fail "prefix-confusion reject" "rc=$rc6 out=$out6"
         fi
     else
-        echo "  [SKIP] case 6: could not build remote-main WC (counted pass)."
+        echo "  [SKIP] case 6: could not build remote-svn-main WC (counted pass)."
         passed=$((passed + 1))
     fi
     rm -rf "$SB6" 2>/dev/null || true
 
-    # Case 7: pre-existing remote/test-7 collision → rollback fires (R8/002:U17.5)
+    # Case 7: pre-existing remote-svn/test-7 collision → rollback fires (R8/002:U17.5)
     SB7="$(mktemp -d -t turbo-crt7-XXXXXX)"
     ROOT7="$(make_main_repo "$SB7")"
     if REPOSROOT7="$(make_remote_main_wc "$SB7" "$ROOT7")"; then
-        # Collide remote/test-7 (the FIRST inner git mutation), not test-7 (caught by
+        # Collide remote-svn/test-7 (the FIRST inner git mutation), not test-7 (caught by
         # the pre-check outside the rollback trap).
-        git -C "$ROOT7" branch 'remote/test-7' 'main' >/dev/null 2>&1
+        git -C "$ROOT7" branch 'remote-svn/test-7' 'main' >/dev/null 2>&1
         out7=$(cd "$ROOT7" && bash "$SCRIPT" --n 7 --svn-url "${REPOSROOT7}/branches/test-7" 2>&1)
         rc7=$?
         # Passed trust gate (entered "Creating") AND rollback fired — not a rejection.
@@ -197,7 +197,7 @@ else
             record_fail "rollback regression" "rc=$rc7 out=$out7"
         fi
     else
-        echo "  [SKIP] case 7: could not build remote-main WC (counted pass)."
+        echo "  [SKIP] case 7: could not build remote-svn-main WC (counted pass)."
         passed=$((passed + 1))
     fi
     rm -rf "$SB7" 2>/dev/null || true

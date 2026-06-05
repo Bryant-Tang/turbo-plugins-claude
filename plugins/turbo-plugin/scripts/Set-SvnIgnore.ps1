@@ -75,7 +75,7 @@ try {
 
     $remoteWorktrees = @(
         Get-ChildItem -LiteralPath $worktreesDir -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^remote-(main|test-\d+)$' } |
+        Where-Object { $_.Name -match '^remote-svn-(main|test-\d+)$' } |
         ForEach-Object { $_.FullName }
     )
 
@@ -85,9 +85,9 @@ try {
 
     # ── LIST ──────────────────────────────────────────────────────────────────
     if ($Add.Count -eq 0 -and $Remove.Count -eq 0) {
-        $remotemainPath = Join-Path $worktreesDir 'remote-main'
+        $remotemainPath = Join-Path $worktreesDir 'remote-svn-main'
         if (-not (Test-Path -LiteralPath $remotemainPath -PathType Container)) {
-            throw "remote-main worktree not found at: $remotemainPath"
+            throw "remote-svn-main worktree not found at: $remotemainPath"
         }
         Push-Location $remotemainPath
         try { $canonical = Get-SvnIgnorePatterns -TargetPath $Path } finally { Pop-Location }
@@ -101,11 +101,11 @@ try {
 
         foreach ($wt in $remoteWorktrees) {
             $wtName = [System.IO.Path]::GetFileName($wt)
-            if ($wtName -eq 'remote-main') { continue }
+            if ($wtName -eq 'remote-svn-main') { continue }
             Push-Location $wt
             try { $wtPatterns = Get-SvnIgnorePatterns -TargetPath $Path } finally { Pop-Location }
             $diff = Compare-Object -ReferenceObject @($canonical) -DifferenceObject @($wtPatterns) -ErrorAction SilentlyContinue
-            if ($diff) { Write-Output "Warning: svn:ignore in '$wtName' differs from remote-main — run 'svn-ignore --add/--remove' to re-sync" }
+            if ($diff) { Write-Output "Warning: svn:ignore in '$wtName' differs from remote-svn-main — run 'svn-ignore --add/--remove' to re-sync" }
         }
         exit 0
     }

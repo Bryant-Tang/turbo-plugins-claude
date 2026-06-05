@@ -122,12 +122,12 @@ resolve_remote_worktree() {
   local branch_name="$1"
   local worktrees_dir="$2"
   if [[ "$branch_name" == 'main' ]]; then
-    echo "remote-main|remote/main|$worktrees_dir/remote-main"
+    echo "remote-svn-main|remote-svn/main|$worktrees_dir/remote-svn-main"
     return 0
   fi
   if [[ "$branch_name" =~ ^test-([0-9]+)$ ]]; then
     local n="${BASH_REMATCH[1]}"
-    echo "remote-test-$n|remote/test-$n|$worktrees_dir/remote-test-$n"
+    echo "remote-svn-test-$n|remote-svn/test-$n|$worktrees_dir/remote-svn-test-$n"
     return 0
   fi
   echo "Error: unsupported branch '$branch_name'. Only 'main' and 'test-<n>' branches can be synced from SVN." >&2
@@ -201,7 +201,7 @@ assert_trusted_svn_url() {
   fi
   base="$(printf '%s' "$base" | tr -d '\r\n')"
   if [[ -z "$base" ]]; then
-    echo "Error: assert_trusted_svn_url: could not determine trusted repos-root-url from '$trusted_wc' (path missing, not a working copy, or SVN unreachable). Refusing to proceed (fail closed). Run /tp-setup to bootstrap remote-main." >&2
+    echo "Error: assert_trusted_svn_url: could not determine trusted repos-root-url from '$trusted_wc' (path missing, not a working copy, or SVN unreachable). Refusing to proceed (fail closed). Run /tp-setup to bootstrap remote-svn-main." >&2
     return 1
   fi
 

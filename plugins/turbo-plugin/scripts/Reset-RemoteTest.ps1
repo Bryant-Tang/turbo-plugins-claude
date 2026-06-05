@@ -20,7 +20,7 @@ try {
 
     $mainWorktree = Get-MainWorktree
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
-    $remoteWorktreePath = Join-Path $worktreesDir "remote-test-$idx"
+    $remoteWorktreePath = Join-Path $worktreesDir "remote-svn-test-$idx"
 
     $existingTest = (& git -C $mainWorktree branch --list $testBranch | Out-String).Trim()
     if (-not $existingTest) { throw "Branch '$testBranch' does not exist." }
@@ -60,7 +60,7 @@ try {
 
     # F25: emit file-impact preview — list files that would be svn-deleted on the next push.
     # This lets the SKILL prompt the user before they commit to the reset.
-    $filesLost = (& git -C $mainWorktree diff --name-status "main..remote/test-$idx" 2>$null | Out-String).Trim()
+    $filesLost = (& git -C $mainWorktree diff --name-status "main..remote-svn/test-$idx" 2>$null | Out-String).Trim()
     Write-Output ''
     Write-Output 'FILES_LOST_AFTER_PUSH'
     if ($filesLost) { Write-Output $filesLost }

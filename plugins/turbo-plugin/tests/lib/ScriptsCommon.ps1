@@ -15,7 +15,7 @@
 #   - New-Sandbox / Remove-Sandbox  isolated per-case work dir under C:\Turbo (avoid TEMP
 #                                   short-name bugs).
 #   - New-GitMainRepo               git init + initial commit + optional .worktrees/ skeleton
-#                                   + optional remote-main worktree (covers most scripts'
+#                                   + optional remote-svn-main worktree (covers most scripts'
 #                                   precondition).
 
 Set-StrictMode -Version Latest
@@ -115,9 +115,9 @@ function New-GitMainRepo {
         $wt = [System.IO.Path]::Combine($Root, '.turbo-plugin', 'worktrees')
         $null = New-Item -ItemType Directory -Path $wt -Force
         if ($CreateRemoteMain) {
-            $remoteMain = [System.IO.Path]::Combine($wt, 'remote-main')
-            $null = Run-Git -Cwd $Root -GitArgs @('branch', 'remote/main', 'main')
-            $null = Run-Git -Cwd $Root -GitArgs @('worktree', 'add', $remoteMain, 'remote/main')
+            $remoteMain = [System.IO.Path]::Combine($wt, 'remote-svn-main')
+            $null = Run-Git -Cwd $Root -GitArgs @('branch', 'remote-svn/main', 'main')
+            $null = Run-Git -Cwd $Root -GitArgs @('worktree', 'add', $remoteMain, 'remote-svn/main')
         }
     }
 }
