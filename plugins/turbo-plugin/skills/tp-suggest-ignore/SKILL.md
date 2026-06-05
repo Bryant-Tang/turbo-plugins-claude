@@ -91,7 +91,7 @@ Forward the script output to the user.
 
 ### Step 1 — Resolve paths
 
-1. Resolve main worktree and all remote worktrees (`remote-main`, `remote-test-*`) from `git rev-parse --git-common-dir`.
+1. Resolve main worktree and all remote worktrees (`remote-svn-main`, `remote-svn-test-*`) from `git rev-parse --git-common-dir`.
 2. If no remote worktrees exist, skip SVN Ignore, Inconsistency, and Un-track, and proceed with Git Ignore only.
 
 ### Step 2 — Collect data
@@ -102,8 +102,8 @@ Run the following (all read-only):
 git -C <main-worktree> status --short
 git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1"   # lists svn:ignore from remote-main (canonical)
-# For each remote worktree (remote-main, remote-test-*):
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1"   # lists svn:ignore from remote-svn-main (canonical)
+# For each remote worktree (remote-svn-main, remote-svn-test-*):
 git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
 
@@ -111,8 +111,8 @@ git -C <remote-worktree> ls-files -o -i --exclude-standard
 git -C <main-worktree> status --short
 git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-svn-ignore.sh"   # lists svn:ignore from remote-main (canonical)
-# For each remote worktree (remote-main, remote-test-*):
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-svn-ignore.sh"   # lists svn:ignore from remote-svn-main (canonical)
+# For each remote worktree (remote-svn-main, remote-svn-test-*):
 git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
 
@@ -134,10 +134,10 @@ Use the collected data to build candidate lists for each category. Common "shoul
 
 **SVN Ignore — Add to `svn:ignore`**
 - Source: `git ls-files` (git-tracked files)
-- Condition: matches a pattern that belongs in git but not SVN (e.g. `.claude/`, CI configs) AND not already in `svn:ignore` (checked against `remote-main` as canonical)
+- Condition: matches a pattern that belongs in git but not SVN (e.g. `.claude/`, CI configs) AND not already in `svn:ignore` (checked against `remote-svn-main` as canonical)
 - Changes applied to **all remote worktrees** to keep them consistent
 - **Limitation note to show user**: `svn:ignore` is per-directory only, not recursive. For recursive exclusions use `.gitignore`.
-- **Warning if already SVN-tracked**: check `svn status <file>` in remote-main — if the file is tracked (blank output, not `?`) warn: "svn:ignore won't affect already-tracked files. To stop pushing modifications, consider Un-track option A instead."
+- **Warning if already SVN-tracked**: check `svn status <file>` in remote-svn-main — if the file is tracked (blank output, not `?`) warn: "svn:ignore won't affect already-tracked files. To stop pushing modifications, consider Un-track option A instead."
 
 **Inconsistency — SVN-tracked but git-ignored**
 - Source: `git ls-files -o -i --exclude-standard` in **each** remote worktree (different SVN branches may track different files)

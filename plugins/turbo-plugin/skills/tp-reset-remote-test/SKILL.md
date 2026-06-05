@@ -1,6 +1,6 @@
 ---
 name: tp-reset-remote-test
-description: '把 test-<n> 分支硬重置(`git reset --hard main`)使其等同 main 內容。**git reset --hard 會搬 branch 指標丟掉 test-<n> 自己的 commit**(原 commit 可透過 release tag / reflog 找回),必須使用者明確要求才執行;agent 偵測需重設 test 環境時可建議,但需明確確認。'
+description: '把 test-<n> 分支硬重置(`git reset --hard main`)使其等同 main 內容。**git reset --hard 會搬 branch 指標丟掉 test-<n> 自己的 commit**(被搬掉的 commit 可透過 reflog 找回;TODO(U9):release tag 機制落地後回填,指向 /tp-push-to-svn 的 release tag),必須使用者明確要求才執行;agent 偵測需重設 test 環境時可建議,但需明確確認。'
 argument-hint: '--n <number> [--diff-only]'
 user-invocable: true
 allowed-tools: Bash, Read, AskUserQuestion
@@ -28,7 +28,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.sh" --diff-only
 Script 印出:
 - `LOSE` 後跟即將從 test-<n> 被砍掉的 commit subject 清單(test-<n> 領先 main 的部分)
 - `GAIN` 後跟 reset 後會獲得的 commit subject 清單(main 領先 test-<n> 的部分)
-- `FILES_LOST_AFTER_PUSH` 後跟下一次 /tp-push-to-svn 後 SVN 上會被刪除的檔案清單(git diff --name-status `main..remote/test-<n>`)
+- `FILES_LOST_AFTER_PUSH` 後跟下一次 /tp-push-to-svn 後 SVN 上會被刪除的檔案清單(git diff --name-status `main..remote-svn/test-<n>`)
 - 或 `<test-n> already equals main. Nothing to reset.` (early exit, no Step 2 needed)
 
 ### Step 2 — Confirm with AskUserQuestion
@@ -72,15 +72,15 @@ Script 跑 `git reset --hard main` 然後 emit `Reset test-<n> to main.`
 
 - **force_bash routing**: 呼叫 script 前,讀取 `.turbo-plugin/config.toml` 中 `[svn] force_bash` 的值(透過 `Resolve-ConfigValue -Section 'svn' -Key 'force_bash' -Default 'false'`)。若為 `true`,改以 Git Bash 執行 `.sh` sibling 而非 `.ps1`(對應 Step 0.5 case (a) 的中文 Windows 使用者)。
 - 必須在主 worktree 跑。
-- 兩個 worktree(main + remote-test-<n>)都必須 clean,否則拒跑。
-- **`git reset --hard` 不是真的丟失資料**:被搬掉的 commit 若有 release tag / 其它 ref 指到仍可找回。但 SKILL.md 仍應在 prompt 強調這點。
+- 兩個 worktree(main + remote-svn-test-<n>)都必須 clean,否則拒跑。
+- **`git reset --hard` 不是真的丟失資料**:被搬掉的 commit 可透過 reflog 找回(TODO(U9):release tag 機制落地後回填本句,改為指向 /tp-push-to-svn 的 release tag / 其它 ref)。但 SKILL.md 仍應在 prompt 強調這點。
 - 預設不寫,先 `AskUserQuestion` 確認:Apply / Cancel(顯示 LOSE / GAIN diff)。
 
 ## Completion Checks
 
 - `git log --oneline test-<n>` 與 `git log --oneline main` 對齊。
 - 主 worktree 仍在原 branch(check `git rev-parse --abbrev-ref HEAD` 沒被意外切走)。
-- remote-test-<n> 仍 clean。
+- remote-svn-test-<n> 仍 clean。
 
 ## Test Scenarios
 
