@@ -24,9 +24,7 @@ if [[ ${#ADD[@]} -gt 0 && ${#REMOVE[@]} -gt 0 ]]; then
 fi
 
 MAIN_WORKTREE="$(get_main_worktree)"
-PROJ_NAME="$(basename "$MAIN_WORKTREE")"
-ROOT_DIR="$(dirname "$MAIN_WORKTREE")"
-WORKTREES_DIR="$ROOT_DIR/$PROJ_NAME.worktrees"
+WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
 
 if [[ ! -d "$WORKTREES_DIR" ]]; then
   echo "Error: worktrees directory not found: $WORKTREES_DIR. Run /tp-setup to bootstrap the SVN remote worktrees." >&2; exit 1

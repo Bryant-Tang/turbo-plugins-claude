@@ -26,9 +26,7 @@ IDX="$N"
 TEST_BRANCH="test-$IDX"
 
 MAIN_WORKTREE="$(get_main_worktree)"
-PROJ_NAME="$(basename "$MAIN_WORKTREE")"
-ROOT_DIR="$(dirname "$MAIN_WORKTREE")"
-WORKTREES_DIR="$ROOT_DIR/$PROJ_NAME.worktrees"
+WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
 REMOTE_PATH="$WORKTREES_DIR/remote-test-$IDX"
 
 if ! git -C "$MAIN_WORKTREE" branch --list "$TEST_BRANCH" | grep -q .; then

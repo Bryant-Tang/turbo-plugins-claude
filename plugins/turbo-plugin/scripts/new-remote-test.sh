@@ -22,9 +22,7 @@ probe_git_version
 if [[ -z "$SVN_URL" ]]; then echo "Error: --svn-url is required" >&2; exit 1; fi
 
 MAIN_WORKTREE="$(get_main_worktree)"
-PROJ_NAME="$(basename "$MAIN_WORKTREE")"
-ROOT_DIR="$(dirname "$MAIN_WORKTREE")"
-WORKTREES_DIR="$ROOT_DIR/$PROJ_NAME.worktrees"
+WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
 
 if [[ ! -d "$WORKTREES_DIR" ]]; then
   echo "Error: worktrees directory not found: $WORKTREES_DIR. Run /tp-setup first." >&2; exit 1

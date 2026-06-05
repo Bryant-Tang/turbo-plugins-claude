@@ -892,6 +892,23 @@ Assert-Equal -Name 'test-3 -> Path <wt>\remote-test-3' -Expected (Join-Path $wtD
 
 Assert-Throws2 -Name 'unsupported branch (feature/x) throws' -ScriptBlock { Resolve-RemoteWorktree -BranchName 'feature/x' -WorktreesDir $wtDir } -ExpectedMessagePattern "Only 'main' and 'test-<n>'"
 
+# ─── Get-WorktreesDir (U1) ─────────────────────────────────────────────────────
+#
+# happy: given an explicit -MainWorktree, returns <main>/.turbo-plugin/worktrees
+# (the v1.0 nested container location, built via [System.IO.Path]::Combine).
+
+Write-Output ''
+Write-Output '─── Get-WorktreesDir ───'
+
+$gwMain = 'C:\proj\main'
+$gwExpected = [System.IO.Path]::Combine($gwMain, '.turbo-plugin', 'worktrees')
+$gwActual = Get-WorktreesDir -MainWorktree $gwMain
+Assert-Equal -Name 'explicit MainWorktree -> <main>\.turbo-plugin\worktrees' -Expected $gwExpected -Actual $gwActual
+
+# The container is nested inside the main worktree (NOT a sibling "<proj>.worktrees").
+Assert-True -Name 'result is nested under the main worktree' -Condition ($gwActual.StartsWith($gwMain, [System.StringComparison]::OrdinalIgnoreCase)) -Detail "got: $gwActual"
+Assert-True -Name 'result ends with .turbo-plugin\worktrees' -Condition ($gwActual -match '\.turbo-plugin[\\/]worktrees$') -Detail "got: $gwActual"
+
 # ─── Format-IisExpressSiteName ─────────────────────────────────────────────────
 
 Write-Output ''

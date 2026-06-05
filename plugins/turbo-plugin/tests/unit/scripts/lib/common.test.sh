@@ -359,6 +359,17 @@ else
     record_fail "resolve_remote_worktree unsupported" "expected non-zero + 'unsupported branch', got rc=$rrw_bad_rc err='$rrw_bad_err'"
 fi
 
+# ─── get_worktrees_dir (U1) ──────────────────────────────────────────────────
+# happy: given an explicit main worktree arg, echoes <main>/.turbo-plugin/worktrees
+# (the v1.0 nested container location).
+gwd_main='C:/proj/main'
+gwd_out="$(get_worktrees_dir "$gwd_main" 2>/dev/null || true)"
+if [[ "$gwd_out" == "$gwd_main/.turbo-plugin/worktrees" ]]; then
+    record_pass "get_worktrees_dir explicit main → <main>/.turbo-plugin/worktrees (got: $gwd_out)"
+else
+    record_fail "get_worktrees_dir explicit" "expected $gwd_main/.turbo-plugin/worktrees, got '$gwd_out'"
+fi
+
 # ─── write_utf8_no_bom — CJK content, no BOM, byte-equal to canonical UTF-8 ────
 # CJK sample from schema dict (single source of truth): path #1.1 + commit msg #3.1.
 # Canonical UTF-8 bytes are produced by the same printf path the helper uses, then

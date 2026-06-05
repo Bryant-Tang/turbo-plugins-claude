@@ -16,8 +16,7 @@ try {
     }
 
     $mainWorktree = Get-MainWorktree
-    $projName = [System.IO.Path]::GetFileName($mainWorktree)
-    $worktreesDir = Join-Path ([System.IO.Path]::GetDirectoryName($mainWorktree)) "$projName.worktrees"
+    $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
 
     $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir
 

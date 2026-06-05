@@ -39,9 +39,8 @@ function New-RepoWithTestBranchAhead {
     $null = Run-Git -Cwd $Root -GitArgs @('commit', '-m', "feat: test-$N-only change")
     $null = Run-Git -Cwd $Root -GitArgs @('checkout', 'main')
 
-    $wtDir = [System.IO.Path]::Combine(
-        [System.IO.Path]::GetDirectoryName($Root),
-        "$([System.IO.Path]::GetFileName($Root)).worktrees")
+    # v1.0 (U1): container inside the main worktree at <Root>/.turbo-plugin/worktrees.
+    $wtDir = [System.IO.Path]::Combine($Root, '.turbo-plugin', 'worktrees')
     $null = New-Item -ItemType Directory -Path $wtDir -Force
     $remoteTestDir = [System.IO.Path]::Combine($wtDir, "remote-test-$N")
     $null = Run-Git -Cwd $Root -GitArgs @('branch', "remote/test-$N", 'main')

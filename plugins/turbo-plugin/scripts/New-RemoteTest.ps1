@@ -15,8 +15,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($SvnUrl)) { throw '-SvnUrl is required' }
 
     $mainWorktree = Get-MainWorktree
-    $projName = [System.IO.Path]::GetFileName($mainWorktree)
-    $worktreesDir = Join-Path ([System.IO.Path]::GetDirectoryName($mainWorktree)) "$projName.worktrees"
+    $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
 
     if (-not (Test-Path -LiteralPath $worktreesDir)) {
         throw "Worktrees directory not found: $worktreesDir. Run /tp-setup first to bootstrap."

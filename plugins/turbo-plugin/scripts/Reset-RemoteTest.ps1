@@ -19,8 +19,7 @@ try {
     $testBranch = "test-$idx"
 
     $mainWorktree = Get-MainWorktree
-    $projName = [System.IO.Path]::GetFileName($mainWorktree)
-    $worktreesDir = Join-Path ([System.IO.Path]::GetDirectoryName($mainWorktree)) "$projName.worktrees"
+    $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
     $remoteWorktreePath = Join-Path $worktreesDir "remote-test-$idx"
 
     $existingTest = (& git -C $mainWorktree branch --list $testBranch | Out-String).Trim()

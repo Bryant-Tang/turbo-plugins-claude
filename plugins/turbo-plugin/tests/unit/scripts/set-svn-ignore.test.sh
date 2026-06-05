@@ -60,7 +60,7 @@ else
     record_fail "unknown arg" "expected non-zero"
 fi
 
-# Case 4: no .worktrees/ dir → fail-loudly
+# Case 4: no .turbo-plugin/worktrees/ dir → fail-loudly
 out3=$(bash "$SCRIPT" --add obj/ 2>&1)
 rc3=$?
 popd >/dev/null

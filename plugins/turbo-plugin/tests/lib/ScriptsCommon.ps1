@@ -101,12 +101,18 @@ function New-GitMainRepo {
     $null = Run-Git -Cwd $Root -GitArgs @('config', 'user.email', 'test@turbo-plugin')
     $null = Run-Git -Cwd $Root -GitArgs @('config', 'user.name',  'turbo-plugin-test')
     [System.IO.File]::WriteAllText([System.IO.Path]::Combine($Root, 'init.txt'), 'init')
+    # v1.0 (U1): the worktrees container now lives INSIDE the main worktree at
+    # <Root>/.turbo-plugin/worktrees. Commit a .gitignore for it BEFORE adding any
+    # linked worktree there so the main worktree's `git status` stays clean (the
+    # nested worktree would otherwise show as an untracked ".turbo-plugin/" entry).
+    # (The full tp-setup gitignore wiring is U2; this is the fixture-side companion.)
+    [System.IO.File]::WriteAllText([System.IO.Path]::Combine($Root, '.gitignore'), "/.turbo-plugin/worktrees/`n")
     $null = Run-Git -Cwd $Root -GitArgs @('add', '-A')
     $null = Run-Git -Cwd $Root -GitArgs @('commit', '-m', 'initial', '--allow-empty')
     if ($CreateWorktreesDir) {
-        $wt = [System.IO.Path]::Combine(
-            [System.IO.Path]::GetDirectoryName($Root),
-            "$([System.IO.Path]::GetFileName($Root)).worktrees")
+        # v1.0 (U1): container moved from sibling "<proj>.worktrees" to inside the
+        # main worktree at <Root>/.turbo-plugin/worktrees (matches Get-WorktreesDir).
+        $wt = [System.IO.Path]::Combine($Root, '.turbo-plugin', 'worktrees')
         $null = New-Item -ItemType Directory -Path $wt -Force
         if ($CreateRemoteMain) {
             $remoteMain = [System.IO.Path]::Combine($wt, 'remote-main')

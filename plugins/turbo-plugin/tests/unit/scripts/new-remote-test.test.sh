@@ -43,16 +43,18 @@ make_main_repo() {
   echo init > "$root/init.txt"
   git -C "$root" add -A >/dev/null 2>&1
   git -C "$root" commit -m initial --allow-empty >/dev/null 2>&1
-  mkdir -p "$sandbox/test-turbo-plugin.worktrees"
+  # v1.0 (U1): container inside the main worktree at <root>/.turbo-plugin/worktrees.
+  mkdir -p "$root/.turbo-plugin/worktrees"
   printf '%s' "$root"
 }
 
-# Build a real remote-main svn WC from the seed dump under <root>.worktrees/remote-main.
+# Build a real remote-main svn WC from the seed dump under
+# <root>/.turbo-plugin/worktrees/remote-main.
 # Echoes repos-root-url on success; returns non-zero (empty) on failure.
 make_remote_main_wc() {
   local sandbox="$1" root="$2"
   local svnrepo="$sandbox/svnrepo"
-  local worktrees="$sandbox/test-turbo-plugin.worktrees"
+  local worktrees="$root/.turbo-plugin/worktrees"
   svnadmin create "$svnrepo" >/dev/null 2>&1 || return 1
   svnadmin load "$svnrepo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
   # Build a file:// URI from the (possibly Git-Bash) path. Convert /c/... → file:///C:/...

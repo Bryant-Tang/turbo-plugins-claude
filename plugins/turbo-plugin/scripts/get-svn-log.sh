@@ -33,9 +33,7 @@ if ! [[ "$LIMIT" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 MAIN_WORKTREE="$(get_main_worktree)"
-PROJ_NAME="$(basename "$MAIN_WORKTREE")"
-ROOT_DIR="$(dirname "$MAIN_WORKTREE")"
-WORKTREES_DIR="$ROOT_DIR/$PROJ_NAME.worktrees"
+WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
 
 REMOTE_SPEC="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR")"
 REMOTE_NAME="${REMOTE_SPEC%%|*}"

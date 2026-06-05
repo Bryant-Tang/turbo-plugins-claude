@@ -84,11 +84,11 @@ if [[ $SKIP_SVN -eq 0 ]]; then
 
     # ─── Step 3: svn checkout remote-main / remote-test-1 ─────────────────────
     #
-    # Sibling layout (tgs convention): <TEST_ROOT>.worktrees/ 與 <TEST_ROOT>/ 同層,
-    # 中間用 '.' 分隔。所有 turbo-plugin script 都讀 sibling 路徑,**不**用 nested
-    # <TEST_ROOT>/.worktrees/。
+    # v1.0 (U1) nested layout (matches get_worktrees_dir): the container lives INSIDE
+    # the main worktree at <TEST_ROOT>/.turbo-plugin/worktrees/. All turbo-plugin
+    # scripts read this nested path.
 
-    worktrees_dir="${TEST_ROOT}.worktrees"
+    worktrees_dir="${TEST_ROOT}/.turbo-plugin/worktrees"
     remote_main_dir="$worktrees_dir/remote-main"
     remote_test1_dir="$worktrees_dir/remote-test-1"
 
@@ -111,7 +111,7 @@ echo "✔ Fixture reset complete."
 echo "  Workspace: $TEST_ROOT"
 if [[ $SKIP_SVN -eq 0 ]]; then
     echo "  SVN repo:  $SVN_REPO (loaded from $DUMP_PATH)"
-    echo "  Remote-*:  ${TEST_ROOT}.worktrees/{remote-main, remote-test-1}"
+    echo "  Remote-*:  ${TEST_ROOT}/.turbo-plugin/worktrees/{remote-main, remote-test-1}"
 else
     echo "  (SVN reset skipped)"
 fi

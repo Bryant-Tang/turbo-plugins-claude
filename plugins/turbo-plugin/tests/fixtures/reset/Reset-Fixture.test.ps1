@@ -286,9 +286,9 @@ if (-not $dumpExists) {
         $rc = Invoke-Reset -TestRoot $testRoot -SvnRepo $svnRepo
         Assert-Equal -Name 'reset exit code 0 (with SVN)' -Expected 0 -Actual $rc
         Assert-True -Name 'SVN repo dir exists' -Condition ([System.IO.Directory]::Exists($svnRepo))
-        # tgs convention: <TestRoot>.worktrees/ sibling (NOT nested .worktrees inside TestRoot).
-        # See Reset-Fixture.ps1 line 157: $worktreesDir = $TestRoot + '.worktrees'
-        $worktreesDir = $testRoot + '.worktrees'
+        # v1.0 (U1): container nested inside the main worktree at
+        # <TestRoot>/.turbo-plugin/worktrees/ (matches Get-WorktreesDir + Reset-Fixture.ps1).
+        $worktreesDir = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'worktrees')
         Assert-True -Name 'remote-main worktree checked out' -Condition (Test-Path -LiteralPath ([System.IO.Path]::Combine($worktreesDir, 'remote-main', '.svn')))
         Assert-True -Name 'remote-test-1 worktree checked out' -Condition (Test-Path -LiteralPath ([System.IO.Path]::Combine($worktreesDir, 'remote-test-1', '.svn')))
 

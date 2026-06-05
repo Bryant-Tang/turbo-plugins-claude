@@ -41,10 +41,10 @@ if (-not [System.IO.File]::Exists($scriptUnderTest)) {
 }
 
 function Get-WorktreesDir {
+    # v1.0 (U1): container moved inside the main worktree at <Root>/.turbo-plugin/worktrees
+    # (mirrors the production Get-WorktreesDir in scripts/lib/Common.ps1).
     param([string]$Root)
-    return [System.IO.Path]::Combine(
-        [System.IO.Path]::GetDirectoryName($Root),
-        "$([System.IO.Path]::GetFileName($Root)).worktrees")
+    return [System.IO.Path]::Combine($Root, '.turbo-plugin', 'worktrees')
 }
 
 # Build a throwaway svn repo (from the seed dump) and check out trunk into
