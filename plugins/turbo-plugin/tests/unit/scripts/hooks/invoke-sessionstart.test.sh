@@ -29,7 +29,7 @@ mk_sandbox() {
     local tag="$1"
     local stamp
     stamp="$(date +%s%N 2>/dev/null || date +%s)"
-    local dir="/c/Turbo/test-turbo-plugin/sandboxes/turbo-plugin-test-hook-${tag}-${stamp}"
+    local dir="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-hook-${tag}-${stamp}"
     mkdir -p "$dir"
     echo "$dir"
 }
@@ -39,8 +39,22 @@ rm_sandbox() {
     rm -rf "$dir" 2>/dev/null || true
 }
 
+# The non-git case MUST run from a dir OUTSIDE any git work tree. The repo-relative
+# tests/.sandbox/ lives INSIDE this repo, so a sandbox there would inherit the outer repo and
+# the hook would no longer see a non-git cwd. Use OS temp (outside the repo) for that case only.
+mk_nongit_sandbox() {
+    local tag="$1"
+    local stamp
+    stamp="$(date +%s%N 2>/dev/null || date +%s)"
+    local base="${TMPDIR:-/tmp}"
+    [[ -d "$base" ]] || base="/tmp"
+    local dir="$base/turbo-plugin-test-hook-${tag}-${stamp}"
+    mkdir -p "$dir"
+    echo "$dir"
+}
+
 # ─── Case 1: non-git cwd ────────────────────────────────────────────────────
-sb1="$(mk_sandbox 'ss-nongit')"
+sb1="$(mk_nongit_sandbox 'ss-nongit')"
 cd "$sb1"
 out1="$(bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e1=$?
 cd "$PLUGIN_ROOT"

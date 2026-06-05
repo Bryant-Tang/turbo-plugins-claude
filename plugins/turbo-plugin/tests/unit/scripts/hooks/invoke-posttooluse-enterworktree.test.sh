@@ -26,7 +26,7 @@ mk_sandbox() {
     local tag="$1"
     local stamp
     stamp="$(date +%s%N 2>/dev/null || date +%s)"
-    local dir="/c/Turbo/test-turbo-plugin/sandboxes/turbo-plugin-test-hook-${tag}-${stamp}"
+    local dir="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-hook-${tag}-${stamp}"
     mkdir -p "$dir"
     echo "$dir"
 }

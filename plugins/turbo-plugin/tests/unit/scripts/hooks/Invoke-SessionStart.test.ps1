@@ -34,7 +34,18 @@ $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'hooks', 'I
 
 function New-Sandbox { param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $dir = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-$Purpose-$guid")
+    $dir = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-test-$Purpose-$guid")
+    $null = New-Item -ItemType Directory -Path $dir -Force
+    return $dir
+}
+# The non-git case MUST run from a dir that is NOT inside any git work tree. The repo-relative
+# tests/.sandbox/ lives INSIDE this repo's work tree, so a sandbox there would inherit the outer
+# repo and the hook would no longer see a non-git cwd. Use OS temp (outside the repo) for that
+# one case only; long-form via GetFullPath so 8.3 short-names never appear.
+function New-NonGitSandbox { param([string]$Purpose)
+    $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
+    $dir = [System.IO.Path]::GetFullPath(
+        [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-test-$Purpose-$guid"))
     $null = New-Item -ItemType Directory -Path $dir -Force
     return $dir
 }
@@ -73,7 +84,8 @@ function Invoke-Hook {
     $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-hookout-$([Guid]::NewGuid().ToString('N')).txt")
     $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-hookerr-$([Guid]::NewGuid().ToString('N')).txt")
     try {
-        $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptUnderTest)
+        # Quote -File so a spaced repo/parent path (AE8) survives Start-Process's space-join.
+        $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"'))
         $proc = Start-Process -FilePath 'powershell.exe' `
             -ArgumentList $argList -WorkingDirectory $WorkDir `
             -RedirectStandardOutput $tmpStdout `
@@ -98,7 +110,8 @@ $sb3 = $null
 
 try {
     # ─── Case 1: non-git cwd → silent exit 0 + `{}` ────────────────────────────
-    $sb1 = New-Sandbox 'hook-ss-nongit'
+    # Must be OUTSIDE any git work tree (see New-NonGitSandbox note above).
+    $sb1 = New-NonGitSandbox 'hook-ss-nongit'
     $r1 = Invoke-Hook -WorkDir $sb1
     Assert-Equal -Name 'case1: non-git exit 0' -Expected 0 -Actual $r1.Exit
     # contract: 非 git → emit `{}` silent。不應該 emit `systemMessage`。

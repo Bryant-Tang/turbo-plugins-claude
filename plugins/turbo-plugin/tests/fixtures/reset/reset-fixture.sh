@@ -7,16 +7,16 @@
 # native it works the same modulo the svnadmin dump format compatibility (out of scope
 # for v1.0 — see plan K-Decision).
 #
-# Defaults match the PS version:
-#   --test-root C:\Turbo\test-turbo-plugin\test-turbo-plugin       (override with --test-root <path>)
-#   --svn-repo  C:\Turbo\test-turbo-plugin\svn-repo
+# Defaults are repo-relative, gitignored tests/.sandbox/ (override with --test-root / --svn-repo):
+#   --test-root <tests>/.sandbox/test-turbo-plugin
+#   --svn-repo  <tests>/.sandbox/svn-repo
 #
 # Idempotent: any prior state restored to base.
 
 set -euo pipefail
 
-TEST_ROOT="C:/Turbo/test-turbo-plugin/test-turbo-plugin"
-SVN_REPO="C:/Turbo/test-turbo-plugin/svn-repo"
+TEST_ROOT=""
+SVN_REPO=""
 BASE_DIR=""
 DUMP_PATH=""
 SKIP_SVN=0
@@ -34,6 +34,14 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fixtures_dir="$(cd "$script_dir/.." && pwd)"
+tests_dir="$(cd "$script_dir/../.." && pwd)"
+
+# Default work root = repo-relative, gitignored tests/.sandbox/. svn CLIENT calls get
+# --config-dir <sandbox>/.svnconfig so the global ~/.subversion is not touched.
+sandbox_dir="$tests_dir/.sandbox"
+[[ -z "$TEST_ROOT" ]] && TEST_ROOT="$sandbox_dir/test-turbo-plugin"
+[[ -z "$SVN_REPO" ]] && SVN_REPO="$sandbox_dir/svn-repo"
+svn_config_dir="$sandbox_dir/.svnconfig"
 
 [[ -z "$BASE_DIR" ]] && BASE_DIR="$fixtures_dir/base"
 [[ -z "$DUMP_PATH" ]] && DUMP_PATH="$fixtures_dir/seed/svn-repo-r1-r20.dump"
@@ -100,10 +108,10 @@ if [[ $SKIP_SVN -eq 0 ]]; then
     repo_uri="file:///${SVN_REPO//\\//}"
 
     echo "Step 3a: svn checkout trunk -> $remote_main_dir"
-    svn checkout "$repo_uri/trunk" "$remote_main_dir" > /dev/null
+    svn checkout --config-dir "$svn_config_dir" "$repo_uri/trunk" "$remote_main_dir" > /dev/null
 
     echo "Step 3b: svn checkout branches/test-1 -> $remote_test1_dir"
-    svn checkout "$repo_uri/branches/test-1" "$remote_test1_dir" > /dev/null
+    svn checkout --config-dir "$svn_config_dir" "$repo_uri/branches/test-1" "$remote_test1_dir" > /dev/null
 fi
 
 echo ""

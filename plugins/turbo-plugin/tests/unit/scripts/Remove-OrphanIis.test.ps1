@@ -47,7 +47,7 @@ $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Remove-Orp
 # anyone removes [regex]::Escape from production, the metacharacter cases below go red.
 . ([System.IO.Path]::Combine($pluginRoot, 'scripts', 'lib', 'IisHelpers.ps1'))
 
-$testRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin'
+$testRoot = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'test-turbo-plugin')
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')
 
 function Ensure-FixtureGit {
@@ -82,7 +82,9 @@ function Invoke-Script {
         $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
         $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
         try {
-            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptUnderTest) + $ExtraArgs
+            # Quote -File (and any spaced ExtraArg) so a spaced repo/parent path (AE8) survives
+            # Start-Process's naive space-join of -ArgumentList.
+            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
             $proc = Start-Process -FilePath 'powershell.exe' `
                 -ArgumentList $argList -WorkingDirectory $WorkDir `
                 -RedirectStandardOutput $tmpStdout -RedirectStandardError $tmpStderr `

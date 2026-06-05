@@ -118,7 +118,7 @@ try {
     New-GitMainRepo -Root $root  # NO -CreateWorktreesDir → .worktrees/ absent at parent
 
     $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root `
-                           -ScriptArgs @('-SvnUrl', 'file:///C:/Turbo/no-such-repo/branches/test-1')
+                           -ScriptArgs @('-SvnUrl', 'file:///nonexistent-svn-repo/branches/test-1')
     Assert-True -Name 'exit != 0 (worktrees dir missing)' -Condition ($res.ExitCode -ne 0)
     Assert-Match -Name 'stderr mentions Worktrees directory not found' `
                  -Pattern 'Worktrees directory not found' -InputText $res.Combined
@@ -141,7 +141,7 @@ $sb3 = New-Sandbox -Tag 'crt-3'
 try {
     $root = [System.IO.Path]::Combine($sb3, 'test-turbo-plugin')
     New-GitMainRepo -Root $root -CreateWorktreesDir   # worktrees dir exists, but NO remote-svn-main
-    $url = 'file:///C:/Turbo/no-such-repo/branches/test-99'
+    $url = 'file:///nonexistent-svn-repo/branches/test-99'
     $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $root `
                            -ScriptArgs @('-N', '99', '-SvnUrl', $url)
     Assert-True -Name 'exit != 0 (fail-closed: remote-svn-main absent)' -Condition ($res.ExitCode -ne 0)

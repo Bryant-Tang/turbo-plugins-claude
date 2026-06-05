@@ -3,7 +3,8 @@
 # Per-case fixture reset entry for turbo-plugin v1.0 Phase 1 tests.
 #
 # 做三件事:
-#   1. robocopy /MIR  plugins/turbo-plugin/tests/fixtures/base  ->  $TestRoot (default C:\Turbo\test-turbo-plugin\test-turbo-plugin)
+#   1. robocopy /MIR  plugins/turbo-plugin/tests/fixtures/base  ->  $TestRoot
+#      (default = repo-relative, gitignored tests/.sandbox/test-turbo-plugin)
 #      (F-4 fix: robocopy exit 0-7 都是 success;只 ≥ 8 才 throw,且每次跑完 reset $LASTEXITCODE = 0)
 #   2. svnadmin create $SvnRepo; svnadmin load < seed.dump  (via cmd /c redirect, F-2 一致)
 #   3. svn checkout trunk -> <TestRoot>\.turbo-plugin\worktrees\remote-svn-main
@@ -20,8 +21,8 @@
 
 [CmdletBinding()]
 param(
-    [string]$TestRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin',
-    [string]$SvnRepo  = 'C:\Turbo\test-turbo-plugin\svn-repo',
+    [string]$TestRoot,
+    [string]$SvnRepo,
     [string]$BaseDir,
     [string]$DumpPath,
     [switch]$SkipSvn
@@ -56,7 +57,21 @@ $scriptDir = $PSScriptRoot
 # Reset-Fixture.ps1 lives at: <repo>/plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1
 # base/   ->  ../base
 # seed/   ->  ../seed
+# tests/  ->  ../..
 $fixturesDir = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '..'))
+$testsDir    = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '..', '..'))
+
+# Default work root = repo-relative, gitignored tests/.sandbox/. Resolved LONG form via
+# GetFullPath so 8.3 short-names never appear and a spaced parent path is tolerated. The svn
+# CLIENT calls below get --config-dir <sandbox>/.svnconfig so %APPDATA%\Subversion is untouched.
+$sandboxDir = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($testsDir, '.sandbox'))
+if ([string]::IsNullOrWhiteSpace($TestRoot)) {
+    $TestRoot = [System.IO.Path]::Combine($sandboxDir, 'test-turbo-plugin')
+}
+if ([string]::IsNullOrWhiteSpace($SvnRepo)) {
+    $SvnRepo = [System.IO.Path]::Combine($sandboxDir, 'svn-repo')
+}
+$svnConfigDir = [System.IO.Path]::Combine($sandboxDir, '.svnconfig')
 
 if ([string]::IsNullOrWhiteSpace($BaseDir)) {
     $BaseDir = [System.IO.Path]::Combine($fixturesDir, 'base')
@@ -169,14 +184,16 @@ if (-not $SkipSvn) {
 
     $repoUri = 'file:///' + ($SvnRepo -replace '\\', '/')
 
+    # svn CLIENT calls get --config-dir <sandbox>/.svnconfig so %APPDATA%\Subversion is not
+    # touched (svnadmin create/load above read no global state and accept no --config-dir).
     Write-Output "Step 3a: svn checkout trunk -> $remoteMainDir"
-    & svn checkout "$repoUri/trunk" $remoteMainDir | Out-Null
+    & svn checkout --config-dir $svnConfigDir "$repoUri/trunk" $remoteMainDir | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "svn checkout trunk failed with exit code $LASTEXITCODE"
     }
 
     Write-Output "Step 3b: svn checkout branches/test-1 -> $remoteTest1Dir"
-    & svn checkout "$repoUri/branches/test-1" $remoteTest1Dir | Out-Null
+    & svn checkout --config-dir $svnConfigDir "$repoUri/branches/test-1" $remoteTest1Dir | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "svn checkout branches/test-1 failed with exit code $LASTEXITCODE"
     }

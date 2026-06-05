@@ -13,7 +13,7 @@
 # 規定:
 #   - hand-rolled Assert-* via AssertHelpers.ps1 dot-source
 #   - 不修改 plugins/turbo-plugin/scripts/...
-#   - 沙盒目錄走 C:\Turbo\test-turbo-plugin\sandboxes\turbo-plugin-test-<purpose>-<guid>;避免 %TEMP% 的 PS 5.1 8.3 short-name 問題
+#   - 沙盒目錄走 <tests>/.sandbox/sandboxes/turbo-plugin-test-<purpose>-<guid>;避免 %TEMP% 的 PS 5.1 8.3 short-name 問題
 #   - 用後 try/finally 清掉沙盒;ReadOnly attr 清掉再 Delete
 
 Set-StrictMode -Version Latest
@@ -55,7 +55,7 @@ if (-not [System.IO.File]::Exists($ScriptUnderTest)) {
 function New-Sandbox {
     param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $dir = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-$Purpose-$guid")
+    $dir = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-test-$Purpose-$guid")
     $null = New-Item -ItemType Directory -Path $dir -Force
     return $dir
 }

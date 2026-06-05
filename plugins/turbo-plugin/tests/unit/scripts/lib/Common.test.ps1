@@ -856,9 +856,9 @@ if (-not $ghGitOk) {
 Write-Output ''
 Write-Output '─── Get-NormalizedAbsolutePath ───'
 
-# Git-Bash style /c/Users/... -> C:\Users\... with lowercase drive letter.
-$gnGitBash = Get-NormalizedAbsolutePath -Path '/c/Users/test/proj'
-Assert-Match2 -Name 'Git-Bash /c/... -> c:\... (drive lowercased, backslashes)' -Pattern '^c:\\Users\\test\\proj$' -InputText $gnGitBash
+# Git-Bash style /c/work/... -> c:\work\... with lowercase drive letter.
+$gnGitBash = Get-NormalizedAbsolutePath -Path '/c/work/test/proj'
+Assert-Match2 -Name 'Git-Bash /c/... -> c:\... (drive lowercased, backslashes)' -Pattern '^c:\\work\\test\\proj$' -InputText $gnGitBash
 
 # Uppercase drive letter input is lowercased.
 $gnUpper = Get-NormalizedAbsolutePath -Path 'C:\Temp\Thing'

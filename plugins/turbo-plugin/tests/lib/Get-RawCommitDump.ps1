@@ -10,8 +10,8 @@
 #   .BaseStream)，再用 [Console]::OutputEncoding decode (Bytes mode 就回 byte[])。
 #
 # 用法:
-#   $bytes = & .\Get-RawCommitDump.ps1 -RevN 5 -RepoPathOrUrl 'C:\Turbo\test-turbo-plugin\svn-repo' -ReturnFormat Bytes
-#   $text  = & .\Get-RawCommitDump.ps1 -RevN 5 -RepoPathOrUrl 'C:\Turbo\test-turbo-plugin\svn-repo' -ReturnFormat Text
+#   $bytes = & .\Get-RawCommitDump.ps1 -RevN 5 -RepoPathOrUrl '<tests>/.sandbox/svn-repo' -ReturnFormat Bytes
+#   $text  = & .\Get-RawCommitDump.ps1 -RevN 5 -RepoPathOrUrl '<tests>/.sandbox/svn-repo' -ReturnFormat Text
 
 [CmdletBinding()]
 param(

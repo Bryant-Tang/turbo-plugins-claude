@@ -36,8 +36,14 @@
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Get-ProjectIdentity.test | Get-ProjectIdentity | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Get-ProjectIdentity.test.ps1 |
-| P1-get-project-identity.test | Get-ProjectIdentity | fresh-base | script exit 0 + last line OK | exit 0; last: OK: all bash cases pass | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\get-project-identity.test.sh |
+| P1-Get-ProjectIdentity.test | Get-ProjectIdentity | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-ProjectIdentity.test.ps1 |
+| P1-get-project-identity.test | Get-ProjectIdentity | fresh-base | script exit 0 + last line OK | exit 0; last: OK: all bash cases pass | PASS | plugins/turbo-plugin/tests/unit/scripts/get-project-identity.test.sh |
+| P1-Get-ProjectIdentity.test | Get-ProjectIdentity | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-ProjectIdentity.test.ps1 |
+| P1-get-project-identity.test | Get-ProjectIdentity | fresh-base | script exit 0 + last line OK | exit 0; last: OK: all bash cases pass | PASS | plugins/turbo-plugin/tests/unit/scripts/get-project-identity.test.sh |
+| P1-Get-ProjectIdentity.test | Get-ProjectIdentity | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-ProjectIdentity.test.ps1 |
+| P1-get-project-identity.test | Get-ProjectIdentity | fresh-base | script exit 0 + last line OK | exit 0; last: OK: all bash cases pass | PASS | plugins/turbo-plugin/tests/unit/scripts/get-project-identity.test.sh |
+| P1-Get-ProjectIdentity.test | Get-ProjectIdentity | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-ProjectIdentity.test.ps1 |
+| P1-get-project-identity.test | Get-ProjectIdentity | fresh-base | script exit 0 + last line OK | exit 0; last: OK: all bash cases pass | PASS | plugins/turbo-plugin/tests/unit/scripts/get-project-identity.test.sh |
 
 _(rows TBD)_
 
@@ -46,8 +52,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Get-TargetUrl.test | Get-TargetUrl | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Get-TargetUrl.test.ps1 |
-| P1-get-target-url.test | Get-TargetUrl | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\get-target-url.test.sh |
+| P1-Get-TargetUrl.test | Get-TargetUrl | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-TargetUrl.test.ps1 |
+| P1-get-target-url.test | Get-TargetUrl | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/get-target-url.test.sh |
+| P1-Get-TargetUrl.test | Get-TargetUrl | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-TargetUrl.test.ps1 |
+| P1-get-target-url.test | Get-TargetUrl | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/get-target-url.test.sh |
+| P1-Get-TargetUrl.test | Get-TargetUrl | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-TargetUrl.test.ps1 |
+| P1-get-target-url.test | Get-TargetUrl | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/get-target-url.test.sh |
+| P1-Get-TargetUrl.test | Get-TargetUrl | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-TargetUrl.test.ps1 |
+| P1-get-target-url.test | Get-TargetUrl | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/get-target-url.test.sh |
 
 _(rows TBD)_
 
@@ -56,8 +68,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Test-IisListening.test | Test-IisListening | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Test-IisListening.test.ps1 |
-| P1-test-iis-listening.test | Test-IisListening | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\test-iis-listening.test.sh |
+| P1-Test-IisListening.test | Test-IisListening | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Test-IisListening.test.ps1 |
+| P1-test-iis-listening.test | Test-IisListening | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/test-iis-listening.test.sh |
+| P1-Test-IisListening.test | Test-IisListening | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Test-IisListening.test.ps1 |
+| P1-test-iis-listening.test | Test-IisListening | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/test-iis-listening.test.sh |
+| P1-Test-IisListening.test | Test-IisListening | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Test-IisListening.test.ps1 |
+| P1-test-iis-listening.test | Test-IisListening | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/test-iis-listening.test.sh |
+| P1-Test-IisListening.test | Test-IisListening | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Test-IisListening.test.ps1 |
+| P1-test-iis-listening.test | Test-IisListening | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/test-iis-listening.test.sh |
 
 _(rows TBD)_
 
@@ -66,8 +84,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Test-EncodingSupport.test | Test-EncodingSupport | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Test-EncodingSupport.test.ps1 |
-| P1-test-encoding-support.test | Test-EncodingSupport | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\test-encoding-support.test.sh |
+| P1-Test-EncodingSupport.test | Test-EncodingSupport | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Test-EncodingSupport.test.ps1 |
+| P1-test-encoding-support.test | Test-EncodingSupport | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/test-encoding-support.test.sh |
+| P1-Test-EncodingSupport.test | Test-EncodingSupport | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Test-EncodingSupport.test.ps1 |
+| P1-test-encoding-support.test | Test-EncodingSupport | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/test-encoding-support.test.sh |
+| P1-Test-EncodingSupport.test | Test-EncodingSupport | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Test-EncodingSupport.test.ps1 |
+| P1-test-encoding-support.test | Test-EncodingSupport | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/test-encoding-support.test.sh |
+| P1-Test-EncodingSupport.test | Test-EncodingSupport | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Test-EncodingSupport.test.ps1 |
+| P1-test-encoding-support.test | Test-EncodingSupport | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/test-encoding-support.test.sh |
 
 _(rows TBD)_
 
@@ -76,7 +100,10 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-IisHelpers.test | IisHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\lib\IisHelpers.test.ps1 |
+| P1-IisHelpers.test | IisHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/IisHelpers.test.ps1 |
+| P1-IisHelpers.test | IisHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/IisHelpers.test.ps1 |
+| P1-IisHelpers.test | IisHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/IisHelpers.test.ps1 |
+| P1-IisHelpers.test | IisHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/IisHelpers.test.ps1 |
 
 _(rows TBD)_
 
@@ -85,8 +112,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Build-SvnCommit.test | Build-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Build-SvnCommit.test.ps1 |
-| P1-build-svn-commit.test | Build-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\build-svn-commit.test.sh |
+| P1-Build-SvnCommit.test | Build-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Build-SvnCommit.test.ps1 |
+| P1-build-svn-commit.test | Build-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/build-svn-commit.test.sh |
+| P1-Build-SvnCommit.test | Build-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Build-SvnCommit.test.ps1 |
+| P1-build-svn-commit.test | Build-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/build-svn-commit.test.sh |
+| P1-Build-SvnCommit.test | Build-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Build-SvnCommit.test.ps1 |
+| P1-build-svn-commit.test | Build-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/build-svn-commit.test.sh |
+| P1-Build-SvnCommit.test | Build-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Build-SvnCommit.test.ps1 |
+| P1-build-svn-commit.test | Build-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/build-svn-commit.test.sh |
 
 _(rows TBD)_
 
@@ -95,8 +128,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Get-SvnLog.test | Get-SvnLog | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Get-SvnLog.test.ps1 |
-| P1-get-svn-log.test | Get-SvnLog | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\get-svn-log.test.sh |
+| P1-Get-SvnLog.test | Get-SvnLog | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-SvnLog.test.ps1 |
+| P1-get-svn-log.test | Get-SvnLog | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/get-svn-log.test.sh |
+| P1-Get-SvnLog.test | Get-SvnLog | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-SvnLog.test.ps1 |
+| P1-get-svn-log.test | Get-SvnLog | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/get-svn-log.test.sh |
+| P1-Get-SvnLog.test | Get-SvnLog | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-SvnLog.test.ps1 |
+| P1-get-svn-log.test | Get-SvnLog | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/get-svn-log.test.sh |
+| P1-Get-SvnLog.test | Get-SvnLog | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Get-SvnLog.test.ps1 |
+| P1-get-svn-log.test | Get-SvnLog | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/get-svn-log.test.sh |
 
 _(rows TBD)_
 
@@ -105,8 +144,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Start-Iis.test | Start-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Start-Iis.test.ps1 |
-| P1-start-iis.test | Start-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\start-iis.test.sh |
+| P1-Start-Iis.test | Start-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Start-Iis.test.ps1 |
+| P1-start-iis.test | Start-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/start-iis.test.sh |
+| P1-Start-Iis.test | Start-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Start-Iis.test.ps1 |
+| P1-start-iis.test | Start-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/start-iis.test.sh |
+| P1-Start-Iis.test | Start-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Start-Iis.test.ps1 |
+| P1-start-iis.test | Start-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/start-iis.test.sh |
+| P1-Start-Iis.test | Start-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Start-Iis.test.ps1 |
+| P1-start-iis.test | Start-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/start-iis.test.sh |
 
 _(rows TBD)_
 
@@ -115,8 +160,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Stop-Iis.test | Stop-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Stop-Iis.test.ps1 |
-| P1-stop-iis.test | Stop-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\stop-iis.test.sh |
+| P1-Stop-Iis.test | Stop-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Stop-Iis.test.ps1 |
+| P1-stop-iis.test | Stop-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/stop-iis.test.sh |
+| P1-Stop-Iis.test | Stop-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Stop-Iis.test.ps1 |
+| P1-stop-iis.test | Stop-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/stop-iis.test.sh |
+| P1-Stop-Iis.test | Stop-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Stop-Iis.test.ps1 |
+| P1-stop-iis.test | Stop-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/stop-iis.test.sh |
+| P1-Stop-Iis.test | Stop-Iis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Stop-Iis.test.ps1 |
+| P1-stop-iis.test | Stop-Iis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/stop-iis.test.sh |
 
 _(rows TBD)_
 
@@ -125,8 +176,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Remove-OrphanIis.test | Remove-OrphanIis | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Remove-OrphanIis.test.ps1 |
-| P1-remove-orphan-iis.test | Remove-OrphanIis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\remove-orphan-iis.test.sh |
+| P1-Remove-OrphanIis.test | Remove-OrphanIis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Remove-OrphanIis.test.ps1 |
+| P1-remove-orphan-iis.test | Remove-OrphanIis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/remove-orphan-iis.test.sh |
+| P1-Remove-OrphanIis.test | Remove-OrphanIis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Remove-OrphanIis.test.ps1 |
+| P1-remove-orphan-iis.test | Remove-OrphanIis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/remove-orphan-iis.test.sh |
+| P1-Remove-OrphanIis.test | Remove-OrphanIis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Remove-OrphanIis.test.ps1 |
+| P1-remove-orphan-iis.test | Remove-OrphanIis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/remove-orphan-iis.test.sh |
+| P1-Remove-OrphanIis.test | Remove-OrphanIis | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Remove-OrphanIis.test.ps1 |
+| P1-remove-orphan-iis.test | Remove-OrphanIis | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/remove-orphan-iis.test.sh |
 
 _(rows TBD)_
 
@@ -135,8 +192,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Build-Web.test | Build-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Build-Web.test.ps1 |
-| P1-build-web.test | Build-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\build-web.test.sh |
+| P1-Build-Web.test | Build-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Build-Web.test.ps1 |
+| P1-build-web.test | Build-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/build-web.test.sh |
+| P1-Build-Web.test | Build-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Build-Web.test.ps1 |
+| P1-build-web.test | Build-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/build-web.test.sh |
+| P1-Build-Web.test | Build-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Build-Web.test.ps1 |
+| P1-build-web.test | Build-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/build-web.test.sh |
+| P1-Build-Web.test | Build-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Build-Web.test.ps1 |
+| P1-build-web.test | Build-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/build-web.test.sh |
 
 _(rows TBD)_
 
@@ -145,8 +208,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Publish-Web.test | Publish-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Publish-Web.test.ps1 |
-| P1-publish-web.test | Publish-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\publish-web.test.sh |
+| P1-Publish-Web.test | Publish-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Publish-Web.test.ps1 |
+| P1-publish-web.test | Publish-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/publish-web.test.sh |
+| P1-Publish-Web.test | Publish-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Publish-Web.test.ps1 |
+| P1-publish-web.test | Publish-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/publish-web.test.sh |
+| P1-Publish-Web.test | Publish-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Publish-Web.test.ps1 |
+| P1-publish-web.test | Publish-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/publish-web.test.sh |
+| P1-Publish-Web.test | Publish-Web | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Publish-Web.test.ps1 |
+| P1-publish-web.test | Publish-Web | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/publish-web.test.sh |
 
 _(rows TBD)_
 
@@ -155,8 +224,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Sync-FromSvn.test | Sync-FromSvn | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Sync-FromSvn.test.ps1 |
-| P1-sync-from-svn.test | Sync-FromSvn | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\sync-from-svn.test.sh |
+| P1-Sync-FromSvn.test | Sync-FromSvn | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Sync-FromSvn.test.ps1 |
+| P1-sync-from-svn.test | Sync-FromSvn | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/sync-from-svn.test.sh |
+| P1-Sync-FromSvn.test | Sync-FromSvn | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Sync-FromSvn.test.ps1 |
+| P1-sync-from-svn.test | Sync-FromSvn | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/sync-from-svn.test.sh |
+| P1-Sync-FromSvn.test | Sync-FromSvn | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Sync-FromSvn.test.ps1 |
+| P1-sync-from-svn.test | Sync-FromSvn | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/sync-from-svn.test.sh |
+| P1-Sync-FromSvn.test | Sync-FromSvn | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Sync-FromSvn.test.ps1 |
+| P1-sync-from-svn.test | Sync-FromSvn | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/sync-from-svn.test.sh |
 
 _(rows TBD)_
 
@@ -165,8 +240,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Submit-SvnCommit.test | Submit-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Submit-SvnCommit.test.ps1 |
-| P1-submit-svn-commit.test | Submit-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\submit-svn-commit.test.sh |
+| P1-Submit-SvnCommit.test | Submit-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Submit-SvnCommit.test.ps1 |
+| P1-submit-svn-commit.test | Submit-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/submit-svn-commit.test.sh |
+| P1-Submit-SvnCommit.test | Submit-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Submit-SvnCommit.test.ps1 |
+| P1-submit-svn-commit.test | Submit-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/submit-svn-commit.test.sh |
+| P1-Submit-SvnCommit.test | Submit-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Submit-SvnCommit.test.ps1 |
+| P1-submit-svn-commit.test | Submit-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/submit-svn-commit.test.sh |
+| P1-Submit-SvnCommit.test | Submit-SvnCommit | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Submit-SvnCommit.test.ps1 |
+| P1-submit-svn-commit.test | Submit-SvnCommit | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/submit-svn-commit.test.sh |
 
 _(rows TBD)_
 
@@ -175,8 +256,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-New-RemoteTest.test | New-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\New-RemoteTest.test.ps1 |
-| P1-new-remote-test.test | New-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\new-remote-test.test.sh |
+| P1-New-RemoteTest.test | New-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/New-RemoteTest.test.ps1 |
+| P1-new-remote-test.test | New-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/new-remote-test.test.sh |
+| P1-New-RemoteTest.test | New-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/New-RemoteTest.test.ps1 |
+| P1-new-remote-test.test | New-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/new-remote-test.test.sh |
+| P1-New-RemoteTest.test | New-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/New-RemoteTest.test.ps1 |
+| P1-new-remote-test.test | New-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/new-remote-test.test.sh |
+| P1-New-RemoteTest.test | New-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/New-RemoteTest.test.ps1 |
+| P1-new-remote-test.test | New-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/new-remote-test.test.sh |
 
 _(rows TBD)_
 
@@ -185,8 +272,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Reset-RemoteTest.test | Reset-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Reset-RemoteTest.test.ps1 |
-| P1-reset-remote-test.test | Reset-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\reset-remote-test.test.sh |
+| P1-Reset-RemoteTest.test | Reset-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Reset-RemoteTest.test.ps1 |
+| P1-reset-remote-test.test | Reset-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/reset-remote-test.test.sh |
+| P1-Reset-RemoteTest.test | Reset-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Reset-RemoteTest.test.ps1 |
+| P1-reset-remote-test.test | Reset-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/reset-remote-test.test.sh |
+| P1-Reset-RemoteTest.test | Reset-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Reset-RemoteTest.test.ps1 |
+| P1-reset-remote-test.test | Reset-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/reset-remote-test.test.sh |
+| P1-Reset-RemoteTest.test | Reset-RemoteTest | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Reset-RemoteTest.test.ps1 |
+| P1-reset-remote-test.test | Reset-RemoteTest | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/reset-remote-test.test.sh |
 
 _(rows TBD)_
 
@@ -195,8 +288,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Set-SvnIgnore.test | Set-SvnIgnore | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Set-SvnIgnore.test.ps1 |
-| P1-set-svn-ignore.test | Set-SvnIgnore | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\set-svn-ignore.test.sh |
+| P1-Set-SvnIgnore.test | Set-SvnIgnore | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Set-SvnIgnore.test.ps1 |
+| P1-set-svn-ignore.test | Set-SvnIgnore | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/set-svn-ignore.test.sh |
+| P1-Set-SvnIgnore.test | Set-SvnIgnore | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Set-SvnIgnore.test.ps1 |
+| P1-set-svn-ignore.test | Set-SvnIgnore | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/set-svn-ignore.test.sh |
+| P1-Set-SvnIgnore.test | Set-SvnIgnore | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Set-SvnIgnore.test.ps1 |
+| P1-set-svn-ignore.test | Set-SvnIgnore | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/set-svn-ignore.test.sh |
+| P1-Set-SvnIgnore.test | Set-SvnIgnore | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Set-SvnIgnore.test.ps1 |
+| P1-set-svn-ignore.test | Set-SvnIgnore | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/set-svn-ignore.test.sh |
 
 _(rows TBD)_
 
@@ -205,8 +304,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Compress-Content.test | Compress-Content | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\Compress-Content.test.ps1 |
-| P1-compress-content.test | Compress-Content | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\compress-content.test.sh |
+| P1-Compress-Content.test | Compress-Content | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Compress-Content.test.ps1 |
+| P1-compress-content.test | Compress-Content | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/compress-content.test.sh |
+| P1-Compress-Content.test | Compress-Content | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Compress-Content.test.ps1 |
+| P1-compress-content.test | Compress-Content | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/compress-content.test.sh |
+| P1-Compress-Content.test | Compress-Content | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Compress-Content.test.ps1 |
+| P1-compress-content.test | Compress-Content | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/compress-content.test.sh |
+| P1-Compress-Content.test | Compress-Content | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/Compress-Content.test.ps1 |
+| P1-compress-content.test | Compress-Content | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/compress-content.test.sh |
 
 _(rows TBD)_
 
@@ -215,8 +320,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Invoke-PostToolUseEnterWorktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\hooks\Invoke-PostToolUseEnterWorktree.test.ps1 |
-| P1-invoke-posttooluse-enterworktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\hooks\invoke-posttooluse-enterworktree.test.sh |
+| P1-Invoke-PostToolUseEnterWorktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/Invoke-PostToolUseEnterWorktree.test.ps1 |
+| P1-invoke-posttooluse-enterworktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/invoke-posttooluse-enterworktree.test.sh |
+| P1-Invoke-PostToolUseEnterWorktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/Invoke-PostToolUseEnterWorktree.test.ps1 |
+| P1-invoke-posttooluse-enterworktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/invoke-posttooluse-enterworktree.test.sh |
+| P1-Invoke-PostToolUseEnterWorktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/Invoke-PostToolUseEnterWorktree.test.ps1 |
+| P1-invoke-posttooluse-enterworktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/invoke-posttooluse-enterworktree.test.sh |
+| P1-Invoke-PostToolUseEnterWorktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/Invoke-PostToolUseEnterWorktree.test.ps1 |
+| P1-invoke-posttooluse-enterworktree.test | Invoke-PostToolUseEnterWorktree | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/invoke-posttooluse-enterworktree.test.sh |
 
 _(rows TBD)_
 
@@ -225,8 +336,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Invoke-SessionStart.test | Invoke-SessionStart | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\hooks\Invoke-SessionStart.test.ps1 |
-| P1-invoke-sessionstart.test | Invoke-SessionStart | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\hooks\invoke-sessionstart.test.sh |
+| P1-Invoke-SessionStart.test | Invoke-SessionStart | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/Invoke-SessionStart.test.ps1 |
+| P1-invoke-sessionstart.test | Invoke-SessionStart | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/invoke-sessionstart.test.sh |
+| P1-Invoke-SessionStart.test | Invoke-SessionStart | fresh-base | all Assert-* PASS | exit 1 | FAIL | plugins/turbo-plugin/tests/unit/scripts/hooks/Invoke-SessionStart.test.ps1 |
+| P1-invoke-sessionstart.test | Invoke-SessionStart | fresh-base | script exit 0 + last line OK | exit 1; last: FAIL | FAIL | plugins/turbo-plugin/tests/unit/scripts/hooks/invoke-sessionstart.test.sh |
+| P1-Invoke-SessionStart.test | Invoke-SessionStart | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/Invoke-SessionStart.test.ps1 |
+| P1-invoke-sessionstart.test | Invoke-SessionStart | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/invoke-sessionstart.test.sh |
+| P1-Invoke-SessionStart.test | Invoke-SessionStart | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/Invoke-SessionStart.test.ps1 |
+| P1-invoke-sessionstart.test | Invoke-SessionStart | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/hooks/invoke-sessionstart.test.sh |
 
 _(rows TBD)_
 
@@ -235,8 +352,14 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-Common.test | Common | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\lib\Common.test.ps1 |
-| P1-common.test | Common | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\lib\common.test.sh |
+| P1-Common.test | Common | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/Common.test.ps1 |
+| P1-common.test | Common | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/common.test.sh |
+| P1-Common.test | Common | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/Common.test.ps1 |
+| P1-common.test | Common | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/common.test.sh |
+| P1-Common.test | Common | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/Common.test.ps1 |
+| P1-common.test | Common | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/common.test.sh |
+| P1-Common.test | Common | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/Common.test.ps1 |
+| P1-common.test | Common | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/common.test.sh |
 
 _(rows TBD)_
 
@@ -245,7 +368,10 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-ApplicationHostHelpers.test | ApplicationHostHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\lib\ApplicationHostHelpers.test.ps1 |
+| P1-ApplicationHostHelpers.test | ApplicationHostHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/ApplicationHostHelpers.test.ps1 |
+| P1-ApplicationHostHelpers.test | ApplicationHostHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/ApplicationHostHelpers.test.ps1 |
+| P1-ApplicationHostHelpers.test | ApplicationHostHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/ApplicationHostHelpers.test.ps1 |
+| P1-ApplicationHostHelpers.test | ApplicationHostHelpers | fresh-base | all Assert-* PASS | exit 0 | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/ApplicationHostHelpers.test.ps1 |
 
 _(rows TBD)_
 
@@ -254,7 +380,10 @@ _(rows TBD)_
 
 | case ID | section | fixture | expected | actual | result | evidence |
 |---|---|---|---|---|---|---|
-| P1-ps1-delegate.test | ps1-delegate | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | C:\Turbo\turbo-plugins-claude\.claude\worktrees\turbo-plugin-brainstorm\plugins\turbo-plugin\tests\unit\scripts\lib\ps1-delegate.test.sh |
+| P1-ps1-delegate.test | ps1-delegate | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/ps1-delegate.test.sh |
+| P1-ps1-delegate.test | ps1-delegate | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/ps1-delegate.test.sh |
+| P1-ps1-delegate.test | ps1-delegate | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/ps1-delegate.test.sh |
+| P1-ps1-delegate.test | ps1-delegate | fresh-base | script exit 0 + last line OK | exit 0; last: OK | PASS | plugins/turbo-plugin/tests/unit/scripts/lib/ps1-delegate.test.sh |
 
 _(rows TBD)_
 

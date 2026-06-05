@@ -26,7 +26,7 @@ $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'hooks', 'I
 
 function New-Sandbox { param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $dir = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-$Purpose-$guid")
+    $dir = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-test-$Purpose-$guid")
     $null = New-Item -ItemType Directory -Path $dir -Force
     return $dir
 }
@@ -50,7 +50,8 @@ function Invoke-Hook {
     # 空檔當 stdin
     [System.IO.File]::WriteAllText($tmpStdin, '', (New-Object System.Text.UTF8Encoding($false)))
     try {
-        $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptUnderTest)
+        # Quote -File so a spaced repo/parent path (AE8) survives Start-Process's space-join.
+        $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"'))
         $proc = Start-Process -FilePath 'powershell.exe' `
             -ArgumentList $argList -WorkingDirectory $WorkDir `
             -RedirectStandardInput $tmpStdin `

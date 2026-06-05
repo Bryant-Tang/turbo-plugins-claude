@@ -35,12 +35,15 @@ function Mirror-Base-To {
     # Run Reset-Fixture with -SkipSvn to mirror base/ into TestRoot.
     param([string]$TestRoot)
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 10)
-    $outFile = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-reset-out-$stamp.txt")
+    $outFile = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-reset-out-$stamp.txt")
     try {
         # `2>&1` 在 cmd.exe shell context 內,**不是** PS-level — cmd.exe 做 shell
         # 重導向,PS 看到的是 single stream,不會 trigger NativeCommandError。把字串
         # 拉到變數讓 lint-ps-compat 規則 4 不誤判。
-        $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$TestRoot`" -SvnRepo `"C:\Turbo\turbo-plugin-pc-unused-svn`" -SkipSvn > `"$outFile`" 2>&1"
+        # -SvnRepo is required by Reset-Fixture's signature but unused under -SkipSvn; pass a
+        # sandbox-relative throwaway path so no machine-local literal leaks into the tree.
+        $unusedSvn = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'unused-svn')
+        $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resetScript`" -TestRoot `"$TestRoot`" -SvnRepo `"$unusedSvn`" -SkipSvn > `"$outFile`" 2>&1"
         & cmd.exe /c $cmdStr
         return $LASTEXITCODE
     } finally {
@@ -186,15 +189,30 @@ try {
 # / absence of the sentinel.
 #
 # Helper: build a [frontend] config whose install_command touches $SentinelPath via a
-# token-split-safe `cmd /c type nul > <abs-path>` invocation. The sentinel path lives
-# under the sandbox (no spaces), so tokenization on whitespace stays correct.
+# token-split-safe `cmd /c type nul > <abs-path>` invocation. The production gate splits the
+# command on whitespace (`$installCmd -split '\s+'`) and never reparses quotes, so the sentinel
+# path MUST be space-free for the redirect target to survive tokenization — see
+# New-SpaceFreeSentinel (the repo/sandbox path itself may contain spaces under AE8).
+
+# AE8: the sandbox may live under a spaced parent path, but the gate tokenizes install_command
+# on whitespace, so the sentinel redirect target must be space-free. Mint it under the system
+# drive root (always space-free + writable) instead of inside the spaced sandbox.
+function New-SpaceFreeSentinel {
+    param([string]$Leaf = 'sentinel')
+    $sysDrive = $env:SystemDrive
+    if ([string]::IsNullOrWhiteSpace($sysDrive)) { $sysDrive = 'C:' }
+    $dir = $sysDrive + '\tp-sentinel-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
+    $null = New-Item -ItemType Directory -Path $dir -Force
+    return [System.IO.Path]::Combine($dir, "$Leaf.txt")
+}
 
 function New-FrontendWithSentinel {
     param([string]$TestRoot, [string]$SentinelPath)
     $frontendDir = [System.IO.Path]::Combine($TestRoot, 'frontend')
     $null = New-Item -ItemType Directory -Path $frontendDir -Force
     [System.IO.File]::WriteAllText([System.IO.Path]::Combine($frontendDir, 'package.json'), '{"name":"x"}')
-    # `cmd /c type nul > <path>` creates an empty sentinel file. No spaces in the path.
+    # `cmd /c type nul > <path>` creates an empty sentinel file. Path MUST be space-free (gate
+    # tokenizes on whitespace — see New-SpaceFreeSentinel).
     $installCmd = "cmd /c type nul > $SentinelPath"
     $buildCmd   = ''
     $cfg = [System.IO.Path]::Combine($TestRoot, '.turbo-plugin', 'config.toml')
@@ -210,7 +228,7 @@ $sb5 = New-Sandbox -Tag 'pc-5'
 try {
     $testRoot = [System.IO.Path]::Combine($sb5, 'test-turbo-plugin')
     $null = Mirror-Base-To -TestRoot $testRoot
-    $sentinel = [System.IO.Path]::Combine($sb5, 'sentinel-unapproved.txt')
+    $sentinel = New-SpaceFreeSentinel -Leaf 'sentinel-unapproved'
     $null = New-FrontendWithSentinel -TestRoot $testRoot -SentinelPath $sentinel
     # No pack-content-trust.local.toml written → gate must reject.
     $res = Invoke-PsScript -ScriptPath $scriptUnderTest -Cwd $testRoot -ScriptArgs @()
@@ -221,6 +239,7 @@ try {
                 -Message "sentinel unexpectedly present at $sentinel"
 } finally {
     Remove-Sandbox -Dir $sb5
+    if ($sentinel) { Remove-Sandbox -Dir ([System.IO.Path]::GetDirectoryName($sentinel)) }
 }
 
 # ─── Case 6: trust hash stale (config changed since approval) → blocked ──────
@@ -231,7 +250,7 @@ $sb6 = New-Sandbox -Tag 'pc-6'
 try {
     $testRoot = [System.IO.Path]::Combine($sb6, 'test-turbo-plugin')
     $null = Mirror-Base-To -TestRoot $testRoot
-    $sentinel = [System.IO.Path]::Combine($sb6, 'sentinel-stale.txt')
+    $sentinel = New-SpaceFreeSentinel -Leaf 'sentinel-stale'
     $null = New-FrontendWithSentinel -TestRoot $testRoot -SentinelPath $sentinel
     # Write a trust file whose approved_hash is for *different* (old) commands —
     # simulates "config edited after approval". Hash must therefore mismatch.
@@ -246,6 +265,7 @@ try {
                 -Message "sentinel unexpectedly present at $sentinel"
 } finally {
     Remove-Sandbox -Dir $sb6
+    if ($sentinel) { Remove-Sandbox -Dir ([System.IO.Path]::GetDirectoryName($sentinel)) }
 }
 
 # ─── Case 7: approved command (control) → runs, sentinel IS created ──────────
@@ -256,7 +276,7 @@ $sb7 = New-Sandbox -Tag 'pc-7'
 try {
     $testRoot = [System.IO.Path]::Combine($sb7, 'test-turbo-plugin')
     $null = Mirror-Base-To -TestRoot $testRoot
-    $sentinel = [System.IO.Path]::Combine($sb7, 'sentinel-approved.txt')
+    $sentinel = New-SpaceFreeSentinel -Leaf 'sentinel-approved'
     $cmds = New-FrontendWithSentinel -TestRoot $testRoot -SentinelPath $sentinel
     # Write a trust file whose approved_hash matches the *actual* configured commands.
     $hash = Compute-TrustHash -InstallCmd $cmds.InstallCmd -BuildCmd $cmds.BuildCmd
@@ -270,6 +290,7 @@ try {
                 -Message "sentinel missing at $sentinel; stdout:`n$($res.Stdout)`nstderr:`n$($res.Stderr)"
 } finally {
     Remove-Sandbox -Dir $sb7
+    if ($sentinel) { Remove-Sandbox -Dir ([System.IO.Path]::GetDirectoryName($sentinel)) }
 }
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

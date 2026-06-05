@@ -40,7 +40,7 @@ $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Get-Target
 function New-Sandbox {
     param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $dir = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-$Purpose-$guid")
+    $dir = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-test-$Purpose-$guid")
     $null = New-Item -ItemType Directory -Path $dir -Force
     return $dir
 }
@@ -108,8 +108,11 @@ function Invoke-Script {
         $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
         $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
         try {
+            # Quote the -File path so a spaced repo/parent path (AE8) survives Start-Process's
+            # naive space-join of -ArgumentList (otherwise powershell.exe parses only up to the
+            # first space and drops into interactive banner mode).
             $proc = Start-Process -FilePath 'powershell.exe' `
-                -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptUnderTest) `
+                -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"')) `
                 -WorkingDirectory $WorkDir `
                 -RedirectStandardOutput $tmpStdout `
                 -RedirectStandardError $tmpStderr `

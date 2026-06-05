@@ -13,7 +13,7 @@ new_sandbox() {
     local purpose="$1"
     local guid
     guid="$(powershell -NoProfile -Command '[guid]::NewGuid().ToString("N").Substring(0,12)' | tr -d '\r')"
-    local dir="/c/Turbo/test-turbo-plugin/sandboxes/turbo-plugin-test-${purpose}-${guid}"
+    local dir="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-${purpose}-${guid}"
     mkdir -p "$dir"
     echo "$dir"
 }

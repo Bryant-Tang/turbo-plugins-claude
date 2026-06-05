@@ -40,7 +40,7 @@ function Invoke-GitSilent {
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
 $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Get-SvnLog.ps1')
 
-$testRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin'
+$testRoot = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'test-turbo-plugin')
 # Reset-Fixture (F5 fix 2026-05-28)已改為直接創 sibling layout
 # `<testRoot>.worktrees/`,跟 turbo-plugin production tgs convention 對齊。
 # 早期的 Ensure-WorktreesSibling junction workaround 已移除。
@@ -68,7 +68,9 @@ function Invoke-Script {
         $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
         $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
         try {
-            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptUnderTest) + $ExtraArgs
+            # Quote -File (and any spaced ExtraArg) so a spaced repo/parent path (AE8) survives
+            # Start-Process's naive space-join of -ArgumentList.
+            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
             $proc = Start-Process -FilePath 'powershell.exe' `
                 -ArgumentList $argList `
                 -WorkingDirectory $WorkDir `
@@ -119,7 +121,7 @@ try {
     # re-decode the captured stdout. Capture bytes via the captured string round-trip:
     # we can't get raw bytes back from $r2.Stdout (already string), so call the
     # underlying script via svn directly and pass bytes.
-    $svnRepo = 'C:\Turbo\test-turbo-plugin\svn-repo'
+    $svnRepo = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'svn-repo')
     $svnUri = 'file:///' + ($svnRepo -replace '\\', '/') + '/trunk'
     # Use Get-RawCommitDump indirectly via Assert-SvnLogTextRoundTrip (it knows how to
     # invoke). Pass the SvnRepo path (sibling 'remote-svn-main' is a working copy):

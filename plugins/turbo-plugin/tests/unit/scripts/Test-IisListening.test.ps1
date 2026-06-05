@@ -42,7 +42,7 @@ $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Test-IisLi
 
 function New-Sandbox { param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $dir = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-$Purpose-$guid")
+    $dir = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-test-$Purpose-$guid")
     $null = New-Item -ItemType Directory -Path $dir -Force
     return $dir
 }

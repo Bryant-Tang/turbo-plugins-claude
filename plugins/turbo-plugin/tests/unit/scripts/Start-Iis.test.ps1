@@ -47,7 +47,7 @@ function Invoke-GitSilent {
 $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
 $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Start-Iis.ps1')
 
-$testRoot = 'C:\Turbo\test-turbo-plugin\test-turbo-plugin'
+$testRoot = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'test-turbo-plugin')
 $cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')
 $apphostPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'applicationhost.config')
 
@@ -86,7 +86,9 @@ function Invoke-Script {
         $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
         $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
         try {
-            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptUnderTest) + $ExtraArgs
+            # Quote -File (and any spaced ExtraArg) so a spaced repo/parent path (AE8) survives
+            # Start-Process's naive space-join of -ArgumentList.
+            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
             $proc = Start-Process -FilePath 'powershell.exe' `
                 -ArgumentList $argList `
                 -WorkingDirectory $WorkDir `
@@ -150,7 +152,7 @@ try {
 
     # Case 3: missing csproj — temp dir without csproj
     $sandboxGuid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $sandbox = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-startiis-$sandboxGuid")
+    $sandbox = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-test-startiis-$sandboxGuid")
     $null = New-Item -ItemType Directory -Path $sandbox -Force
     try {
         $tpDir = [System.IO.Path]::Combine($sandbox, '.turbo-plugin')

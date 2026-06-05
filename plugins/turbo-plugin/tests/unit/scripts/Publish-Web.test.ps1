@@ -40,7 +40,7 @@ $ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Publish-We
 
 function New-Sandbox { param([string]$Purpose)
     $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $dir = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-$Purpose-$guid")
+    $dir = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-test-$Purpose-$guid")
     $null = New-Item -ItemType Directory -Path $dir -Force
     return $dir
 }
@@ -82,7 +82,9 @@ function Invoke-Script {
         $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
         $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
         try {
-            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptUnderTest) + $ExtraArgs
+            # Quote -File (and any spaced ExtraArg) so a spaced repo/parent path (AE8) survives
+            # Start-Process's naive space-join of -ArgumentList.
+            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
             $proc = Start-Process -FilePath 'powershell.exe' `
                 -ArgumentList $argList -WorkingDirectory $WorkDir `
                 -RedirectStandardOutput $tmpStdout -RedirectStandardError $tmpStderr `

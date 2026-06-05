@@ -12,8 +12,9 @@
 #                                   cmd.exe /c with explicit stdout/stderr redirect to
 #                                   tempfiles — bypasses pipeline ErrorRecord wrapping that
 #                                   PS 5.1 imposes on native-tool stderr.
-#   - New-Sandbox / Remove-Sandbox  isolated per-case work dir under C:\Turbo (avoid TEMP
-#                                   short-name bugs).
+#   - New-Sandbox / Remove-Sandbox  isolated per-case work dir under the repo-relative,
+#                                   gitignored tests/.sandbox/ (resolved long-form to dodge
+#                                   PS 5.1 8.3 short-name bugs; tolerates spaced parents).
 #   - New-GitMainRepo               git init + initial commit + optional .worktrees/ skeleton
 #                                   + optional remote-svn-main worktree (covers most scripts'
 #                                   precondition).
@@ -59,8 +60,12 @@ function Run-Git-Capture {
 
 # ─── Sandbox helpers ────────────────────────────────────────────────────────
 
-# All test sandboxes live UNDER the test container so nothing pollutes C:\Turbo directly.
-$script:TpSandboxBase = 'C:\Turbo\test-turbo-plugin\sandboxes'
+# All test sandboxes live UNDER the repo-relative, gitignored tests/.sandbox/ so nothing
+# pollutes outside the repo. Derived from $PSScriptRoot (tests/lib) → up to tests/ → .sandbox.
+# Resolved to LONG form via [System.IO.Path]::GetFullPath so 8.3 short-names never appear, and
+# a parent path containing spaces is tolerated (cmd redirect / svnadmin get quoted LiteralPath).
+$script:TpSandboxBase = [System.IO.Path]::GetFullPath(
+    [System.IO.Path]::Combine($PSScriptRoot, '..', '.sandbox', 'sandboxes'))
 
 function New-Sandbox {
     param([string]$Tag = 'sandbox')

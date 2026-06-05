@@ -48,13 +48,13 @@ else
 fi
 
 # Case 2: get_normalized_absolute_path — Git Bash /c/foo → c:/foo (lowercased)
-norm="$(get_normalized_absolute_path '/c/Turbo' 2>/dev/null || true)"
+norm="$(get_normalized_absolute_path '/c/projdir' 2>/dev/null || true)"
 case "$norm" in
-    c:/Turbo|c:/turbo)
-        record_pass "get_normalized_absolute_path converts /c/Turbo to lowercased-drive form (got: $norm)"
+    c:/projdir)
+        record_pass "get_normalized_absolute_path converts /c/projdir to lowercased-drive form (got: $norm)"
         ;;
     *)
-        # realpath -m may resolve /c/Turbo differently on some Git Bash builds; accept
+        # realpath -m may resolve /c/projdir differently on some Git Bash builds; accept
         # any path that starts with the lowercased drive c:.
         if [[ "$norm" =~ ^c:.* ]]; then
             record_pass "get_normalized_absolute_path lowercases drive letter (got: $norm)"

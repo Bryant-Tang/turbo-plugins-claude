@@ -97,9 +97,11 @@ Write-Output "Invoke-ScriptTests: TargetDoc  = $TargetDoc"
 Write-Output ''
 
 # Ensure the test sandbox base exists before any test runs (AssertHelpers.test.ps1 in the
-# infra gate writes a tempfile there). All test artifacts live UNDER the container so nothing
-# pollutes C:\Turbo directly.
-$null = New-Item -ItemType Directory -Path 'C:\Turbo\test-turbo-plugin\sandboxes' -Force
+# infra gate writes a tempfile there). All test artifacts live UNDER the repo-relative,
+# gitignored tests/.sandbox/ so nothing pollutes outside the repo. Resolved LONG form via
+# GetFullPath so 8.3 short-names never appear (tolerates a spaced parent path).
+$sandboxBase = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '.sandbox', 'sandboxes'))
+$null = New-Item -ItemType Directory -Path $sandboxBase -Force
 
 # ─── Step 1: Pre-flight lint ─────────────────────────────────────────────────
 
@@ -174,6 +176,20 @@ function ConvertTo-BashPath {
     param([string]$WinPath)
     $bp = [regex]::Replace($WinPath, '^([A-Za-z]):', { param($m) '/' + $m.Groups[1].Value.ToLower() })
     return ($bp -replace '\\', '/')
+}
+
+function ConvertTo-RepoRelativePath {
+    # Emit a repo-relative, forward-slash Evidence path so the committed tracking doc never
+    # carries a machine-local absolute path (AE6). Falls back to the leaf-name if the path is
+    # somehow outside the repo (should not happen for discovered test files).
+    param([string]$FullPath)
+    $full = [System.IO.Path]::GetFullPath($FullPath)
+    $root = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd('\', '/')
+    if ($full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $rel = $full.Substring($root.Length).TrimStart('\', '/')
+        return ($rel -replace '\\', '/')
+    }
+    return [System.IO.Path]::GetFileName($full)
 }
 
 function Invoke-PsTestFile {
@@ -445,7 +461,7 @@ function Invoke-ProdPsCase {
                 -Expected 'fixture meta-test PASS' `
                 -Actual   $skippedFixtureReason `
                 -Result   'SKIP' `
-                -Evidence $CaseFile.FullName `
+                -Evidence (ConvertTo-RepoRelativePath $CaseFile.FullName) `
                 -TargetDoc $TargetDoc | Out-Null
         }
         return
@@ -485,7 +501,7 @@ function Invoke-ProdPsCase {
             -Expected 'all Assert-* PASS' `
             -Actual   "exit $($r.ExitCode)" `
             -Result   $result `
-            -Evidence $CaseFile.FullName `
+            -Evidence (ConvertTo-RepoRelativePath $CaseFile.FullName) `
             -TargetDoc $TargetDoc | Out-Null
     }
 }
@@ -506,7 +522,7 @@ function Invoke-ProdShCase {
                 -Expected 'fixture meta-test PASS' `
                 -Actual   $skippedFixtureReason `
                 -Result   'SKIP' `
-                -Evidence $CaseFile.FullName `
+                -Evidence (ConvertTo-RepoRelativePath $CaseFile.FullName) `
                 -TargetDoc $TargetDoc | Out-Null
         }
         return
@@ -569,7 +585,7 @@ function Invoke-ProdShCase {
             -Expected 'script exit 0 + last line OK' `
             -Actual   "exit $($r.ExitCode); last: $lastLine" `
             -Result   $result `
-            -Evidence $CaseFile.FullName `
+            -Evidence (ConvertTo-RepoRelativePath $CaseFile.FullName) `
             -TargetDoc $TargetDoc | Out-Null
     }
 }

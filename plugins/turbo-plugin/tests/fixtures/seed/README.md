@@ -16,7 +16,7 @@ seed/
 
 由 `Build-SeedRepo.ps1` 自動產生。流程:
 
-1. 建臨時 SVN repo 在 `$env:TEMP\turbo-plugin-seed-build\repo`
+1. 建臨時 SVN repo 在 repo 內 gitignored 的 `<tests>/.sandbox/seed-build/repo`
 2. 建 `trunk` / `branches` / `tags` (r1)
 3. checkout `trunk` 到臨時 working copy
 4. 跑 r2-r19 一連串 add/modify commit;**r5 / r10 / r15 用中文 commit message**

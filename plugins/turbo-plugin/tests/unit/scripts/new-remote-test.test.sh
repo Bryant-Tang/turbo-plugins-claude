@@ -119,7 +119,7 @@ fi
 # Case 4: (U2/R1) remote-svn-main absent → fail-closed before any side effect.
 SB4="$(mktemp -d -t turbo-crt4-XXXXXX)"
 ROOT4="$(make_main_repo "$SB4")"   # worktrees dir exists but NO remote-svn-main
-out4=$(cd "$ROOT4" && bash "$SCRIPT" --n 99 --svn-url 'file:///C:/Turbo/no-such-repo/branches/test-99' 2>&1)
+out4=$(cd "$ROOT4" && bash "$SCRIPT" --n 99 --svn-url 'file:///nonexistent-svn-repo/branches/test-99' 2>&1)
 rc4=$?
 if [[ $rc4 -ne 0 ]]; then
     record_pass "remote-svn-main absent exits non-zero (fail-closed, rc=$rc4)"

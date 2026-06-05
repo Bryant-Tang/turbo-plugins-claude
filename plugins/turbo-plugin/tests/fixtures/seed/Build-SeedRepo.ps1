@@ -6,7 +6,7 @@
 #   plugins/turbo-plugin/tests/fixtures/seed/svn-repo-r1-r20.dump
 #
 # 流程:
-#   1. mktemp 工作目錄 (預設 $env:TEMP\turbo-plugin-seed-build)
+#   1. work root = repo-relative, gitignored tests/.sandbox/seed-build/ (long-form)
 #   2. svnadmin create <repo>
 #   3. svn co <repo> <wc>
 #   4. r1-r20:  trunk 上 commit 20 個 revision (英文 + r5/r10/r15 中文 commit msg)
@@ -38,9 +38,15 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $scriptDir = $PSScriptRoot
 $dumpPath  = [System.IO.Path]::Combine($scriptDir, 'svn-repo-r1-r20.dump')
-# Work root must NOT contain spaces (PS 5.1 has tilde-expansion bugs on 8.3 short names
-# like 'MELWU~1' inside Push-Location even with -LiteralPath). Hardcode to C:\Turbo\.
-$workRoot  = 'C:\Turbo\turbo-plugin-seed-build'
+# Work root = repo-relative, gitignored tests/.sandbox/seed-build/ (Build-SeedRepo lives at
+# tests/fixtures/seed/, so tests/ is ../..). Resolved to LONG form via GetFullPath so 8.3
+# short-names (e.g. 'MELWU~1') never appear — the historical PS 5.1 tilde-expansion bug that
+# this file used to dodge with a hardcoded machine-local work root is solved generally here
+# (Push-Location uses -LiteralPath and every svnadmin/cmd path is quoted). The committed dump
+# is unaffected;
+# this work root is developer-only (CI consumes the committed dump).
+$testsDir  = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '..', '..'))
+$workRoot  = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($testsDir, '.sandbox', 'seed-build'))
 $repoPath  = [System.IO.Path]::Combine($workRoot, 'repo')
 $wcPath    = [System.IO.Path]::Combine($workRoot, 'wc')
 

@@ -73,7 +73,8 @@ function Run-WithInnerCounters {
 function Make-TempFile {
     param([byte[]]$Bytes)
     $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $path = [System.IO.Path]::Combine('C:\Turbo\test-turbo-plugin\sandboxes', "turbo-plugin-test-asserthelpers-$stamp.bin")
+    $sandboxBase = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '.sandbox', 'sandboxes'))
+    $path = [System.IO.Path]::Combine($sandboxBase, "turbo-plugin-test-asserthelpers-$stamp.bin")
     $parent = [System.IO.Path]::GetDirectoryName($path)
     if (-not [System.IO.Directory]::Exists($parent)) {
         $null = New-Item -ItemType Directory -Path $parent -Force
@@ -236,7 +237,7 @@ try {
             -Name 'mocked utf8 round-trip' `
             -ExpectedText $zh31 `
             -RevN 5 `
-            -RepoPathOrUrl 'C:\Turbo\unused-fake-repo' `
+            -RepoPathOrUrl 'unused-fake-repo' `
             -DecodeBytesOverride $mockBytes
     }
     Meta-Assert -Name 'Assert-SvnLogTextRoundTrip(decode happy) records 1 PASS' -Expected $true -Actual ($r.Passed -eq 1 -and $r.Failed -eq 0)

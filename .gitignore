@@ -1,6 +1,9 @@
 .claude/**/*.local.*
 .claude/worktrees/
 
+# turbo-plugin test sandbox work root (repo-relative, never committed — U4)
+plugins/turbo-plugin/tests/.sandbox/
+
 # OS
 .DS_Store
 Thumbs.db
