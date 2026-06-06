@@ -7,6 +7,16 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/build-web.sh"
 
+# Capability gate (U5): build-web.sh is a ps1-delegate — the script-under-test itself
+# requires PowerShell. On a runner without PowerShell (e.g. ubuntu CI) skip cleanly BEFORE
+# any fixture setup. A last line starting with "OK" + exit 0 is the orchestrator's
+# non-FAIL signal (Invoke-ScriptTests.ps1 parses ^OK as PASS; invoke-script-tests.sh treats
+# exit 0 as PASS), so the job stays green. On Windows the gate passes and the test runs as today.
+if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
+    echo "OK (SKIPPED: build-web.sh delegates to PowerShell; no powershell/pwsh on this runner)"
+    exit 0
+fi
+
 passed=0
 failed=0
 
@@ -18,13 +28,15 @@ assert_neq0() { if [[ "$2" != "0" ]]; then echo "  [PASS] $1"; ((passed++)); els
 
 new_sb() {
     local guid
-    guid="$(powershell -NoProfile -Command '[guid]::NewGuid().ToString("N").Substring(0,12)' | tr -d '\r')"
+    guid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "${RANDOM}${RANDOM}${RANDOM}")"
+    guid="${guid//-/}"; guid="${guid:0:12}"
     local d="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-$1-$guid"
     mkdir -p "$d"
     echo "$d"
 }
 rm_sb() {
-    powershell -NoProfile -Command "Remove-Item -LiteralPath '$1' -Recurse -Force -ErrorAction SilentlyContinue" >/dev/null 2>&1 || true
+    [[ -z "${1:-}" || ! -d "$1" ]] && return 0
+    rm -rf "$1" 2>/dev/null || true
 }
 
 # Case 1: missing csproj

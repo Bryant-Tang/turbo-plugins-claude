@@ -6,6 +6,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/test-encoding-support.sh"
 
+# Capability gate (U5): test-encoding-support.sh is a ps1-delegate (needs PowerShell). Skip
+# cleanly on a runner without PowerShell before any fixture setup. Last line "OK" + exit 0 =
+# orchestrator non-FAIL signal; on Windows the gate passes and the test runs as today.
+if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
+    echo "OK (SKIPPED: test-encoding-support.sh delegates to PowerShell; no powershell/pwsh on this runner)"
+    exit 0
+fi
+
 passed=0
 failed=0
 

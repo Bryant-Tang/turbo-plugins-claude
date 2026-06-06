@@ -20,6 +20,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
 DELEGATE="$PLUGIN_ROOT/scripts/lib/ps1-delegate.sh"
 
+# Capability gate (U5): ps1-delegate.sh dispatches to PowerShell — the cases here invoke real
+# powershell. Skip cleanly on a runner without PowerShell before any fixture setup. Last line
+# "OK" + exit 0 = orchestrator non-FAIL signal; on Windows the gate passes and the test runs as today.
+if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
+    echo "OK (SKIPPED: ps1-delegate.sh dispatches to PowerShell; no powershell/pwsh on this runner)"
+    exit 0
+fi
+
 passed=0
 failed=0
 fail_msgs=()

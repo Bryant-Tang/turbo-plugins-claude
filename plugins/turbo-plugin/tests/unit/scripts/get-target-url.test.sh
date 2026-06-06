@@ -6,13 +6,22 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/get-target-url.sh"
 
+# Capability gate (U5): get-target-url.sh is a ps1-delegate (needs PowerShell). Skip cleanly on
+# a runner without PowerShell before any fixture setup. Last line "OK" + exit 0 = orchestrator
+# non-FAIL signal; on Windows the gate passes and the test runs as today.
+if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
+    echo "OK (SKIPPED: get-target-url.sh delegates to PowerShell; no powershell/pwsh on this runner)"
+    exit 0
+fi
+
 passed=0
 failed=0
 
 new_sandbox() {
     local purpose="$1"
     local guid
-    guid="$(powershell -NoProfile -Command '[guid]::NewGuid().ToString("N").Substring(0,12)' | tr -d '\r')"
+    guid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "${RANDOM}${RANDOM}${RANDOM}")"
+    guid="${guid//-/}"; guid="${guid:0:12}"
     local dir="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-${purpose}-${guid}"
     mkdir -p "$dir"
     echo "$dir"
@@ -22,7 +31,7 @@ remove_sandbox() {
     local dir="$1"
     [[ -z "$dir" ]] && return
     [[ -d "$dir" ]] || return
-    powershell -NoProfile -Command "Remove-Item -LiteralPath '$dir' -Recurse -Force -ErrorAction SilentlyContinue" >/dev/null 2>&1 || true
+    rm -rf "$dir" 2>/dev/null || true
 }
 
 write_csproj() {

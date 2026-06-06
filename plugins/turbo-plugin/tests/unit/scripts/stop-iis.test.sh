@@ -5,6 +5,15 @@ set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/stop-iis.sh"
+
+# Capability gate (U5): stop-iis.sh is a ps1-delegate (needs PowerShell + IIS Express). Skip
+# cleanly on a runner without PowerShell before any fixture setup. Last line "OK" + exit 0 =
+# orchestrator non-FAIL signal; on Windows the gate passes and the test runs as today.
+if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
+    echo "OK (SKIPPED: stop-iis.sh delegates to PowerShell/IIS; no powershell/pwsh on this runner)"
+    exit 0
+fi
+
 TEST_ROOT="$PLUGIN_ROOT/tests/.sandbox/test-turbo-plugin"
 CFG="$TEST_ROOT/.turbo-plugin/config.toml"
 

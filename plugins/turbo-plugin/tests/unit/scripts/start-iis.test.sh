@@ -8,6 +8,15 @@ set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/start-iis.sh"
+
+# Capability gate (U5): start-iis.sh is a ps1-delegate (needs PowerShell + IIS Express). Skip
+# cleanly on a runner without PowerShell before any fixture setup. Last line "OK" + exit 0 =
+# orchestrator non-FAIL signal; on Windows the gate passes and the test runs as today.
+if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
+    echo "OK (SKIPPED: start-iis.sh delegates to PowerShell/IIS; no powershell/pwsh on this runner)"
+    exit 0
+fi
+
 TEST_ROOT="$PLUGIN_ROOT/tests/.sandbox/test-turbo-plugin"
 CFG="$TEST_ROOT/.turbo-plugin/config.toml"
 APPHOST="$TEST_ROOT/.turbo-plugin/applicationhost.config"
@@ -67,7 +76,8 @@ if [[ -f "$APPHOST" ]]; then
 fi
 
 # Case 3: missing csproj sandbox
-guid="$(powershell -NoProfile -Command '[guid]::NewGuid().ToString("N").Substring(0,12)' | tr -d '\r')"
+guid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "${RANDOM}${RANDOM}${RANDOM}")"
+guid="${guid//-/}"; guid="${guid:0:12}"
 sb="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-startiis-sh-$guid"
 mkdir -p "$sb/.turbo-plugin"
 echo "[iis]" > "$sb/.turbo-plugin/config.toml"
@@ -76,7 +86,7 @@ echo "enabled = true" >> "$sb/.turbo-plugin/config.toml"
 cd "$sb"
 combined3="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e3=$?
 cd "$PLUGIN_ROOT"
-powershell -NoProfile -Command "Remove-Item -LiteralPath '$sb' -Recurse -Force -ErrorAction SilentlyContinue" >/dev/null 2>&1 || true
+rm -rf "$sb" 2>/dev/null || true
 assert_neq0 'case3: no csproj exit ≠ 0' "$e3"
 assert_match 'case3: 訊息提及 .csproj' '\.csproj' "$combined3"
 
