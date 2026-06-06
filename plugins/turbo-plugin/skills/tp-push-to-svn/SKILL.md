@@ -149,6 +149,30 @@ feat, fix, refactor, perf, revert
 
 Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 git-ignore 篩掉)。
 
+### Step 7 — Optional release tag
+
+**Trigger rule(KTD7 / R29 — 判準是「有無產出 git merge commit」,不是「svn commit 有無內容」)**:
+
+- 只要 Step 2 的 prepare 階段找到 **≥1 個新 commit** 可 merge(即 `git log <remote-svn-ref>..<branch>` 非空、prepare 沒有印 `Nothing to push`,而是實際 stage 了一個 git merge commit)→ **詢問 release tag**。
+- 這代表:即使 Step 6 回 `No changes to commit to SVN`(所有變更檔案都被 `svn:ignore`,svn commit 為空),**只要 git 那側仍產出了 merge commit,就照樣詢問** release tag。tag 指向的是 `remote-svn/<branch>` 這條 git 分支的 tip,與 svn 是否有內容無關。
+- 反之,若 prepare 階段就 `Nothing to push`(git、svn 皆無變更、根本沒有 merge commit 產出)→ **直接跳過 Step 7**,不詢問。
+
+當觸發條件成立時,用 `AskUserQuestion`:
+
+- **Yes**:建立 release tag
+- **No**:略過 tagging
+
+選 Yes → 呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/Tag-Release.ps1`(或依 force_bash routing 改 `${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.sh`)帶 `--branch <name>`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Tag-Release.ps1" -Branch "main"
+```
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.sh" --branch "main"
+```
+
+Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日自動遞增)。把建立的 tag 名回報給使用者。tag 指向 `remote-svn/<branch>` 的 tip。
+
 ## Decision Rules
 
 - **force_bash routing**: 呼叫 prepare / commit script 前,讀取 `.turbo-plugin/config.toml` 中 `[svn] force_bash` 的值(透過 `Resolve-ConfigValue -Section 'svn' -Key 'force_bash' -Default 'false'`)。若為 `true`,改以 Git Bash 執行對應的 `.sh` sibling 而非 `.ps1`(對應 Step 0.5 case (a) 的中文 Windows 使用者)。
@@ -159,6 +183,7 @@ Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 gi
 - **UTF-8 no-BOM commit message**:Step 6 script 已正確處理,**不要**改成 `svn commit -m "..."`(Windows CP_ACP 會 mangle 中文)。
 - **不安裝 husky / commitlint hook**:本 skill 是篩選 source-of-truth,不需要 git hook enforce。
 - **Pull-from-svn 是 prerequisite**:remote SVN HEAD 不 up-to-date 直接拒跑,讓使用者先 `/tp-pull-from-svn`。
+- **Release tag 判準 = 有無 git merge commit**(Step 7):prepare 階段只要產出 merge commit 就詢問 tag,**即使 svn commit 為空**(檔案全被 `svn:ignore`)也照問;唯有 `Nothing to push`(根本無 merge commit)時才跳過。tag ref 用新命名 `remote-svn/<branch>`,不是舊的 `remote/<branch>`。
 
 ## Completion Checks
 
@@ -167,6 +192,7 @@ Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 gi
 - 本地 `git log --oneline remote/<branch>` 含 `Merge branch '<branch>' into remote/<branch>` 自動 merge commit。
 - Remote worktree 內 `git status --porcelain` 為空,`svn status` 為空(或只有 git-ignored 的本地檔案)。
 - Unknown type commit 已透過 prompt 處理(保留 / 篩除 / 取消 push)。
+- (Step 7,可選)若使用者選擇建立 release tag:`git tag -l "<branch>-release-*"` 出現新 tag,且 `git rev-parse <tag>` 等於 `git rev-parse remote-svn/<branch>`;若 prepare 為 `Nothing to push` 則不應出現詢問也不應有新 tag。
 
 ## Test Scenarios
 

@@ -1,6 +1,6 @@
 ---
 name: tp-reset-remote-test
-description: '把 test-<n> 分支硬重置(`git reset --hard main`)使其等同 main 內容。**git reset --hard 會搬 branch 指標丟掉 test-<n> 自己的 commit**(被搬掉的 commit 可透過 reflog 找回;TODO(U9):release tag 機制落地後回填,指向 /tp-push-to-svn 的 release tag),必須使用者明確要求才執行;agent 偵測需重設 test 環境時可建議,但需明確確認。'
+description: '把 test-<n> 分支硬重置(`git reset --hard main`)使其等同 main 內容。**git reset --hard 會搬 branch 指標丟掉 test-<n> 自己的 commit**(被搬掉的 commit 可透過 reflog 找回,或若先前已用 `/tp-push-to-svn` Step 7 建立 release tag 則可從該 tag 找回),必須使用者明確要求才執行;agent 偵測需重設 test 環境時可建議,但需明確確認。'
 argument-hint: '--n <number> [--diff-only]'
 user-invocable: true
 allowed-tools: Bash, Read, AskUserQuestion
@@ -73,7 +73,7 @@ Script 跑 `git reset --hard main` 然後 emit `Reset test-<n> to main.`
 - **force_bash routing**: 呼叫 script 前,讀取 `.turbo-plugin/config.toml` 中 `[svn] force_bash` 的值(透過 `Resolve-ConfigValue -Section 'svn' -Key 'force_bash' -Default 'false'`)。若為 `true`,改以 Git Bash 執行 `.sh` sibling 而非 `.ps1`(對應 Step 0.5 case (a) 的中文 Windows 使用者)。
 - 必須在主 worktree 跑。
 - 兩個 worktree(main + remote-svn-test-<n>)都必須 clean,否則拒跑。
-- **`git reset --hard` 不是真的丟失資料**:被搬掉的 commit 可透過 reflog 找回(TODO(U9):release tag 機制落地後回填本句,改為指向 /tp-push-to-svn 的 release tag / 其它 ref)。但 SKILL.md 仍應在 prompt 強調這點。
+- **`git reset --hard` 不是真的丟失資料**:被搬掉的 commit 可透過 reflog 找回;若先前推送時用 `/tp-push-to-svn` 的 Step 7 建立過 release tag(`<branch>-release-<date>-<NNN>`),也可從該 tag 找回對應的 commit。但 SKILL.md 仍應在 prompt 強調這點。
 - 預設不寫,先 `AskUserQuestion` 確認:Apply / Cancel(顯示 LOSE / GAIN diff)。
 
 ## Completion Checks
