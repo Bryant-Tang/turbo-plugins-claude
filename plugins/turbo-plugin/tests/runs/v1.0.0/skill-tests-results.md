@@ -99,6 +99,16 @@
 | case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
 |---|---|---|---|---|---|---|---|
 
+### tp-merge-main-into-all
+
+| case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
+|---|---|---|---|---|---|---|---|
+
+### tp-db-management
+
+| case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
+|---|---|---|---|---|---|---|---|
+
 ---
 
 ## Known Issues

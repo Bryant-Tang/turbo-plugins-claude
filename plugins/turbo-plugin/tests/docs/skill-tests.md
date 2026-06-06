@@ -1,15 +1,41 @@
 # Skill tests — Manual Test Tracking SCHEMA
 
-turbo-plugin v1.0+ PR-readiness Skill tests 手動測試的 **schema + 14 skill case spec +
-prompt 範本 + 失敗 patterns**。本檔為持久 schema reference;per-release 的實際執行
-結果寫在 `plugins/turbo-plugin/tests/runs/<release>/skill-tests-results.md`(使用者跑每個
+turbo-plugin v1.0+ PR-readiness Skill tests 手動測試的 **schema + 16 skill case spec +
+prompt 範本 + 失敗 patterns**。本檔為持久、可重複、path-free 的 schema reference;
+per-release 的實際執行結果寫在
+`plugins/turbo-plugin/tests/runs/<release>/skill-tests-results.md`(使用者跑每個
 session 後手動 append rows)。
 
 > 本檔下方各 skill section 的 `### Row table` 保留為空 template,不會被填;
 > 實際 row 寫到 `runs/<release>/skill-tests-results.md`。
 
-Skill tests case 由使用者貼 prompt 進 `C:\Turbo\test-turbo-plugin\test-turbo-plugin` 內的 Claude Code
-session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / FAIL / PARTIAL。
+Skill tests case 由使用者貼 prompt 進 `<VALIDATION_ROOT>/proj`(見下方 `<VALIDATION_ROOT>`
+慣例)內的 Claude Code session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀
+PASS / FAIL / PARTIAL。
+
+---
+
+## `<VALIDATION_ROOT>` 慣例(path-free 前提)
+
+本套件**完全 path-free**:所有 case 不寫死任何本機絕對路徑。
+
+- `<VALIDATION_ROOT>` = 操作者在執行時自選的一個**真實本機目錄**,需在 **repo 之外**、
+  且在 **`C:\Turbo` 之外**(避免和 plugin 開發樹或既有測試遺留物混淆)。底下所有路徑
+  都是**相對於 `<VALIDATION_ROOT>`** 表達。
+- 操作者把 `<VALIDATION_ROOT>` 心裡換成自己挑的實際目錄(例如某個 scratch 資料夾),
+  本檔不規定也不假設它在哪。
+- 慣例佈局(相對 `<VALIDATION_ROOT>`):
+  - `<VALIDATION_ROOT>/proj` — 受測專案 main worktree(fixture 重置的目標)。
+  - `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-main` — SVN trunk 橋接
+    worktree(branch `remote-svn/main`)。
+  - `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-test-<n>` — SVN test 分支
+    橋接 worktree(branch `remote-svn/test-<n>`)。
+  - `<VALIDATION_ROOT>/svn-repo` — 本機 SVN repo(`svnadmin create` 出來的)。
+- SVN URL 一律寫成 `file:///<VALIDATION_ROOT>/svn-repo/trunk` /
+  `file:///<VALIDATION_ROOT>/svn-repo/branches/test-<n>` 這種 placeholder 形式;操作者把
+  `<VALIDATION_ROOT>` 換成自己目錄的 `file:///` URL。
+- 注意:turbo-plugin **不**維護 `.code-workspace` 檔(那是已退役的舊 tgs 行為),case
+  不應假設或斷言任何 `.code-workspace`。
 
 > 中文 fixture 字典(#1 路徑 / #2 檔名 / #3 commit msg / #4 source 註解 /
 > #5 source string literal)— **single source of truth** 在
@@ -43,7 +69,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 ```markdown
 | case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
 |---|---|---|---|---|---|---|---|
-| P2-tp-setup-1 | case (a) 新建 happy | fresh-base + .git removed | 在 test-turbo-plugin 空目錄請 agent 跑 /tp-setup | Phase 1 detect → AskUserQuestion 取 SVN URL → orphan remote/main + svn checkout | agent 走 case (a) 6 sub-step + apphost bootstrap 三選一(已選 1) | PASS | chat r1234 / .turbo-plugin/ 目錄齊全 |
+| P2-tp-setup-1 | case (a) 新建 happy | fresh-base + .git removed | 在 `<VALIDATION_ROOT>/proj` 空目錄請 agent 跑 /tp-setup | Phase 1 detect → AskUserQuestion 取 SVN URL → orphan remote-svn/main + svn checkout | agent 走 case (a) 6 sub-step + apphost bootstrap 三選一(已選 1) | PASS | chat r1234 / .turbo-plugin/ 目錄齊全 |
 ```
 
 > **Round-trip text stability**(F-3 plan-time correction):中文 SVN-related case 不
@@ -66,9 +92,9 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-setup-1 | case (a) 新建 git+SVN happy | fresh-base 但移除 `.git/` + 移除 `.turbo-plugin/` | Phase 1 detect → case (a) → 6 sub-step + apphost bootstrap 三選一(選 (1) 暫停 — 因 fresh fixture 無 `.vs/`) | `.git/` 重建 / `.gitignore` 含 turbo-plugin pattern / `.turbo-plugin/` 目錄三檔齊 / `remote/main` orphan branch + worktree / svn checkout 完成 | AE8, AE9(case-detect happy) |
+| P2-tp-setup-1 | case (a) 新建 git+SVN happy | fresh-base 但移除 `.git/` + 移除 `.turbo-plugin/` | Phase 1 detect → case (a) → 6 sub-step + apphost bootstrap 三選一(選 (1) 暫停 — 因 fresh fixture 無 `.vs/`) | `.git/` 重建 / `.gitignore` 含 turbo-plugin pattern(含 `.turbo-plugin/worktrees/`)/ `.turbo-plugin/` 目錄三檔齊 / `remote-svn/main` orphan branch + `.turbo-plugin/worktrees/remote-svn-main` worktree / svn checkout 完成 | AE8, AE9(case-detect happy) |
 | P2-tp-setup-2 | case (c) 主 worktree 補設定(idempotent) | fresh-base 完整(`.turbo-plugin/` 已存在) | Phase 1 detect → case (c) → 6 個 idempotent sub-step 全 skip(已存在不覆寫)→ apphost bootstrap canonical-exists 分支 | 沒有新檔 / 既有 shared file 內容 byte-unchanged / Phase 4 報告「全部已存在,無變動」/ 第二次跑結果完全一致 | AE10(idempotency) |
-| P2-tp-setup-3 | 中文 workspace path | fresh-base 複製到 `C:\Turbo\test-turbo-plugin\test-turbo-plugin 測試 ™\` | Phase 1 detect → 中文路徑不 crash → case (c) 補設定 → apphost bootstrap → Phase 4 報告路徑 round-trip 正確 | `.turbo-plugin/config.toml` 寫入路徑顯示為中文 / agent chat 中顯示中文路徑無 mojibake / `applicationhost.config` 路徑替換不破壞 | AE9 extended(中文 path) |
+| P2-tp-setup-3 | 中文 workspace path | fresh-base 複製到 `<VALIDATION_ROOT>/proj 測試 ™/` | Phase 1 detect → 中文路徑不 crash → case (c) 補設定 → apphost bootstrap → Phase 4 報告路徑 round-trip 正確 | `.turbo-plugin/config.toml` 寫入路徑顯示為中文 / agent chat 中顯示中文路徑無 mojibake / `applicationhost.config` 路徑替換不破壞 | AE9 extended(中文 path) |
 | P2-tp-setup-4 | Phase 3 推薦項目實際安裝 — LSP(C# + TS/JS) | 已跑完 case 1 或 case 2 + dotnet / npm 兩個 CLI 都 ✓ | Phase 3 detect → batch 1 prompt(C# LSP / TS/JS LSP 兩題)→ 使用者選 user-level → `~/.claude/settings.json` 寫入 enabledPlugins + env.ENABLE_LSP_TOOL → `dotnet tool install -g csharp-ls` + `npm install -g typescript-language-server typescript` 兩個外部安裝實際跑 | `dotnet tool list -g` 含 csharp-ls / `npm list -g` 含 typescript-language-server / `~/.claude/settings.json` 含兩個 enabledPlugins / Phase 4 報告「✓ 已安裝」兩條 | AE15(real-install) |
 | P2-tp-setup-5 | Phase 3 推薦項目實際安裝 — compound-engineering + agent teams + TUI fullscreen | 接續 case 4 完成後 | Phase 3 detect → batch 2 prompt(CE 三選一 / agent teams 四選一 / TUI fullscreen 四選一)→ 使用者選 CE「安裝(不自動更新)」+ agent teams user-level + TUI fullscreen user-level → `~/.claude/settings.json` 寫入 extraKnownMarketplaces + env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS + top-level tui | `~/.claude/settings.json` 含 `extraKnownMarketplaces["compound-engineering-plugin"]` + `enabledPlugins["compound-engineering@compound-engineering-plugin"] = true` + `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"` + `tui = "fullscreen"` / Phase 4 提示「請重啟 Claude Code 後才會生效」 | AE15(real-install) |
 
@@ -84,11 +110,11 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1`,然後手動 `Remove-Item -Recurse -Force C:\Turbo\test-turbo-plugin\test-turbo-plugin\.git` 與 `Remove-Item -Recurse -Force C:\Turbo\test-turbo-plugin\test-turbo-plugin\.turbo-plugin`。然後在 `C:\Turbo\test-turbo-plugin\test-turbo-plugin\` 開 Claude Code session,確認 turbo-plugin 已啟用。
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1`,然後手動移除 `<VALIDATION_ROOT>/proj/.git` 與 `<VALIDATION_ROOT>/proj/.turbo-plugin`(`Remove-Item -Recurse -Force`)。然後在 `<VALIDATION_ROOT>/proj` 開 Claude Code session,確認 turbo-plugin 已啟用。
 >
 > **Prompt**:
 > ```
-> 請幫我跑 /tp-setup,SVN URL 是 file:///C:/Turbo/test-turbo-plugin/svn-repo/trunk
+> 請幫我跑 /tp-setup,SVN URL 是 file:///<VALIDATION_ROOT>/svn-repo/trunk
 > ```
 >
 > **觀察重點**:
@@ -96,8 +122,9 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - Phase 1 是否偵測為 case (a)
 > - apphost bootstrap 三選一是否出現,使用者選 (1) 暫停後 setup 是否乾淨結束
 > - `.turbo-plugin/` 目錄是否含 `config.toml` / `applicationhost.config` / `dbhub.example.local.toml` 三檔
-> - `remote/main` orphan branch + worktree 是否建立(`git worktree list` 確認)
-> - 跑完後 `git log --oneline remote/main` 至少 1 個 commit「init: remote/main branch」
+> - `.gitignore` 在任何 `git worktree add` 之前已含 `.turbo-plugin/worktrees/`(主 worktree `git status --porcelain` 乾淨)
+> - `remote-svn/main` orphan branch + `.turbo-plugin/worktrees/remote-svn-main` worktree 是否建立(`git worktree list` 確認)
+> - 跑完後 `git log --oneline remote-svn/main` 至少 1 個 commit「init: remote-svn/main branch」
 > - chat 中 agent 沒列出 internal 動作(.gitignore 寫入等),只列「從 SVN 抓取」「設定 SVN ignore 並推送」
 
 > **Setup**(case 2):orchestrator 跑 `Reset-Fixture.ps1` 重置 fixture,fixture base 已含 `.turbo-plugin/` 完整三檔。
@@ -113,7 +140,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - 沒有新檔出現(`git status --porcelain` 為空)
 > - 隔幾秒重跑同 prompt → 第二次結果完全相同(idempotent 驗證)
 
-> **Setup**(case 3):orchestrator 跑 `Reset-Fixture.ps1`,然後 `Rename-Item C:\Turbo\test-turbo-plugin\test-turbo-plugin C:\Turbo\"test-turbo-plugin 測試 ™"`,在新路徑下開 Claude Code。
+> **Setup**(case 3):orchestrator 跑 `Reset-Fixture.ps1`,然後把 `<VALIDATION_ROOT>/proj` 改名為 `<VALIDATION_ROOT>/proj 測試 ™`(`Rename-Item`),在新路徑下開 Claude Code。
 >
 > **Prompt**:
 > ```
@@ -168,7 +195,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 |---|---|---|---|---|---|---|---|
 | P2-tp-setup-1 | case (a) 新建 happy | fresh-base + .git/.turbo-plugin removed | /tp-setup with --svn-url | Phase 1→case(a)→6 sub-step + apphost bootstrap 三選一 | _(TBD U6→merged here)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-setup-2 | case (c) 主 worktree 補設定 idempotent | fresh-base 完整 | /tp-setup(無參數) | Phase 1→case(c)→6 idempotent sub-step skip | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-setup-3 | 中文 workspace path | fresh-base 改名為「test-turbo-plugin 測試 ™」 | /tp-setup | 中文路徑 round-trip 不破壞 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-setup-3 | 中文 workspace path | fresh-base 改名為「proj 測試 ™」 | /tp-setup | 中文路徑 round-trip 不破壞 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-setup-4 | Phase 3 LSP 實際安裝 | case 1/2 完成 + dotnet/npm 可用 | /tp-setup 啟用 C# LSP + TS/JS LSP | batch 1 prompt + 兩個外部 install + settings.json 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-setup-5 | Phase 3 CE + agent teams + TUI 實際安裝 | case 4 接續 | /tp-setup 啟用 CE 不更新 + agent teams + TUI fullscreen | batch 2 prompt + settings.json 5 keys | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
@@ -180,10 +207,10 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-pull-from-svn-1 | Happy SVN-ahead pull | fresh-base + SVN r20 base + 已 setup;SVN 多 r21 commit(orchestrator 預先用 svn ci 推進去) | /tp-pull-from-svn --branch main → script:`svn update`+`git fetch`+`git merge remote/main` → 主 worktree HEAD 前進 | `Pulled SVN r21 into main` stdout / `git log --oneline main` 含 sync commit + merge commit / `git status --porcelain` 為空 | AE5 |
-| P2-tp-pull-from-svn-2 | 中文 commit pull | 接 case 1 完成後 + orchestrator 推 r22 中文 commit「修正中文 commit 訊息亂碼」(字典 3.1) | /tp-pull-from-svn --branch main → svn update r22 → git fetch / merge | `git log --oneline remote/main` r22 commit msg 顯示「修正中文 commit 訊息亂碼」**text-equal**(round-trip stable,不 byte-equal — Windows codepage 限制) | AE5 + R18 中文 |
+| P2-tp-pull-from-svn-1 | Happy SVN-ahead pull | fresh-base + SVN r20 base + 已 setup;SVN 多 r21 commit(orchestrator 預先用 svn ci 推進去) | /tp-pull-from-svn --branch main → script:`svn update`+`git fetch`+`git merge remote-svn/main` → 主 worktree HEAD 前進 | `Pulled SVN r21 into main` stdout / `git log --oneline main` 含 sync commit + merge commit / `git status --porcelain` 為空 | AE5 |
+| P2-tp-pull-from-svn-2 | 中文 commit pull | 接 case 1 完成後 + orchestrator 推 r22 中文 commit「修正中文 commit 訊息亂碼」(字典 3.1) | /tp-pull-from-svn --branch main → svn update r22 → git fetch / merge | `git log --oneline remote-svn/main` r22 commit msg 顯示「修正中文 commit 訊息亂碼」**text-equal**(round-trip stable,不 byte-equal — Windows codepage 限制) | AE5 + R18 中文 |
 | P2-tp-pull-from-svn-3 | Main dirty refuse | fresh-base + 主 worktree 多新檔 `extras/garbage.txt`(untracked) | /tp-pull-from-svn --branch main → script 偵測 `git status --porcelain` 非空 → 拒跑 fail-loudly | stderr 含「please commit / stash first」/ exit 非 0 / 沒動 SVN / `extras/garbage.txt` 仍在 | (Decision Rule cover) |
-| P2-tp-pull-from-svn-4 | remote-main missing | fresh-base 後手動 `git worktree remove --force <proj>.worktrees/remote-main` | /tp-pull-from-svn --branch main → script 偵測 remote-main worktree 不存在 → fail-loudly | stderr 提示「先跑 /tp-setup」/ exit 非 0 / 沒動 SVN | (Decision Rule cover) |
+| P2-tp-pull-from-svn-4 | remote-svn-main missing | fresh-base 後手動 `git worktree remove --force .turbo-plugin/worktrees/remote-svn-main` | /tp-pull-from-svn --branch main → script 偵測 remote-svn-main worktree 不存在 → fail-loudly | stderr 提示「先跑 /tp-setup」/ exit 非 0 / 沒動 SVN | (Decision Rule cover) |
 
 ### 失敗常見 patterns
 
@@ -194,7 +221,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑完一輪 `/tp-setup` case (a)(在 orchestrator session 預先做)。然後 orchestrator 在 `C:\Turbo\test-turbo-plugin\svn-repo` 上手動 `svn import` 多一個 r21 commit。確認 main worktree clean。
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑完一輪 `/tp-setup` case (a)(在 orchestrator session 預先做)。然後 orchestrator 在 `<VALIDATION_ROOT>/svn-repo` 上手動 `svn import` 多一個 r21 commit。確認 main worktree clean。
 >
 > **Prompt**:
 > ```
@@ -204,15 +231,11 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > **觀察重點**:
 > - agent 是否觸發 tp-pull-from-svn skill
 > - script stdout 出現 `Pulled SVN r21 into main`
-> - `git log --oneline main` 至少含一個 `sync: svn r21` commit + 一個 `Merge branch 'remote/main' into main` commit
+> - `git log --oneline main` 至少含一個 `sync: svn r21` commit + 一個 `Merge branch 'remote-svn/main' into main` commit
 > - `git status --porcelain` 為空
 > - agent 沒主動 commit / amend 任何使用者沒授權的東西
 
-> **Setup**(case 2):case 1 跑完之後,orchestrator 在 `test-turbo-plugin-svn-repo` 推 r22 中文 commit:
-> ```
-> cd C:\Turbo\test-turbo-plugin\svn-repo  # SVN repo root
-> # orchestrator 用 svn commit with --message "修正中文 commit 訊息亂碼" 推 r22
-> ```
+> **Setup**(case 2):case 1 跑完之後,orchestrator 在 `<VALIDATION_ROOT>/svn-repo` 推 r22 中文 commit(在 SVN repo root 用 svn commit with `--message "修正中文 commit 訊息亂碼"` 推 r22)。
 >
 > **Prompt**:
 > ```
@@ -222,7 +245,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > **觀察重點**:
 > - agent 觸發 tp-pull-from-svn
 > - script stdout 含 r22 msg 顯示「修正中文 commit 訊息亂碼」(text-equal,可能 console codepage decode 後比對)
-> - `git log -1 --format=%s remote/main` 也是「修正中文 commit 訊息亂碼」
+> - `git log -1 --format=%s remote-svn/main` 也是「修正中文 commit 訊息亂碼」
 > - 沒亂碼(無 `?` 取代字元)
 
 > **Setup**(case 3):case 1 / 2 跑完後在主 worktree 多建 `extras/garbage.txt`(untracked,**不要 commit**)。
@@ -238,7 +261,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - `extras/garbage.txt` 仍存在(不被 stash)
 > - agent 不自動 `git stash`(SKILL 不應該做這個決定)
 
-> **Setup**(case 4):case 1 / 2 跑完之後 orchestrator 手動 `git worktree remove --force <proj>.worktrees/remote-main`(或直接刪資料夾)。
+> **Setup**(case 4):case 1 / 2 跑完之後 orchestrator 手動 `git worktree remove --force .turbo-plugin/worktrees/remote-svn-main`(或直接刪資料夾)。
 >
 > **Prompt**:
 > ```
@@ -246,7 +269,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > ```
 >
 > **觀察重點**:
-> - script fail-loudly,stderr 含「remote-main worktree missing」/「先跑 /tp-setup」
+> - script fail-loudly,stderr 含「remote-svn-main worktree missing」/「先跑 /tp-setup」
 > - exit 非 0
 > - 沒嘗試自動修復(setup 由使用者明確觸發,不該被 pull 自動帶入)
 
@@ -257,7 +280,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 | P2-tp-pull-from-svn-1 | Happy SVN-ahead | fresh-base + r21 預推 | /tp-pull-from-svn --branch main | r21 → main HEAD 前進 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-pull-from-svn-2 | 中文 commit pull | 接 case 1 + r22 中文 commit | /tp-pull-from-svn 拉新 commit | r22 中文 msg round-trip 正確 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-pull-from-svn-3 | Main dirty refuse | fresh-base + untracked garbage | /tp-pull-from-svn | 拒跑 fail-loudly | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-pull-from-svn-4 | remote-main missing | fresh-base + remote-main 移除 | /tp-pull-from-svn | fail-loudly 提示先 setup | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-pull-from-svn-4 | remote-svn-main missing | fresh-base + remote-svn-main 移除 | /tp-pull-from-svn | fail-loudly 提示先 setup | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
 
@@ -270,15 +293,20 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 | P2-tp-push-to-svn-1 | Happy push 含 feat / fix / refactor commits | fresh-base 已 setup + main 多 3 commit(feat / fix / refactor 各一)+ SVN HEAD = r20 | /tp-push-to-svn --branch main → prepare → parse 3 commits → 全部 kept-subset → Step 5 confirm Accept → commit → SVN r21 | prepare stdout 含 `COMMITS\n<hash>\|feat:...\n<hash>\|fix:...\n<hash>\|refactor:...` / Step 4 SVN body 含三條 bullet / SVN r21 寫入 / `svn log -r 21` msg 完整 | AE7 |
 | P2-tp-push-to-svn-2 | 中文 commit push | 接 case 1 + main 多 1 commit subject 「fix: 處理 SVN 中文檔名相容性」(字典 3.4) | /tp-push-to-svn --branch main → SVN body 含中文 → svn commit --file UTF-8 no-BOM | SVN r22 寫入 / `svn log -r 22` text-equal「fix: 處理 SVN 中文檔名相容性」(text-equal not byte-equal — Windows propvalue codepage 限制) | AE7 + R18 中文 |
 | P2-tp-push-to-svn-3 | docs/chore 全篩除(empty body) | 接 case 2 + main 多 2 commit(`docs: 更新 README` + `chore: bump version`) | /tp-push-to-svn → 兩 commit 都被 silent 篩除 → Step 4 body 寫「本次推送沒有程式碼層級的異動」 | Step 5 confirm 顯示 kept = 0 / removed = 2 / SVN body 含 fallback 字串 / r23 寫入 | (Step 3.4 silent-filter behavior) |
-| P2-tp-push-to-svn-4 | Unknown type prompt 取消 | 接 case 3 + main 多 1 commit subject `update parser logic`(無 conventional prefix) | /tp-push-to-svn → prepare → unknown type 偵測 → AskUserQuestion(保留 / 篩除 / 取消)→ 使用者選「取消」→ `git merge --abort` cleanup | AskUserQuestion 出現 / 使用者選取消 / remote-main worktree `git status` 為空(merge 已 abort)/ SVN 沒新 revision | (Step 3.5 cancel path) |
+| P2-tp-push-to-svn-4 | Unknown type prompt 取消 | 接 case 3 + main 多 1 commit subject `update parser logic`(無 conventional prefix) | /tp-push-to-svn → prepare → unknown type 偵測 → AskUserQuestion(保留 / 篩除 / 取消)→ 使用者選「取消」→ `git merge --abort` cleanup | AskUserQuestion 出現 / 使用者選取消 / remote-svn-main worktree `git status` 為空(merge 已 abort)/ SVN 沒新 revision | (Step 3.5 cancel path) |
+| P2-tp-push-to-svn-5 | Step 7 release tag — 檔案全 svn:ignore 仍產出 merge commit | 接 case 1 後重置 push 環境 + main 多 1 commit,該 commit 只新增一個已被 `svn:ignore` 的檔(如 `obj/junk.tmp`,先用 tp-suggest-ignore 把 `obj/` 加進 svn:ignore)| /tp-push-to-svn --branch main → prepare 產出 git merge commit(`git log remote-svn/main..main` 非空)→ Step 6 svn commit 為空(`No changes to commit to SVN`)→ **Step 7 仍詢問** release tag → 使用者選 Yes → Tag-Release 建 `main-release-<date>-NNN` | prepare stage 了 merge commit / Step 6 stdout 含 `No changes to commit to SVN` / Step 7 AskUserQuestion 出現(Yes/No)/ 選 Yes 後 `git tag -l "main-release-*"` 出現新 tag / `git rev-parse <tag>` == `git rev-parse remote-svn/main` | AE1(merge commit → 仍問 tag) |
+| P2-tp-push-to-svn-6 | Step 7 nothing-to-push → 不問 tag | 接 case 5 後不再多任何 commit(main 與 remote-svn/main 已對齊) | /tp-push-to-svn --branch main → prepare 印 `Nothing to push`(無 merge commit 產出)→ **直接跳過 Step 7**,不詢問 release tag | prepare stdout 含 `Nothing to push` / **沒有** Step 7 AskUserQuestion / `git tag -l "main-release-*"` 數量與 case 5 後相同(無新增) | AE2(無新 commit → 不問 tag) |
 
 ### 失敗常見 patterns
 
 - **agent 自動猜 unknown type**:SKILL.md Decision Rule「Unknown type 必須 prompt,不能猜」。若 case 4 agent 自動「reasoning: 看起來像 refactor,保留」未 ask → FAIL。
-- **沒 cleanup merge state**:case 4 取消後 remote-main worktree 仍 stage merge → FAIL。
+- **沒 cleanup merge state**:case 4 取消後 remote-svn-main worktree 仍 stage merge → FAIL。
 - **`.commitlintrc.json` 不在時靜默全篩光**:SKILL.md 明文「fallback 用 default 12 類 + stderr notice,不靜默失敗」。若 fixture 中 `.commitlintrc.json` 刪掉測 happy case agent 把所有 commit 篩光 → FAIL。
 - **中文 commit msg mangle**:case 2 SVN r22 msg 變「fix: 處理 SVN ?? 檔名 ???」→ FAIL(可能 script 沒用 `--file <utf8-no-bom-tmp> --encoding UTF-8`,改成 `-m "..."`,中文被 CP_ACP mangle)。
 - **race condition guard 失效**:SHA pin guard 沒做 → 在 Step 5 Accept 前手動 `git commit` 新 commit → Step 6 commit 沒 throw `Branch ... has new commits since prepare` → FAIL(這個 test 在 Test Scenarios manual case,P2 不必硬編但可順便驗)。
+- **Step 7 判準用「svn commit 有無內容」而非「有無 merge commit」**:case 5 檔案全 `svn:ignore`、svn commit 為空,但 prepare 仍產出 git merge commit → 若 agent 因 `No changes to commit to SVN` 就**不問** release tag → FAIL(KTD7 / R29 判準是「有無產出 git merge commit」)。
+- **nothing-to-push 仍問 tag**:case 6 prepare 印 `Nothing to push`(根本無 merge commit)→ 若 agent 仍跳出 Step 7 release tag prompt → FAIL。
+- **tag ref 用舊命名**:Step 7 建的 tag 指向 `remote/main`(舊命名)而非 `remote-svn/main` → FAIL。
 
 ### Prompt 範本
 
@@ -349,8 +377,40 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - 三選一:保留 / 篩除 / 取消
 > - 使用者選「取消」
 > - agent 跑 `git merge --abort` cleanup
-> - remote-main worktree `git status --porcelain` 為空(merge 已 abort)
+> - remote-svn-main worktree `git status --porcelain` 為空(merge 已 abort)
 > - SVN log 仍只有 r23(沒 r24)
+
+> **Setup**(case 5):接 case 4 後重置 push 環境(orchestrator 跑 `Reset-Fixture.ps1` + setup case (a),SVN HEAD = r20)。先用 `/tp-suggest-ignore --add-svn "obj/"` 把 `obj/` 加進 remote-svn-main 的 svn:ignore。然後在 main 多 1 commit,內容只新增一個被忽略的檔:
+> ```
+> # 新增 obj/junk.tmp(會被 svn:ignore obj/ 忽略),git add . ; git commit -m "chore: 暫存產物"
+> ```
+> 確認 main worktree clean。
+>
+> **Prompt**:
+> ```
+> /tp-push-to-svn --branch main
+> ```
+>
+> **觀察重點**:
+> - prepare 階段產出 git merge commit(`git log remote-svn/main..main` 非空)
+> - Step 6 svn commit stdout 含 `No changes to commit to SVN`(檔案全被 `svn:ignore`)
+> - **Step 7 仍詢問** release tag(AskUserQuestion Yes/No)— 判準是「有 merge commit」非「svn 有內容」
+> - 使用者選 Yes
+> - Tag-Release 印 `Created tag: main-release-<yyyy-MM-dd>-NNN`
+> - `git tag -l "main-release-*"` 出現新 tag
+> - `git rev-parse <tag>` == `git rev-parse remote-svn/main`(tag 指向 remote-svn/main tip,新命名)
+
+> **Setup**(case 6):接 case 5 直接續(main 與 remote-svn/main 已對齊,**不**再多任何 commit)。
+>
+> **Prompt**:
+> ```
+> /tp-push-to-svn --branch main
+> ```
+>
+> **觀察重點**:
+> - prepare stdout 含 `Nothing to push`(沒有任何新 commit、沒有 merge commit 產出)
+> - skill **直接結束**,**沒有** Step 7 release tag 詢問
+> - `git tag -l "main-release-*"` 數量與 case 5 跑完後相同(無新 tag)
 
 ### Row table
 
@@ -360,6 +420,8 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 | P2-tp-push-to-svn-2 | 中文 commit push | 接 1 + 中文 fix commit | /tp-push-to-svn --branch main | r22 中文 msg text-equal | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-push-to-svn-3 | docs/chore 全篩除 | 接 2 + 2 commit (docs/chore) | /tp-push-to-svn --branch main | body 是 fallback 字串 / r23 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-push-to-svn-4 | Unknown type 取消 | 接 3 + 1 commit (`update parser`) | /tp-push-to-svn --branch main | AskUserQuestion 取消 / merge --abort | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-5 | Step 7 tag — svn:ignore 仍有 merge commit | reset+setup + obj/ svn:ignore + 1 commit 只加忽略檔 | /tp-push-to-svn --branch main | svn 空但仍問 tag → 建 main-release-* on remote-svn/main | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-6 | Step 7 nothing-to-push 不問 tag | 接 5,無新 commit | /tp-push-to-svn --branch main | `Nothing to push` → 跳過 Step 7,無新 tag | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
 
@@ -369,9 +431,9 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-create-remote-test-1 | Happy Confirm path | fresh-base 已 setup case (a) 完成 + SVN trunk 已存在 + 沒有 `branches/test-1` | /tp-create-remote-test --svn-url file:///.../branches/test-1 → AskUserQuestion 確認(顯示 N / branch / worktree / URL)→ Confirm → script 跑 → `svn copy` from trunk → checkout → 繼承 svn:ignore | `git branch -a` 含 `test-1` + `remote/test-1` / `git worktree list` 含 `<proj>.worktrees/remote-test-1` / `.worktrees/remote-test-1/.svn/` 存在 / `<proj>.code-workspace` 含新 worktree | (Confirm gate happy) |
+| P2-tp-create-remote-test-1 | Happy Confirm path | fresh-base 已 setup case (a) 完成 + SVN trunk 已存在 + 沒有 `branches/test-1` | /tp-create-remote-test --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1 → AskUserQuestion 確認(顯示 N / branch / worktree / URL)→ Confirm → script 跑 → `svn copy` from trunk → checkout → 繼承 svn:ignore | `git branch -a` 含 `test-1` + `remote-svn/test-1` / `git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-test-1` / `.turbo-plugin/worktrees/remote-svn-test-1/.svn/` 存在 | (Confirm gate happy) |
 | P2-tp-create-remote-test-2 | Cancel path 不動 SVN | 同 case 1 fresh fixture | /tp-create-remote-test --svn-url ... → AskUserQuestion → 使用者選 Cancel → script 不執行 | 沒新 branch / 沒新 worktree / SVN 上沒新 `branches/test-1` / agent 顯式報告「已取消」 | (Cancel gate) |
-| P2-tp-create-remote-test-3 | SVN URL invalid → rollback | fresh-base 已 setup + SVN URL 故意給不存在的(如 `file:///nonexistent/repo/branches/test-X`) | /tp-create-remote-test --svn-url <bad> → AskUserQuestion → Confirm → script 跑 `svn checkout` 失敗 → rollback 清掉半建 state | `git branch --list test-X` 為空 / `git branch --list remote/test-X` 為空 / `git worktree list` 沒 remote-test-X / `<proj>.code-workspace` 沒新 worktree | (rollback) |
+| P2-tp-create-remote-test-3 | SVN URL invalid → rollback | fresh-base 已 setup + SVN URL 故意給不存在的(如 `file:///<VALIDATION_ROOT>/nonexistent-svn-repo/branches/test-X`) | /tp-create-remote-test --svn-url <bad> → AskUserQuestion → Confirm → script 跑 `svn checkout` 失敗 → rollback 清掉半建 state | `git branch --list test-X` 為空 / `git branch --list remote-svn/test-X` 為空 / `git worktree list` 沒 remote-svn-test-X | (rollback) |
 
 ### 失敗常見 patterns
 
@@ -381,19 +443,19 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) 完成。確認 SVN trunk 在 `file:///C:/Turbo/test-turbo-plugin/svn-repo/trunk`,還沒有任何 `branches/`。
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) 完成。確認 SVN trunk 在 `file:///<VALIDATION_ROOT>/svn-repo/trunk`,還沒有任何 `branches/`。
 >
 > **Prompt**:
 > ```
-> 幫我建一個 SVN test branch,SVN URL 是 file:///C:/Turbo/test-turbo-plugin/svn-repo/branches/test-1
+> 幫我建一個 SVN test branch,SVN URL 是 file:///<VALIDATION_ROOT>/svn-repo/branches/test-1
 > ```
 >
 > **觀察重點**:
 > - agent 觸發 tp-create-remote-test skill
-> - AskUserQuestion 出現,description 含具體的 N = 1 / Branch name = `remote/test-1` / Worktree path = `<proj>.worktrees/remote-test-1` / SVN URL
+> - AskUserQuestion 出現,description 含具體的 N = 1 / Branch name = `remote-svn/test-1` / Worktree path = `.turbo-plugin/worktrees/remote-svn-test-1` / SVN URL
 > - 使用者選 Confirm
-> - 跑完 `git branch -a` 含 `test-1` + `remote/test-1`
-> - `git worktree list` 含 `<proj>.worktrees/remote-test-1`
+> - 跑完 `git branch -a` 含 `test-1` + `remote-svn/test-1`
+> - `git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-test-1`
 > - 該 worktree 內含 `.svn/`
 > - SVN repo 多一個 r21(svn copy from trunk)
 
@@ -401,22 +463,22 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 >
 > **Prompt**:
 > ```
-> 幫我建一個 SVN test branch,SVN URL 是 file:///C:/Turbo/test-turbo-plugin/svn-repo/branches/test-1
+> 幫我建一個 SVN test branch,SVN URL 是 file:///<VALIDATION_ROOT>/svn-repo/branches/test-1
 > ```
 >
 > **觀察重點**:
 > - AskUserQuestion 出現
 > - 使用者選 Cancel
 > - agent 顯式報告「已取消,不動 SVN」
-> - `git branch -a` 沒 `test-1` 也沒 `remote/test-1`
-> - `git worktree list` 只剩主 worktree + remote-main(沒 remote-test-1)
+> - `git branch -a` 沒 `test-1` 也沒 `remote-svn/test-1`
+> - `git worktree list` 只剩主 worktree + remote-svn-main(沒 remote-svn-test-1)
 > - SVN log 仍 r20
 
-> **Setup**(case 3):跟 case 1 一樣 fresh fixture。但 SVN URL 給不存在的:`file:///C:/Turbo/nonexistent-svn-repo/branches/test-X`。
+> **Setup**(case 3):跟 case 1 一樣 fresh fixture。但 SVN URL 給不存在的:`file:///<VALIDATION_ROOT>/nonexistent-svn-repo/branches/test-X`。
 >
 > **Prompt**:
 > ```
-> 幫我建一個 SVN test branch,SVN URL 是 file:///C:/Turbo/nonexistent-svn-repo/branches/test-X
+> 幫我建一個 SVN test branch,SVN URL 是 file:///<VALIDATION_ROOT>/nonexistent-svn-repo/branches/test-X
 > ```
 >
 > **觀察重點**:
@@ -425,9 +487,8 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - script 跑後 svn checkout 失敗
 > - agent 報告錯誤但已 rollback
 > - `git branch --list test-X` 為空
-> - `git branch --list remote/test-X` 為空
-> - `git worktree list` 沒 remote-test-X
-> - `<proj>.code-workspace` 沒新 worktree
+> - `git branch --list remote-svn/test-X` 為空
+> - `git worktree list` 沒 remote-svn-test-X
 > - 完全乾淨(no half-built state)
 
 ### Row table
@@ -436,7 +497,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 |---|---|---|---|---|---|---|---|
 | P2-tp-create-remote-test-1 | Happy Confirm | fresh-base+setup(a) | /tp-create-remote-test --svn-url <valid> | AskUserQuestion 顯示具體參數 + Confirm + branch/worktree/svn 三齊 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-create-remote-test-2 | Cancel | fresh-base+setup(a) | /tp-create-remote-test --svn-url <valid> | Cancel 後完全沒動 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-create-remote-test-3 | SVN URL invalid rollback | fresh-base+setup(a) + bad URL | /tp-create-remote-test --svn-url <bad> | Confirm 後 checkout fail → rollback 乾淨 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-create-remote-test-3 | SVN URL invalid rollback | fresh-base+setup(a) + bad URL | /tp-create-remote-test --svn-url <bad> | Confirm 後 checkout fail → rollback 乾淨(無 remote-svn/test-X) | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
 
@@ -600,7 +661,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
 | P2-tp-run-dotnet-framework-web-1 | Happy IIS Express start with listening check | fresh-base + setup(a) + apphost canonical 已建(已過 Step 6 VS pre-touch) + 沒舊 iisexpress instance | /tp-run-dotnet-framework-web → script:detect csproj → parse IISUrl → compute identity hash → no existing instance → Start-Process iisexpress → polling netstat → LISTENING | stdout 含 `Started IIS Express (site: <name>, PID: <pid>)` + `Listening on http://localhost:<port>` / `netstat -ano \| findstr :<port>` 顯示 LISTENING / process tree 含 iisexpress.exe | (Happy run + listening check) |
-| P2-tp-run-dotnet-framework-web-2 | Cross-worktree self-heal | case 1 跑完,iisexpress 跑在主 worktree → 切換 cwd 到 peer worktree(`dev-1`),peer 也 tp-setup 過 | /tp-run-dotnet-framework-web from peer → script 偵測同 project 在主 worktree 已啟 → 自動 Stop-Process 舊 instance → 啟新 in peer | stdout 含 `Stopping previous instance(s)` / 主 worktree PID 被殺 / 新 instance PID 在 peer worktree path / `Listening on` 出現 | AE15a(self-heal) |
+| P2-tp-run-dotnet-framework-web-2 | Cross-worktree self-heal | case 1 跑完,iisexpress 跑在主 worktree → 切換 cwd 到 peer worktree(任一非 main 的 linked worktree),peer 也 tp-setup 過 | /tp-run-dotnet-framework-web from peer → script 偵測同 project 在主 worktree 已啟 → 自動 Stop-Process 舊 instance → 啟新 in peer | stdout 含 `Stopping previous instance(s)` / 主 worktree PID 被殺 / 新 instance PID 在 peer worktree path / `Listening on` 出現 | AE15a(self-heal) |
 | P2-tp-run-dotnet-framework-web-3 | [iis] disabled refuse | fresh-base + setup(a) + `[iis] enabled = false` | /tp-run-dotnet-framework-web → Step 0 拒跑 | 沒呼叫 start-iis / chat 中含「IIS 已停用」訊息 | AE2 consistency |
 
 ### 失敗常見 patterns
@@ -626,12 +687,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - `netstat -ano | findstr :<port>` 顯示 LISTENING
 > - 可用瀏覽器或 `Invoke-WebRequest http://localhost:<port>` 取得回應
 
-> **Setup**(case 2):case 1 跑完(iisexpress 跑在主 worktree)。orchestrator 切換 cwd:
-> ```
-> # 在 dev-1 peer worktree 開 Claude Code session
-> cd C:\Turbo\test-turbo-plugin\test-turbo-plugin.worktrees\dev-1
-> ```
-> 確認 peer worktree 已過 `/tp-setup` case (d) peer-mode(orchestrator 預先做)。
+> **Setup**(case 2):case 1 跑完(iisexpress 跑在主 worktree)。orchestrator 在一個 peer worktree(任一非 main 的 linked worktree,例如 `<VALIDATION_ROOT>/proj-peer`)開 Claude Code session。確認該 peer worktree 已過 `/tp-setup` case (d) peer-mode(orchestrator 預先做)。
 >
 > **Prompt**:
 > ```
@@ -686,7 +742,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ### Prompt 範本
 
-> **Setup**(case 1):承 tp-run case 1 fixture 跑完(iisexpress LISTENING)。orchestrator 切換 cwd 到 peer worktree(`dev-1`)。
+> **Setup**(case 1):承 tp-run case 1 fixture 跑完(iisexpress LISTENING)。orchestrator 切換 cwd 到 peer worktree(任一非 main 的 linked worktree)。
 >
 > **Prompt**:
 > ```
@@ -884,22 +940,22 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-suggest-ignore-1 | Analysis mode happy(Git Ignore + SVN Ignore) | fresh-base + setup(a) + tp-create-remote-test 建 test-1 + 主 worktree 多新檔 `.env`(untracked) + 主 worktree git-tracked `.claude/settings.json` | /tp-suggest-ignore(無參數)→ analysis mode → Step 2-3 classify → Git Ignore 列 `.env` / SVN Ignore 列 `.claude/` → Step 4 prompt(option A apply all / B per-item / C skip) → 使用者 apply all → Step 5 寫 .gitignore + commit + svn-ignore.ps1 -Add `.claude/` 全 remote worktree | `.gitignore` 末尾含 `.env` 與 `.claude/` / `git log --oneline` 含 `chore: update .gitignore` commit / `svn propget svn:ignore .` 在 remote-main + remote-test-1 都含 `.claude/` / 2 個 SVN commit(r21 + r22)| AE13(2-worktree propset) |
-| P2-tp-suggest-ignore-2 | Direct mode --add-svn cross-worktree | fresh-base + setup(a) + tp-create-remote-test 建 test-1 | /tp-suggest-ignore --add-svn "obj/" → Direct mode → script svn-ignore.ps1 -Add "obj/" → 對 remote-main + remote-test-1 兩個 worktree propset + 各 commit | `svn propget svn:ignore` 在 remote-main + remote-test-1 都含 `obj/` / 2 個 SVN commit(r21 + r22)/ 每 commit msg 各對應一個 worktree | AE13(2-worktree propset) |
-| P2-tp-suggest-ignore-3 | Rollback when remote-test-1 propset 失敗 | fresh-base + setup(a) + tp-create-remote-test + 手動 corrupt remote-test-1 的 `.svn/wc.db`(讓 propset 失敗) | /tp-suggest-ignore --add-svn "obj/" → svn-ignore.ps1 對 remote-main propset OK(r21)→ 對 remote-test-1 propset 失敗 → rollback remote-main r21 | `svn propget svn:ignore` 在 remote-main **不**含 `obj/`(rollback 成功)/ 在 remote-test-1 也不含 / SVN log 最後 revision 是 baseline(無 r21 / r22) | AE13(rollback) |
+| P2-tp-suggest-ignore-1 | Analysis mode happy(Git Ignore + SVN Ignore) | fresh-base + setup(a) + tp-create-remote-test 建 test-1 + 主 worktree 多新檔 `.env`(untracked) + 主 worktree git-tracked `.claude/settings.json` | /tp-suggest-ignore(無參數)→ analysis mode → Step 2-3 classify → Git Ignore 列 `.env` / SVN Ignore 列 `.claude/` → Step 4 prompt(option A apply all / B per-item / C skip) → 使用者 apply all → Step 5 寫 .gitignore + commit + svn-ignore.ps1 -Add `.claude/` 全 remote worktree | `.gitignore` 末尾含 `.env` 與 `.claude/` / `git log --oneline` 含 `chore: update .gitignore` commit / `svn propget svn:ignore .` 在 remote-svn-main + remote-svn-test-1 都含 `.claude/` / 2 個 SVN commit(r21 + r22)| AE13(2-worktree propset) |
+| P2-tp-suggest-ignore-2 | Direct mode --add-svn cross-worktree | fresh-base + setup(a) + tp-create-remote-test 建 test-1 | /tp-suggest-ignore --add-svn "obj/" → Direct mode → script svn-ignore.ps1 -Add "obj/" → 對 remote-svn-main + remote-svn-test-1 兩個 worktree propset + 各 commit | `svn propget svn:ignore` 在 remote-svn-main + remote-svn-test-1 都含 `obj/` / 2 個 SVN commit(r21 + r22)/ 每 commit msg 各對應一個 worktree | AE13(2-worktree propset) |
+| P2-tp-suggest-ignore-3 | Rollback when remote-svn-test-1 propset 失敗 | fresh-base + setup(a) + tp-create-remote-test + 手動 corrupt remote-svn-test-1 的 `.svn/wc.db`(讓 propset 失敗) | /tp-suggest-ignore --add-svn "obj/" → svn-ignore.ps1 對 remote-svn-main propset OK(r21)→ 對 remote-svn-test-1 propset 失敗 → rollback remote-svn-main r21 | `svn propget svn:ignore` 在 remote-svn-main **不**含 `obj/`(rollback 成功)/ 在 remote-svn-test-1 也不含 / SVN log 最後 revision 是 baseline(無 r21 / r22) | AE13(rollback) |
 | P2-tp-suggest-ignore-4 | 中文 svn:ignore pattern | fresh-base + setup(a) + tp-create-remote-test | /tp-suggest-ignore --add-svn "中文資料夾/" → script propset → 兩 worktree commit | `svn propget svn:ignore` 兩 worktree 都含 `中文資料夾/`(text-equal,中文 svn property 透過 svn cli round-trip 後在 console codepage decode 後正確)/ SVN commit msg(若含中文)同樣 round-trip 正確 | AE13 + R18 中文 |
 
 ### 失敗常見 patterns
 
 - **`&&` chain 過 git 指令**:SKILL.md 開頭 NOTE 明文「treat as two separate steps — run `git add` first, observe success, then run `git commit`」。若 fixture / agent 用 `&&` chain → FAIL(CLAUDE.md prohibition)。
 - **`.gitignore` 不存在沒先建**:SKILL.md Decision Rule「If `.gitignore` does not exist, create it before editing」。若 fixture 刪 `.gitignore` 後 agent crash → FAIL。
-- **rollback 不完全**:case 3 應 rollback remote-main(undo r21)。若只是「propset 失敗訊息報出來」但 remote-main r21 仍存在 → FAIL。
-- **2-worktree propset 變 3-worktree(含 main)**:SKILL.md 明文 svn:ignore 只動 remote worktrees,main 不是 SVN-tracked。若 agent 對 main 跑 propset → FAIL。
+- **rollback 不完全**:case 3 應 rollback remote-svn-main(undo r21)。若只是「propset 失敗訊息報出來」但 remote-svn-main r21 仍存在 → FAIL。
+- **2-worktree propset 變 3-worktree(含 main)**:SKILL.md 明文 svn:ignore 只動 remote-svn worktrees,main 不是 SVN-tracked。若 agent 對 main 跑 propset → FAIL。
 - **Inconsistency / Un-track 沒個別 confirm**:SKILL.md Decision Rule「An Inconsistency or Un-track file must be confirmed individually — no "apply all" option」。若 agent 提供「apply all」option for Inconsistency → FAIL。
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) + 跑 `/tp-create-remote-test --svn-url file:///.../branches/test-1` Confirm。在主 worktree 預製:
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) + 跑 `/tp-create-remote-test --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1` Confirm。在主 worktree 預製:
 > - untracked: 建 `.env` 檔(內容 `SECRET=foo`)
 > - git-tracked: `.claude/settings.json`(stage + commit)
 >
@@ -919,11 +975,11 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - Step 5:
 >   - `.gitignore` 末尾追加 `.env`
 >   - `git -C <main> commit -m "chore: update .gitignore"`(commit on main)
->   - 對 remote-main + remote-test-1 各跑 propset + commit `.claude/`
+>   - 對 remote-svn-main + remote-svn-test-1 各跑 propset + commit `.claude/`
 > - 跑完:
 >   - `git log --oneline main` 含新 commit
->   - `svn propget svn:ignore .` 在 remote-main + remote-test-1 都列 `.claude/`
->   - SVN log r21 (remote-main) + r22 (remote-test-1) 兩 commits
+>   - `svn propget svn:ignore .` 在 remote-svn-main + remote-svn-test-1 都列 `.claude/`
+>   - SVN log r21 (remote-svn-main) + r22 (remote-svn-test-1) 兩 commits
 
 > **Setup**(case 2):orchestrator 跑 reset + setup + tp-create-remote-test 建 test-1。主 worktree clean,沒新檔。
 >
@@ -936,15 +992,11 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > - agent 觸發 Direct mode --add-svn
 > - 沒跑 analysis(沒 prompts about Git Ignore / SVN Ignore)
 > - script svn-ignore.ps1 -Add "obj/" 一次 invocation
-> - 對 remote-main + remote-test-1 兩 worktree propset + commit
+> - 對 remote-svn-main + remote-svn-test-1 兩 worktree propset + commit
 > - 2 個 SVN commit(r21 + r22),msg 各對應一個 worktree
 > - `svn propget svn:ignore` 兩 worktree 都含 `obj/`
 
-> **Setup**(case 3):orchestrator 跑 reset + setup + tp-create-remote-test。然後手動 corrupt remote-test-1 的 SVN working copy:
-> ```
-> # 刪除 .svn/wc.db 讓 svn propset 失敗
-> Remove-Item C:\Turbo\test-turbo-plugin\test-turbo-plugin.worktrees\remote-test-1\.svn\wc.db
-> ```
+> **Setup**(case 3):orchestrator 跑 reset + setup + tp-create-remote-test。然後手動 corrupt remote-svn-test-1 的 SVN working copy:刪除 `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-test-1/.svn/wc.db`(`Remove-Item`)讓 svn propset 失敗。
 >
 > **Prompt**:
 > ```
@@ -952,11 +1004,11 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 > ```
 >
 > **觀察重點**:
-> - script 對 remote-main propset OK,commit r21
-> - 對 remote-test-1 propset 失敗(`.svn/wc.db` missing)
-> - 觸發 rollback:把 remote-main 剛 commit 的 r21 也回退(svn revert / 重新 propset 不含 obj/ 等 mechanism)
+> - script 對 remote-svn-main propset OK,commit r21
+> - 對 remote-svn-test-1 propset 失敗(`.svn/wc.db` missing)
+> - 觸發 rollback:把 remote-svn-main 剛 commit 的 r21 也回退(svn revert / 重新 propset 不含 obj/ 等 mechanism)
 > - 跑完:
->   - `svn propget svn:ignore .` 在 remote-main **不**含 `obj/`
+>   - `svn propget svn:ignore .` 在 remote-svn-main **不**含 `obj/`
 >   - SVN log 最高 revision 仍是 baseline(無 r21 / r22)
 > - agent 回報「rollback 成功,SVN 狀態回到操作前」
 
@@ -979,7 +1031,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 |---|---|---|---|---|---|---|---|
 | P2-tp-suggest-ignore-1 | Analysis mode happy | fresh-base+setup+test-1 + .env untracked + .claude tracked | /tp-suggest-ignore | analysis → Git Ignore + SVN Ignore apply all | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-suggest-ignore-2 | Direct --add-svn cross-worktree | fresh-base+setup+test-1 | /tp-suggest-ignore --add-svn "obj/" | 2-worktree propset + 2 commits | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-suggest-ignore-3 | Rollback when test-1 fail | fresh-base+setup+test-1 + corrupt .svn/wc.db | /tp-suggest-ignore --add-svn "obj/" | remote-main r21 rollback | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-suggest-ignore-3 | Rollback when test-1 fail | fresh-base+setup+test-1 + corrupt .svn/wc.db | /tp-suggest-ignore --add-svn "obj/" | remote-svn-main r21 rollback | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-suggest-ignore-4 | 中文 svn:ignore | fresh-base+setup+test-1 | /tp-suggest-ignore --add-svn "中文資料夾/" | text-equal round-trip | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
@@ -1006,7 +1058,7 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1`(會 svnadmin load seed dump → r1-r20 含 r5/r10/r15 中文)+ 跑 setup case (a)。確認 `svn log -r 5 file:///...` 顯示「修正中文 commit 訊息亂碼」。
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1`(會 svnadmin load seed dump → r1-r20 含 r5/r10/r15 中文)+ 跑 setup case (a)。確認 `svn log -r 5 file:///<VALIDATION_ROOT>/svn-repo/trunk` 顯示「修正中文 commit 訊息亂碼」。
 >
 > **Prompt**:
 > ```
@@ -1265,6 +1317,177 @@ session,使用者轉述 agent 回應 + 觀察錨點,orchestrator 判讀 PASS / F
 
 ---
 
+## tp-merge-main-into-all
+
+### Cases
+
+| Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
+|---|---|---|---|---|---|
+| P2-tp-merge-main-into-all-1 | Happy:多分支落後 main 一起 merge | fresh-base + setup(a)(已有 `remote-svn/main`)+ tp-create-remote-test 建 test-1(已有 `remote-svn/test-1`)+ 在 main 多 2 commit 領先 + 另建兩個本地分支 `feature-a` / `feature-b`(從 main 較舊的 commit 起跳,落後 main) | /tp-merge-main-into-all(無參數)→ script 列目標分支(排除 `main` 與 `remote-svn/*`)→ 逐支 `checkout` + `git merge main` + 還原原分支 → summary | stdout 末尾含 `Merged cleanly: feature-a, feature-b`(順序不拘)/ `feature-a` / `feature-b` 都含 main tip(`git log feature-a..main` 為空)/ `main` 與 `remote-svn/main` / `remote-svn/test-1` **不**在目標、未被動 / 跑完 HEAD 回開跑時原分支 | (Happy multi-branch merge) |
+| P2-tp-merge-main-into-all-2 | Exclude:`remote-svn/*` 與 main 被跳過 | 同 case 1 fixture(可接 case 1 後直接續) | /tp-merge-main-into-all → script 目標清單不含 `main` / `remote-svn/main` / `remote-svn/test-1` | summary 的 `Merged cleanly:` 不列任何 `remote-svn/*` 或 `main` / `git log -1 remote-svn/main` 與 `remote-svn/test-1` 的 tip 跑前跑後 SHA 不變 | (Exclude filter) |
+| P2-tp-merge-main-into-all-3 | Conflict:衝突分支中止、其餘照常 | fresh-base + setup(a) + 在 main 改 `shared.txt` 某行 + commit;另建 `feature-conflict`(改同一行造成衝突)與 `feature-clean`(改不相干檔,可乾淨 merge) | /tp-merge-main-into-all → `feature-conflict` merge 衝突 → 對該分支 `git merge --abort` → 標 CONFLICT → 繼續 merge `feature-clean` → summary | stdout 末尾含 `CONFLICT (aborted): feature-conflict` + `Merged cleanly: feature-clean` / `feature-conflict` 仍是衝突前的 tip(未含 main、無殘留衝突狀態 `git status` 乾淨)/ `feature-clean` 含 main tip / script exit 1 / 跑完 HEAD 回原分支 | (Conflict per-branch abort) |
+
+### 失敗常見 patterns
+
+- **動到 `remote-svn/*`**:SKILL.md Decision Rule「`remote-svn/*` 是 SVN 橋接分支,絕不動」。若 summary 把任何 `remote-svn/*` 列入 merge 目標 → FAIL。
+- **動到 main 自己**:exclude filter 須同時排除 `main`。若 agent 對 `main` 跑 `git merge main` → FAIL。
+- **衝突沒 abort 留下髒狀態**:case 3 衝突分支應 `git merge --abort` 還原乾淨。若衝突狀態殘留、或整個 run 中斷不續跑其餘分支 → FAIL。
+- **沒還原原分支**:跑完 HEAD 沒回到開跑時所在分支 → FAIL。
+- **dirty main 仍跑**:main worktree 有未 commit 變更時 script 應拒跑;若仍 merge 進髒樹 → FAIL。
+
+### Prompt 範本
+
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) + 跑 `/tp-create-remote-test --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1` Confirm。然後在 main worktree:在 main 多 2 commit(模擬 main 前進);再從較早的 commit 建兩個落後分支:
+> ```
+> # git branch feature-a <main 的較早 commit>
+> # git branch feature-b <main 的較早 commit>
+> ```
+> 確認 main worktree clean,HEAD 回到 main。
+>
+> **Prompt**:
+> ```
+> 幫我把 main 同步進所有分支 — /tp-merge-main-into-all
+> ```
+>
+> **觀察重點**:
+> - agent 觸發 tp-merge-main-into-all
+> - script 列目標分支 = `feature-a` / `feature-b`(不含 `main`、不含 `remote-svn/main` / `remote-svn/test-1`)
+> - stdout 末尾 `Merged cleanly: feature-a, feature-b`(順序不拘)
+> - `git log feature-a..main` 與 `git log feature-b..main` 皆為空(都含 main tip)
+> - `remote-svn/main` / `remote-svn/test-1` tip SHA 跑前跑後不變
+> - 跑完 HEAD 回到開跑時原分支(`main`)
+
+> **Setup**(case 2):接 case 1 跑完(或同 case 1 fixture)。記下 `git rev-parse remote-svn/main` 與 `git rev-parse remote-svn/test-1`。
+>
+> **Prompt**:
+> ```
+> /tp-merge-main-into-all
+> ```
+>
+> **觀察重點**:
+> - summary 的 `Merged cleanly:` / `CONFLICT (aborted):` 兩行都**不**出現任何 `remote-svn/*` 或 `main`
+> - `git rev-parse remote-svn/main` / `remote-svn/test-1` 與跑前相同
+> - main 自己也沒被 merge 進去(`main` 不在目標)
+
+> **Setup**(case 3):orchestrator 跑 `Reset-Fixture.ps1` + setup case (a)。在 main 改 `shared.txt` 第 1 行並 commit。然後:
+> ```
+> # 從 main 改動前的 commit 建 feature-conflict,改 shared.txt 同一行（會衝突）並 commit
+> # 從 main 改動前的 commit 建 feature-clean,改不相干檔 other.txt 並 commit（可乾淨 merge）
+> ```
+> 確認 main worktree clean,HEAD 回 main。
+>
+> **Prompt**:
+> ```
+> /tp-merge-main-into-all
+> ```
+>
+> **觀察重點**:
+> - `feature-conflict` merge 衝突 → script 對它 `git merge --abort`
+> - 繼續 merge `feature-clean`(乾淨)
+> - stdout 末尾:`CONFLICT (aborted): feature-conflict` + `Merged cleanly: feature-clean`
+> - `feature-conflict` 仍是衝突前 tip、`git status` 乾淨(無殘留衝突)
+> - `feature-clean` 含 main tip
+> - script exit 1(至少一支 CONFLICT)
+> - 跑完 HEAD 回原分支
+
+### Row table
+
+| case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
+|---|---|---|---|---|---|---|---|
+| P2-tp-merge-main-into-all-1 | Happy multi-branch merge | fresh-base+setup+test-1 + feature-a/b 落後 | /tp-merge-main-into-all | feature-a/b 含 main tip / remote-svn/* + main 排除 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-merge-main-into-all-2 | Exclude remote-svn/* + main | 同 case 1 | /tp-merge-main-into-all | remote-svn/* + main 不被動 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-merge-main-into-all-3 | Conflict per-branch abort | feature-conflict + feature-clean | /tp-merge-main-into-all | conflict 分支 abort + clean 分支 merge / exit 1 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+
+---
+
+## tp-db-management
+
+### Cases
+
+| Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
+|---|---|---|---|---|---|
+| P2-tp-db-management-1 | Happy:唯讀檢視 + 標準化 SQL 落 `.turbo-plugin/sql/<env>-db/<branch>/` | fresh-base + setup(a)(`.turbo-plugin/dbhub.local.toml` 已設、`tp-dbhub` MCP 可用、docker 在跑、連 local DB)+ 當前 branch = `main` | /tp-db-management → 用 `tp-dbhub` 唯讀 MCP tool 查 schema/資料(只讀)→ 需寫入側變更時產 `.sql` → 算分組鍵(`git rev-parse --abbrev-ref HEAD` = `main`)→ 檔案落 `.turbo-plugin/sql/local-db/main/<order>-<db>-<purpose>.sql` | agent 只用 `tp-dbhub` **唯讀** MCP tool(沒有透過 MCP 跑 INSERT/UPDATE/CREATE 等)/ 產出的 `.sql` 落在 `.turbo-plugin/sql/local-db/main/` / 檔名遵循 `<order>-<database>-<purpose>.sql` / 該檔出現在 `git status`(非 gitignored)/ 最終回報區分「唯讀檢視到的事實」與「準備供手動執行的 SQL」 | R31(db-management) read-only + 落點 |
+| P2-tp-db-management-2 | Branch 名含 `/` → slash→dash 轉換 | 同 case 1 環境,但當前 branch = `feature/x`(orchestrator 先 `git checkout -b feature/x`) | /tp-db-management → 算分組鍵 `git rev-parse --abbrev-ref HEAD` = `feature/x` → 把 `/` 換 `-` → `feature-x` → 檔案落 `.turbo-plugin/sql/local-db/feature-x/` | 分組子資料夾是 `feature-x`(單層,**不是** 巢狀 `feature/x/`)/ `.sql` 落 `.turbo-plugin/sql/local-db/feature-x/` / 該檔在 `git status` 出現 | KTD10 slash→dash |
+| P2-tp-db-management-3 | dbhub MCP 不可用 → fail loudly | fresh-base + setup(a) 但 `tp-dbhub` MCP 不可用(docker 未起或 `dbhub.local.toml` 未設) | /tp-db-management → 偵測無 `tp-dbhub` MCP tool → fail loudly 提示先跑 `/tp-setup` 設 `dbhub.local.toml` + 確認 docker 在跑 | agent 明確告知「dbhub MCP server 不可用」/ **不**靜默改用猜測或假裝查到資料庫 / 沒產出捏造的 SQL | (fail-loudly Decision Rule) |
+| P2-tp-db-management-4 | Detached HEAD → 拒用 HEAD 當分組鍵 | 同 case 1 環境,但 orchestrator 先 `git checkout <某 commit SHA>`(detached HEAD,`git rev-parse --abbrev-ref HEAD` 回 `HEAD`) | /tp-db-management → 偵測 detached HEAD → fail loudly,請使用者先 checkout 一個具名 branch 再跑 | agent **不**用 `HEAD` 字面當分組鍵 / 沒在 `.turbo-plugin/sql/.../HEAD/` 產檔 / 明確要求 checkout 具名 branch | (detached HEAD guard) |
+
+### 失敗常見 patterns
+
+- **透過 MCP 執行寫操作**:SKILL.md Fixed Constraints「絕不透過 MCP tool 執行 INSERT / UPDATE / DELETE / CREATE / ALTER / DROP」。若 agent 用 `tp-dbhub` MCP 直接改資料庫而非產 `.sql` → FAIL。
+- **SQL 落錯位置**:檔案沒落在 `.turbo-plugin/sql/<env>-db/<branch>/`(如落在舊 dev-flow 的 `sql files/` 或 spec/slug 結構)→ FAIL(de-couple 失敗)。
+- **branch 名沒做 slash→dash**:case 2 子資料夾變成巢狀 `feature/x/` 而非 `feature-x/` → FAIL。
+- **detached HEAD 用 `HEAD` 當鍵**:case 4 在 `.turbo-plugin/sql/.../HEAD/` 產檔而非 fail loudly → FAIL。
+- **把 `.turbo-plugin/sql/` 當 gitignored**:產出的 SQL 沒出現在 `git status`(被當成 worktrees/ 一樣忽略)→ FAIL(SKILL.md 明文 `.turbo-plugin/sql/` 進版控)。
+- **MCP 不可用時靜默猜測**:case 3 agent 沒 fail loudly,改用想像的 schema 編 SQL → FAIL。
+
+### Prompt 範本
+
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a),並確認 `.turbo-plugin/dbhub.local.toml` 已設好、docker 在跑、`tp-dbhub` MCP server 在當前 session 暴露唯讀 tool、連的是一個 local 測試資料庫(含至少一張可查的 table)。當前 branch = `main`。
+>
+> **Prompt**:
+> ```
+> 幫我看一下資料庫某張表的結構,然後幫我準備一支補資料的 SQL — /tp-db-management
+> ```
+>
+> **觀察重點**:
+> - agent 觸發 tp-db-management
+> - 只用 `tp-dbhub` **唯讀** MCP tool 查 schema / 資料(沒透過 MCP 跑任何寫 SQL)
+> - 寫入側需求改為產 `.sql` 檔
+> - 算分組鍵跑 `git rev-parse --abbrev-ref HEAD` = `main`
+> - 產出檔落 `.turbo-plugin/sql/local-db/main/<order>-<database>-<purpose>.sql`
+> - 檔名符合 `<order>-<database>-<purpose>.sql`(如 `01-AppDb-補資料.sql`)
+> - 該檔出現在 `git status`(`.turbo-plugin/sql/` 非 gitignored)
+> - 最終回報區分「唯讀檢視到的事實」與「準備供手動執行的 SQL(含落點路徑)」
+
+> **Setup**(case 2):接 case 1 環境。orchestrator 先 `git checkout -b feature/x`(製造含 `/` 的 branch 名),main worktree clean。
+>
+> **Prompt**:
+> ```
+> 在這個 feature branch 上幫我準備一支改 schema 的 SQL — /tp-db-management
+> ```
+>
+> **觀察重點**:
+> - agent 算分組鍵 `git rev-parse --abbrev-ref HEAD` = `feature/x`
+> - 把 `/` 換 `-` 得 `feature-x`
+> - `.sql` 落 `.turbo-plugin/sql/local-db/feature-x/`(**單層**,不是巢狀 `feature/x/`)
+> - 該檔出現在 `git status`
+
+> **Setup**(case 3):orchestrator 跑 `Reset-Fixture.ps1` + setup case (a),但**不**讓 `tp-dbhub` 可用(docker 不起、或 `dbhub.local.toml` 未設),確認當前 session 沒有 `tp-dbhub` MCP tool。
+>
+> **Prompt**:
+> ```
+> 幫我查一下資料庫 schema — /tp-db-management
+> ```
+>
+> **觀察重點**:
+> - agent 偵測 `tp-dbhub` MCP tool 不可用
+> - fail loudly:明確告知「dbhub MCP server 不可用,請先跑 `/tp-setup` 設定 `.turbo-plugin/dbhub.local.toml` 並確認 docker 在跑」
+> - **不**靜默改用猜測或假裝查到資料庫
+> - 沒產出捏造 schema 的 SQL
+
+> **Setup**(case 4):接 case 1 環境。orchestrator 先 `git checkout <某具體 commit SHA>` 進入 detached HEAD(`git rev-parse --abbrev-ref HEAD` 回 `HEAD`)。
+>
+> **Prompt**:
+> ```
+> 幫我準備一支 SQL — /tp-db-management
+> ```
+>
+> **觀察重點**:
+> - agent 偵測 detached HEAD(分組鍵會是 `HEAD` 字面)
+> - fail loudly,請使用者先 checkout 一個具名 branch 再跑
+> - **不**在 `.turbo-plugin/sql/.../HEAD/` 產檔
+
+### Row table
+
+| case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
+|---|---|---|---|---|---|---|---|
+| P2-tp-db-management-1 | Happy 唯讀 + SQL 落點 | fresh-base+setup + dbhub 可用 + branch=main | /tp-db-management | 唯讀檢視 + `.sql` 落 local-db/main/ + 進版控 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-db-management-2 | branch 含 `/` slash→dash | dbhub 可用 + branch=feature/x | /tp-db-management | 子資料夾 `feature-x`（單層） | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-db-management-3 | dbhub MCP 不可用 fail loudly | setup but dbhub unavailable | /tp-db-management | fail loudly 提示先 setup dbhub | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-db-management-4 | detached HEAD guard | dbhub 可用 + detached HEAD | /tp-db-management | 拒用 HEAD 當鍵 / fail loudly | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+
+---
+
 ## Summary
 
 Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
@@ -1273,7 +1496,7 @@ Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
 |---|---|---|---|---|---|
 | tp-setup | 5 | _ | _ | _ | |
 | tp-pull-from-svn | 4 | _ | _ | _ | |
-| tp-push-to-svn | 4 | _ | _ | _ | |
+| tp-push-to-svn | 6 | _ | _ | _ | case 5/6 = Step 7 release tag |
 | tp-create-remote-test | 3 | _ | _ | _ | |
 | tp-reset-remote-test | 2 | _ | _ | _ | surface-small |
 | tp-build-dotnet-framework-web | 3 | _ | _ | _ | |
@@ -1285,7 +1508,9 @@ Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
 | tp-svn-log | 4 | _ | _ | _ | |
 | tp-csharp-comment | 2 | _ | _ | _ | surface-small |
 | tp-js-comment | 2 | _ | _ | _ | surface-small |
-| **Total** | **45** | _ | _ | _ | |
+| tp-merge-main-into-all | 3 | _ | _ | _ | parity 補(v1.0.0) |
+| tp-db-management | 4 | _ | _ | _ | parity 補(v1.0.0) |
+| **Total** | **54** | _ | _ | _ | |
 
 ---
 

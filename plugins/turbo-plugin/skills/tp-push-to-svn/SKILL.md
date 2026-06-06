@@ -189,7 +189,7 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
 
 - 保留 commits 進 SVN body,被篩除的 commits 留本地 git history 但不在 SVN message。
 - SVN log 顯示新 revision 含繁體中文正確編碼(no mangle)。
-- 本地 `git log --oneline remote/<branch>` 含 `Merge branch '<branch>' into remote/<branch>` 自動 merge commit。
+- 本地 `git log --oneline remote-svn/<branch>` 含 `Merge branch '<branch>' into remote-svn/<branch>` 自動 merge commit。
 - Remote worktree 內 `git status --porcelain` 為空,`svn status` 為空(或只有 git-ignored 的本地檔案)。
 - Unknown type commit 已透過 prompt 處理(保留 / 篩除 / 取消 push)。
 - (Step 7,可選)若使用者選擇建立 release tag:`git tag -l "<branch>-release-*"` 出現新 tag,且 `git rev-parse <tag>` 等於 `git rev-parse remote-svn/<branch>`;若 prepare 為 `Nothing to push` 則不應出現詢問也不應有新 tag。

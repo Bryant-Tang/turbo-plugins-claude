@@ -175,8 +175,8 @@ per RBP Q3 resolution = **(b)** — Skill tests tp-setup 推薦項目實際安�
 
 這些是 Script tests + Skill tests 過程中 orchestrator 在 fixture 主機上建出來的痕跡,Skill tests 結束後可選擇保留(下次測試重用)或清掉:
 
-- [ ] `C:\Turbo\test-turbo-plugin\test-turbo-plugin` 整個資料夾(下次測試 `Reset-Fixture.ps1` 會重建,所以可砍可留)
-- [ ] `C:\Turbo\test-turbo-plugin\svn-repo` SVN repo(下次測試 `Build-SeedRepo.ps1` 會重建)
+- [ ] `<VALIDATION_ROOT>/proj` 整個資料夾(`<VALIDATION_ROOT>` 慣例見 `skill-tests.md` 開頭;下次測試 `Reset-Fixture.ps1` 會重建,所以可砍可留)
+- [ ] `<VALIDATION_ROOT>/svn-repo` SVN repo(下次測試 `Build-SeedRepo.ps1` 會重建)
 
 > 這兩個目錄不在「使用者主機污染」範疇 — 是測試專用沙盒。保留亦可,作為下次 v1.x 測試重用。
 
