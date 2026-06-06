@@ -1,0 +1,136 @@
+name: Script Tests
+
+# Convention-based auto-discovery (KTD6 / R7): any plugin that ships the standard
+# tests/ entrypoint is discovered automatically. Adding a new plugin that follows
+# the layout needs NO change to this workflow.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── discover ────────────────────────────────────────────────────────────────
+  # Globs plugins/*/tests/ for the standard orchestrator entrypoint(s) and emits a
+  # JSON matrix of qualifying plugin dirs. NOT hardcoded — today only
+  # plugins/turbo-plugin qualifies, but it is found by globbing, not by name.
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      count: ${{ steps.set.outputs.count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Discover plugins with a standard test entrypoint
+        id: set
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugins=()
+          # A plugin qualifies if its tests/ dir has either orchestrator entrypoint.
+          for dir in plugins/*/tests/; do
+            [ -d "$dir" ] || continue
+            plugin="${dir%/tests/}"
+            if [ -f "${dir}Invoke-ScriptTests.ps1" ] || [ -f "${dir}invoke-script-tests.sh" ]; then
+              plugins+=("$plugin")
+            fi
+          done
+          # Build a JSON object: {"plugin":["plugins/turbo-plugin",...]}
+          json='{"plugin":['
+          first=1
+          for p in "${plugins[@]+"${plugins[@]}"}"; do
+            if [ $first -eq 1 ]; then first=0; else json="${json},"; fi
+            json="${json}\"${p}\""
+          done
+          json="${json}]}"
+          echo "Discovered ${#plugins[@]} plugin(s): ${plugins[*]+"${plugins[*]}"}"
+          echo "matrix=${json}" >> "$GITHUB_OUTPUT"
+          echo "count=${#plugins[@]}" >> "$GITHUB_OUTPUT"
+
+  # ── test-windows ────────────────────────────────────────────────────────────
+  # Windows PowerShell 5.1 (powershell.exe, NOT pwsh) runs ALL .ps1 + ALL .sh
+  # (git-bash is present on windows runners). Orchestrator is CWD-independent
+  # (resolves paths from $PSScriptRoot), so we invoke it from the repo root with
+  # the matrix-relative path. Its sandbox base lives under <plugin>/tests/.sandbox/
+  # (gitignored — created fresh on the runner).
+  test-windows:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install Subversion
+        shell: pwsh
+        run: |
+          # windows-latest may already have svn; tolerate either outcome.
+          choco install svn --no-progress -y
+        continue-on-error: true
+
+      - name: Configure git identity (defensive)
+        shell: bash
+        run: |
+          git config --global user.email "ci@turbo-plugin"
+          git config --global user.name "turbo-plugin-ci"
+
+      - name: Run PowerShell orchestrator (Windows PowerShell 5.1)
+        shell: cmd
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${{ matrix.plugin }}/tests/Invoke-ScriptTests.ps1
+
+  # ── test-ubuntu ─────────────────────────────────────────────────────────────
+  # bash runs the .sh orchestrator. The .NET/IIS .sh tests SKIP-gate themselves
+  # (print OK (SKIPPED:…) + exit 0) when powershell is absent; the SVN/git + hook
+  # tests RUN. Orchestrator is CWD-independent (resolves from BASH_SOURCE).
+  test-ubuntu:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install Subversion
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y subversion
+
+      - name: Configure git identity (defensive)
+        run: |
+          git config --global user.email "ci@turbo-plugin"
+          git config --global user.name "turbo-plugin-ci"
+
+      - name: Run bash orchestrator
+        shell: bash
+        run: |
+          set -o pipefail
+          bash ${{ matrix.plugin }}/tests/invoke-script-tests.sh 2>&1 | tee orchestrator-output.txt
+
+      - name: SKIP visibility (R10)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          # The .sh orchestrator buckets cross-platform-incompatible cases as a pass
+          # (OK (SKIPPED:…) + exit 0). Surface them so SKIP is distinguishable from
+          # PASS in the CI log. Non-fatal.
+          if [ -f orchestrator-output.txt ]; then
+            n=$(grep -c "(SKIPPED" orchestrator-output.txt || true)
+            echo "Skipped ${n} cross-platform-incompatible case(s) on ubuntu"
+          else
+            echo "Skipped 0 cross-platform-incompatible cases on ubuntu (no output captured)"
+          fi
