@@ -49,10 +49,10 @@ try {
     $publishConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'configuration' -CliValue $Configuration -Default 'Release'
     $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default 'Any CPU'
 
-    # Pre-publish: run pack-content for frontend. pack-content.ps1 is shipped in this
-    # plugin alongside publish-web.ps1, so the prior Test-Path guard was redundant —
-    # pack-content already exits 0 with a skip message when [frontend] isn't configured.
-    & ([System.IO.Path]::Combine($PSScriptRoot, 'pack-content.ps1'))
+    # Pre-publish: run Compress-Content for frontend. Compress-Content.ps1 is shipped in this
+    # plugin alongside Publish-Web.ps1, so the prior Test-Path guard was redundant —
+    # Compress-Content already exits 0 with a skip message when [frontend] isn't configured.
+    & ([System.IO.Path]::Combine($PSScriptRoot, 'Compress-Content.ps1'))
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $publishProfileName = [System.IO.Path]::GetFileNameWithoutExtension($pubxmlAbsPath)

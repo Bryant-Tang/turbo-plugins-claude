@@ -26,6 +26,11 @@
 - doc: skill-test 套件改 `<VALIDATION_ROOT>` placeholder + 反映新結構(remote-svn / `.turbo-plugin/worktrees/` / release tag / 無 .code-workspace)+ 新增 2 skill case(16 skills / 54 cases)（U8）
 - doc: 根 `CLAUDE.md` 改 marketplace plugin-agnostic 通用規範 + 明訂兩層測試標準;plugin 專屬規範(worktree 模型、commit-type 過濾、C#/JS 註解)移進 `README.md`（U12）
 
+### Fixed
+
+- fix: `Build-Web.ps1` / `Publish-Web.ps1` 呼叫已不存在的 `pack-content.ps1`(verb-approval 改名為 `Compress-Content.ps1`,呼叫端未同步)——`$ErrorActionPreference='Stop'` 下每次 `/tp-build`、`/tp-publish` 都在 frontend pack 步驟 throw → exit 1;呼叫端與註解改指向 `Compress-Content.ps1`(code review P0)
+- fix: `tp-reset-remote-test` SKILL 的 PowerShell invocation 用 GNU 風格 `--diff-only`——`powershell -File` 會靜默忽略該旗標,使 `$DiffOnly=False`,「預覽」步驟反而直接執行真正的 `git reset --hard`;改用 PS switch `-DiffOnly`,並補上四處遺漏的必填 `-N <n>` / `--n <n>`(code review P1)
+
 ## [1.0.0] - 2026-05-27
 
 turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `tnf` / `tgs` / `tpi`）的 dev 流程進單一 plugin,加上 v1.0 refinements(apphost 跟 VS 分離、tp-setup 4-Phase 重組、Claude Code 友善功能推薦、svn-log 中文亂碼修正 + 互動分頁、tp-suggest-ignore 文件修正)。

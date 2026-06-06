@@ -16,13 +16,13 @@ allowed-tools: Bash, Read, AskUserQuestion
 
 ### Step 1 — Preview LOSE / GAIN / FILES_LOST_AFTER_PUSH
 
-Run the script with `--diff-only` to compute and print the LOSE / GAIN summary without performing the reset.
+Run the script in diff-only mode to compute and print the LOSE / GAIN summary without performing the reset. `<n>` is the test number from the user's `--n` argument. **PowerShell 用 `-DiffOnly`(單破折號 switch);GNU 風格的 `--diff-only` 在 `powershell -File` 下會被靜默忽略,導致 `$DiffOnly=False` 而直接跑真正的 `git reset --hard`。**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Reset-RemoteTest.ps1" --diff-only
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Reset-RemoteTest.ps1" -N <n> -DiffOnly
 ```
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.sh" --diff-only
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.sh" --n <n> --diff-only
 ```
 
 Script 印出:
@@ -54,12 +54,12 @@ If Step 1 was not the "already equal" early exit:
 
 ### Step 3 — Execute the reset
 
-Re-run the script without `--diff-only`:
+Re-run the script without the diff-only flag:
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Reset-RemoteTest.ps1"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Reset-RemoteTest.ps1" -N <n>
 ```
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.sh"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset-remote-test.sh" --n <n>
 ```
 
 Script 跑 `git reset --hard main` 然後 emit `Reset test-<n> to main.`
