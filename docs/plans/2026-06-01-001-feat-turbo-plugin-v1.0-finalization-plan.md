@@ -1,6 +1,6 @@
 ---
 type: feat
-status: active
+status: completed
 date: 2026-06-01
 origin: docs/brainstorms/2026-06-01-turbo-plugin-v1.0-finalization-requirements.md
 ---

@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- feat: GitHub Actions 自動探索測試 CI(`.github/workflows/tests.yml`)——discover job 掃 `plugins/*/tests/` 輸出 matrix,windows-latest 跑全部 `.ps1`+`.sh`、ubuntu-latest 跑可移植 `.sh`,缺工具測試自我 SKIP(≠fail),新增遵循佈局的 plugin 免改 yml（U7）
+- feat: release tag——`Tag-Release.ps1`/`tag-release.sh` + `tp-push-to-svn` Step 7,判準為「有產出 git merge commit」(即使檔案全被 `svn:ignore`、svn commit 為空也照問;nothing-to-push 才跳過)（U9）
+- feat: `tp-merge-main-into-all`——把最新 main merge 進所有「非 main 且非 `remote-svn/*`」的本地分支,衝突時 per-branch `git merge --abort` + 標記 CONFLICT 續跑（U10）
+- feat: `tp-db-management`——DBHub(`tp-dbhub` MCP)唯讀檢視 + SQL 標準化到 `.turbo-plugin/sql/<env>-db/<branch>/`(branch 名 `/`→`-`),de-couple 舊 dev-flow slug 耦合（U11）
+
 ### Changed
 
 - refactor: 全 plugin scripts + tests 改名符合 PowerShell `Get-Verb` 規範(Verb-Noun PascalCase / lib noun-only / Bash kebab),Phase 1/2 jargon 改 Script/Skill tests
@@ -13,8 +20,11 @@
 - refactor: `_Common.ps1` 從 `tests/unit/scripts/` 搬到 `tests/lib/ScriptsCommon.ps1` (KD-8)
 - refactor: `resolve-iis-settings.ps1` 重新分類為 lib (`scripts/lib/IisHelpers.ps1`)
 - refactor: `tools/verify-approved-verbs.ps1` 新增 — 用 `Get-Verb` + Build/Deploy policy whitelist 強制命名規範
-
-(無 fix / feat — 純 internal refactor 無 user-facing 行為改變)
+- refactor: worktree 容器從 sibling `<proj>.worktrees/` 移進 `<proj>/.turbo-plugin/worktrees/`(抽 `Get-WorktreesDir`/`get_worktrees_dir` helper,7 對 SVN script 改呼叫);worktree 目錄與 branch ref 改 `remote-svn-*` / `remote-svn/*` 命名（U1/U2）
+- feat: `tp-setup` 在首次 `git worktree add` 之前把 `.turbo-plugin/worktrees/` 寫進 `.gitignore` + svn:ignore,確保巢狀 worktree 不弄髒主 worktree status（U2）
+- refactor: 測試工作根改 repo 相對 gitignored `tests/.sandbox/`、含空格路徑容忍(`GetFullPath` 長形)、`svn --config-dir` 隔離 `%APPDATA%` 全域狀態,消除所有機器專屬絕對路徑;真跨平台 `.sh` 測試 powershell-free + .NET/IIS `.sh` 依能力 SKIP 以支援 ubuntu CI（U4/U5）
+- doc: skill-test 套件改 `<VALIDATION_ROOT>` placeholder + 反映新結構(remote-svn / `.turbo-plugin/worktrees/` / release tag / 無 .code-workspace)+ 新增 2 skill case(16 skills / 54 cases)（U8）
+- doc: 根 `CLAUDE.md` 改 marketplace plugin-agnostic 通用規範 + 明訂兩層測試標準;plugin 專屬規範(worktree 模型、commit-type 過濾、C#/JS 註解)移進 `README.md`（U12）
 
 ## [1.0.0] - 2026-05-27
 
