@@ -1,32 +1,12 @@
 {
-  "name": "turbo-plugins-claude",
+  "name": "turbo-plugins-claude-dev",
   "owner": {
     "name": "Bryant Tang"
   },
   "plugins": [
     {
-      "name": "tdp",
-      "description": "Web project development workflows.",
-      "source": "./plugins/turbo-dev-pack"
-    },
-    {
-      "name": "tnf",
-      "description": ".NET Framework web build/run/publish commands.",
-      "source": "./plugins/turbo-dotnet-framework-commands"
-    },
-    {
-      "name": "tgs",
-      "description": "Git workflows bridging a remote SVN repository.",
-      "source": "./plugins/turbo-git-with-remote-svn"
-    },
-    {
-      "name": "tpi",
-      "description": "Cross-plugin integration.",
-      "source": "./plugins/turbo-plugins-integration"
-    },
-    {
       "name": "turbo-plugin",
-      "description": ".NET Framework Web + git+SVN bridged 環境的本機開發雜務工具集（14 個 skill）。env-free，集中設定於 .turbo-plugin/，取代 tdp/tnf/tgs/tpi。",
+      "description": ".NET Framework Web + git+SVN bridged 環境的本機開發雜務工具集（16 個 skill）。env-free，集中設定於 .turbo-plugin/。",
       "source": "./plugins/turbo-plugin"
     }
   ]
