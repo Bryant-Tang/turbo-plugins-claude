@@ -26,10 +26,10 @@
 | Skill | 用途 |
 |---|---|
 | `/tp-setup` | 唯一設定入口(四 case:新建 / 接管現有 git+SVN / 主 worktree 補設定 / peer-mode) |
-| `/tp-pull-from-svn` | 從 SVN 拉更新到 `remote/main` 並 merge 進工作分支 |
+| `/tp-pull-from-svn` | 從 SVN 拉更新到 `remote-svn/main` 並 merge 進工作分支 |
 | `/tp-push-to-svn` | 將工作分支推送上 SVN(自 parse subject 篩選 conventional commit type) |
-| `/tp-svn-log` | 在 `remote-*` worktree 跑 SVN log |
-| `/tp-create-remote-test` | 建立 `remote/test-<n>` 分支與對應 worktree |
+| `/tp-svn-log` | 在 `remote-svn-*` worktree 跑 SVN log |
+| `/tp-create-remote-test` | 建立 `remote-svn/test-<n>` 分支與對應 worktree |
 | `/tp-reset-remote-test` | 從 main 重設 test-<n> 分支 |
 | `/tp-build-dotnet-framework-web` | MSBuild build .NET Framework Web 專案 |
 | `/tp-run-dotnet-framework-web` | 啟動 IIS Express 跑專案,內含 listening 健康檢查 + 跨 worktree self-heal |
@@ -73,6 +73,34 @@ enabled = false
 
 同一專案在所有 worktree 之間仍只能啟動一個 IIS Express instance(port / site 從專案檔產生,跨 worktree 算出相同值,物理上不可能並發);切換 worktree 跑 `tp-run` 走「同 site 已存在則先 stop 再用新 physicalPath 重啟」邏輯。
 
+## Worktree 模型（git ↔ SVN 橋接）
+
+`turbo-plugin` 透過多個 git worktree 把 SVN 橋接職責拆開，全部收進主 worktree 內的 `.turbo-plugin/worktrees/`（整個 gitignored，於首次 `git worktree add` 前就先寫入 ignore 規則）：
+
+```
+<proj>/                                      ← main worktree（main / 工作分支切換）
+└─ .turbo-plugin/
+    └─ worktrees/                            ← gitignored 整個
+        ├─ remote-svn-main/                  ← branch: remote-svn/main，SVN trunk 同步用
+        └─ remote-svn-test-<n>/              ← branch: remote-svn/test-<n>，SVN test 分支同步用
+```
+
+- 目錄名（`remote-svn-main` / `remote-svn-test-<n>`）與 branch ref（`remote-svn/main` / `remote-svn/test-<n>`）兩維度一致，集中由 `Resolve-RemoteWorktree` / `resolve_remote_worktree`（`scripts/lib/`）解析；worktree 容器路徑由 `Get-WorktreesDir` / `get_worktrees_dir` helper 統一定義。
+- `remote-svn-*` worktree 是 git/SVN 橋樑，通常不直接編輯。
+- 在任一 worktree 開的 Claude session 都能呼叫 turbo-plugin 指令——script 會自動定位主 worktree。
+- turbo-plugin 只管 `remote-svn-*` 橋接 worktree，**不建立 / 不碰**個人開發用的 `dev-<n>` 隔離 worktree（若你自行用 `git worktree add` 建 peer worktree，turbo-plugin 不干涉）。
+
+## Commit message 類型過濾（`tp-push-to-svn`）
+
+`tp-push-to-svn` 在組裝 SVN commit body 時會 parse 每個 commit 的 subject 前綴：過濾掉 `Merge ` / `doc` / `docs` / `db` / `chore` 開頭的 subject，只保留 `feat` / `fix` / `refactor`。所以 commit type 用對才會出現在 SVN history——程式碼變更用 `feat` / `fix`、行為不變的整理用 `refactor`、純文件 / SQL / 雜務用 `doc` / `db` / `chore`（後三者不會進 SVN body）。
+
+## 程式碼註解 convention（`tp-csharp-comment` / `tp-js-comment`）
+
+改本專案程式碼時套用對應註解 skill：
+
+- **C# 註解**：改 C# 程式碼呼叫 `/tp-csharp-comment`。
+- **JS / TS 註解**：改 `.js` / `.ts`，或 `.vue` / `.cshtml` / `.html` 中的 `<script>` 區塊呼叫 `/tp-js-comment`。
+
 ## Pattern A vs Pattern B
 
 `turbo-plugin` 支援兩種 Claude session 啟動方式:
@@ -87,7 +115,7 @@ enabled = false
 
 ### Pattern B — 直接在 peer worktree 啟動
 
-1. `cd <proj>.worktrees/dev-x` 進 peer worktree
+1. `cd` 進某個 peer worktree
 2. 啟動 Claude Code session
 
 優點:適合長時間在同一 peer worktree 工作。
