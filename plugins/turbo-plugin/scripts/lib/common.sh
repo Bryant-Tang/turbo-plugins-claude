@@ -307,9 +307,6 @@ read_turbo_plugin_config() {
         # Targeted lookup: emit sentinel-prefixed value when section+key match.
         # Use $filter_key (not section) as the sentinel for "targeted mode" because
         # top-level keys have an empty section name and `-n ""` is false.
-        # v0.2.7+ F-U3.11 fix: previously checked `-n "$filter_section" && -n "$filter_key"`
-        # which meant schema_version (top-level, section="") never hit the sentinel branch,
-        # so check_turbo_plugin_config_schema never emitted the schema_version warning on bash side.
         if [[ "$section" == "$filter_section" && "$key" == "$filter_key" ]]; then
           echo "__TP_FOUND__:${val}"
           return 0
@@ -320,30 +317,6 @@ read_turbo_plugin_config() {
       fi
     fi
   done < "$config_path"
-}
-
-# Module-scope guard so the schema_version mismatch warning is emitted only ONCE per process,
-# regardless of how many resolve_config_value calls a single script makes.
-_TP_SCHEMA_WARNED="${_TP_SCHEMA_WARNED:-false}"
-
-# Emit a single stderr warning if the top-level `schema_version` key in config.toml is present
-# and != 1. Absent schema_version is treated as v1 (no warning).
-check_turbo_plugin_config_schema() {
-  local config_path="$1"
-  if [[ "$_TP_SCHEMA_WARNED" == "true" ]]; then return 0; fi
-  [[ -f "$config_path" ]] || return 0
-  # The top-level key is reported by read_turbo_plugin_config with an empty section name (".schema_version=...").
-  local schema_line
-  schema_line="$(read_turbo_plugin_config "$config_path" '' 'schema_version' 2>/dev/null || true)"
-  if [[ "$schema_line" == __TP_FOUND__:* ]]; then
-    local version="${schema_line#__TP_FOUND__:}"
-    # schema_version 2 adds [svn] force_bash. Versions 1 and 2 are both recognized.
-    if [[ "$version" != "1" && "$version" != "2" ]]; then
-      echo "turbo-plugin: .turbo-plugin/config.toml schema_version=$version is not recognized (expected 1 or 2); some settings may be ignored. Run /tp-setup option (c) to upgrade." >&2
-      _TP_SCHEMA_WARNED=true
-      export _TP_SCHEMA_WARNED
-    fi
-  fi
 }
 
 # Lookup chain: CLI arg → config.local.toml → config.toml → built-in default
@@ -378,9 +351,8 @@ resolve_config_value() {
       return 0
     fi
   fi
-  # 2. config.toml next (schema check runs on the canonical file only)
+  # 2. config.toml next (canonical version-controlled file)
   if [[ -f "$config_path" ]]; then
-    check_turbo_plugin_config_schema "$config_path"
     sentinel_line="$(read_turbo_plugin_config "$config_path" "$section" "$key")"
     if [[ "$sentinel_line" == __TP_FOUND__:* ]]; then
       echo "${sentinel_line#__TP_FOUND__:}"

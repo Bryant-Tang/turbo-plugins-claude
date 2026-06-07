@@ -203,7 +203,6 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
 - Manual: 設 `.commitlintrc.json` = `{"extends": ["@commitlint/config-conventional"]}` 不顯式 rules.type-enum → /tp-push-to-svn 應印 stderr notice 並用 default 12 類繼續 push,**不**靜默用空 type list 把所有 commit 篩光。
 - **SHA pin guard (race protection)**: 跑 `/tp-push-to-svn --branch test-1` 進到 Step 5 Accept 前,在另一個 terminal `git commit` 新 commit 到 working branch。回 SKILL 按 Accept,push-to-svn-commit 應 throw `Branch '...' has new commits since prepare (pinned: ..., current: ...). Abort the merge...`。執行該指示,remote worktree `git status` clean。重跑 `/tp-push-to-svn` 應正常進。**.ps1 + .sh 兩條都要跑。**
 - **SHA pin cleanup**: 成功 push 後,`<main>/.git/worktrees/<remote-name>/MERGE_HEAD.tp_branch_sha` 不應存在(`Test-Path` / `[[ -f ]]` 皆 false)。
-- **schema_version warning**: 在 `.turbo-plugin/config.toml` 加 `schema_version = 2`,跑 `/tp-push-to-svn`(或任何 SKILL),stderr 應出現一行 `turbo-plugin: ... schema_version=2 is not recognized ...`。同一 process 後續 read 不重複出現。
 - **PENDING_MERGE Continue path**: prepare 偵到既有 staged merge → SKILL 三選一選 Continue(option 2)→ 略過 prepare 直接進 Step 3,既有 staged content 推上 SVN,push 成功。
 - **PENDING_MERGE Cancel path**: prepare 偵到既有 staged merge → SKILL 三選一選 Cancel(option 3)→ SKILL 結束,remote worktree `git status` 仍顯示 unstaged merge state(刻意不清,讓使用者手動處理)。
 

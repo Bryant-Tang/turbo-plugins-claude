@@ -473,26 +473,6 @@ function Read-TurboPluginConfig {
 #   1. $CliValue (already-resolved CLI argument; pass $null if not provided)
 #   2. config.toml under repo-root .turbo-plugin/config.toml, $Section.$Key
 #   3. $Default (built-in default; pass $null to skip)
-# Module-scope guard so the schema_version mismatch warning is emitted only ONCE per process,
-# regardless of how many Resolve-ConfigValue calls a single script makes.
-$script:_TpSchemaWarned = $false
-
-function Test-TurboPluginConfigSchema {
-    param([Parameter(Mandatory = $true)]$Config)
-    if ($script:_TpSchemaWarned) { return }
-    if ($null -eq $Config) { return }
-    # `schema_version` is a top-level key (no section), so it lives under the empty-string section.
-    if (-not $Config.ContainsKey('')) { return }
-    $topLevel = $Config['']
-    if (-not $topLevel.ContainsKey('schema_version')) { return }
-    $version = $topLevel['schema_version']
-    # schema_version 2 adds [svn] force_bash. Versions 1 and 2 are both recognized.
-    if ($version -ne 1 -and $version -ne 2) {
-        [Console]::Error.WriteLine("turbo-plugin: .turbo-plugin/config.toml schema_version=$version is not recognized (expected 1 or 2); some settings may be ignored. Run /tp-setup option (c) to upgrade.")
-        $script:_TpSchemaWarned = $true
-    }
-}
-
 function Resolve-ConfigValue {
     param(
         [string]$RepoRoot,
@@ -509,7 +489,6 @@ function Resolve-ConfigValue {
     $configPath      = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
     $configLocalPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.local.toml')
     $cfg = Read-TurboPluginConfig -ConfigPath @($configPath, $configLocalPath)
-    Test-TurboPluginConfigSchema -Config $cfg
     if ($cfg.ContainsKey($Section) -and $cfg[$Section].ContainsKey($Key)) {
         return $cfg[$Section][$Key]
     }
