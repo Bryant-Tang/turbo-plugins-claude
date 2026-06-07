@@ -135,18 +135,42 @@ Describe 'New-RemoteBridge' {
         }
     }
 
-    Context 'Case 4: bridge branch already exists -> guard fires before svn' {
+    Context 'Case 4: complete bridge already exists -> guard fires before svn' {
         It 'rejects with "Bridge branch ... already exists"' {
             $sb = New-Sandbox -Tag 'nrb-4'
             try {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-GitMainRepo -Root $root -CreateWorktreesDir
-                # Pre-create the bridge branch so the already-exists guard trips.
+                # Pre-create BOTH the bridge branch AND its worktree dir so this is a genuine
+                # complete bridge (not the inconsistent ref-XOR-dir partial state in Case 4b).
                 $null = Run-Git -Cwd $root -GitArgs @('branch', 'remote-svn/feature-x', 'main')
+                $wtDir = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feature-x')
+                $null = New-Item -ItemType Directory -Path $wtDir -Force
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
                                        -ScriptArgs @('-Branch', 'feature-x', '-SvnUrl', 'file:///nonexistent/branches/x')
                 $res.ExitCode | Should -Not -Be 0
                 $res.Combined | Should -Match "Bridge branch 'remote-svn/feature-x' already exists\."
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 4b: inconsistent partial state (ref without worktree dir) -> recovery guidance' {
+        It 'rejects with an inconsistent-state message naming the recovery steps' {
+            $sb = New-Sandbox -Tag 'nrb-4b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                # Bridge branch exists but NO worktree dir -> leftover from an interrupted run.
+                $null = Run-Git -Cwd $root -GitArgs @('branch', 'remote-svn/feature-x', 'main')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feature-x', '-SvnUrl', 'file:///nonexistent/branches/x')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'Inconsistent bridge state'
+                $res.Combined | Should -Match 'git worktree prune'
+                # Must NOT have reached the svn-mutation phase.
+                $res.Combined | Should -Not -Match 'Creating SVN bridge'
             } finally {
                 Remove-Sandbox -Dir $sb
             }

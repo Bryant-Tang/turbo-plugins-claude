@@ -83,10 +83,10 @@ enabled = false
 └─ .turbo-plugin/
     └─ worktrees/                            ← gitignored 整個
         ├─ remote-svn-main/                  ← branch: remote-svn/main，SVN trunk 同步用
-        └─ remote-svn-test-<n>/              ← branch: remote-svn/test-<n>，SVN test 分支同步用
+        └─ remote-svn-<branch>/              ← branch: remote-svn/<branch>，任意工作分支的 SVN bridge
 ```
 
-- 目錄名（`remote-svn-main` / `remote-svn-test-<n>`）與 branch ref（`remote-svn/main` / `remote-svn/test-<n>`）兩維度一致，集中由 `Resolve-RemoteWorktree` / `resolve_remote_worktree`（`scripts/lib/`）解析；worktree 容器路徑由 `Get-WorktreesDir` / `get_worktrees_dir` helper 統一定義。
+- 目錄名（`remote-svn-main` / `remote-svn-<branch>`）與 branch ref（`remote-svn/main` / `remote-svn/<branch>`）兩維度一致，集中由 `Resolve-RemoteWorktree` / `resolve_remote_worktree`（`scripts/lib/`）解析；worktree 容器路徑由 `Get-WorktreesDir` / `get_worktrees_dir` helper 統一定義。工作分支名中的斜線（如 `feat/login`）在目錄名會轉成 dash（`remote-svn-feat-login`），branch ref 則保留斜線（`remote-svn/feat/login`）。
 - `remote-svn-*` worktree 是 git/SVN 橋樑，通常不直接編輯。
 - 在任一 worktree 開的 Claude session 都能呼叫 turbo-plugin 指令——script 會自動定位主 worktree。
 - turbo-plugin 只管 `remote-svn-*` 橋接 worktree，**不建立 / 不碰**個人開發用的 `dev-<n>` 隔離 worktree（若你自行用 `git worktree add` 建 peer worktree，turbo-plugin 不干涉）。

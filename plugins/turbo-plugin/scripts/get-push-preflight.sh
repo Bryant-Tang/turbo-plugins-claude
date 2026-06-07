@@ -13,6 +13,17 @@ source "$SCRIPT_DIR/lib/common.sh"
 PREFIX='TP_TOKEN:'
 BRANCH=''
 
+# Emit a terminal ERROR token on the SKILL's routing channel (parity with the .ps1 catch),
+# for a POST-sanitization failure (e.g. MAX_PATH in resolve) so it is never a tokenless
+# non-zero exit. (Pre-sanitization rejection stays tokenless -- anti-forge.) Collapse
+# newlines and neutralize any embedded TP_TOKEN: so the reason can't forge a line.
+_die_token() {
+  local reason
+  reason="$(printf '%s' "$1" | tr '\r\n' '  ' | sed 's/TP_TOKEN:/TP_TOKEN_/g')"
+  echo "${PREFIX}ERROR reason=$reason"
+  exit 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch) [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
@@ -32,6 +43,8 @@ fi
 
 # Sanitize the requested branch BEFORE emitting any token (anti-forge). Invalid input
 # is a hard error, never a token.
+# Sanitization failure stays tokenless (anti-forge): a forged/invalid branch never earns a
+# token. Only POST-sanitization failures (e.g. MAX_PATH in resolve below) emit TP_TOKEN:ERROR.
 assert_valid_remote_branch_name "$BRANCH" || exit 1
 
 MAIN_WORKTREE="$(get_main_worktree)"
@@ -53,7 +66,7 @@ if [[ "$CURRENT" != "$BRANCH" ]]; then
   exit 0
 fi
 
-RESOLVED="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR")" || exit 1
+if ! RESOLVED="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR" 2>&1)"; then _die_token "$RESOLVED"; fi
 REMOTE_PATH="${RESOLVED##*|}"
 if [[ -d "$REMOTE_PATH" ]]; then
   echo "${PREFIX}BRIDGE_PRESENT requested=$BRANCH"

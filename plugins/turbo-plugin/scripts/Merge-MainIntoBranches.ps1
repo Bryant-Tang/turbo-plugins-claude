@@ -35,6 +35,9 @@ try {
 
     # Refuse to run from / against a dirty main worktree.
     $status = (& git -C $mainWorktree status --porcelain 2>$null | Out-String).Trim()
+    # git status itself can fail (e.g. corrupted index); 2>$null hides the error and the
+    # empty result would otherwise read as "clean" and bypass this guard. Fail loudly.
+    if ($LASTEXITCODE -ne 0) { throw "git status --porcelain failed (exit $LASTEXITCODE) in $mainWorktree" }
     if (-not [string]::IsNullOrWhiteSpace($status)) {
         throw "Main worktree is dirty ($mainWorktree). Commit or stash changes before merging main into branches."
     }

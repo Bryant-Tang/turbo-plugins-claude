@@ -112,11 +112,13 @@ test_unknown_arg() {
 }
 
 # ── Case 5: pre-existing bridge branch → already-exists guard (git only) ───────
-# remote-svn/<branch> already exists → reject BEFORE the trust check / rollback.
+# Complete bridge (ref AND worktree dir) already exists → reject BEFORE trust / rollback.
 test_bridge_already_exists() {
     local root out rc
     root="$(make_main_repo "$SB")"
     git -C "$root" branch 'remote-svn/feat-x' 'main' >/dev/null 2>&1
+    # Genuine complete bridge: also create the worktree dir (not the ref-XOR-dir partial state).
+    mkdir -p "$root/.turbo-plugin/worktrees/remote-svn-feat-x"
     out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-x --svn-url 'file:///nope/branches/feat-x' 2>&1)"; rc=$?
     assertNotEquals 'pre-existing bridge exits non-zero' 0 "$rc"
     case "$out" in
@@ -126,6 +128,28 @@ test_bridge_already_exists() {
     case "$out" in
         *"rolling back"*) fail "unexpectedly entered rollback: $out" ;;
         *) assertTrue 'did not enter rollback' 0 ;;
+    esac
+}
+
+# Inconsistent partial state (ref without worktree dir) → recovery guidance, no svn mutation.
+test_bridge_inconsistent_partial_state() {
+    local root out rc
+    root="$(make_main_repo "$SB")"
+    # Bridge branch exists but NO worktree dir -> leftover from an interrupted run.
+    git -C "$root" branch 'remote-svn/feat-x' 'main' >/dev/null 2>&1
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-x --svn-url 'file:///nope/branches/feat-x' 2>&1)"; rc=$?
+    assertNotEquals 'inconsistent state exits non-zero' 0 "$rc"
+    case "$out" in
+        *"inconsistent bridge state"*) assertTrue 'reports inconsistent state' 0 ;;
+        *) fail "expected 'inconsistent bridge state', got: $out" ;;
+    esac
+    case "$out" in
+        *"git worktree prune"*) assertTrue 'names recovery step' 0 ;;
+        *) fail "expected 'git worktree prune' guidance, got: $out" ;;
+    esac
+    case "$out" in
+        *"Creating SVN bridge"*) fail "unexpectedly reached svn mutation: $out" ;;
+        *) assertTrue 'did not reach svn mutation' 0 ;;
     esac
 }
 

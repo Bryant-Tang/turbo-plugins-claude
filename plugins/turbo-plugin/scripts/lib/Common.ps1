@@ -203,7 +203,9 @@ function Resolve-RemoteWorktree {
     # MAX_PATH guard — distinct from the sanitization rejection above. Windows PS 5.1
     # / .NET Framework cannot create paths longer than 260 chars without long-path
     # support; fail loudly with guidance rather than letting the create blow up later.
-    if ($path.Length -gt 260) {
+    # MAX_PATH (260) counts the terminating NUL, so the usable string length is 259 —
+    # reject at >= 260 (a 260-char path passes -gt 260 but Windows still refuses it).
+    if ($path.Length -ge 260) {
         throw "Worktree path exceeds the Windows MAX_PATH limit (260): '$path' is $($path.Length) chars. Shorten the clone path, or enable long-path support (git config core.longpaths true, or the \\?\ prefix)."
     }
 

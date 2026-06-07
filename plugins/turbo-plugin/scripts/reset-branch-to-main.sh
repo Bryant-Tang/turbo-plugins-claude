@@ -89,13 +89,21 @@ if [[ "$ORIGINAL_BRANCH" != "$BRANCH" ]]; then
 fi
 
 if ! git -C "$MAIN_WORKTREE" reset --hard 'main'; then
-  [[ "$SWITCHED" == true ]] && git -C "$MAIN_WORKTREE" checkout "$ORIGINAL_BRANCH"
+  if [[ "$SWITCHED" == true ]]; then
+    if ! git -C "$MAIN_WORKTREE" checkout "$ORIGINAL_BRANCH"; then
+      echo "Error: git reset --hard main failed on $BRANCH, and the recovery checkout back to '$ORIGINAL_BRANCH' also failed. The main worktree is now left on '$BRANCH'. Manually run 'git checkout $ORIGINAL_BRANCH' in the main worktree: $MAIN_WORKTREE" >&2
+      exit 1
+    fi
+  fi
   echo "Error: git reset --hard main failed on $BRANCH" >&2
   exit 1
 fi
 
 if [[ "$SWITCHED" == true ]]; then
-  git -C "$MAIN_WORKTREE" checkout "$ORIGINAL_BRANCH"
+  if ! git -C "$MAIN_WORKTREE" checkout "$ORIGINAL_BRANCH"; then
+    echo "Error: reset succeeded but could not switch back to '$ORIGINAL_BRANCH'. The main worktree is now left on '$BRANCH' (expected '$ORIGINAL_BRANCH'). Manually run 'git checkout $ORIGINAL_BRANCH' in the main worktree: $MAIN_WORKTREE" >&2
+    exit 1
+  fi
   echo "Switched back to '$ORIGINAL_BRANCH'."
 fi
 

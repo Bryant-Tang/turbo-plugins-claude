@@ -1,7 +1,7 @@
 ---
 name: tp-pull-from-svn
-description: '從 SVN 拉新 revision 到 remote-svn/<branch>(`remote-svn-main` / `remote-svn-test-<n>` worktree)並 merge 進對應本地工作分支。使用者明確要求 pull / 偵測到 remote 有新 SVN commit 而本地 working branch 落後時建議執行;**不要自動觸發**(merge 衝突需使用者介入)。'
-argument-hint: '--branch <main|test-<n>>'
+description: '從 SVN 拉新 revision 到 remote-svn/<branch>(`remote-svn-main` / `remote-svn-<branch>` worktree)並 merge 進對應本地工作分支。使用者明確要求 pull / 偵測到 remote 有新 SVN commit 而本地 working branch 落後時建議執行;**不要自動觸發**(merge 衝突需使用者介入)。'
+argument-hint: '--branch <branch>'
 user-invocable: true
 allowed-tools: Bash, Read
 ---
@@ -14,7 +14,7 @@ allowed-tools: Bash, Read
 
 ## Procedure
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Sync-FromSvn.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/sync-from-svn.sh`)帶 `--branch <main|test-<n>>` 參數。
+1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Sync-FromSvn.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/sync-from-svn.sh`)帶 `--branch <branch>` 參數。
 2. 解讀 script 輸出:
    - `Already up to date at SVN r<rev>` → 完成
    - `Pulled SVN r<rev> into <branch>` → 完成

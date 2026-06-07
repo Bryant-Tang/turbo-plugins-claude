@@ -50,7 +50,10 @@ probe_git_version
 MAIN_WORKTREE="$(get_main_worktree)"
 
 # Refuse to run against a dirty main worktree.
-STATUS="$(git -C "$MAIN_WORKTREE" status --porcelain)"
+if ! STATUS="$(git -C "$MAIN_WORKTREE" status --porcelain)"; then
+  echo "Error: git status --porcelain failed in $MAIN_WORKTREE" >&2
+  exit 1
+fi
 if [[ -n "$STATUS" ]]; then
   echo "Error: main worktree is dirty ($MAIN_WORKTREE). Commit or stash changes before merging main into branches." >&2
   exit 1

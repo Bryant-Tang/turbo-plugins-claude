@@ -18,7 +18,16 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 
 ### Step 0 — First-push bootstrap pre-flight(gate 順序:detached → mismatch → bridge)
 
-跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Get-PushPreflight.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh`,依**執行路由**選工具)帶 `--branch <name>`。腳本只輸出**一行**以 `TP_TOKEN:` 為前綴的終結 token——**SKILL 只認以 `TP_TOKEN:` 開頭的行**(raw branch 名內嵌的假 token 不算),且**不要自己跑 git 判斷**,完全依此 token 路由:
+依**執行路由**選工具跑 pre-flight 腳本(**PowerShell 用單破折號參數 `-Branch`;GNU 風格 `--branch` 在 `powershell -File` 下不可靠,可能不綁定**):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Get-PushPreflight.ps1" -Branch <name>
+```
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
+```
+
+腳本只輸出**一行**以 `TP_TOKEN:` 為前綴的終結 token——**SKILL 只認以 `TP_TOKEN:` 開頭的行**(raw branch 名內嵌的假 token 不算),且**不要自己跑 git 判斷**,完全依此 token 路由:
 
 - `TP_TOKEN:DETACHED_HEAD requested=<r>` → **拒絕**:HEAD 為 detached(或 `--branch HEAD`),沒有分支名可推導 bridge。提示使用者先 `git checkout <具名分支>` 再重跑。結束 skill,**不建任何東西**。
 - `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<c> requested=<r>` → `AskUserQuestion`:「你目前在 `<c>` branch,但要推 `<r>`。先確認沒有推錯分支?」
@@ -26,13 +35,21 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
   - **確認** → 請使用者切到 `<r>`(`git checkout <r>`)後重跑本 Step 0,避免誤推。
 - `TP_TOKEN:BRIDGE_ABSENT requested=<r> target=<path>` → 進入**首推 bootstrap**(見下)。
 - `TP_TOKEN:BRIDGE_PRESENT requested=<r>` → 已有 bridge,直接進 Step 1(正常 push)。
+- `TP_TOKEN:ERROR reason=<訊息>` → pre-flight 無法判定(例:worktree 路徑超過 Windows MAX_PATH)。把 `reason` 原文顯示給使用者並**結束 skill,不建任何東西**。
+- (防呆)若腳本**非零 exit 且完全沒有 `TP_TOKEN:` 行** → 顯示 stderr 給使用者並結束 skill,不要臆測路由。
 
 **首推 bootstrap(僅 `BRIDGE_ABSENT`)**:
 
 1. 需要 `--svn-url <url>`(該分支對應的 SVN 路徑)。未提供 → 要求使用者提供後再續。
 2. `AskUserQuestion` 明示風險:「這會建立一個**永久** SVN 路徑 `<url>`(SVN 路徑建立後無法刪除)。若建立過程後段失敗,該 SVN 路徑可能已經留下,可由**重跑首推** idempotent 接續(偵測到既有路徑→checkout,不重複建立);本機 git 端(分支/worktree)失敗會自動 rollback。確認建立?」
    - **取消** → 結束 skill,不建任何東西。
-   - **確認** → 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1`(或 `new-remote-bridge.sh`,依執行路由)帶 `--branch <r> --svn-url <url>`。
+   - **確認** → 依執行路由跑 New-RemoteBridge(**PowerShell 用單破折號參數**):
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1" -Branch <r> -SvnUrl <url>
+     ```
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/new-remote-bridge.sh" --branch <r> --svn-url <url>
+     ```
 3. New-RemoteBridge 成功 → 進 Step 1 繼續正常 push。失敗 → 腳本已 rollback 本機 git 端;若訊息提到 SVN 路徑已建立,提醒使用者可重跑首推接續。
 
 ### Step 1 — Pre-flight clean check

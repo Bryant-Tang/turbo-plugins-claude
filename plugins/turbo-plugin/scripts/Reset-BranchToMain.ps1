@@ -77,13 +77,20 @@ try {
 
     & git -C $mainWorktree reset --hard 'main'
     if ($LASTEXITCODE -ne 0) {
-        if ($switched) { & git -C $mainWorktree checkout $originalBranch }
+        if ($switched) {
+            & git -C $mainWorktree checkout $originalBranch
+            if ($LASTEXITCODE -ne 0) {
+                throw "git reset --hard main failed on $Branch, and the recovery checkout back to '$originalBranch' also failed. The main worktree is now left on '$Branch'. Manually run 'git checkout $originalBranch' in the main worktree: $mainWorktree"
+            }
+        }
         throw "git reset --hard main failed on $Branch"
     }
 
     if ($switched) {
         & git -C $mainWorktree checkout $originalBranch
-        if ($LASTEXITCODE -ne 0) { throw "Could not switch back to '$originalBranch'" }
+        if ($LASTEXITCODE -ne 0) {
+            throw "Reset succeeded but could not switch back to '$originalBranch'. The main worktree is now left on '$Branch' (expected '$originalBranch'). Manually run 'git checkout $originalBranch' in the main worktree: $mainWorktree"
+        }
         Write-Output "Switched back to '$originalBranch'."
     }
 

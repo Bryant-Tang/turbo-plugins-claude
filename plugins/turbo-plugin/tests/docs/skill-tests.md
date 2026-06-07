@@ -28,8 +28,8 @@ PASS / FAIL / PARTIAL。
   - `<VALIDATION_ROOT>/proj` — 受測專案 main worktree(fixture 重置的目標)。
   - `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-main` — SVN trunk 橋接
     worktree(branch `remote-svn/main`)。
-  - `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-test-<n>` — SVN test 分支
-    橋接 worktree(branch `remote-svn/test-<n>`)。
+  - `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-<branch>` — 任意工作分支的
+    SVN 橋接 worktree(branch `remote-svn/<branch>`);測試常以 `test-<n>` 當具體分支名。
   - `<VALIDATION_ROOT>/svn-repo` — 本機 SVN repo(`svnadmin create` 出來的)。
 - SVN URL 一律寫成 `file:///<VALIDATION_ROOT>/svn-repo/trunk` /
   `file:///<VALIDATION_ROOT>/svn-repo/branches/test-<n>` 這種 placeholder 形式;操作者把
@@ -215,7 +215,6 @@ PASS / FAIL / PARTIAL。
 ### 失敗常見 patterns
 
 - **agent 自動 abort merge conflict**:SKILL.md 明文「衝突時不自動 abort,讓使用者選擇手動解決」。若 agent 在 case 1 變體(故意造衝突)下自動 `git merge --abort` → FAIL。
-- **沒驗 `force_bash` config**:SKILL.md Decision Rule 「呼叫 script 前讀 `.turbo-plugin/config.toml [svn] force_bash`」。fixture 改 `force_bash = true` 後若 agent 仍跑 `.ps1` → FAIL(這個是個 sub-variant 沒列為獨立 case,但常見漏洞)。
 - **中文 commit msg 亂碼**:case 2 若 round-trip 顯示「修正?? commit ????」→ FAIL(可能 script 用 `svn log` 不帶 `--xml`,被 console codepage mangle)。
 - **rollback failure 時繼續往下**:script emit「Working tree is in an inconsistent state」之後 agent 繼續跑後續 step → FAIL。
 

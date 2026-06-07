@@ -91,7 +91,7 @@ Forward the script output to the user.
 
 ### Step 1 — Resolve paths
 
-1. Resolve main worktree and all remote worktrees (`remote-svn-main`, `remote-svn-test-*`) from `git rev-parse --git-common-dir`.
+1. Resolve main worktree and all remote worktrees (`remote-svn-*`, e.g. `remote-svn-main`, `remote-svn-feat-login`) from `git rev-parse --git-common-dir`.
 2. If no remote worktrees exist, skip SVN Ignore, Inconsistency, and Un-track, and proceed with Git Ignore only.
 
 ### Step 2 — Collect data
@@ -103,7 +103,7 @@ git -C <main-worktree> status --short
 git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
 powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Set-SvnIgnore.ps1"   # lists svn:ignore from remote-svn-main (canonical)
-# For each remote worktree (remote-svn-main, remote-svn-test-*):
+# For each remote worktree (remote-svn-*):
 git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
 
@@ -112,7 +112,7 @@ git -C <main-worktree> status --short
 git -C <main-worktree> ls-files
 # Read <main-worktree>/.gitignore  (empty string if file does not exist)
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-svn-ignore.sh"   # lists svn:ignore from remote-svn-main (canonical)
-# For each remote worktree (remote-svn-main, remote-svn-test-*):
+# For each remote worktree (remote-svn-*):
 git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
 

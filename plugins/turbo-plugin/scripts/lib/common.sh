@@ -209,7 +209,8 @@ resolve_remote_worktree() {
   local path="${worktrees_dir}/${name}"
 
   # MAX_PATH guard — parity with the PS side (Windows is the constrained host).
-  if (( ${#path} > 260 )); then
+  # MAX_PATH (260) counts the terminating NUL, so usable length is 259 — reject at >= 260.
+  if (( ${#path} >= 260 )); then
     echo "Error: worktree path exceeds the Windows MAX_PATH limit (260): '$path' is ${#path} chars. Shorten the clone path, or enable long-path support (git config core.longpaths true, or the \\\\?\\ prefix)." >&2
     return 1
   fi

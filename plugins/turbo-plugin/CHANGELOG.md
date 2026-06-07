@@ -4,6 +4,24 @@
 
 格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.5.1] - 2026-06-07
+
+> v0.5.0 合併前 code review(多 persona)修正。無 P0/P1;trust anchor(KTD-8)經確認未放寬。
+
+### Changed
+
+- doc: 修正落後於程式的 agent 面向文件——`tp-pull-from-svn` / `tp-svn-log` SKILL 的 `argument-hint` 與範例由 `<main|test-<n>>` 改為泛化的 `<branch>`;`tp-suggest-ignore` SKILL 枚舉 worktree 的 pseudocode 由 `remote-svn-test-*` 改為 `remote-svn-*`;`README.md` worktree 模型圖由 `remote-svn-test-<n>` 改為 `remote-svn-<branch>`(補斜線轉 dash 說明);`tests/docs/skill-tests.md` VALIDATION_ROOT 慣例描述同步泛化(具體 `test-<n>` fixture 保留)。這些殘留的舊命名會誤導 agent 以為 bridge 只支援 `main`/`test-<n>`,抵銷 v0.5.0 的任意分支泛化
+- doc: `tp-push-to-svn` Step 0 對新腳本 `Get-PushPreflight` / `New-RemoteBridge` 的呼叫改為分列 PowerShell(`-Branch`/`-SvnUrl`)與 bash(`--branch`/`--svn-url`)雙 block 並加警告(GNU `--` 形式在 `powershell -File` 下不可靠),比照既有 `tp-reset-branch-to-main` 的安全寫法;補 `TP_TOKEN:ERROR` 與「無 token + 非零 exit」的處理規則
+- refactor: 移除 `tests/docs/skill-tests.md` 中已隨 U5 移除的 `force_bash` 失敗 pattern 說明
+
+### Fixed
+
+- fix: `Reset-BranchToMain.ps1` / `reset-branch-to-main.sh`——reset 失敗後的補救切回未檢查結果、正常切回失敗時訊息未明示 worktree 停在何分支;改為兩條失敗路徑皆檢查 exit code 並明講「main worktree 現停在 `<branch>`(預期 `<original>`)+ 手動復原指令」
+- fix: `Get-PushPreflight.ps1` / `get-push-preflight.sh`——消毒後仍可能 throw(如 MAX_PATH)卻不發 token,使 SKILL 收到未定義的「exit 1 無 token」;改為在錯誤路徑發 `TP_TOKEN:ERROR reason=...`(collapse 換行 + 中和內嵌 `TP_TOKEN:`,維持 anti-forge)
+- fix: `Merge-MainIntoBranches.ps1` / `merge-main-into-branches.sh`——dirty 檢查的 `git status` 失敗(如 index 損壞)會被當成乾淨而繞過守衛;改為檢查 `git status` 結果,失敗則 fail-loud
+- fix: `New-RemoteBridge.ps1` / `new-remote-bridge.sh`——「ref 在但 worktree 目錄不在」(或反向)的半套殘留狀態會 hard-fail「already exists」而卡住宣稱可重跑的首推;改為偵測 ref XOR dir 並給明確復原指令(`git worktree prune` / `git branch -D`)
+- fix: `Common.ps1` / `common.sh`——MAX_PATH guard 由 `>260` 改為 `>=260`(260 含結尾 NUL,可用長度 259),修正放行剛好 260 字元路徑的邊界差一
+
 ## [0.5.0] - 2026-06-07
 
 ### Added

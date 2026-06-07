@@ -50,10 +50,19 @@ try {
     }
 
     # Bridge-only already-exists guard. No working-branch creation in the push-bootstrap
-    # model -- the working branch IS the caller's current branch.
+    # model -- the working branch IS the caller's current branch. Detect the inconsistent
+    # partial states (ref XOR dir) left by an interrupted run and give explicit recovery
+    # steps instead of a dead-end "already exists" that blocks the advertised re-run.
     $existingBridge = (& git -C $mainWorktree branch --list $remoteBranch | Out-String).Trim()
+    $worktreeExists = Test-Path -LiteralPath $remoteWorktreePath
+    if ($existingBridge -and -not $worktreeExists) {
+        throw "Inconsistent bridge state: branch '$remoteBranch' exists but its worktree directory is missing ($remoteWorktreePath) -- likely a leftover from an interrupted first push. To recover, run in the main worktree ($mainWorktree): 'git worktree prune', then 'git branch -D $remoteBranch'; then re-run the first push."
+    }
+    if ($worktreeExists -and -not $existingBridge) {
+        throw "Inconsistent bridge state: the worktree directory exists ($remoteWorktreePath) but branch '$remoteBranch' is missing -- likely a leftover from an interrupted first push. To recover, delete that directory and run 'git worktree prune' in the main worktree ($mainWorktree); then re-run the first push."
+    }
     if ($existingBridge) { throw "Bridge branch '$remoteBranch' already exists." }
-    if (Test-Path -LiteralPath $remoteWorktreePath) { throw "Worktree '$remoteWorktreeName' already exists at: $remoteWorktreePath" }
+    if ($worktreeExists) { throw "Worktree '$remoteWorktreeName' already exists at: $remoteWorktreePath" }
 
     # SECURITY (KTD-8): validate $SvnUrl under the trusted repos-root BEFORE any git/svn
     # mutation. Trust base = remote-svn-main's repos-root-url. This MUST run outside

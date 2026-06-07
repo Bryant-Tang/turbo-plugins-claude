@@ -52,11 +52,25 @@ if [[ -n "$COLLISION" ]]; then
   exit 1
 fi
 
-# Bridge-only already-exists guard (no working-branch creation).
-if git -C "$MAIN_WORKTREE" branch --list "$REMOTE_BRANCH" | grep -q .; then
+# Bridge-only already-exists guard (no working-branch creation). Detect the inconsistent
+# partial states (ref XOR dir) left by an interrupted run and give explicit recovery steps
+# instead of a dead-end "already exists" that blocks the advertised re-run.
+BRIDGE_EXISTS=false
+if git -C "$MAIN_WORKTREE" branch --list "$REMOTE_BRANCH" | grep -q .; then BRIDGE_EXISTS=true; fi
+WT_EXISTS=false
+if [[ -e "$REMOTE_PATH" ]]; then WT_EXISTS=true; fi
+if [[ "$BRIDGE_EXISTS" == true && "$WT_EXISTS" == false ]]; then
+  echo "Error: inconsistent bridge state: branch '$REMOTE_BRANCH' exists but its worktree directory is missing ($REMOTE_PATH) -- likely a leftover from an interrupted first push. To recover, run in the main worktree ($MAIN_WORKTREE): 'git worktree prune', then 'git branch -D $REMOTE_BRANCH'; then re-run the first push." >&2
+  exit 1
+fi
+if [[ "$WT_EXISTS" == true && "$BRIDGE_EXISTS" == false ]]; then
+  echo "Error: inconsistent bridge state: the worktree directory exists ($REMOTE_PATH) but branch '$REMOTE_BRANCH' is missing -- likely a leftover from an interrupted first push. To recover, delete that directory and run 'git worktree prune' in the main worktree ($MAIN_WORKTREE); then re-run the first push." >&2
+  exit 1
+fi
+if [[ "$BRIDGE_EXISTS" == true ]]; then
   echo "Error: bridge branch '$REMOTE_BRANCH' already exists." >&2; exit 1
 fi
-if [[ -e "$REMOTE_PATH" ]]; then
+if [[ "$WT_EXISTS" == true ]]; then
   echo "Error: worktree '$REMOTE_NAME' already exists at: $REMOTE_PATH" >&2; exit 1
 fi
 

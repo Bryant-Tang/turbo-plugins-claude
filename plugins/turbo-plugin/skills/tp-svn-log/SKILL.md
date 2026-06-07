@@ -1,7 +1,7 @@
 ---
 name: tp-svn-log
 description: '在指定 remote-<branch> worktree 跑 svn log,顯示 SVN history。使用者明確要求查 SVN history 時執行;agent 在需要對齊 SVN revision / 確認新 SVN commit 時也可建議執行(read-only,可安全 auto-trigger)。'
-argument-hint: '[--branch <main|test-<n>>] [--limit <n>] [-r/--revision <spec>] [--verbose]'
+argument-hint: '[--branch <branch>] [--limit <n>] [-r/--revision <spec>] [--verbose]'
 user-invocable: true
 allowed-tools: Bash, Read
 ---
@@ -17,10 +17,10 @@ allowed-tools: Bash, Read
 1. 跑 script,參數依平台:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Get-SvnLog.ps1" [-Branch <main|test-<n>>] [-Limit <n>] [-Revision <spec>] [-VerboseOutput]
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Get-SvnLog.ps1" [-Branch <branch>] [-Limit <n>] [-Revision <spec>] [-VerboseOutput]
    ```
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-svn-log.sh" [--branch <main|test-<n>>] [--limit <n>] [--revision <spec>] [--verbose]
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-svn-log.sh" [--branch <branch>] [--limit <n>] [--revision <spec>] [--verbose]
    ```
 
    可選參數(logical 名稱與行為):
