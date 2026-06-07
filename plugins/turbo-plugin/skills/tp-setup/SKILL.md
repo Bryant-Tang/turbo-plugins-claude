@@ -133,11 +133,11 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
    .svn/
    ```
 
-3. 建 `.turbo-plugin/` 集中目錄(複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/` 全部 template),複製出來的內容:`config.toml`、`applicationhost.config`、`dbhub.example.local.toml`(此三檔進 git,跨同事共用)。
+3. 建 `.turbo-plugin/` 集中目錄(複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/` 全部 template),複製出來的內容:`config.toml`、`applicationhost.config`、`conventions.md`、`dbhub.example.local.toml`(此四檔進 git,跨同事共用)。
 
 4. 注入 `.commitlintrc.json` + `CLAUDE.md` convention 段:
    - `.commitlintrc.json`:若**不存在**則直接複製 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/commitlintrc-template.json`;若**已存在**則 JSON parse + merge `rules.type-enum[2]` array(將模板 12 類 union 進去,保留使用者既有 rules,不覆寫整檔)。
-   - `CLAUDE.md`:若**不存在**則建立含 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/claudemd-convention-snippet.md` 的內容;若**已存在**則用 marker `<!-- turbo-plugin:begin commit-type-convention -->` / `<!-- turbo-plugin:end commit-type-convention -->` 包夾的區段進行 idempotent 替換或追加,不影響其它段落。
+   - `CLAUDE.md`:注入的是**精簡指向 snippet**(`${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/claudemd-convention-snippet.md`)——祈使觸發語「執行 DB / commit / `*.cs` / `*.js` 操作前先讀 `.turbo-plugin/conventions.md`」+ R3a 常駐規則(不得提交僅限本機之物),**不再** inline 整份規範。若 `CLAUDE.md` **不存在**則建立含該 snippet 的內容;若**已存在**則用 marker `<!-- turbo-plugin:begin commit-type-convention -->` / `<!-- turbo-plugin:end commit-type-convention -->` 包夾的區段進行 idempotent 替換或追加,不影響其它段落。
 
 5. `AskUserQuestion`(自由文字)收集 **SVN URL**(若 argument 沒帶 `--svn-url`)。空值或格式不對(非 http(s) / svn / file)→ 重問或取消。
 
@@ -195,7 +195,7 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
 
 2. **不**做 apphost bootstrap — canonical(`.turbo-plugin/applicationhost.config`)在主 worktree 已存在,跨 worktree 由 git 共享。peer 的 IIS Express 啟動由 `start-iis` runtime 自動讀 canonical 並渲染到 temp file(已由 U3 實作)。
 
-3. **不**重寫 `.commitlintrc.json` / `CLAUDE.md` / `.turbo-plugin/config.toml` / `.turbo-plugin/applicationhost.config` / `.turbo-plugin/dbhub.example.local.toml`(這些是 git-versioned shared files,只由主 worktree 管理)。
+3. **不**重寫 `.commitlintrc.json` / `CLAUDE.md` / `.turbo-plugin/config.toml` / `.turbo-plugin/conventions.md` / `.turbo-plugin/applicationhost.config` / `.turbo-plugin/dbhub.example.local.toml`(這些是 git-versioned shared files,只由主 worktree 管理)。
 
 完成後 fall through to Phase 3。
 
@@ -532,7 +532,7 @@ JSON merge 規則同 3.4.B,寫入:
 
 ## Completion Checks
 
-- `.turbo-plugin/` marker 目錄存在,內含 `config.toml`、`applicationhost.config`、`dbhub.example.local.toml`(三件 git-versioned)。
+- `.turbo-plugin/` marker 目錄存在,內含 `config.toml`、`applicationhost.config`、`conventions.md`、`dbhub.example.local.toml`(四件 git-versioned)。
 - `.gitignore` 含 `turbo-plugin` 相關 patterns(`.claude/**/*.local.*` / `.turbo-plugin/**/*.local.*` / `.turbo-plugin/worktrees/` / `.svn/`)。
 - `.commitlintrc.json` 含 `rules.type-enum[2]` ⊇ 12 類預設;`CLAUDE.md` 含 turbo-plugin convention 段(由 marker 包夾)。
 - Case (a)/(b):`git branch -a` 含 `remote-svn/main`,`git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-main`,該 worktree 內含 `.svn/`;主 worktree `git status --porcelain` 乾淨(`.turbo-plugin/worktrees/` 已 gitignore)。
@@ -542,7 +542,7 @@ JSON merge 規則同 3.4.B,寫入:
   - 走 user-pause 分支 → setup 已結束,留訊息「請開 VS 後重跑 `/tp-setup`」
   - 走 disable-iis 分支 → `.turbo-plugin/config.toml` 內有 `[iis] enabled = false`
 - Missing dependencies(MSBuild / IIS Express / dotnet / npm 等)已在 Phase 3 prompt;若任何 LSP server install 失敗,Phase 4 報告含補裝指令。
-- Case (d):未動到任何 git-versioned shared file(`.gitignore` / `.commitlintrc.json` / `CLAUDE.md` / `.turbo-plugin/config.toml` / `.turbo-plugin/applicationhost.config` / `.turbo-plugin/dbhub.example.local.toml` 全未變);`dbhub.local.toml` 已處理完畢。
+- Case (d):未動到任何 git-versioned shared file(`.gitignore` / `.commitlintrc.json` / `CLAUDE.md` / `.turbo-plugin/config.toml` / `.turbo-plugin/conventions.md` / `.turbo-plugin/applicationhost.config` / `.turbo-plugin/dbhub.example.local.toml` 全未變);`dbhub.local.toml` 已處理完畢。
 - 跑兩次 `/tp-setup` case (c) / (d):結果與跑一次相同(idempotent 驗證)。
 
 ## Test Scenarios
