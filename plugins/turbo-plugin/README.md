@@ -29,7 +29,6 @@
 | `/tp-pull-from-svn` | 從 SVN 拉更新到 `remote-svn/main` 並 merge 進工作分支 |
 | `/tp-push-to-svn` | 將工作分支推送上 SVN(自 parse subject 篩選 conventional commit type) |
 | `/tp-svn-log` | 在 `remote-svn-*` worktree 跑 SVN log |
-| `/tp-create-remote-test` | 建立 `remote-svn/test-<n>` 分支與對應 worktree |
 | `/tp-reset-remote-test` | 從 main 重設 test-<n> 分支 |
 | `/tp-build-dotnet-framework-web` | MSBuild build .NET Framework Web 專案 |
 | `/tp-run-dotnet-framework-web` | 啟動 IIS Express 跑專案,內含 listening 健康檢查 + 跨 worktree self-heal |

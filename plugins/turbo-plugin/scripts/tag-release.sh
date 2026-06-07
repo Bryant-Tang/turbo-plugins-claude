@@ -36,7 +36,7 @@ REMOTE_BRANCH="$(printf '%s' "$RESOLVED" | cut -d'|' -f2)"
 
 # Confirm the remote-svn ref exists before tagging — fail loudly otherwise.
 if ! git -C "$MAIN_WORKTREE" rev-parse --verify "${REMOTE_BRANCH}^{commit}" >/dev/null 2>&1; then
-  echo "Error: remote-svn branch '$REMOTE_BRANCH' not found. Run /tp-setup or /tp-create-remote-test first." >&2
+  echo "Error: remote-svn branch '$REMOTE_BRANCH' not found. Run /tp-setup (for main), or push the branch with /tp-push-to-svn (its first-push bootstrap builds the bridge), first." >&2
   exit 1
 fi
 

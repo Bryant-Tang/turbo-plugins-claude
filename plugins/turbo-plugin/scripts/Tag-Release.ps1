@@ -36,7 +36,7 @@ try {
     # so we never create a tag pointing at an unknown revision.
     $null = & git -C $mainWorktree rev-parse --verify "$remoteBranch^{commit}" 2>$null
     if ($LASTEXITCODE -ne 0) {
-        throw "Remote-svn branch '$remoteBranch' not found. Run /tp-setup or /tp-create-remote-test first."
+        throw "Remote-svn branch '$remoteBranch' not found. Run /tp-setup (for main), or push the branch with /tp-push-to-svn (its first-push bootstrap builds the bridge), first."
     }
 
     $prefix = "$Branch-release-$(Get-Date -Format 'yyyy-MM-dd')"

@@ -6,7 +6,7 @@ turbo-plugin v1.0 PR-readiness Skill tests 是 **使用者主導** 的測試階�
 轉述給 orchestrator 判讀 PASS / FAIL。本檔規劃 10-13 個建議 session(分 10 主場 + 3 reserved
 fail-then-fix re-run = 13 個 session slot)。
 
-> 使用者可以合併 / 拆分 session;case 數總和 **54** 不變(涵蓋 16 個 skill)。
+> 使用者可以合併 / 拆分 session;case 數總和 **51** 不變(涵蓋 15 個 skill)。
 
 ---
 
@@ -19,7 +19,6 @@ fail-then-fix re-run = 13 個 session slot)。
 | tp-setup | 5 | case 4 / 5 走 real-install LSP / CE / agent teams / TUI |
 | tp-pull-from-svn | 4 | |
 | tp-push-to-svn | 6 | 含 Step 7 release tag(merge commit → 問 tag / nothing-to-push → 不問) |
-| tp-create-remote-test | 3 | |
 | tp-reset-remote-test | 2 | **surface-small skill** — below R12 通用 floor(reset 操作只有 4 條 path:diff-only preview / Apply / Cancel / already-equal,2 case 即覆蓋) |
 | tp-build-dotnet-framework-web | 3 | |
 | tp-run-dotnet-framework-web | 3 | |
@@ -32,7 +31,7 @@ fail-then-fix re-run = 13 個 session slot)。
 | tp-js-comment | 2 | **surface-small skill** — below R12 通用 floor |
 | tp-merge-main-into-all | 3 | parity 補(v1.0.0)— happy multi-branch + exclude remote-svn/* + conflict |
 | tp-db-management | 4 | parity 補(v1.0.0)— 唯讀 + SQL 落點 + slash→dash + fail-loudly |
-| **Total** | **54** | |
+| **Total** | **51** | |
 
 > **R12 floor not ceiling**(plan trade-off 5 resolution):「1 happy + 2-3 error +
 > 1 中文 = 4 最少數」是通用 floor,但對 surface 表面狹窄的 skill(comment 系列
@@ -64,14 +63,14 @@ fail-then-fix re-run = 13 個 session slot)。
   - P2-tp-setup-5(Phase 3 CE + agent teams + TUI fullscreen real-install)
 - **session 結束 state**:`~/.claude/settings.json` 含 5 個推薦項目 keys;`dotnet tool -g` + `npm -g` 各裝一個 binary。**不要 rollback,留到 Skill tests 全部結束才一次性 rollback**(per RBP Q3 resolution)。
 
-### Session 3 — tp-pull-from-svn + tp-create-remote-test
+### Session 3 — tp-pull-from-svn
 
-- **預估時間**:20-30 分鐘
+- **預估時間**:15-25 分鐘
 - **fixture pre-state**:session 2 結束狀態 + orchestrator 跑 `Reset-Fixture.ps1`(reset 主 fixture 但不動 `~/.claude/settings.json`)+ 跑 setup case (a) bootstrap
 - **cases**:
   - P2-tp-pull-from-svn-1 / 2 / 3 / 4
-  - P2-tp-create-remote-test-1 / 2 / 3
-- **session 結束 state**:含 remote-test-1 worktree 的 fixture
+- **session 結束 state**:已跑過 setup case (a) 的 fixture
+- **session 結束 setup（供 session 4 用）**:orchestrator 在主 worktree 先 `git checkout -b test-1` 再呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`，`.sh` 用 `new-remote-bridge.sh`）建 test-1 bridge，建完 `git checkout main`，使 session 4 有 remote-test-1 worktree（helper 不建工作分支，故須先 `git checkout -b test-1`）
 
 ### Session 4 — tp-suggest-ignore(cross-worktree + rollback)
 
@@ -106,7 +105,7 @@ fail-then-fix re-run = 13 個 session slot)。
 ### Session 7 — tp-push-to-svn(含 Step 7 release tag)+ tp-reset-remote-test
 
 - **預估時間**:30-40 分鐘
-- **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` 重置 SVN history + 重跑 setup + 重跑 create-remote-test 建 test-1(避免 session 4 / 5 在 SVN 留下 r21+ 影響 push test)
+- **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` 重置 SVN history + 重跑 setup + 在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`(避免 session 4 / 5 在 SVN 留下 r21+ 影響 push test)
 - **cases**:
   - P2-tp-push-to-svn-1 / 2 / 3 / 4(基本 push 篩選)
   - P2-tp-push-to-svn-5 / 6(Step 7 release tag:merge commit 仍問 tag / nothing-to-push 不問)
@@ -133,7 +132,7 @@ fail-then-fix re-run = 13 個 session slot)。
 ### Session 10 — tp-merge-main-into-all + tp-db-management(parity 補)
 
 - **預估時間**:20-30 分鐘
-- **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup(a) + 跑 create-remote-test 建 test-1(merge 需要有 `remote-svn/*` 分支驗 exclude);db-management case 另需 `tp-dbhub` MCP 可用(case 3 反向需不可用)
+- **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup(a) + 在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`(merge 需要有 `remote-svn/*` 分支驗 exclude);db-management case 另需 `tp-dbhub` MCP 可用(case 3 反向需不可用)
 - **cases**:
   - P2-tp-merge-main-into-all-1 / 2 / 3(happy multi-branch / exclude remote-svn/* + main / conflict per-branch abort)
   - P2-tp-db-management-1 / 2 / 3 / 4(唯讀+SQL 落點 / slash→dash / dbhub 不可用 fail-loudly / detached HEAD guard)
@@ -153,7 +152,7 @@ fail-then-fix re-run = 13 個 session slot)。
 ```mermaid
 flowchart LR
   S1[Session 1<br>tp-setup case 1-3] --> S2[Session 2<br>tp-setup case 4-5]
-  S2 --> S3[Session 3<br>pull-from-svn + create-remote-test]
+  S2 --> S3[Session 3<br>pull-from-svn]
   S3 --> S4[Session 4<br>tp-suggest-ignore]
   S4 --> S5[Session 5<br>build + run + stop]
   S5 --> S6[Session 6<br>publish + cleanup-orphan-iis]
@@ -194,7 +193,7 @@ orchestrator 在 session 1 開始前確認:
 
 session 10 跑完(或 session 11-13 fail-then-fix 都修完)後:
 
-- [ ] `skill-tests.md` `## Summary` section 已填(54 case 統計)
+- [ ] `skill-tests.md` `## Summary` section 已填(51 case 統計)
 - [ ] `skill-tests.md` `## Known Issues` 列入 `FAIL-known` case(若有,per R32 escalation)
 - [ ] 使用者確認哪些 `FAIL-known` 不 block v1.0 PR
 - [ ] **執行 `rollback-checklist.md`** 還原使用者主機(per RBP Q3 = (b) — Skill tests 全部結束才一次性 rollback)

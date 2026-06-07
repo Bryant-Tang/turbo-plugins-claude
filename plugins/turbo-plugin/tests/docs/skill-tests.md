@@ -1,6 +1,6 @@
 # Skill tests — Manual Test Tracking SCHEMA
 
-turbo-plugin v1.0+ PR-readiness Skill tests 手動測試的 **schema + 16 skill case spec +
+turbo-plugin v1.0+ PR-readiness Skill tests 手動測試的 **schema + 15 skill case spec +
 prompt 範本 + 失敗 patterns**。本檔為持久、可重複、path-free 的 schema reference;
 per-release 的實際執行結果寫在
 `plugins/turbo-plugin/tests/runs/<release>/skill-tests-results.md`(使用者跑每個
@@ -425,82 +425,6 @@ PASS / FAIL / PARTIAL。
 
 ---
 
-## tp-create-remote-test
-
-### Cases
-
-| Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
-|---|---|---|---|---|---|
-| P2-tp-create-remote-test-1 | Happy Confirm path | fresh-base 已 setup case (a) 完成 + SVN trunk 已存在 + 沒有 `branches/test-1` | /tp-create-remote-test --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1 → AskUserQuestion 確認(顯示 N / branch / worktree / URL)→ Confirm → script 跑 → `svn copy` from trunk → checkout → 繼承 svn:ignore | `git branch -a` 含 `test-1` + `remote-svn/test-1` / `git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-test-1` / `.turbo-plugin/worktrees/remote-svn-test-1/.svn/` 存在 | (Confirm gate happy) |
-| P2-tp-create-remote-test-2 | Cancel path 不動 SVN | 同 case 1 fresh fixture | /tp-create-remote-test --svn-url ... → AskUserQuestion → 使用者選 Cancel → script 不執行 | 沒新 branch / 沒新 worktree / SVN 上沒新 `branches/test-1` / agent 顯式報告「已取消」 | (Cancel gate) |
-| P2-tp-create-remote-test-3 | SVN URL invalid → rollback | fresh-base 已 setup + SVN URL 故意給不存在的(如 `file:///<VALIDATION_ROOT>/nonexistent-svn-repo/branches/test-X`) | /tp-create-remote-test --svn-url <bad> → AskUserQuestion → Confirm → script 跑 `svn checkout` 失敗 → rollback 清掉半建 state | `git branch --list test-X` 為空 / `git branch --list remote-svn/test-X` 為空 / `git worktree list` 沒 remote-svn-test-X | (rollback) |
-
-### 失敗常見 patterns
-
-- **AskUserQuestion 沒顯示具體參數**:SKILL.md Procedure step 3 明文要列 N / branch name / worktree path / SVN URL。若 agent 只問「確認執行?」沒顯示參數 → FAIL。
-- **rollback 不完全**:case 3 SVN checkout 失敗後 git branch 仍存在 → FAIL。
-- **在 peer worktree 跑**:SKILL.md Decision Rule「必須在主 worktree 跑」。若 fixture 改 cwd 為 peer worktree 後 agent 仍跑 → FAIL(這個是 sub-variant)。
-
-### Prompt 範本
-
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) 完成。確認 SVN trunk 在 `file:///<VALIDATION_ROOT>/svn-repo/trunk`,還沒有任何 `branches/`。
->
-> **Prompt**:
-> ```
-> 幫我建一個 SVN test branch,SVN URL 是 file:///<VALIDATION_ROOT>/svn-repo/branches/test-1
-> ```
->
-> **觀察重點**:
-> - agent 觸發 tp-create-remote-test skill
-> - AskUserQuestion 出現,description 含具體的 N = 1 / Branch name = `remote-svn/test-1` / Worktree path = `.turbo-plugin/worktrees/remote-svn-test-1` / SVN URL
-> - 使用者選 Confirm
-> - 跑完 `git branch -a` 含 `test-1` + `remote-svn/test-1`
-> - `git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-test-1`
-> - 該 worktree 內含 `.svn/`
-> - SVN repo 多一個 r21(svn copy from trunk)
-
-> **Setup**(case 2):跟 case 1 一樣 fresh fixture(orchestrator 跑 reset 重置)。
->
-> **Prompt**:
-> ```
-> 幫我建一個 SVN test branch,SVN URL 是 file:///<VALIDATION_ROOT>/svn-repo/branches/test-1
-> ```
->
-> **觀察重點**:
-> - AskUserQuestion 出現
-> - 使用者選 Cancel
-> - agent 顯式報告「已取消,不動 SVN」
-> - `git branch -a` 沒 `test-1` 也沒 `remote-svn/test-1`
-> - `git worktree list` 只剩主 worktree + remote-svn-main(沒 remote-svn-test-1)
-> - SVN log 仍 r20
-
-> **Setup**(case 3):跟 case 1 一樣 fresh fixture。但 SVN URL 給不存在的:`file:///<VALIDATION_ROOT>/nonexistent-svn-repo/branches/test-X`。
->
-> **Prompt**:
-> ```
-> 幫我建一個 SVN test branch,SVN URL 是 file:///<VALIDATION_ROOT>/nonexistent-svn-repo/branches/test-X
-> ```
->
-> **觀察重點**:
-> - AskUserQuestion 出現
-> - 使用者選 Confirm
-> - script 跑後 svn checkout 失敗
-> - agent 報告錯誤但已 rollback
-> - `git branch --list test-X` 為空
-> - `git branch --list remote-svn/test-X` 為空
-> - `git worktree list` 沒 remote-svn-test-X
-> - 完全乾淨(no half-built state)
-
-### Row table
-
-| case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
-|---|---|---|---|---|---|---|---|
-| P2-tp-create-remote-test-1 | Happy Confirm | fresh-base+setup(a) | /tp-create-remote-test --svn-url <valid> | AskUserQuestion 顯示具體參數 + Confirm + branch/worktree/svn 三齊 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-create-remote-test-2 | Cancel | fresh-base+setup(a) | /tp-create-remote-test --svn-url <valid> | Cancel 後完全沒動 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-create-remote-test-3 | SVN URL invalid rollback | fresh-base+setup(a) + bad URL | /tp-create-remote-test --svn-url <bad> | Confirm 後 checkout fail → rollback 乾淨(無 remote-svn/test-X) | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-
----
-
 ## tp-reset-remote-test
 
 > **Surface-small skill**:2 case(below R12 通用 floor「1 happy + 2-3 error + 1 中文」的 4 最少數)。理由:reset 操作只有四條 path(diff-only preview / Apply / Cancel / already-equal),每條 path 行為極為穩定。中文層面對齊 SVN history 不會在這裡新增 surface(已被 tp-svn-log + tp-push-to-svn 覆蓋)。
@@ -509,8 +433,8 @@ PASS / FAIL / PARTIAL。
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-reset-remote-test-1 | Apply path with LOSE/GAIN diff | fresh-base + setup(a) + 跑 tp-create-remote-test 建 test-1 + test-1 branch 領先 main 3 commit + main 領先 test-1 5 commit | /tp-reset-remote-test --n 1 → Step 1 --diff-only → script 印 LOSE/GAIN/FILES_LOST_AFTER_PUSH → AskUserQuestion → 使用者選 Apply → Step 3 actual reset → `Reset test-1 to main.` | Step 1 stdout 含 `LOSE` 3 commits + `GAIN` 5 commits + `FILES_LOST_AFTER_PUSH` non-empty / AskUserQuestion description 含「重設後下次推送 SVN 會刪除 N 個檔案」/ Apply 後 `git log test-1..main` 為空(等齊) | (Apply happy) |
-| P2-tp-reset-remote-test-2 | Cancel + already-equal short-circuit | (a) cancel:同 case 1 fixture 但使用者選 Cancel;(b) already-equal:fresh-base + 跑 tp-create-remote-test 後 test-1 直接 == main(沒有 LOSE/GAIN)| (a) /tp-reset-remote-test → --diff-only → AskUserQuestion → Cancel → 不動 git;(b) /tp-reset-remote-test → --diff-only → 印「already equals main. Nothing to reset.」→ 略過 AskUserQuestion 直接結束 | (a) test-1 HEAD 未動 / LOSE/GAIN 仍不平衡;(b) stdout 含「already equals」/ 沒 AskUserQuestion / exit 0 | (Cancel + short-circuit) |
+| P2-tp-reset-remote-test-1 | Apply path with LOSE/GAIN diff | fresh-base + setup(a) + 建工作分支 test-1 後用 `New-RemoteBridge` 建 test-1 bridge + test-1 branch 領先 main 3 commit + main 領先 test-1 5 commit | /tp-reset-remote-test --n 1 → Step 1 --diff-only → script 印 LOSE/GAIN/FILES_LOST_AFTER_PUSH → AskUserQuestion → 使用者選 Apply → Step 3 actual reset → `Reset test-1 to main.` | Step 1 stdout 含 `LOSE` 3 commits + `GAIN` 5 commits + `FILES_LOST_AFTER_PUSH` non-empty / AskUserQuestion description 含「重設後下次推送 SVN 會刪除 N 個檔案」/ Apply 後 `git log test-1..main` 為空(等齊) | (Apply happy) |
+| P2-tp-reset-remote-test-2 | Cancel + already-equal short-circuit | (a) cancel:同 case 1 fixture 但使用者選 Cancel;(b) already-equal:fresh-base + 用 `New-RemoteBridge` 建 test-1 bridge 後 test-1 直接 == main(沒有 LOSE/GAIN)| (a) /tp-reset-remote-test → --diff-only → AskUserQuestion → Cancel → 不動 git;(b) /tp-reset-remote-test → --diff-only → 印「already equals main. Nothing to reset.」→ 略過 AskUserQuestion 直接結束 | (a) test-1 HEAD 未動 / LOSE/GAIN 仍不平衡;(b) stdout 含「already equals」/ 沒 AskUserQuestion / exit 0 | (Cancel + short-circuit) |
 
 ### 失敗常見 patterns
 
@@ -521,7 +445,7 @@ PASS / FAIL / PARTIAL。
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) + 跑 tp-create-remote-test 建 test-1。然後在 main worktree commit 5 個 commit(模擬 main 進 5 步),`git checkout test-1` 後 commit 3 個不同 commit(模擬 test-1 自己進 3 步),會造成 main 領先 5 / test-1 領先 3(divergent)。確認都 commit、worktree clean。
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a),然後在主 worktree 先建工作分支 `git checkout -b test-1`,再呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1 -Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`(`.sh` 等價 `new-remote-bridge.sh --branch test-1 --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge(helper 不建工作分支,故須先 `git checkout -b test-1`);完成後 `git checkout main`。然後在 main worktree commit 5 個 commit(模擬 main 進 5 步),`git checkout test-1` 後 commit 3 個不同 commit(模擬 test-1 自己進 3 步),會造成 main 領先 5 / test-1 領先 3(divergent)。確認都 commit、worktree clean。
 >
 > **Prompt**:
 > ```
@@ -551,7 +475,7 @@ PASS / FAIL / PARTIAL。
 > - 使用者選 Cancel
 > - test-1 HEAD 未動(`git rev-parse test-1` 跑前跑後相同)
 >
-> **(b) Already-equal sub-run**:orchestrator 重 reset fixture + 重跑 setup + 重跑 tp-create-remote-test(test-1 從 main 起跳,SHA 完全相同)。**不**多任何 commit。
+> **(b) Already-equal sub-run**:orchestrator 重 reset fixture + 重跑 setup + 在主 worktree 先 `git checkout -b test-1` 再呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge(test-1 從 main 起跳,SHA 完全相同),建完 `git checkout main`。**不**多任何 commit。
 >
 > **Prompt**(b):
 > ```
@@ -940,10 +864,10 @@ PASS / FAIL / PARTIAL。
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-suggest-ignore-1 | Analysis mode happy(Git Ignore + SVN Ignore) | fresh-base + setup(a) + tp-create-remote-test 建 test-1 + 主 worktree 多新檔 `.env`(untracked) + 主 worktree git-tracked `.claude/settings.json` | /tp-suggest-ignore(無參數)→ analysis mode → Step 2-3 classify → Git Ignore 列 `.env` / SVN Ignore 列 `.claude/` → Step 4 prompt(option A apply all / B per-item / C skip) → 使用者 apply all → Step 5 寫 .gitignore + commit + svn-ignore.ps1 -Add `.claude/` 全 remote worktree | `.gitignore` 末尾含 `.env` 與 `.claude/` / `git log --oneline` 含 `chore: update .gitignore` commit / `svn propget svn:ignore .` 在 remote-svn-main + remote-svn-test-1 都含 `.claude/` / 2 個 SVN commit(r21 + r22)| AE13(2-worktree propset) |
-| P2-tp-suggest-ignore-2 | Direct mode --add-svn cross-worktree | fresh-base + setup(a) + tp-create-remote-test 建 test-1 | /tp-suggest-ignore --add-svn "obj/" → Direct mode → script svn-ignore.ps1 -Add "obj/" → 對 remote-svn-main + remote-svn-test-1 兩個 worktree propset + 各 commit | `svn propget svn:ignore` 在 remote-svn-main + remote-svn-test-1 都含 `obj/` / 2 個 SVN commit(r21 + r22)/ 每 commit msg 各對應一個 worktree | AE13(2-worktree propset) |
-| P2-tp-suggest-ignore-3 | Rollback when remote-svn-test-1 propset 失敗 | fresh-base + setup(a) + tp-create-remote-test + 手動 corrupt remote-svn-test-1 的 `.svn/wc.db`(讓 propset 失敗) | /tp-suggest-ignore --add-svn "obj/" → svn-ignore.ps1 對 remote-svn-main propset OK(r21)→ 對 remote-svn-test-1 propset 失敗 → rollback remote-svn-main r21 | `svn propget svn:ignore` 在 remote-svn-main **不**含 `obj/`(rollback 成功)/ 在 remote-svn-test-1 也不含 / SVN log 最後 revision 是 baseline(無 r21 / r22) | AE13(rollback) |
-| P2-tp-suggest-ignore-4 | 中文 svn:ignore pattern | fresh-base + setup(a) + tp-create-remote-test | /tp-suggest-ignore --add-svn "中文資料夾/" → script propset → 兩 worktree commit | `svn propget svn:ignore` 兩 worktree 都含 `中文資料夾/`(text-equal,中文 svn property 透過 svn cli round-trip 後在 console codepage decode 後正確)/ SVN commit msg(若含中文)同樣 round-trip 正確 | AE13 + R18 中文 |
+| P2-tp-suggest-ignore-1 | Analysis mode happy(Git Ignore + SVN Ignore) | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge + 主 worktree 多新檔 `.env`(untracked) + 主 worktree git-tracked `.claude/settings.json` | /tp-suggest-ignore(無參數)→ analysis mode → Step 2-3 classify → Git Ignore 列 `.env` / SVN Ignore 列 `.claude/` → Step 4 prompt(option A apply all / B per-item / C skip) → 使用者 apply all → Step 5 寫 .gitignore + commit + svn-ignore.ps1 -Add `.claude/` 全 remote worktree | `.gitignore` 末尾含 `.env` 與 `.claude/` / `git log --oneline` 含 `chore: update .gitignore` commit / `svn propget svn:ignore .` 在 remote-svn-main + remote-svn-test-1 都含 `.claude/` / 2 個 SVN commit(r21 + r22)| AE13(2-worktree propset) |
+| P2-tp-suggest-ignore-2 | Direct mode --add-svn cross-worktree | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge | /tp-suggest-ignore --add-svn "obj/" → Direct mode → script svn-ignore.ps1 -Add "obj/" → 對 remote-svn-main + remote-svn-test-1 兩個 worktree propset + 各 commit | `svn propget svn:ignore` 在 remote-svn-main + remote-svn-test-1 都含 `obj/` / 2 個 SVN commit(r21 + r22)/ 每 commit msg 各對應一個 worktree | AE13(2-worktree propset) |
+| P2-tp-suggest-ignore-3 | Rollback when remote-svn-test-1 propset 失敗 | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge + 手動 corrupt remote-svn-test-1 的 `.svn/wc.db`(讓 propset 失敗) | /tp-suggest-ignore --add-svn "obj/" → svn-ignore.ps1 對 remote-svn-main propset OK(r21)→ 對 remote-svn-test-1 propset 失敗 → rollback remote-svn-main r21 | `svn propget svn:ignore` 在 remote-svn-main **不**含 `obj/`(rollback 成功)/ 在 remote-svn-test-1 也不含 / SVN log 最後 revision 是 baseline(無 r21 / r22) | AE13(rollback) |
+| P2-tp-suggest-ignore-4 | 中文 svn:ignore pattern | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge | /tp-suggest-ignore --add-svn "中文資料夾/" → script propset → 兩 worktree commit | `svn propget svn:ignore` 兩 worktree 都含 `中文資料夾/`(text-equal,中文 svn property 透過 svn cli round-trip 後在 console codepage decode 後正確)/ SVN commit msg(若含中文)同樣 round-trip 正確 | AE13 + R18 中文 |
 
 ### 失敗常見 patterns
 
@@ -955,7 +879,7 @@ PASS / FAIL / PARTIAL。
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) + 跑 `/tp-create-remote-test --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1` Confirm。在主 worktree 預製:
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a),然後在主 worktree 先 `git checkout -b test-1` 再呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1 -Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`(`.sh`:`new-remote-bridge.sh --branch test-1 --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`(helper 不建工作分支,故須先 `git checkout -b test-1`)。在主 worktree 預製:
 > - untracked: 建 `.env` 檔(內容 `SECRET=foo`)
 > - git-tracked: `.claude/settings.json`(stage + commit)
 >
@@ -981,7 +905,7 @@ PASS / FAIL / PARTIAL。
 >   - `svn propget svn:ignore .` 在 remote-svn-main + remote-svn-test-1 都列 `.claude/`
 >   - SVN log r21 (remote-svn-main) + r22 (remote-svn-test-1) 兩 commits
 
-> **Setup**(case 2):orchestrator 跑 reset + setup + tp-create-remote-test 建 test-1。主 worktree clean,沒新檔。
+> **Setup**(case 2):orchestrator 跑 reset + setup,然後在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`。主 worktree clean,沒新檔。
 >
 > **Prompt**:
 > ```
@@ -996,7 +920,7 @@ PASS / FAIL / PARTIAL。
 > - 2 個 SVN commit(r21 + r22),msg 各對應一個 worktree
 > - `svn propget svn:ignore` 兩 worktree 都含 `obj/`
 
-> **Setup**(case 3):orchestrator 跑 reset + setup + tp-create-remote-test。然後手動 corrupt remote-svn-test-1 的 SVN working copy:刪除 `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-test-1/.svn/wc.db`(`Remove-Item`)讓 svn propset 失敗。
+> **Setup**(case 3):orchestrator 跑 reset + setup,然後在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`。然後手動 corrupt remote-svn-test-1 的 SVN working copy:刪除 `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-test-1/.svn/wc.db`(`Remove-Item`)讓 svn propset 失敗。
 >
 > **Prompt**:
 > ```
@@ -1012,7 +936,7 @@ PASS / FAIL / PARTIAL。
 >   - SVN log 最高 revision 仍是 baseline(無 r21 / r22)
 > - agent 回報「rollback 成功,SVN 狀態回到操作前」
 
-> **Setup**(case 4):orchestrator 跑 reset + setup + tp-create-remote-test。主 worktree clean。
+> **Setup**(case 4):orchestrator 跑 reset + setup,然後在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`。主 worktree clean。
 >
 > **Prompt**:
 > ```
@@ -1323,7 +1247,7 @@ PASS / FAIL / PARTIAL。
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-merge-main-into-all-1 | Happy:多分支落後 main 一起 merge | fresh-base + setup(a)(已有 `remote-svn/main`)+ tp-create-remote-test 建 test-1(已有 `remote-svn/test-1`)+ 在 main 多 2 commit 領先 + 另建兩個本地分支 `feature-a` / `feature-b`(從 main 較舊的 commit 起跳,落後 main) | /tp-merge-main-into-all(無參數)→ script 列目標分支(排除 `main` 與 `remote-svn/*`)→ 逐支 `checkout` + `git merge main` + 還原原分支 → summary | stdout 末尾含 `Merged cleanly: feature-a, feature-b`(順序不拘)/ `feature-a` / `feature-b` 都含 main tip(`git log feature-a..main` 為空)/ `main` 與 `remote-svn/main` / `remote-svn/test-1` **不**在目標、未被動 / 跑完 HEAD 回開跑時原分支 | (Happy multi-branch merge) |
+| P2-tp-merge-main-into-all-1 | Happy:多分支落後 main 一起 merge | fresh-base + setup(a)(已有 `remote-svn/main`)+ 用 `New-RemoteBridge` 建 test-1 bridge(已有 `remote-svn/test-1`)+ 在 main 多 2 commit 領先 + 另建兩個本地分支 `feature-a` / `feature-b`(從 main 較舊的 commit 起跳,落後 main) | /tp-merge-main-into-all(無參數)→ script 列目標分支(排除 `main` 與 `remote-svn/*`)→ 逐支 `checkout` + `git merge main` + 還原原分支 → summary | stdout 末尾含 `Merged cleanly: feature-a, feature-b`(順序不拘)/ `feature-a` / `feature-b` 都含 main tip(`git log feature-a..main` 為空)/ `main` 與 `remote-svn/main` / `remote-svn/test-1` **不**在目標、未被動 / 跑完 HEAD 回開跑時原分支 | (Happy multi-branch merge) |
 | P2-tp-merge-main-into-all-2 | Exclude:`remote-svn/*` 與 main 被跳過 | 同 case 1 fixture(可接 case 1 後直接續) | /tp-merge-main-into-all → script 目標清單不含 `main` / `remote-svn/main` / `remote-svn/test-1` | summary 的 `Merged cleanly:` 不列任何 `remote-svn/*` 或 `main` / `git log -1 remote-svn/main` 與 `remote-svn/test-1` 的 tip 跑前跑後 SHA 不變 | (Exclude filter) |
 | P2-tp-merge-main-into-all-3 | Conflict:衝突分支中止、其餘照常 | fresh-base + setup(a) + 在 main 改 `shared.txt` 某行 + commit;另建 `feature-conflict`(改同一行造成衝突)與 `feature-clean`(改不相干檔,可乾淨 merge) | /tp-merge-main-into-all → `feature-conflict` merge 衝突 → 對該分支 `git merge --abort` → 標 CONFLICT → 繼續 merge `feature-clean` → summary | stdout 末尾含 `CONFLICT (aborted): feature-conflict` + `Merged cleanly: feature-clean` / `feature-conflict` 仍是衝突前的 tip(未含 main、無殘留衝突狀態 `git status` 乾淨)/ `feature-clean` 含 main tip / script exit 1 / 跑完 HEAD 回原分支 | (Conflict per-branch abort) |
 
@@ -1337,7 +1261,7 @@ PASS / FAIL / PARTIAL。
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a) + 跑 `/tp-create-remote-test --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1` Confirm。然後在 main worktree:在 main 多 2 commit(模擬 main 前進);再從較早的 commit 建兩個落後分支:
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a),然後在主 worktree 先 `git checkout -b test-1` 再呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1 -Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`(`.sh`:`new-remote-bridge.sh --branch test-1 --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`(helper 不建工作分支,故須先 `git checkout -b test-1`)。然後在 main worktree:在 main 多 2 commit(模擬 main 前進);再從較早的 commit 建兩個落後分支:
 > ```
 > # git branch feature-a <main 的較早 commit>
 > # git branch feature-b <main 的較早 commit>
@@ -1497,7 +1421,6 @@ Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
 | tp-setup | 5 | _ | _ | _ | |
 | tp-pull-from-svn | 4 | _ | _ | _ | |
 | tp-push-to-svn | 6 | _ | _ | _ | case 5/6 = Step 7 release tag |
-| tp-create-remote-test | 3 | _ | _ | _ | |
 | tp-reset-remote-test | 2 | _ | _ | _ | surface-small |
 | tp-build-dotnet-framework-web | 3 | _ | _ | _ | |
 | tp-run-dotnet-framework-web | 3 | _ | _ | _ | |
@@ -1510,7 +1433,7 @@ Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
 | tp-js-comment | 2 | _ | _ | _ | surface-small |
 | tp-merge-main-into-all | 3 | _ | _ | _ | parity 補(v1.0.0) |
 | tp-db-management | 4 | _ | _ | _ | parity 補(v1.0.0) |
-| **Total** | **54** | _ | _ | _ | |
+| **Total** | **51** | _ | _ | _ | |
 
 ---
 

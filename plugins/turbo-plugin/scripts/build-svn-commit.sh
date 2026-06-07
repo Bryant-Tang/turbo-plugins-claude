@@ -35,9 +35,12 @@ fi
 
 # F23: detect --branch mismatch — emit a structured token when the requested branch differs
 # from the current HEAD so the SKILL can prompt for user confirmation before pushing.
+# v0.5.0 U9 (R3-1): prefix with TP_TOKEN: to match the pre-flight contract — the SKILL only
+# trusts TP_TOKEN:-prefixed lines, so the backstop must use the same prefix or the warning
+# is silently dropped on the normal push path.
 CURRENT_HEAD_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 if [[ -n "$CURRENT_HEAD_BRANCH" && "$CURRENT_HEAD_BRANCH" != "$BRANCH" ]]; then
-  echo "BRANCH_MISMATCH_WARNING current=$CURRENT_HEAD_BRANCH requested=$BRANCH"
+  echo "TP_TOKEN:BRANCH_MISMATCH_WARNING current=$CURRENT_HEAD_BRANCH requested=$BRANCH"
 fi
 
 if git -C "$REMOTE_PATH" rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1; then

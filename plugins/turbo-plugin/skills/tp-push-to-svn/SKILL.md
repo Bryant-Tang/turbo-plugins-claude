@@ -1,7 +1,7 @@
 ---
 name: tp-push-to-svn
 description: '把本地工作分支推上 SVN(透過 remote-<branch> worktree),自 parse 每個 commit subject 篩 SVN history。**SVN 寫操作影響永久 history,必須由使用者明確要求才執行;agent 偵測到「使用者完成一輪改動準備 push」時可建議,但需明確確認**。'
-argument-hint: '--branch <main|test-<n>>'
+argument-hint: '--branch <branch> [--svn-url <url>]'
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 ---
@@ -16,10 +16,29 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 
 ## Procedure
 
+### Step 0 — First-push bootstrap pre-flight(gate 順序:detached → mismatch → bridge)
+
+跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Get-PushPreflight.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh`,依**執行路由**選工具)帶 `--branch <name>`。腳本只輸出**一行**以 `TP_TOKEN:` 為前綴的終結 token——**SKILL 只認以 `TP_TOKEN:` 開頭的行**(raw branch 名內嵌的假 token 不算),且**不要自己跑 git 判斷**,完全依此 token 路由:
+
+- `TP_TOKEN:DETACHED_HEAD requested=<r>` → **拒絕**:HEAD 為 detached(或 `--branch HEAD`),沒有分支名可推導 bridge。提示使用者先 `git checkout <具名分支>` 再重跑。結束 skill,**不建任何東西**。
+- `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<c> requested=<r>` → `AskUserQuestion`:「你目前在 `<c>` branch,但要推 `<r>`。先確認沒有推錯分支?」
+  - **取消** → 結束 skill。
+  - **確認** → 請使用者切到 `<r>`(`git checkout <r>`)後重跑本 Step 0,避免誤推。
+- `TP_TOKEN:BRIDGE_ABSENT requested=<r> target=<path>` → 進入**首推 bootstrap**(見下)。
+- `TP_TOKEN:BRIDGE_PRESENT requested=<r>` → 已有 bridge,直接進 Step 1(正常 push)。
+
+**首推 bootstrap(僅 `BRIDGE_ABSENT`)**:
+
+1. 需要 `--svn-url <url>`(該分支對應的 SVN 路徑)。未提供 → 要求使用者提供後再續。
+2. `AskUserQuestion` 明示風險:「這會建立一個**永久** SVN 路徑 `<url>`(SVN 路徑建立後無法刪除)。若建立過程後段失敗,該 SVN 路徑可能已經留下,可由**重跑首推** idempotent 接續(偵測到既有路徑→checkout,不重複建立);本機 git 端(分支/worktree)失敗會自動 rollback。確認建立?」
+   - **取消** → 結束 skill,不建任何東西。
+   - **確認** → 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1`(或 `new-remote-bridge.sh`,依執行路由)帶 `--branch <r> --svn-url <url>`。
+3. New-RemoteBridge 成功 → 進 Step 1 繼續正常 push。失敗 → 腳本已 rollback 本機 git 端;若訊息提到 SVN 路徑已建立,提醒使用者可重跑首推接續。
+
 ### Step 1 — Pre-flight clean check
 
 - 跑 `git status --porcelain` 確認當前 main worktree 乾淨。非空 → 拒跑,提示先 commit / stash。
-- 確認 `--branch` 參數合法(`main` / `test-<n>`)。
+- `--branch` 接受**任意分支**(合法性 / 消毒由 Step 0 的 pre-flight 腳本以 allowlist 處理)。
 
 ### Step 2 — Prepare merge
 
@@ -35,9 +54,9 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 - remote SVN 不 up-to-date → fail loudly 提示先 `/tp-pull-from-svn`
 - merge 衝突 → 列出衝突檔,**不自動 abort**(由使用者解或手動 `git merge --abort`)
 - `PENDING_MERGE_DETECTED <remote-path>` → Script 輸出此 token 並 exit 0;SKILL 進入下方三選一 prompt
-- `BRANCH_MISMATCH_WARNING current=<current> requested=<requested>` → Script 輸出此 token 並**繼續執行**;SKILL 進入下方確認 prompt
+- `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<current> requested=<requested>` → Build-SvnCommit 的 backstop(主要偵測已在 Step 0 pre-flight;此為正常 push 路徑上的二次防線),token 同以 `TP_TOKEN:` 前綴。Script 輸出此 token 並**繼續執行**;SKILL 進入下方確認 prompt
 
-**BRANCH_MISMATCH_WARNING 處理** — 當 prepare 輸出含 `BRANCH_MISMATCH_WARNING` 行時,在繼續解析其他輸出之前,`AskUserQuestion` 詢問:
+**BRANCH_MISMATCH_WARNING 處理** — 當 prepare 輸出含以 `TP_TOKEN:BRANCH_MISMATCH_WARNING` 開頭的行時,在繼續解析其他輸出之前,`AskUserQuestion` 詢問:
 
 > 你目前在 `<current>` branch,但要推送 `<requested>`。確認推送 `<requested>`?
 

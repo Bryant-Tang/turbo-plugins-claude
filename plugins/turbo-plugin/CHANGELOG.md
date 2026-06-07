@@ -6,6 +6,10 @@
 
 ## [0.5.0] - 2026-06-07
 
+### Added
+
+- feat: `tp-push-to-svn` 首推自動建 bridge——偵測到某分支尚無 git↔SVN bridge 時,確認後自動建立(取代手動 `/tp-create-remote-test`)。新增 pre-flight 偵測腳本 `Get-PushPreflight.ps1` / `get-push-preflight.sh`,發**單一終結 token**(`TP_TOKEN:` 前綴,優先序 `DETACHED_HEAD` > `BRANCH_MISMATCH_WARNING` > `BRIDGE_ABSENT` > `BRIDGE_PRESENT`;detached 用 `git symbolic-ref` 偵測並拒字面 `HEAD`;發 token 前消毒 requested、帶 `current=`/`requested=`/`target=` payload);SKILL 只讀 token 分流,不自跑 git（U9）
+
 ### Changed
 
 - chore: 版本號重編,修正先前誤用 `1.0.0` 的版本語意——原 `## [1.0.0]` 改列為 `## [0.3.0]`、原 `## [Unreleased]` 定版為 `## [0.4.0]`;`plugin.json` `version` 由 `1.0.0` 改為 `0.5.0`,三份檔(`plugin.json` 描述、`README.md` 行 3 與行 141)的 skill 數由「14」更正為「16」（U1）
@@ -14,10 +18,12 @@
 - refactor: 所有呼叫配對 `.ps1`/`.sh` 的 skill(push / pull / svn-log / suggest-ignore / 四個 .NET skill / cleanup-orphan-iis)改用統一執行路由——依環境 + Git Bash 偵測選工具(排除 WSL `System32\bash.exe`),不再用 Bash 工具呼叫 `pwsh`/`powershell`;移除舊 `[svn] force_bash` 機制(skill 規則、tp-setup option (a) 寫入、config 範本註解)（U5）
 - feat: `Resolve-RemoteWorktree` / `resolve_remote_worktree` 一般化,接受**任意 branch**(不再限 `main`/`test-<n>`)——ref `remote-svn/<branch>`(保留斜線)、worktree 目錄 `remote-svn-<branch-dash>`;新增 allowlist 消毒(拒 `..` / 前導 `-` / `\`/`:`/控制字元 / 結尾點或空白 / 保留名 `main` 非小寫與 Windows 裝置名 CON/PRN/AUX/NUL/COM1-9/LPT1-9)、normalize-then-compare 碰撞偵測(`Find-RemoteWorktreeCollision`)、MAX_PATH>260 hard-fail + 引導;PS/bash 兩端一致（U7）
 - refactor: 去耦其餘寫死 `main|test-<n>` 的 call site——`Set-SvnIgnore` / `set-svn-ignore.sh` 的 remote worktree 列舉改掃任意 `remote-svn-*`(不再 regex 限定 main/test-`<n>`);各 SVN 腳本(Build/Submit/Sync/Get-SvnLog/Tag-Release 之 `.ps1`+`.sh`)的 usage / 錯誤訊息字串改泛指 `<branch>`（U8）
+- refactor: `New-RemoteTest.ps1`/`.sh` 改名 `New-RemoteBridge.ps1`/`.sh` 並一般化(收 `--branch` + `--svn-url`、去 `test-<n>` 編號),成為 `tp-push-to-svn` 首推呼叫的內部 helper;首推模型下**不建工作分支**(工作分支即當前分支),只建 bridge ref + worktree + svn checkout;`svn copy` commit message 用消毒後 dash-form;rollback 只清本機 git 端(已建的 SVN 路徑為永久,重跑首推 idempotent 接續)。`Build-SvnCommit` 的 backstop `BRANCH_MISMATCH_WARNING` 改發 `TP_TOKEN:` 前綴(R3-1),`tp-push-to-svn` SKILL 加 Step 0 bootstrap pre-flight + 三道 gate（U9）
 
 ### Removed
 
 - chore: 移除 `schema_version` config gate(過度設計)——刪 `Common.ps1` `Test-TurboPluginConfigSchema` + once-guard + call site、`common.sh` `check_turbo_plugin_config_schema` + guard + call site、config 範本與 fixture 的 `schema_version` 鍵、`tp-push-to-svn` 的 stale schema_version 測試情境;既有檔殘留該鍵由 TOML reader 自然忽略(不警告、不報錯)（U6）
+- chore: 移除 `tp-create-remote-test` skill——其「建立 git↔SVN bridge」功能併入 `tp-push-to-svn` 首推 bootstrap(底層 helper 改名 `New-RemoteBridge`)（U9）
 
 ## [0.4.0] - 2026-06-06
 
