@@ -75,7 +75,7 @@ try {
 
     $remoteWorktrees = @(
         Get-ChildItem -LiteralPath $worktreesDir -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^remote-svn-(main|test-\d+)$' } |
+        Where-Object { $_.Name -match '^remote-svn-.+' } |
         ForEach-Object { $_.FullName }
     )
 

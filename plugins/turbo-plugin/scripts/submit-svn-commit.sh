@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: submit-svn-commit.sh --branch <main|test-<n>> --message "commit message"
+# Usage: submit-svn-commit.sh --branch <branch> --message "commit message"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

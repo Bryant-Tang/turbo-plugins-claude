@@ -11,8 +11,7 @@ $ErrorActionPreference = 'Stop'
 # Create a lightweight git tag pointing at the remote-svn worktree branch tip.
 #
 # Branch -> ref mapping (NEW remote-svn naming -- NOT the old remote/* scheme):
-#   --branch main      -> remote-svn/main
-#   --branch test-<n>  -> remote-svn/test-<n>
+#   --branch <branch>  -> remote-svn/<branch>
 # (resolved via the canonical Resolve-RemoteWorktree in lib/Common.ps1).
 #
 # Tag naming: <branch>-release-<yyyy-MM-dd>-<NNN> with an auto-incrementing 3-digit
@@ -25,7 +24,7 @@ try {
     Probe-GitVersion
 
     if ([string]::IsNullOrWhiteSpace($Branch)) {
-        throw 'Missing required argument: -Branch <main|test-<n>>'
+        throw 'Missing required argument: -Branch <branch>'
     }
 
     $mainWorktree = Get-MainWorktree

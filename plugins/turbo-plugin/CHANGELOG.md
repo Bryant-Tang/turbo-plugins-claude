@@ -13,6 +13,7 @@
 - refactor: 編碼初始化集中到共用 lib——`Common.ps1` 加 guarded `[Console]::InputEncoding`(補齊三編碼變數)、`common.sh` 開頭加 portable 且非致命的 UTF-8 locale 設定(R-2 fallback);`Test-EncodingSupport.ps1` 補齊三編碼變數(維持獨立偵測語意不受影響)、`Invoke-PostToolUseEnterWorktree.ps1` 補 guarded 編碼 init(保留 EAP=Continue)（U4）
 - refactor: 所有呼叫配對 `.ps1`/`.sh` 的 skill(push / pull / svn-log / suggest-ignore / 四個 .NET skill / cleanup-orphan-iis)改用統一執行路由——依環境 + Git Bash 偵測選工具(排除 WSL `System32\bash.exe`),不再用 Bash 工具呼叫 `pwsh`/`powershell`;移除舊 `[svn] force_bash` 機制(skill 規則、tp-setup option (a) 寫入、config 範本註解)（U5）
 - feat: `Resolve-RemoteWorktree` / `resolve_remote_worktree` 一般化,接受**任意 branch**(不再限 `main`/`test-<n>`)——ref `remote-svn/<branch>`(保留斜線)、worktree 目錄 `remote-svn-<branch-dash>`;新增 allowlist 消毒(拒 `..` / 前導 `-` / `\`/`:`/控制字元 / 結尾點或空白 / 保留名 `main` 非小寫與 Windows 裝置名 CON/PRN/AUX/NUL/COM1-9/LPT1-9)、normalize-then-compare 碰撞偵測(`Find-RemoteWorktreeCollision`)、MAX_PATH>260 hard-fail + 引導;PS/bash 兩端一致（U7）
+- refactor: 去耦其餘寫死 `main|test-<n>` 的 call site——`Set-SvnIgnore` / `set-svn-ignore.sh` 的 remote worktree 列舉改掃任意 `remote-svn-*`(不再 regex 限定 main/test-`<n>`);各 SVN 腳本(Build/Submit/Sync/Get-SvnLog/Tag-Release 之 `.ps1`+`.sh`)的 usage / 錯誤訊息字串改泛指 `<branch>`（U8）
 
 ### Removed
 

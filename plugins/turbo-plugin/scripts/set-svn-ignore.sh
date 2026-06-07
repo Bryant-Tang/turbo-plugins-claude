@@ -30,14 +30,11 @@ if [[ ! -d "$WORKTREES_DIR" ]]; then
   echo "Error: worktrees directory not found: $WORKTREES_DIR. Run /tp-setup to bootstrap the SVN remote worktrees." >&2; exit 1
 fi
 
-# Collect all remote worktrees
+# Collect all remote worktrees (any remote-svn-* bridge; v0.5.0 U8 generalized).
 REMOTE_WORKTREES=()
-for d in "$WORKTREES_DIR"/remote-svn-main "$WORKTREES_DIR"/remote-svn-test-*/; do
+for d in "$WORKTREES_DIR"/remote-svn-*/; do
   [[ -d "$d" ]] || continue
-  name="$(basename "$d")"
-  if [[ "$name" == 'remote-svn-main' || "$name" =~ ^remote-svn-test-[0-9]+$ ]]; then
-    REMOTE_WORKTREES+=("${d%/}")
-  fi
+  REMOTE_WORKTREES+=("${d%/}")
 done
 
 if [[ ${#REMOTE_WORKTREES[@]} -eq 0 ]]; then

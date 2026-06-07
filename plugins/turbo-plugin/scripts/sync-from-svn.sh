@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: sync-from-svn.sh --branch <main|test-<n>>
+# Usage: sync-from-svn.sh --branch <branch>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,7 +18,7 @@ done
 probe_git_version
 
 if [[ -z "$BRANCH" ]]; then
-  echo "Error: --branch is required (main or test-<n>)" >&2; exit 1
+  echo "Error: --branch is required (e.g. main or feat/login)" >&2; exit 1
 fi
 
 MAIN_WORKTREE="$(get_main_worktree)"

@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # tag-release.sh — create a lightweight git tag pointing at the remote-svn branch tip.
 #
-# Usage: tag-release.sh --branch <main|test-<n>>
+# Usage: tag-release.sh --branch <branch>
 #
 # Branch → ref mapping (NEW remote-svn naming — NOT the old remote/* scheme):
-#   --branch main      → remote-svn/main
-#   --branch test-<n>  → remote-svn/test-<n>
+#   --branch <branch>  → remote-svn/<branch>
 # (resolved via the canonical resolve_remote_worktree in lib/common.sh).
 #
 # Tag naming: <branch>-release-<yyyy-MM-dd>-<NNN> with auto-incrementing 3-digit serial.

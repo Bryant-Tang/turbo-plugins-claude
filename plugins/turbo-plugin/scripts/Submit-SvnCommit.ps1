@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 try {
     Probe-GitVersion
 
-    if ([string]::IsNullOrWhiteSpace($Branch)) { throw 'Missing required argument: -Branch <main|test-<n>>' }
+    if ([string]::IsNullOrWhiteSpace($Branch)) { throw 'Missing required argument: -Branch <branch>' }
     if ([string]::IsNullOrWhiteSpace($Message)) { throw 'Missing required argument: -Message <commit-message>' }
 
     $mainWorktree = Get-MainWorktree

@@ -12,7 +12,7 @@ try {
     Probe-GitVersion
 
     if ([string]::IsNullOrWhiteSpace($Branch)) {
-        throw 'Missing required argument: -Branch <main|test-<n>>'
+        throw 'Missing required argument: -Branch <branch>'
     }
 
     $mainWorktree = Get-MainWorktree
