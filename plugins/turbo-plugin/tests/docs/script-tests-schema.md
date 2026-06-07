@@ -160,11 +160,15 @@ _(rows TBD)_
 
 _(rows TBD)_
 
-### create-remote-test
+### new-remote-bridge
 
 _(rows TBD)_
 
-### reset-remote-test
+### get-push-preflight
+
+_(rows TBD)_
+
+### reset-branch-to-main
 
 _(rows TBD)_
 

@@ -1,6 +1,6 @@
 ---
 title: "feat: turbo-plugin v0.5.0 — SVN bridge 一般化、commit-msg 回歸、測試框架化、跨環境韌性"
-status: active
+status: completed
 created: 2026-06-07
 type: feat
 origin: docs/brainstorms/2026-06-06-turbo-plugin-v0.5.0-requirements.md
