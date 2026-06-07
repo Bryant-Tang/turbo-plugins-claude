@@ -1,30 +1,17 @@
 #!/usr/bin/env bash
-# build-web.test.sh — bash sibling for build-web.sh
+# build-web.test.sh (shUnit2) — bash sibling for build-web.sh
+# build-web.sh is a ps1-delegate; on a runner without PowerShell the per-test gate SKIPs.
 # Note: no script-level [iis] gate (SKILL-level only); real build deferred to SKILL-level test.
-set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/build-web.sh"
+SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
-# Capability gate (U5): build-web.sh is a ps1-delegate — the script-under-test itself
-# requires PowerShell. On a runner without PowerShell (e.g. ubuntu CI) skip cleanly BEFORE
-# any fixture setup. A last line starting with "OK" + exit 0 is the orchestrator's
-# non-FAIL signal (Invoke-ScriptTests.ps1 parses ^OK as PASS; invoke-script-tests.sh treats
-# exit 0 as PASS), so the job stays green. On Windows the gate passes and the test runs as today.
-if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
-    echo "OK (SKIPPED: build-web.sh delegates to PowerShell; no powershell/pwsh on this runner)"
-    exit 0
-fi
-
-passed=0
-failed=0
-
-assert_match() {
-    if echo "$3" | grep -Eq "$2"; then echo "  [PASS] $1"; ((passed++));
-    else echo "  [FAIL] $1 pattern='$2' got='${3:0:200}'"; ((failed++)); fi
+oneTimeSetUp() {
+    HAS_PS=0
+    if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then HAS_PS=1; fi
 }
-assert_neq0() { if [[ "$2" != "0" ]]; then echo "  [PASS] $1"; ((passed++)); else echo "  [FAIL] $1 got 0"; ((failed++)); fi }
 
 new_sb() {
     local guid
@@ -35,45 +22,49 @@ new_sb() {
     echo "$d"
 }
 rm_sb() {
-    [[ -z "${1:-}" || ! -d "$1" ]] && return 0
+    [ -z "${1:-}" ] && return 0
+    [ -d "$1" ] || return 0
     rm -rf "$1" 2>/dev/null || true
 }
 
-# Case 1: missing csproj
-sb1="$(new_sb 'build-sh-nocsproj')"
-(cd "$sb1" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && echo placeholder > README.txt && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
-cd "$sb1"
-combined1="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e1=$?
-cd "$PLUGIN_ROOT"
-assert_neq0 'case1: missing csproj exit ≠ 0' "$e1"
-assert_match 'case1: 訊息提及 .csproj' '\.csproj' "$combined1"
+# Case 1 + 2: missing csproj — first invoke errors and mentions .csproj; re-invoke still errors.
+test_missing_csproj_and_reinvoke() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb out e
+    sb="$(new_sb 'build-sh-nocsproj')"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && echo placeholder > README.txt && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
 
-# Case 2: SKILL re-invoke
-cd "$sb1"
-combined2="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e2=$?
-cd "$PLUGIN_ROOT"
-assert_neq0 'case2: SKILL re-invoke exit ≠ 0' "$e2"
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    assertTrue 'case1: missing csproj exit != 0' "[ $e -ne 0 ]"
+    echo "$out" | grep -Eq '\.csproj'; assertTrue 'case1: 訊息提及 .csproj' $?
 
-# Case 3: [iis]=false sandbox (no script-level gate)
-sb2="$(new_sb 'build-sh-iisfalse')"
-mkdir -p "$sb2/.turbo-plugin"
-echo "[iis]" > "$sb2/.turbo-plugin/config.toml"
-echo "enabled = false" >> "$sb2/.turbo-plugin/config.toml"
-(cd "$sb2" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
-cd "$sb2"
-combined3="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e3=$?
-cd "$PLUGIN_ROOT"
-assert_neq0 'case3 (deviation): no script-level gate → still errors (csproj missing)' "$e3"
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    assertTrue 'case2: SKILL re-invoke exit != 0' "[ $e -ne 0 ]"
 
-# Case 4 SKIP
-echo "  [PASS] case4 (SKIP): real MSBuild deferred to Phase 2 SKILL"
-((passed++))
+    rm_sb "$sb"
+}
 
-rm_sb "$sb1"
-rm_sb "$sb2"
+# Case 3: [iis]=false sandbox — no script-level gate → still errors (csproj missing).
+test_iis_false_no_script_gate() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb e
+    sb="$(new_sb 'build-sh-iisfalse')"
+    mkdir -p "$sb/.turbo-plugin"
+    echo "[iis]" > "$sb/.turbo-plugin/config.toml"
+    echo "enabled = false" >> "$sb/.turbo-plugin/config.toml"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
 
-echo ""
-echo "build-web.sh.test: passed=$passed failed=$failed"
-if (( failed > 0 )); then echo "FAIL"; exit 1; fi
-echo "OK"
-exit 0
+    ( cd "$sb" && bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1 ); e=$?
+    assertTrue 'case3 (deviation): no script-level gate → still errors (csproj missing)' "[ $e -ne 0 ]"
+
+    rm_sb "$sb"
+}
+
+# Case 4: real MSBuild deferred to Phase 2 SKILL-level test (always skipped here).
+test_real_msbuild_deferred() {
+    startSkipping
+    assertTrue 'case4 (SKIP): real MSBuild deferred to Phase 2 SKILL' true
+}
+
+# shellcheck disable=SC1090
+. "$SHUNIT2"

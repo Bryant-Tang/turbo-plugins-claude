@@ -1,89 +1,69 @@
 #!/usr/bin/env bash
-# svn-ignore.sh.test.sh
+# set-svn-ignore.test.sh (shUnit2)
+# Script under test: scripts/set-svn-ignore.sh
 #
 # Bash entry coverage:
 #   1. file exists
-#   2. --add and --remove together → error
-#   3. unknown argument → error
-#   4. running outside a git repo → "Not inside a git repository" (or similar)
+#   2. --add and --remove together -> error
+#   3. unknown argument -> error
+#   4. no worktrees dir -> "worktrees directory not found" (fail-loudly)
 # Full happy-path cross-worktree assertions are in svn-ignore.Tests.ps1.
-
-set -u
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT="$PLUGIN_ROOT/scripts/set-svn-ignore.sh"
+SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
-passed=0
-failed=0
-fail_msgs=()
+setUp() {
+    TMPDIR_CASE="$(mktemp -d -t turbo-svnig-XXXXXX)"
+    (
+        cd "$TMPDIR_CASE"
+        git init -b main >/dev/null 2>&1 || git init >/dev/null 2>&1
+        git config user.email 'test@turbo' >/dev/null 2>&1
+        git config user.name  'turbo' >/dev/null 2>&1
+        echo init > init.txt
+        git add -A >/dev/null 2>&1
+        git commit -m initial --allow-empty >/dev/null 2>&1
+    )
+}
 
-record_pass() { echo "  [PASS] $1"; passed=$((passed + 1)); }
-record_fail() { echo "  [FAIL] $1: $2"; failed=$((failed + 1)); fail_msgs+=("$1: $2"); }
+tearDown() {
+    [ -n "${TMPDIR_CASE:-}" ] && rm -rf "$TMPDIR_CASE" 2>/dev/null || true
+}
 
-if [[ -f "$SCRIPT" ]]; then
-    record_pass "svn-ignore.sh exists"
-else
-    record_fail "svn-ignore.sh exists" "not found"
-fi
+# Case 1: script file exists
+test_script_exists() {
+    [ -f "$SCRIPT" ]; assertTrue 'set-svn-ignore.sh exists' $?
+}
 
-TMPDIR_CASE="$(mktemp -d -t turbo-svnig-XXXXXX)"
-trap 'rm -rf "$TMPDIR_CASE" 2>/dev/null || true' EXIT
-pushd "$TMPDIR_CASE" >/dev/null
-git init -b main >/dev/null 2>&1 || git init >/dev/null 2>&1
-git config user.email 'test@turbo' >/dev/null 2>&1
-git config user.name  'turbo' >/dev/null 2>&1
-echo init > init.txt
-git add -A >/dev/null 2>&1
-git commit -m initial --allow-empty >/dev/null 2>&1
+# Case 2: --add + --remove together -> non-zero + stderr explains
+test_add_and_remove_conflict() {
+    local out rc
+    out="$(cd "$TMPDIR_CASE" && bash "$SCRIPT" --add obj/ --remove tmp/ 2>&1)"; rc=$?
+    assertNotEquals 'both --add and --remove exits non-zero' 0 "$rc"
+    case "$out" in
+        *either*|*"not both"*) assertTrue 'both --add --remove stderr explains' 0 ;;
+        *) fail "both --add --remove stderr unexpected: $out" ;;
+    esac
+}
 
-# Case 2: --add + --remove → error
-out=$(bash "$SCRIPT" --add obj/ --remove tmp/ 2>&1)
-rc=$?
-if [[ $rc -ne 0 ]]; then
-    record_pass "both --add and --remove exits non-zero (rc=$rc)"
-else
-    record_fail "both --add --remove" "expected non-zero"
-fi
-if [[ "$out" == *"either"* || "$out" == *"not both"* ]]; then
-    record_pass "both --add --remove stderr explains"
-else
-    record_fail "both --add --remove stderr" "unexpected: $out"
-fi
+# Case 3: unknown arg -> non-zero
+test_unknown_arg() {
+    local rc
+    (cd "$TMPDIR_CASE" && bash "$SCRIPT" --bogus) >/dev/null 2>&1; rc=$?
+    assertNotEquals 'unknown arg exits non-zero' 0 "$rc"
+}
 
-# Case 3: unknown arg
-out2=$(bash "$SCRIPT" --bogus 2>&1)
-rc2=$?
-if [[ $rc2 -ne 0 ]]; then
-    record_pass "unknown arg exits non-zero (rc=$rc2)"
-else
-    record_fail "unknown arg" "expected non-zero"
-fi
+# Case 4: no .turbo-plugin/worktrees/ dir -> fail-loudly mentioning worktree
+test_missing_worktrees_dir() {
+    local out rc
+    out="$(cd "$TMPDIR_CASE" && bash "$SCRIPT" --add obj/ 2>&1)"; rc=$?
+    assertNotEquals 'missing worktrees dir exits non-zero' 0 "$rc"
+    case "$out" in
+        *"worktrees directory"*|*worktree*) assertTrue 'missing worktrees dir stderr mentions worktree' 0 ;;
+        *) fail "missing worktrees dir stderr unexpected: $out" ;;
+    esac
+}
 
-# Case 4: no .turbo-plugin/worktrees/ dir → fail-loudly
-out3=$(bash "$SCRIPT" --add obj/ 2>&1)
-rc3=$?
-popd >/dev/null
-
-if [[ $rc3 -ne 0 ]]; then
-    record_pass "missing worktrees dir exits non-zero (rc=$rc3)"
-else
-    record_fail "missing worktrees dir" "expected non-zero"
-fi
-if [[ "$out3" == *"Worktrees directory"* || "$out3" == *"worktree"* ]]; then
-    record_pass "missing worktrees dir stderr mentions worktree"
-else
-    record_fail "missing worktrees dir stderr" "unexpected: $out3"
-fi
-
-echo ''
-echo '────────────────────────────────────────────────────────────────────────'
-echo "svn-ignore.sh: passed=$passed failed=$failed"
-
-if [[ $failed -gt 0 ]]; then
-    for m in "${fail_msgs[@]}"; do echo "  - $m"; done
-    echo "FAIL: $failed assertion(s) failed"
-    exit 1
-fi
-echo "OK"
-exit 0
+# shellcheck disable=SC1090
+. "$SHUNIT2"

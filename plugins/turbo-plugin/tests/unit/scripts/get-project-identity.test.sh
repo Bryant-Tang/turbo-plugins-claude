@@ -1,47 +1,40 @@
 #!/usr/bin/env bash
-# get-project-identity.test.sh — bash sibling for get-project-identity.sh
-# 1-line delegate to .ps1, so cross-shell parity is essentially "does the bash entry
-# launch the ps1?". We exercise the .sh script directly under a sandboxed workspace.
-
-set -uo pipefail  # not -e: we capture exit codes ourselves
+# get-project-identity.test.sh (shUnit2) — bash sibling for get-project-identity.sh
+# 1-line delegate to .ps1; exercises the .sh entry under a sandboxed workspace.
+# ps1-delegate needs PowerShell; on a runner without it the per-test gate SKIPs.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/get-project-identity.sh"
+SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
-# Capability gate (U5): get-project-identity.sh is a ps1-delegate (needs PowerShell). Skip
-# cleanly on a runner without PowerShell before any fixture setup. Last line "OK" + exit 0 =
-# orchestrator non-FAIL signal; on Windows the gate passes and the test runs as today.
-if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
-    echo "OK (SKIPPED: get-project-identity.sh delegates to PowerShell; no powershell/pwsh on this runner)"
-    exit 0
-fi
+oneTimeSetUp() {
+    HAS_PS=0
+    if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then HAS_PS=1; fi
+    SANDBOXES=()
+}
 
-passed=0
-failed=0
+oneTimeTearDown() {
+    local d
+    for d in "${SANDBOXES[@]:-}"; do
+        [ -n "$d" ] && [ -d "$d" ] || continue
+        chmod -R u+w "$d" 2>/dev/null || true
+        rm -rf "$d" 2>/dev/null || true
+    done
+}
 
 new_sandbox() {
-    local purpose="$1"
-    local guid
+    local purpose="$1" guid dir
     guid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "${RANDOM}${RANDOM}${RANDOM}")"
     guid="${guid//-/}"; guid="${guid:0:12}"
-    local dir="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-${purpose}-${guid}"
+    dir="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-${purpose}-${guid}"
     mkdir -p "$dir"
+    SANDBOXES+=("$dir")
     echo "$dir"
 }
 
-remove_sandbox() {
-    local dir="$1"
-    [[ -z "$dir" ]] && return
-    [[ -d "$dir" ]] || return
-    # best-effort clear read-only bits (e.g. .svn / git objects) before removal
-    chmod -R u+w "$dir" 2>/dev/null || true
-    rm -rf "$dir" 2>/dev/null || true
-}
-
 write_csproj() {
-    local dir="$1"
-    cat > "$dir/HelloApp.csproj" <<'EOF'
+    cat > "$1/HelloApp.csproj" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
@@ -65,92 +58,65 @@ EOF
 }
 
 init_git_repo() {
-    local dir="$1"
-    (
-        cd "$dir" && \
-        git init -q && \
-        git config user.email 'test@example.invalid' && \
-        git config user.name 'Test' && \
-        git add -A && \
-        git -c commit.gpgsign=false commit -q -m 'fixture init'
-    ) >/dev/null 2>&1
+    (cd "$1" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m 'fixture init') >/dev/null 2>&1
 }
 
-assert_eq() {
-    local name="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        echo "  [PASS] $name"
-        ((passed++))
-    else
-        echo "  [FAIL] $name (expected='$expected' actual='$actual')"
-        ((failed++))
+hash_of() {
+    echo "$1" | grep -Eo 'IDENTITY_HASH=[0-9a-f]{8}' | head -1 | sed 's/IDENTITY_HASH=//'
+}
+
+# Case 1 + 2: happy path then deterministic re-invoke on same dir.
+test_happy_and_deterministic() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb out1 e1 out2 e2 h1 h2
+    sb="$(new_sandbox 'cpi-sh-happy')"
+    write_csproj "$sb"
+    init_git_repo "$sb"
+
+    out1="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e1=$?
+    assertEquals 'case1: exit 0' 0 "$e1"
+    echo "$out1" | grep -Eq 'PROJECT='; assertTrue 'case1: stdout has PROJECT' $?
+    echo "$out1" | grep -Eq 'IDENTITY_HASH=[0-9a-f]{8}'; assertTrue 'case1: IDENTITY_HASH 8-hex' $?
+    echo "$out1" | grep -Eq 'SITE_NAME=HelloApp-[0-9a-f]{8}'; assertTrue 'case1: SITE_NAME shape' $?
+    h1="$(hash_of "$out1")"
+
+    out2="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e2=$?
+    h2="$(hash_of "$out2")"
+    assertEquals 'case2: SKILL-entry exit 0' 0 "$e2"
+    assertEquals 'case2: hash deterministic' "$h1" "$h2"
+
+    # stash h1 for the 中文 comparison
+    HASH_ASCII="$h1"
+}
+
+# Case 3: 中文 path — exits 0, hash present, and differs from the ASCII-path hash.
+test_chinese_path() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb zh out e h ascii
+    sb="$(new_sandbox 'cpi-sh-zh')"
+    zh="$sb/中文資料夾"
+    mkdir -p "$zh"
+    write_csproj "$zh"
+    init_git_repo "$zh"
+
+    out="$(cd "$zh" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e=$?
+    assertEquals 'case3: 中文 path exit 0' 0 "$e"
+    echo "$out" | grep -Eq 'IDENTITY_HASH=[0-9a-f]{8}'; assertTrue 'case3: 中文 path IDENTITY_HASH 8-hex' $?
+    h="$(hash_of "$out")"
+
+    # Derive the ASCII baseline independently so this test does not depend on run order.
+    ascii="${HASH_ASCII:-}"
+    if [ -z "$ascii" ]; then
+        local sba outa
+        sba="$(new_sandbox 'cpi-sh-ascii-ref')"
+        write_csproj "$sba"
+        init_git_repo "$sba"
+        outa="$(cd "$sba" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"
+        ascii="$(hash_of "$outa")"
     fi
+    assertTrue 'case3: 中文 path hash present' "[ -n '$h' ]"
+    assertTrue 'case3: 中文 path hash differs from ASCII' "[ '$h' != '$ascii' ]"
 }
 
-assert_match() {
-    local name="$1" pattern="$2" text="$3"
-    if echo "$text" | grep -Eq "$pattern"; then
-        echo "  [PASS] $name"
-        ((passed++))
-    else
-        echo "  [FAIL] $name (pattern='$pattern' text-head='${text:0:200}')"
-        ((failed++))
-    fi
-}
-
-# ─── Case 1: happy path ─────────────────────────────────────────────────────
-sb1="$(new_sandbox 'cpi-sh-happy')"
-write_csproj "$sb1"
-init_git_repo "$sb1"
-cd "$sb1"
-r1_out="$(bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"
-r1_exit=$?
-cd "$PLUGIN_ROOT"
-assert_eq 'case1: exit 0' '0' "$r1_exit"
-assert_match 'case1: stdout has PROJECT' 'PROJECT=' "$r1_out"
-assert_match 'case1: IDENTITY_HASH 8-hex' 'IDENTITY_HASH=[0-9a-f]{8}' "$r1_out"
-assert_match 'case1: SITE_NAME shape' 'SITE_NAME=HelloApp-[0-9a-f]{8}' "$r1_out"
-
-hash1=$(echo "$r1_out" | grep -Eo 'IDENTITY_HASH=[0-9a-f]{8}' | head -1 | sed 's/IDENTITY_HASH=//')
-
-# ─── Case 2: SKILL-entry consistency (re-invoke same dir) ───────────────────
-cd "$sb1"
-r2_out="$(bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"
-r2_exit=$?
-cd "$PLUGIN_ROOT"
-hash2=$(echo "$r2_out" | grep -Eo 'IDENTITY_HASH=[0-9a-f]{8}' | head -1 | sed 's/IDENTITY_HASH=//')
-assert_eq 'case2: SKILL-entry exit 0' '0' "$r2_exit"
-assert_eq 'case2: hash deterministic' "$hash1" "$hash2"
-
-# ─── Case 3: 中文 path ──────────────────────────────────────────────────────
-sb2="$(new_sandbox 'cpi-sh-zh')"
-zh_sub="$sb2/中文資料夾"
-mkdir -p "$zh_sub"
-write_csproj "$zh_sub"
-init_git_repo "$zh_sub"
-cd "$zh_sub"
-r3_out="$(bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"
-r3_exit=$?
-cd "$PLUGIN_ROOT"
-assert_eq 'case3: 中文 path exit 0' '0' "$r3_exit"
-assert_match 'case3: 中文 path IDENTITY_HASH 8-hex' 'IDENTITY_HASH=[0-9a-f]{8}' "$r3_out"
-hash3=$(echo "$r3_out" | grep -Eo 'IDENTITY_HASH=[0-9a-f]{8}' | head -1 | sed 's/IDENTITY_HASH=//')
-if [[ -n "$hash3" && "$hash3" != "$hash1" ]]; then
-    echo "  [PASS] case3: 中文 path hash differs from ASCII"
-    ((passed++))
-else
-    echo "  [FAIL] case3: 中文 path hash should differ (got '$hash3' vs '$hash1')"
-    ((failed++))
-fi
-
-remove_sandbox "$sb1"
-remove_sandbox "$sb2"
-
-echo ""
-echo "compute-project-identity.sh.test: passed=$passed failed=$failed"
-if (( failed > 0 )); then
-    echo "FAIL: see above"
-    exit 1
-fi
-echo "OK: all bash cases pass"
-exit 0
+# shellcheck disable=SC1090
+. "$SHUNIT2"

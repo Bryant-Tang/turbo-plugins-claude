@@ -1,79 +1,64 @@
 #!/usr/bin/env bash
-# push-to-svn-commit.sh.test.sh
+# submit-svn-commit.test.sh (shUnit2)
+# Script under test: scripts/submit-svn-commit.sh
 #
 # Bash entry coverage:
 #   1. file exists
-#   2. missing --branch → exit non-zero + stderr mentions branch required
-#   3. --branch supplied, missing --message → exit non-zero + stderr mentions message
+#   2. missing --branch -> exit non-zero + stderr mentions branch required
+#   3. --branch supplied, missing --message -> exit non-zero + stderr mentions message
 # Full happy / 中文 / drift cases are in push-to-svn-commit.Tests.ps1 (PS) and Phase 2.
-
-set -u
+#
+# U7/U8 note: any branch is now legal and there is no bridge gate, so an unresolvable
+# remote worktree surfaces as "not found" (the old "Unsupported branch" message is gone).
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT="$PLUGIN_ROOT/scripts/submit-svn-commit.sh"
+SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
-passed=0
-failed=0
-fail_msgs=()
+setUp() {
+    TMPDIR_CASE="$(mktemp -d -t turbo-ptsc-XXXXXX)"
+    (
+        cd "$TMPDIR_CASE"
+        git init -b main >/dev/null 2>&1 || git init >/dev/null 2>&1
+        git config user.email 'test@turbo' >/dev/null 2>&1
+        git config user.name  'turbo' >/dev/null 2>&1
+        echo init > init.txt
+        git add -A >/dev/null 2>&1
+        git commit -m initial --allow-empty >/dev/null 2>&1
+    )
+}
 
-record_pass() { echo "  [PASS] $1"; passed=$((passed + 1)); }
-record_fail() { echo "  [FAIL] $1: $2"; failed=$((failed + 1)); fail_msgs+=("$1: $2"); }
+tearDown() {
+    [ -n "${TMPDIR_CASE:-}" ] && rm -rf "$TMPDIR_CASE" 2>/dev/null || true
+}
 
-if [[ -f "$SCRIPT" ]]; then
-    record_pass "push-to-svn-commit.sh exists"
-else
-    record_fail "push-to-svn-commit.sh exists" "not found"
-fi
+# Case 1: script file exists
+test_script_exists() {
+    [ -f "$SCRIPT" ]; assertTrue 'submit-svn-commit.sh exists' $?
+}
 
-TMPDIR_CASE="$(mktemp -d -t turbo-ptsc-XXXXXX)"
-trap 'rm -rf "$TMPDIR_CASE" 2>/dev/null || true' EXIT
-pushd "$TMPDIR_CASE" >/dev/null
-git init -b main >/dev/null 2>&1 || git init >/dev/null 2>&1
-git config user.email 'test@turbo' >/dev/null 2>&1
-git config user.name  'turbo' >/dev/null 2>&1
-echo init > init.txt
-git add -A >/dev/null 2>&1
-git commit -m initial --allow-empty >/dev/null 2>&1
+# Case 2: missing --branch -> non-zero + stderr mentions branch
+test_missing_branch() {
+    local out rc
+    out="$(cd "$TMPDIR_CASE" && bash "$SCRIPT" 2>&1)"; rc=$?
+    assertNotEquals 'missing --branch exits non-zero' 0 "$rc"
+    case "$out" in
+        *--branch*|*required*) assertTrue 'missing --branch stderr mentions branch' 0 ;;
+        *) fail "missing --branch stderr unexpected: $out" ;;
+    esac
+}
 
-# Case 2: missing --branch
-out=$(bash "$SCRIPT" 2>&1)
-rc=$?
-if [[ $rc -ne 0 ]]; then
-    record_pass "missing --branch exits non-zero (rc=$rc)"
-else
-    record_fail "missing --branch" "expected non-zero"
-fi
-if [[ "$out" == *"--branch"* || "$out" == *"required"* ]]; then
-    record_pass "missing --branch stderr mentions branch"
-else
-    record_fail "missing --branch stderr" "unexpected: $out"
-fi
+# Case 3: --branch main but no --message -> non-zero + stderr mentions message
+test_missing_message() {
+    local out rc
+    out="$(cd "$TMPDIR_CASE" && bash "$SCRIPT" --branch main 2>&1)"; rc=$?
+    assertNotEquals 'missing --message exits non-zero' 0 "$rc"
+    case "$out" in
+        *--message*|*required*) assertTrue 'missing --message stderr mentions message' 0 ;;
+        *) fail "missing --message stderr unexpected: $out" ;;
+    esac
+}
 
-# Case 3: --branch main but no --message
-out2=$(bash "$SCRIPT" --branch main 2>&1)
-rc2=$?
-popd >/dev/null
-
-if [[ $rc2 -ne 0 ]]; then
-    record_pass "missing --message exits non-zero (rc=$rc2)"
-else
-    record_fail "missing --message" "expected non-zero"
-fi
-if [[ "$out2" == *"--message"* || "$out2" == *"required"* ]]; then
-    record_pass "missing --message stderr mentions message"
-else
-    record_fail "missing --message stderr" "unexpected: $out2"
-fi
-
-echo ''
-echo '────────────────────────────────────────────────────────────────────────'
-echo "push-to-svn-commit.sh: passed=$passed failed=$failed"
-
-if [[ $failed -gt 0 ]]; then
-    for m in "${fail_msgs[@]}"; do echo "  - $m"; done
-    echo "FAIL: $failed assertion(s) failed"
-    exit 1
-fi
-echo "OK"
-exit 0
+# shellcheck disable=SC1090
+. "$SHUNIT2"

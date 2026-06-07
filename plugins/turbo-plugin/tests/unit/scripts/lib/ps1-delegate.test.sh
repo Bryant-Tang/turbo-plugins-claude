@@ -1,103 +1,76 @@
 #!/usr/bin/env bash
-# ps1-delegate.test.sh
+# ps1-delegate.test.sh (shUnit2)
 #
 # Unit tests for plugins/turbo-plugin/scripts/lib/ps1-delegate.sh.
 # ps1-delegate dispatches `bash <script>` to `powershell -File <SCRIPTS_DIR>/<script>.ps1 <args...>`.
 #
-# Cases (≥ 3):
+# Cases:
 #   1. happy dispatch: a temp scripts/lib/ps1-delegate.sh sibling fake.ps1 that writes a sentinel
 #      and exits 0 → delegate invocation prints sentinel, exit code 0.
 #   2. missing .ps1: delegate to a non-existent script → powershell -File errors, non-zero exit.
 #   3. passthrough exit code: fake.ps1 exits with code 42 → delegate exits 42 (PS error codes pass).
 #
-# Conventions:
-#   - last non-empty line is "OK" (pass) or "FAIL: <reason>" (fail)
-#   - exit 0 if all pass, 1 otherwise
-
-set -u
+# ps1-delegate invokes real powershell; on a runner without it the cases SKIP cleanly.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
 DELEGATE="$PLUGIN_ROOT/scripts/lib/ps1-delegate.sh"
+SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
-# Capability gate (U5): ps1-delegate.sh dispatches to PowerShell — the cases here invoke real
-# powershell. Skip cleanly on a runner without PowerShell before any fixture setup. Last line
-# "OK" + exit 0 = orchestrator non-FAIL signal; on Windows the gate passes and the test runs as today.
-if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
-    echo "OK (SKIPPED: ps1-delegate.sh dispatches to PowerShell; no powershell/pwsh on this runner)"
-    exit 0
-fi
+oneTimeSetUp() {
+    HAS_PS=0
+    if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then HAS_PS=1; fi
+}
 
-passed=0
-failed=0
-fail_msgs=()
+setUp() {
+    [ "$HAS_PS" -eq 1 ] || return 0
+    TMPDIR_RT="$(mktemp -d -t turbo-ps1delegate-XXXXXX)"
+    mkdir -p "$TMPDIR_RT/scripts/lib"
+    cp "$DELEGATE" "$TMPDIR_RT/scripts/lib/ps1-delegate.sh"
+    chmod +x "$TMPDIR_RT/scripts/lib/ps1-delegate.sh"
+    DELEGATE_FAKE="$TMPDIR_RT/scripts/lib/ps1-delegate.sh"
+}
 
-record_pass() { echo "  [PASS] $1"; passed=$((passed + 1)); }
-record_fail() { echo "  [FAIL] $1: $2"; failed=$((failed + 1)); fail_msgs+=("$1: $2"); }
+tearDown() {
+    [ -n "${TMPDIR_RT:-}" ] && rm -rf "$TMPDIR_RT" 2>/dev/null || true
+}
 
-if [[ ! -f "$DELEGATE" ]]; then
-    echo "FAIL: ps1-delegate.sh not found at $DELEGATE"
-    exit 1
-fi
+test_delegate_exists() {
+    [ -f "$DELEGATE" ]
+    assertTrue 'ps1-delegate.sh exists' $?
+}
 
-# Build a sandbox mirroring scripts/<name>.ps1 + scripts/lib/ps1-delegate.sh layout.
-# delegate computes SCRIPTS_DIR as `dirname(__file__)/..`, so we put delegate at
-# <sb>/scripts/lib/ps1-delegate.sh and the target ps1 at <sb>/scripts/<name>.ps1.
-TMPDIR_RT="$(mktemp -d -t turbo-ps1delegate-XXXXXX)"
-trap 'rm -rf "$TMPDIR_RT" 2>/dev/null || true' EXIT
-
-mkdir -p "$TMPDIR_RT/scripts/lib"
-cp "$DELEGATE" "$TMPDIR_RT/scripts/lib/ps1-delegate.sh"
-chmod +x "$TMPDIR_RT/scripts/lib/ps1-delegate.sh"
-DELEGATE_FAKE="$TMPDIR_RT/scripts/lib/ps1-delegate.sh"
-
-# Case 1: happy dispatch
-cat > "$TMPDIR_RT/scripts/fake-happy.ps1" <<'PS1'
+test_happy_dispatch() {
+    if [ "$HAS_PS" -ne 1 ]; then startSkipping; return 0; fi
+    cat > "$TMPDIR_RT/scripts/fake-happy.ps1" <<'PS1'
 [Console]::Out.WriteLine('SENTINEL_TURBO_DELEGATE_OK')
 exit 0
 PS1
+    local out rc
+    out="$("$DELEGATE_FAKE" fake-happy 2>&1)"; rc=$?
+    assertEquals "Case 1: happy dispatch exit 0 (out=${out:0:200})" 0 "$rc"
+    case "$out" in
+        *SENTINEL_TURBO_DELEGATE_OK*) assertTrue 'Case 1: sentinel observed' 0 ;;
+        *) fail "Case 1: sentinel missing, out='${out:0:200}'" ;;
+    esac
+}
 
-out_c1="$("$DELEGATE_FAKE" fake-happy 2>&1)"
-rc_c1=$?
-if [[ "$rc_c1" -eq 0 && "$out_c1" == *"SENTINEL_TURBO_DELEGATE_OK"* ]]; then
-    record_pass "Case 1: happy dispatch — fake.ps1 stdout sentinel observed, exit 0"
-else
-    record_fail "Case 1: happy dispatch" "rc=$rc_c1, out='${out_c1:0:200}'"
-fi
+test_missing_ps1_nonzero() {
+    if [ "$HAS_PS" -ne 1 ]; then startSkipping; return 0; fi
+    local rc
+    "$DELEGATE_FAKE" no-such-script-here >/dev/null 2>&1; rc=$?
+    assertNotEquals 'Case 2: missing .ps1 — delegate exits non-zero' 0 "$rc"
+}
 
-# Case 2: missing .ps1 — delegate to a script that does not exist.
-# NOTE: do NOT use `|| true` here — it masks the non-zero rc we are testing for.
-# `set -u` is on but `set -e` is not, so bash continues on non-zero exit naturally.
-out_c2="$("$DELEGATE_FAKE" no-such-script-here 2>&1)"
-rc_c2=$?
-# powershell -File on a missing path exits non-zero; rc must NOT be 0.
-if [[ "$rc_c2" -ne 0 ]]; then
-    record_pass "Case 2: missing .ps1 — delegate exits non-zero (rc=$rc_c2)"
-else
-    record_fail "Case 2: missing .ps1 — expected non-zero exit" "rc=0, out='${out_c2:0:200}'"
-fi
-
-# Case 3: passthrough exit code (fake.ps1 exits 42)
-cat > "$TMPDIR_RT/scripts/fake-exit42.ps1" <<'PS1'
+test_passthrough_exit_code() {
+    if [ "$HAS_PS" -ne 1 ]; then startSkipping; return 0; fi
+    cat > "$TMPDIR_RT/scripts/fake-exit42.ps1" <<'PS1'
 exit 42
 PS1
+    local rc
+    "$DELEGATE_FAKE" fake-exit42 >/dev/null 2>&1; rc=$?
+    assertEquals 'Case 3: passthrough exit code 42' 42 "$rc"
+}
 
-"$DELEGATE_FAKE" fake-exit42 >/dev/null 2>&1
-rc_c3=$?
-if [[ "$rc_c3" -eq 42 ]]; then
-    record_pass "Case 3: passthrough exit code — got 42"
-else
-    record_fail "Case 3: passthrough exit code" "expected 42, got $rc_c3"
-fi
-
-echo ''
-echo '────────────────────────────────────────────────────────────────────────'
-echo "ps1-delegate.test: passed=$passed failed=$failed"
-
-if [[ $failed -gt 0 ]]; then
-    for m in "${fail_msgs[@]}"; do echo "  - $m"; done
-    echo "FAIL: $failed assertion(s) failed"
-    exit 1
-fi
-echo "OK"
-exit 0
+# shellcheck disable=SC1090
+. "$SHUNIT2"

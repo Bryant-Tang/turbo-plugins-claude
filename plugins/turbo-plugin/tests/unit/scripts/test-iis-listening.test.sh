@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
-# test-iis-listening.test.sh — bash sibling for check-iis-listening.sh
-set -uo pipefail
+# test-iis-listening.test.sh (shUnit2) — bash sibling for test-iis-listening.sh
+#
+# test-iis-listening.sh is a ps1-delegate (needs PowerShell). On a runner without
+# PowerShell the cases SKIP cleanly (Unix x Windows-only-tool); on Windows they run.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/test-iis-listening.sh"
+SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
-# Capability gate (U5): test-iis-listening.sh is a ps1-delegate (needs PowerShell). Skip cleanly
-# on a runner without PowerShell before any fixture setup. Last line "OK" + exit 0 = orchestrator
-# non-FAIL signal; on Windows the gate passes and the test runs as today.
-if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
-    echo "OK (SKIPPED: test-iis-listening.sh delegates to PowerShell; no powershell/pwsh on this runner)"
-    exit 0
-fi
+PORT=51928
 
-passed=0
-failed=0
-port=51928
+oneTimeSetUp() {
+    HAS_PS=0
+    if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then HAS_PS=1; fi
+}
 
 new_sandbox() {
     local guid
@@ -27,7 +25,7 @@ new_sandbox() {
     echo "$dir"
 }
 remove_sandbox() {
-    [[ -z "$1" || ! -d "$1" ]] && return
+    [ -z "${1:-}" ] || [ ! -d "$1" ] && return 0
     rm -rf "$1" 2>/dev/null || true
 }
 write_csproj() {
@@ -45,7 +43,7 @@ write_csproj() {
     <VisualStudio>
       <FlavorProperties GUID="{349c5851-65df-11da-9384-00065b846f21}">
         <WebProjectProperties>
-          <IISUrl>http://localhost:${port}/</IISUrl>
+          <IISUrl>http://localhost:${PORT}/</IISUrl>
         </WebProjectProperties>
       </FlavorProperties>
     </VisualStudio>
@@ -56,42 +54,43 @@ EOF
 init_git() {
     (cd "$1" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
 }
-assert_match() {
-    if echo "$3" | grep -Eq "$2"; then echo "  [PASS] $1"; ((passed++));
-    else echo "  [FAIL] $1 pattern='$2' got='${3:0:200}'"; ((failed++)); fi
+
+# Case 1: not listening — exit 1, stdout 含 port:
+test_not_listening() {
+    if [ "$HAS_PS" -ne 1 ]; then startSkipping; return 0; fi
+    local sb out e
+    sb="$(new_sandbox 'cil-sh-notlisten')"
+    write_csproj "$sb"
+    init_git "$sb"
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e=$?
+    assertEquals 'case1: exit 1' 1 "$e"
+    echo "$out" | grep -Eq "port: $PORT"; assertTrue 'case1: stdout 含 port:' $?
+    remove_sandbox "$sb"
 }
-assert_neq0() { if [[ "$2" != "0" ]]; then echo "  [PASS] $1"; ((passed++)); else echo "  [FAIL] $1 got 0"; ((failed++)); fi }
-assert_eq() { if [[ "$2" == "$3" ]]; then echo "  [PASS] $1"; ((passed++)); else echo "  [FAIL] $1 expected '$2' got '$3'"; ((failed++)); fi }
 
-# Case 1: not listening
-sb1="$(new_sandbox 'cil-sh-notlisten')"
-write_csproj "$sb1"
-init_git "$sb1"
-cd "$sb1"
-out1="$(bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e1=$?
-cd "$PLUGIN_ROOT"
-assert_eq 'case1: exit 1' '1' "$e1"
-assert_match 'case1: stdout 含 port:' "port: $port" "$out1"
+# Case 2: SKILL re-invoke — still exit 1
+test_reinvoke_consistent() {
+    if [ "$HAS_PS" -ne 1 ]; then startSkipping; return 0; fi
+    local sb e
+    sb="$(new_sandbox 'cil-sh-reinvoke')"
+    write_csproj "$sb"
+    init_git "$sb"
+    (cd "$sb" && bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1)
+    (cd "$sb" && bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1); e=$?
+    assertEquals 'case2: exit 1' 1 "$e"
+    remove_sandbox "$sb"
+}
 
-# Case 2: SKILL re-invoke
-cd "$sb1"
-out2="$(bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e2=$?
-cd "$PLUGIN_ROOT"
-assert_eq 'case2: exit 1' '1' "$e2"
+# Case 3: missing csproj — exit != 0
+test_missing_csproj() {
+    if [ "$HAS_PS" -ne 1 ]; then startSkipping; return 0; fi
+    local sb e
+    sb="$(new_sandbox 'cil-sh-nocsproj')"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && echo placeholder > README.txt && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+    (cd "$sb" && bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1); e=$?
+    assertNotEquals 'case3: missing csproj exit != 0' 0 "$e"
+    remove_sandbox "$sb"
+}
 
-# Case 3: missing csproj
-sb2="$(new_sandbox 'cil-sh-nocsproj')"
-(cd "$sb2" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && echo placeholder > README.txt && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
-cd "$sb2"
-combined3="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e3=$?
-cd "$PLUGIN_ROOT"
-assert_neq0 'case3: missing csproj exit ≠ 0' "$e3"
-
-remove_sandbox "$sb1"
-remove_sandbox "$sb2"
-
-echo ""
-echo "check-iis-listening.sh.test: passed=$passed failed=$failed"
-if (( failed > 0 )); then echo "FAIL"; exit 1; fi
-echo "OK"
-exit 0
+# shellcheck disable=SC1090
+. "$SHUNIT2"

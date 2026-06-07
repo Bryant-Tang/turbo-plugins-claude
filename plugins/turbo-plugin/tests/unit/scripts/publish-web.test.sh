@@ -1,27 +1,17 @@
 #!/usr/bin/env bash
-# publish-web.test.sh — bash sibling for publish-web.sh
-set -uo pipefail
+# publish-web.test.sh (shUnit2)
+# Script under test: scripts/publish-web.sh (ps1-delegate -> needs PowerShell).
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/publish-web.sh"
+SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
-# Capability gate (U5): publish-web.sh is a ps1-delegate (needs PowerShell). Skip cleanly on
-# a runner without PowerShell before any fixture setup. Last line "OK" + exit 0 = orchestrator
-# non-FAIL signal; on Windows the gate passes and the test runs as today.
-if ! command -v powershell >/dev/null 2>&1 && ! command -v pwsh >/dev/null 2>&1; then
-    echo "OK (SKIPPED: publish-web.sh delegates to PowerShell; no powershell/pwsh on this runner)"
-    exit 0
-fi
-
-passed=0
-failed=0
-
-assert_match() {
-    if echo "$3" | grep -Eq "$2"; then echo "  [PASS] $1"; ((passed++));
-    else echo "  [FAIL] $1 pattern='$2' got='${3:0:200}'"; ((failed++)); fi
+oneTimeSetUp() {
+    # U5: publish-web.sh is a ps1-delegate (needs PowerShell). On a runner without it, SKIP.
+    HAS_PS=0
+    if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then HAS_PS=1; fi
 }
-assert_neq0() { if [[ "$2" != "0" ]]; then echo "  [PASS] $1"; ((passed++)); else echo "  [FAIL] $1 got 0"; ((failed++)); fi }
 
 new_sb() {
     local guid
@@ -32,7 +22,8 @@ new_sb() {
     echo "$d"
 }
 rm_sb() {
-    [[ -z "${1:-}" || ! -d "$1" ]] && return 0
+    [ -z "${1:-}" ] && return 0
+    [ -d "$1" ] || return 0
     rm -rf "$1" 2>/dev/null || true
 }
 
@@ -51,39 +42,53 @@ write_csproj() {
 EOF
 }
 
-# Case 1: missing csproj
-sb1="$(new_sb 'publish-sh-nocsproj')"
-(cd "$sb1" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && echo placeholder > README.txt && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
-cd "$sb1"
-combined1="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e1=$?
-cd "$PLUGIN_ROOT"
-assert_neq0 'case1: missing csproj exit ≠ 0' "$e1"
-assert_match 'case1: 訊息提及 .csproj' '\.csproj' "$combined1"
+# Case 1: missing csproj -> exit != 0 + message mentions .csproj
+test_missing_csproj() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb combined e
+    sb="$(new_sb 'publish-sh-nocsproj')"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && echo placeholder > README.txt && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+    cd "$sb"
+    combined="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    cd "$PLUGIN_ROOT"
+    rm_sb "$sb"
+    assertNotEquals 'case1: missing csproj exit != 0' 0 "$e"
+    echo "$combined" | grep -Eq '\.csproj'; assertTrue 'case1: message mentions .csproj' $?
+}
 
-# Case 2: missing pubxml
-sb2="$(new_sb 'publish-sh-nopubxml')"
-write_csproj "$sb2"
-(cd "$sb2" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
-cd "$sb2"
-combined2="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e2=$?
-cd "$PLUGIN_ROOT"
-assert_neq0 'case2: missing pubxml exit ≠ 0' "$e2"
-assert_match 'case2: 訊息提及 pubxml' '[Pp]ubxml|pubxml' "$combined2"
+# Case 2: missing pubxml -> exit != 0 + message mentions pubxml
+test_missing_pubxml() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb combined e
+    sb="$(new_sb 'publish-sh-nopubxml')"
+    write_csproj "$sb"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+    cd "$sb"
+    combined="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    cd "$PLUGIN_ROOT"
+    rm_sb "$sb"
+    assertNotEquals 'case2: missing pubxml exit != 0' 0 "$e"
+    echo "$combined" | grep -Eq '[Pp]ubxml|pubxml'; assertTrue 'case2: message mentions pubxml' $?
+}
 
-# Case 3: SKILL re-invoke
-cd "$sb2"
-combined3="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e3=$?
-cd "$PLUGIN_ROOT"
-assert_neq0 'case3: SKILL re-invoke exit ≠ 0' "$e3"
+# Case 3: SKILL re-invoke (consistency) -> still exit != 0
+test_skill_reinvoke() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb e
+    sb="$(new_sb 'publish-sh-reinvoke')"
+    write_csproj "$sb"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+    cd "$sb"
+    bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1; e=$?
+    cd "$PLUGIN_ROOT"
+    rm_sb "$sb"
+    assertNotEquals 'case3: SKILL re-invoke exit != 0' 0 "$e"
+}
 
-echo "  [PASS] case4 (SKIP): real MSBuild publish deferred to Phase 2"
-((passed++))
+# Case 4: real MSBuild publish deferred to Phase 2 (always SKIP).
+test_real_publish_deferred() {
+    startSkipping
+}
 
-rm_sb "$sb1"
-rm_sb "$sb2"
-
-echo ""
-echo "publish-web.sh.test: passed=$passed failed=$failed"
-if (( failed > 0 )); then echo "FAIL"; exit 1; fi
-echo "OK"
-exit 0
+# shellcheck disable=SC1090
+. "$SHUNIT2"
