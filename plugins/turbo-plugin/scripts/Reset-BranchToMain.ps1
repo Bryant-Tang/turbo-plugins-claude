@@ -32,17 +32,11 @@ try {
         throw "Main worktree has uncommitted changes. Commit or stash before reset.`n$mainStatus"
     }
 
-    # v0.2.7+ F-U18.svn-state fix: filter out .svn/* paths from git status check.
-    # .svn/wc.db is SVN's binary metadata, modified by every svn operation (including
-    # the svn status/info that push-to-svn / pull-from-svn themselves run). Treating
-    # it as "uncommitted user change" creates a deadlock - user is told to run
-    # push/pull to resolve, but those commands also touch .svn/wc.db.
-    $remoteStatusRaw = (& git -C $remoteWorktreePath status --porcelain | Out-String).Trim()
-    $remoteStatusLines = @($remoteStatusRaw -split "`n" | Where-Object {
-        $_ -and ($_ -notmatch '^\s*[?MADRC!]+\s+\.svn[/\\]')
-    })
-    if ($remoteStatusLines.Count -gt 0) {
-        $remoteStatus = $remoteStatusLines -join "`n"
+    # Dirty-check the remote worktree. v0.5.0 U12: `.svn/` is now gitignored in the bridge
+    # (synced from main by New-RemoteBridge), so git ignores SVN's binary metadata; no
+    # hand-filtering of `.svn/*` is needed and genuine manual edits are still caught.
+    $remoteStatus = (& git -C $remoteWorktreePath status --porcelain | Out-String).Trim()
+    if ($remoteStatus) {
         throw "Remote-svn worktree '$remoteWorktreePath' has uncommitted changes. Run /tp-push-to-svn or /tp-pull-from-svn to resolve first.`n$remoteStatus"
     }
 

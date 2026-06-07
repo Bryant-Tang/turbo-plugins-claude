@@ -42,15 +42,14 @@ fi
 
 ORIGINAL_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD)"
 
-# F-U(synth #24): dirty-check remote worktree, filter out .svn/* paths.
-# .svn/wc.db is modified by every svn op; treating it as uncommitted change deadlocks
-# the user. Manual edits in the remote worktree would be silently packaged into the
-# sync commit without this check.
-REMOTE_DIRTY_RAW="$(git -C "$REMOTE_PATH" status --porcelain)"
-REMOTE_DIRTY_FILTERED="$(printf '%s' "$REMOTE_DIRTY_RAW" | grep -vE '^[?MADRC! ]+ \.svn[/\\]' || true)"
-if [[ -n "$REMOTE_DIRTY_FILTERED" ]]; then
+# Dirty-check the remote worktree. v0.5.0 U12: `.svn/` is now in the bridge's .gitignore
+# (synced from main by new-remote-bridge), so git ignores SVN's binary metadata and the
+# manual `.svn/*` filter is gone; genuine manual edits are still caught and would otherwise
+# be packaged into the sync commit.
+REMOTE_DIRTY="$(git -C "$REMOTE_PATH" status --porcelain)"
+if [[ -n "$REMOTE_DIRTY" ]]; then
   echo "Error: Remote worktree '$REMOTE_PATH' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling." >&2
-  echo "$REMOTE_DIRTY_FILTERED" >&2
+  echo "$REMOTE_DIRTY" >&2
   exit 1
 fi
 

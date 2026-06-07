@@ -29,16 +29,13 @@ try {
         throw "Main worktree has uncommitted changes. Please commit or stash before pulling from SVN.`n$mainStatus"
     }
 
-    # F-U(synth #24): dirty-check remote worktree, filter out .svn/* (wc.db updates on every svn op).
-    # Mirrors F-U18 fix in reset-remote-test. Without this, manual edits in the remote worktree get
-    # packaged into the sync commit silently.
-    $remoteStatusRaw = (& git -C $remote.Path status --porcelain | Out-String).Trim()
-    $remoteStatusLines = @($remoteStatusRaw -split "`n" | Where-Object {
-        $_ -and ($_ -notmatch '^\s*[?MADRC!]+\s+\.svn[/\\]')
-    })
-    if ($remoteStatusLines.Count -gt 0) {
-        $remoteStatusDisplay = $remoteStatusLines -join "`n"
-        throw "Remote worktree '$($remote.Path)' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling.`n$remoteStatusDisplay"
+    # Dirty-check the remote worktree. v0.5.0 U12: `.svn/` is now in the bridge's .gitignore
+    # (synced from main by New-RemoteBridge), so git ignores SVN's binary metadata and we no
+    # longer hand-filter `.svn/*`; genuine manual edits are still caught and would otherwise be
+    # packaged into the sync commit.
+    $remoteStatus = (& git -C $remote.Path status --porcelain | Out-String).Trim()
+    if ($remoteStatus) {
+        throw "Remote worktree '$($remote.Path)' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling.`n$remoteStatus"
     }
 
     # F-U(synth #11): detect previously-orphaned remote sync commit (svn update + git commit

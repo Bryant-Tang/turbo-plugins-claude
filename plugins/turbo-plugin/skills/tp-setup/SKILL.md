@@ -130,6 +130,7 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
    .claude/**/*.local.*
    .turbo-plugin/**/*.local.*
    .turbo-plugin/worktrees/
+   .svn/
    ```
 
 3. 建 `.turbo-plugin/` 集中目錄(複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/` 全部 template),複製出來的內容:`config.toml`、`applicationhost.config`、`dbhub.example.local.toml`(此三檔進 git,跨同事共用)。
@@ -174,7 +175,7 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
 2. `.turbo-plugin/applicationhost.config` 不存在 → 複製 default-files template;**已存在則不覆寫**。
 3. `.turbo-plugin/dbhub.example.local.toml` 不存在 → 複製 default-files template;**已存在則不覆寫**。
 4. `.turbo-plugin/dbhub.local.toml` 不存在 → 提醒使用者「dbhub 需要使用者自填 credentials,請 `cp .turbo-plugin/dbhub.example.local.toml .turbo-plugin/dbhub.local.toml` 後編輯」,**不自動建立**(避免假裝有效設定)。
-5. `.gitignore` 缺 turbo-plugin patterns → idempotent append（patterns 含 `.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`、`.turbo-plugin/worktrees/`;後者確保任何 `tp-push-to-svn` 首推 bootstrap(New-RemoteBridge)建立的 nested worktree 容器不污染主 worktree `git status`）。
+5. `.gitignore` 缺 turbo-plugin patterns → idempotent append（patterns 含 `.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`、`.turbo-plugin/worktrees/`、`.svn/`;`.turbo-plugin/worktrees/` 確保任何 `tp-push-to-svn` 首推 bootstrap(New-RemoteBridge)建立的 nested worktree 容器不污染主 worktree `git status`,`.svn/` 讓 git 忽略 bridge worktree 內的 SVN 管理目錄,各 SVN 腳本不再需要手動過濾 `.svn/*`）。
 6. `.commitlintrc.json` 缺 → 複製 template;**已存在則 JSON merge `rules.type-enum[2]` 不覆寫整檔**。
 7. `CLAUDE.md` 缺 turbo-plugin convention 段 → 注入;**已存在則用 marker 區段比對,內容相同則 skip**。
 8. **apphost bootstrap**(見下方 §2.apphost-bootstrap;case (c) 通常 canonical 已存在,bootstrap 在 sub-step 2 已 idempotent 跳過,實際觸發機率低)。
@@ -532,7 +533,7 @@ JSON merge 規則同 3.4.B,寫入:
 ## Completion Checks
 
 - `.turbo-plugin/` marker 目錄存在,內含 `config.toml`、`applicationhost.config`、`dbhub.example.local.toml`(三件 git-versioned)。
-- `.gitignore` 含 `turbo-plugin` 相關 patterns(`.claude/**/*.local.*` / `.turbo-plugin/**/*.local.*` / `.turbo-plugin/worktrees/`)。
+- `.gitignore` 含 `turbo-plugin` 相關 patterns(`.claude/**/*.local.*` / `.turbo-plugin/**/*.local.*` / `.turbo-plugin/worktrees/` / `.svn/`)。
 - `.commitlintrc.json` 含 `rules.type-enum[2]` ⊇ 12 類預設;`CLAUDE.md` 含 turbo-plugin convention 段(由 marker 包夾)。
 - Case (a)/(b):`git branch -a` 含 `remote-svn/main`,`git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-main`,該 worktree 內含 `.svn/`;主 worktree `git status --porcelain` 乾淨(`.turbo-plugin/worktrees/` 已 gitignore)。
 - Case (a)/(b)/(c) apphost bootstrap 終態:
