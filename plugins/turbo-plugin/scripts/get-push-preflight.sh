@@ -41,14 +41,15 @@ if [[ "$BRANCH" == 'HEAD' ]]; then
   exit 0
 fi
 
-# Sanitize the requested branch BEFORE emitting any token (anti-forge). Invalid input
-# is a hard error, never a token.
-# Sanitization failure stays tokenless (anti-forge): a forged/invalid branch never earns a
-# token. Only POST-sanitization failures (e.g. MAX_PATH in resolve below) emit TP_TOKEN:ERROR.
+# Sanitize the requested branch BEFORE emitting any token (anti-forge): a forged/invalid
+# branch is a hard error and stays tokenless, never earning a token. Only POST-sanitization
+# failures (e.g. MAX_PATH in resolve below, or worktree resolution) emit TP_TOKEN:ERROR.
 assert_valid_remote_branch_name "$BRANCH" || exit 1
 
-MAIN_WORKTREE="$(get_main_worktree)"
-WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
+# Post-sanitization: worktree resolution failures emit TP_TOKEN:ERROR (parity with the .ps1
+# catch, which fires for the same Get-MainWorktree/Get-WorktreesDir throws once sanitized).
+if ! MAIN_WORKTREE="$(get_main_worktree 2>&1)"; then _die_token "$MAIN_WORKTREE"; fi
+if ! WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE" 2>&1)"; then _die_token "$WORKTREES_DIR"; fi
 
 # Detached-HEAD detection via symbolic-ref (not current == requested).
 if CURRENT="$(git -C "$MAIN_WORKTREE" symbolic-ref -q --short HEAD 2>/dev/null)"; then

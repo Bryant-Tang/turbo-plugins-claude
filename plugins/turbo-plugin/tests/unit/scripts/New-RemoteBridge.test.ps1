@@ -177,6 +177,27 @@ Describe 'New-RemoteBridge' {
         }
     }
 
+    Context 'Case 4c: inconsistent partial state (worktree dir without ref) -> recovery guidance' {
+        It 'rejects with the dir-without-branch message and recovery steps' {
+            $sb = New-Sandbox -Tag 'nrb-4c'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                # Worktree dir exists but NO bridge branch -> the symmetric leftover state.
+                $wtDir = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feature-x')
+                $null = New-Item -ItemType Directory -Path $wtDir -Force
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feature-x', '-SvnUrl', 'file:///nonexistent/branches/x')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'Inconsistent bridge state'
+                $res.Combined | Should -Match 'git worktree prune'
+                $res.Combined | Should -Not -Match 'Creating SVN bridge'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
     Context 'Case 5: collision -> two branches map to the same worktree dir' {
         It 'rejects with "already taken by branch" and creates nothing for the requested branch' {
             $sb = New-Sandbox -Tag 'nrb-5'

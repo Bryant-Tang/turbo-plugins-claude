@@ -157,5 +157,21 @@ test_conflict_isolated_and_restored() {
     assertEquals 'original branch restored' "$start_branch" "$end_branch"
 }
 
+# ── Case 8: git status failure (corrupt index) → fail-loud before merging ──────
+test_git_status_failure_aborts() {
+    local root out rc
+    root="$(make_merge_fixture "$SB")"
+    # Corrupt the index so `git status --porcelain` exits non-zero. get_main_worktree (runs
+    # first and does not read the index) still succeeds, so this exercises the new
+    # status-failure guard rather than an earlier failure.
+    printf 'garbage-not-a-git-index' > "$root/.git/index"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; rc=$?
+    assertNotEquals 'git status failure exits non-zero' 0 "$rc"
+    case "$out" in
+        *"git status --porcelain failed"*) assertTrue 'reports git status failure' 0 ;;
+        *) fail "expected 'git status --porcelain failed', got: $out" ;;
+    esac
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

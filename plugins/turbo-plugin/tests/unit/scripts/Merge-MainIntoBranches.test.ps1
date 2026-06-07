@@ -190,4 +190,26 @@ Describe 'Merge-MainIntoBranches' {
             }
         }
     }
+
+    Context 'Case 6: git status failure (corrupt index) -> fail-loud, does not merge' {
+        It 'exits non-zero on a status failure and never proceeds to a clean merge' {
+            $sb = New-Sandbox -Tag 'mmb-6'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-MergeFixture -Root $root
+                # Corrupt the index so `git status --porcelain` fails. Get-MainWorktree (runs first,
+                # does not read the index) still succeeds, so this hits the dirty-check stage. The
+                # safety contract: the script fails loud and does NOT silently treat the tree as
+                # clean and merge. (Under EAP=Stop the failing git call surfaces git's own fatal;
+                # the explicit $LASTEXITCODE guard additionally covers a silent non-zero exit.)
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, '.git', 'index'), 'garbage-not-a-git-index')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'index file|git status'   # failed on the status/index, not elsewhere
+                $res.Stdout   | Should -Not -Match 'Merged cleanly'     # never reached a successful merge
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
 }

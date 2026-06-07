@@ -21,6 +21,12 @@
 - fix: `Merge-MainIntoBranches.ps1` / `merge-main-into-branches.sh`——dirty 檢查的 `git status` 失敗(如 index 損壞)會被當成乾淨而繞過守衛;改為檢查 `git status` 結果,失敗則 fail-loud
 - fix: `New-RemoteBridge.ps1` / `new-remote-bridge.sh`——「ref 在但 worktree 目錄不在」(或反向)的半套殘留狀態會 hard-fail「already exists」而卡住宣稱可重跑的首推;改為偵測 ref XOR dir 並給明確復原指令(`git worktree prune` / `git branch -D`)
 - fix: `Common.ps1` / `common.sh`——MAX_PATH guard 由 `>260` 改為 `>=260`(260 含結尾 NUL,可用長度 259),修正放行剛好 260 字元路徑的邊界差一
+- fix: `get-push-preflight.sh`——上一條 `TP_TOKEN:ERROR` 修正只包到 `resolve_remote_worktree`(MAX_PATH)站,漏了同樣在消毒後的 `get_main_worktree` / `get_worktrees_dir`;改為同樣包進 `_die_token`,與 `.ps1` 端(消毒後任何 throw 都發 ERROR token)恢復 parity(複審 r2 發現)
+- fix: `reset-branch-to-main.sh`——reset **前**切入分支的 `git checkout` 未檢查 exit code(`.ps1` 端有);改為失敗時明示「main worktree 仍停在原分支」並 exit 1(pre-existing parity gap,複審 r2 發現)
+
+### Added
+
+- test: 為 v0.5.1 新行為補測試——`Get-PushPreflight` 消毒後失敗發 `TP_TOKEN:ERROR`(非 git 目錄觸發,PS+sh)、`Merge-MainIntoBranches` git status 失敗時 fail-loud 不靜默 merge(毀損 index 觸發,PS+sh)、`New-RemoteBridge` 「worktree dir 在但 ref 不在」的對稱半套狀態(PS Case 4c + sh `test_bridge_dir_without_ref`)。`Reset-BranchToMain` 的 reset/checkout **失敗**復原路徑因真 git sandbox 無法注入命令失敗而未加測試(記為已知缺口)
 
 ## [0.5.0] - 2026-06-07
 

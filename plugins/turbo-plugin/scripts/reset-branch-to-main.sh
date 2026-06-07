@@ -84,7 +84,10 @@ SWITCHED=false
 if [[ "$ORIGINAL_BRANCH" != "$BRANCH" ]]; then
   echo ''
   echo "Switching main worktree from '$ORIGINAL_BRANCH' to '$BRANCH'..."
-  git -C "$MAIN_WORKTREE" checkout "$BRANCH"
+  if ! git -C "$MAIN_WORKTREE" checkout "$BRANCH"; then
+    echo "Error: git checkout $BRANCH failed (main worktree left on '$ORIGINAL_BRANCH')" >&2
+    exit 1
+  fi
   SWITCHED=true
 fi
 

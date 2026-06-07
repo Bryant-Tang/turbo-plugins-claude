@@ -108,4 +108,23 @@ Describe 'Get-PushPreflight token contract' {
             $r.Token | Should -BeLike 'TP_TOKEN:BRIDGE_ABSENT*requested=main*target=*'
         }
     }
+
+    Context 'post-sanitization failure emits TP_TOKEN:ERROR (not tokenless, not a routing token)' {
+        # A valid branch passes sanitization; running OUTSIDE any git repo makes Get-MainWorktree
+        # throw AFTER $sanitized is set. The catch must emit exactly one TP_TOKEN:ERROR so the
+        # SKILL (which routes only by TP_TOKEN: lines) is never handed an undocumented "exit 1,
+        # no token". This is the PS<->sh parity path hardened in v0.5.1.
+        It 'emits a single TP_TOKEN:ERROR for a valid branch run outside a git repo' -Skip:(-not $hasGit) {
+            $nonGit = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pf-nongit-$([Guid]::NewGuid().ToString('N'))")
+            $null = New-Item -ItemType Directory -Path $nonGit -Force
+            try {
+                $r = Invoke-Preflight -WorkDir $nonGit -Branch 'feat-x'
+                $r.Exit | Should -Be 1
+                $r.Token | Should -BeLike 'TP_TOKEN:ERROR*'
+                $r.TokenCount | Should -Be 1
+            } finally {
+                Remove-Item -LiteralPath $nonGit -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }

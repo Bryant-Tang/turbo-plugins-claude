@@ -142,5 +142,20 @@ test_bridge_absent() {
     assertEquals 'exactly one token' 1 "$(token_count)"
 }
 
+# ── Case 7: post-sanitization failure → TP_TOKEN:ERROR (parity with .ps1 catch) ──
+# A valid branch passes sanitization; $SB itself is not a git repo, so get_main_worktree
+# fails AFTER sanitization. _die_token must emit exactly one TP_TOKEN:ERROR (never tokenless),
+# matching the .ps1 catch. This is the PS<->sh parity path hardened in v0.5.1.
+test_error_token_on_postsanitization_failure() {
+    if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi
+    run_preflight "$SB" --branch feat-x   # $SB is a bare temp dir, not a git repo
+    assertEquals 'post-sanitization failure exits 1' 1 "$PF_EXIT"
+    case "$PF_STDOUT" in
+        TP_TOKEN:ERROR*) assertTrue 'emits TP_TOKEN:ERROR' 0 ;;
+        *) fail "expected stdout to start with 'TP_TOKEN:ERROR', got: $PF_STDOUT" ;;
+    esac
+    assertEquals 'exactly one token' 1 "$(token_count)"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

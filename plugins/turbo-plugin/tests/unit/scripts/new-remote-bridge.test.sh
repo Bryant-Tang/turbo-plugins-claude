@@ -153,6 +153,28 @@ test_bridge_inconsistent_partial_state() {
     esac
 }
 
+# Symmetric partial state (worktree dir without ref) → recovery guidance, no svn mutation.
+test_bridge_dir_without_ref() {
+    local root out rc
+    root="$(make_main_repo "$SB")"
+    # Worktree dir exists but NO bridge branch -> the symmetric leftover state.
+    mkdir -p "$root/.turbo-plugin/worktrees/remote-svn-feat-x"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-x --svn-url 'file:///nope/branches/feat-x' 2>&1)"; rc=$?
+    assertNotEquals 'dir-without-ref exits non-zero' 0 "$rc"
+    case "$out" in
+        *"inconsistent bridge state"*) assertTrue 'reports inconsistent state' 0 ;;
+        *) fail "expected 'inconsistent bridge state', got: $out" ;;
+    esac
+    case "$out" in
+        *"git worktree prune"*) assertTrue 'names recovery step' 0 ;;
+        *) fail "expected 'git worktree prune' guidance, got: $out" ;;
+    esac
+    case "$out" in
+        *"Creating SVN bridge"*) fail "unexpectedly reached svn mutation: $out" ;;
+        *) assertTrue 'did not reach svn mutation' 0 ;;
+    esac
+}
+
 # ── Case 6: worktrees dir absent → fail-closed (git only) ─────────────────────
 # A bare git repo with NO .turbo-plugin/worktrees must fail before any side effect.
 test_worktrees_dir_absent_fail_closed() {
