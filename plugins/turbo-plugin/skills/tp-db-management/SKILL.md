@@ -50,10 +50,12 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 ## Fixed Constraints
 
 - 本 repo 所有 DBHub MCP 存取 **皆唯讀**，**絕不** 透過 MCP tool 執行 `INSERT` / `UPDATE` / `DELETE` / `CREATE` / `ALTER` / `DROP` 等寫操作。
-- DBHub 只連 local 資料庫，**不** 直連 test / production。
+- **DBHub 連線範圍 = local 資料庫（`local-db`）only**，絕不直連 test / production；test / main 的物件差異一律靠使用者在目標環境跑最小唯讀查詢確認。
 - 任何寫入側需求（資料修正 / schema 變更 / seed / backfill / migration）→ 產 `.sql` 檔到 `.turbo-plugin/sql/<env>-db/<branch>/`，**不** 直接寫資料庫。
 - **不要假設 local / test / production 結構一致**：欄位、view、stored procedure、function、trigger 都可能依環境不同。
 - 若 `test-db` / `main-db` 腳本依賴某物件定義，而該定義在非 local 環境可能不同 → 先給使用者一個 **最小唯讀查詢**（最好是簡單 `SELECT`），請他在目標環境跑完回傳結果，再據此 finalize 對應 SQL。**不要** 假裝 DBHub 能檢視 test / production。
+- **已發佈的 SQL 視為不可變**：已透過 `tp-push-to-svn` 推到 `remote-svn/*` 且已打過 release tag 的 `.sql`，**不得**再編輯舊檔——要修正改走**新檔**（遞增 `<order>` 的新 `.sql`）。SVN history 與 release tag 是永久紀錄，改舊檔會讓已部署環境與版控對不上。
+- **版控 SQL 不得含敏感資料**：`.turbo-plugin/sql/`（進 git）裡的 `.sql` **不得**包含字面憑證、含密碼的連線字串、或超出該 schema 遷移所需的 PII。連線資訊一律走 gitignored 的 `.turbo-plugin/dbhub.local.toml`；SQL 內需要範例值時用 placeholder，不要寫真實機密 / 個資。
 
 | 環境資料夾 | 用途 |
 |---|---|
