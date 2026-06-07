@@ -4,7 +4,13 @@
 
 格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
-## [Unreleased]
+## [0.5.0] - 2026-06-07
+
+### Changed
+
+- chore: 版本號重編,修正先前誤用 `1.0.0` 的版本語意——原 `## [1.0.0]` 改列為 `## [0.3.0]`、原 `## [Unreleased]` 定版為 `## [0.4.0]`;`plugin.json` `version` 由 `1.0.0` 改為 `0.5.0`,三份檔(`plugin.json` 描述、`README.md` 行 3 與行 141)的 skill 數由「14」更正為「16」（U1）
+
+## [0.4.0] - 2026-06-06
 
 ### Added
 
@@ -31,7 +37,7 @@
 - fix: `Build-Web.ps1` / `Publish-Web.ps1` 呼叫已不存在的 `pack-content.ps1`(verb-approval 改名為 `Compress-Content.ps1`,呼叫端未同步)——`$ErrorActionPreference='Stop'` 下每次 `/tp-build`、`/tp-publish` 都在 frontend pack 步驟 throw → exit 1;呼叫端與註解改指向 `Compress-Content.ps1`(code review P0)
 - fix: `tp-reset-remote-test` SKILL 的 PowerShell invocation 用 GNU 風格 `--diff-only`——`powershell -File` 會靜默忽略該旗標,使 `$DiffOnly=False`,「預覽」步驟反而直接執行真正的 `git reset --hard`;改用 PS switch `-DiffOnly`,並補上四處遺漏的必填 `-N <n>` / `--n <n>`(code review P1)
 
-## [1.0.0] - 2026-05-27
+## [0.3.0] - 2026-05-27
 
 turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `tnf` / `tgs` / `tpi`）的 dev 流程進單一 plugin,加上 v1.0 refinements(apphost 跟 VS 分離、tp-setup 4-Phase 重組、Claude Code 友善功能推薦、svn-log 中文亂碼修正 + 互動分頁、tp-suggest-ignore 文件修正)。
 

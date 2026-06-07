@@ -1,6 +1,6 @@
 # turbo-plugin
 
-.NET Framework Web + git+SVN bridged 環境的本機開發雜務工具集。14 個 skill 涵蓋 setup / SVN bridge / build / run / publish / ignore / 註解,**env-free 設計**,集中設定於 `.turbo-plugin/`。
+.NET Framework Web + git+SVN bridged 環境的本機開發雜務工具集。16 個 skill 涵蓋 setup / SVN bridge / build / run / publish / ignore / 註解,**env-free 設計**,集中設定於 `.turbo-plugin/`。
 
 > v1.0.0 為第一次 marketplace release,整合既有 `tdp` / `tnf` / `tgs` / `tpi` 四 plugin 的 dev 流程進單一 plugin。
 
@@ -138,7 +138,7 @@ enabled = false
 
 ## 與既有 4 plugin 共存
 
-v1.0.0 將既有 `tdp` / `tnf` / `tgs` / `tpi` 四 plugin 的 dev 流程整合進單一 `turbo-plugin`。若你仍在用舊 4 plugin,可在 `~/.claude/settings.json` 或 project-level `.claude/settings.json` 的 `enabledPlugins` 移除對應條目,改用 `/tp-<skill>` 觸發新 plugin 的 14 個 skill。
+v1.0.0 將既有 `tdp` / `tnf` / `tgs` / `tpi` 四 plugin 的 dev 流程整合進單一 `turbo-plugin`。若你仍在用舊 4 plugin,可在 `~/.claude/settings.json` 或 project-level `.claude/settings.json` 的 `enabledPlugins` 移除對應條目,改用 `/tp-<skill>` 觸發新 plugin 的 16 個 skill。
 
 ## License
 
