@@ -78,7 +78,7 @@ PASS / FAIL / PARTIAL。
 > byte-equal)。Source body byte preserve(`pack-content` / `tp-build-dotnet-framework-web`
 > 對應)仍是 byte-equal,filesystem bytes 是 UTF-8 canonical。
 
-> **Surface-small skill 標記**:`tp-csharp-comment` / `tp-js-comment` / `tp-reset-remote-test`
+> **Surface-small skill 標記**:`tp-csharp-comment` / `tp-js-comment` / `tp-reset-branch-to-main`
 > 各 2 case,低於 R12 通用 floor「1 happy + 2-3 error + 1 中文」的 4 case 最少數。
 > 理由:這三個 skill 介面表面狹窄(comment 系列只有「跑 + verify XML/JSDoc 覆蓋」、
 > reset 系列只有「diff-only preview / apply / cancel / already-equal 四條 path」),
@@ -425,7 +425,7 @@ PASS / FAIL / PARTIAL。
 
 ---
 
-## tp-reset-remote-test
+## tp-reset-branch-to-main
 
 > **Surface-small skill**:2 case(below R12 通用 floor「1 happy + 2-3 error + 1 中文」的 4 最少數)。理由:reset 操作只有四條 path(diff-only preview / Apply / Cancel / already-equal),每條 path 行為極為穩定。中文層面對齊 SVN history 不會在這裡新增 surface(已被 tp-svn-log + tp-push-to-svn 覆蓋)。
 
@@ -433,8 +433,8 @@ PASS / FAIL / PARTIAL。
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-reset-remote-test-1 | Apply path with LOSE/GAIN diff | fresh-base + setup(a) + 建工作分支 test-1 後用 `New-RemoteBridge` 建 test-1 bridge + test-1 branch 領先 main 3 commit + main 領先 test-1 5 commit | /tp-reset-remote-test --n 1 → Step 1 --diff-only → script 印 LOSE/GAIN/FILES_LOST_AFTER_PUSH → AskUserQuestion → 使用者選 Apply → Step 3 actual reset → `Reset test-1 to main.` | Step 1 stdout 含 `LOSE` 3 commits + `GAIN` 5 commits + `FILES_LOST_AFTER_PUSH` non-empty / AskUserQuestion description 含「重設後下次推送 SVN 會刪除 N 個檔案」/ Apply 後 `git log test-1..main` 為空(等齊) | (Apply happy) |
-| P2-tp-reset-remote-test-2 | Cancel + already-equal short-circuit | (a) cancel:同 case 1 fixture 但使用者選 Cancel;(b) already-equal:fresh-base + 用 `New-RemoteBridge` 建 test-1 bridge 後 test-1 直接 == main(沒有 LOSE/GAIN)| (a) /tp-reset-remote-test → --diff-only → AskUserQuestion → Cancel → 不動 git;(b) /tp-reset-remote-test → --diff-only → 印「already equals main. Nothing to reset.」→ 略過 AskUserQuestion 直接結束 | (a) test-1 HEAD 未動 / LOSE/GAIN 仍不平衡;(b) stdout 含「already equals」/ 沒 AskUserQuestion / exit 0 | (Cancel + short-circuit) |
+| P2-tp-reset-branch-to-main-1 | Apply path with LOSE/GAIN diff | fresh-base + setup(a) + 建工作分支 test-1 後用 `New-RemoteBridge` 建 test-1 bridge + test-1 branch 領先 main 3 commit + main 領先 test-1 5 commit | /tp-reset-branch-to-main --branch test-1 → Step 1 --diff-only → script 印 LOSE/GAIN/FILES_LOST_AFTER_PUSH → AskUserQuestion → 使用者選 Apply → Step 3 actual reset → `Reset test-1 to main.` | Step 1 stdout 含 `LOSE` 3 commits + `GAIN` 5 commits + `FILES_LOST_AFTER_PUSH` non-empty / AskUserQuestion description 含「重設後下次推送 SVN 會刪除 N 個檔案」/ Apply 後 `git log test-1..main` 為空(等齊) | (Apply happy) |
+| P2-tp-reset-branch-to-main-2 | Cancel + already-equal short-circuit | (a) cancel:同 case 1 fixture 但使用者選 Cancel;(b) already-equal:fresh-base + 用 `New-RemoteBridge` 建 test-1 bridge 後 test-1 直接 == main(沒有 LOSE/GAIN)| (a) /tp-reset-branch-to-main --branch test-1 → --diff-only → AskUserQuestion → Cancel → 不動 git;(b) /tp-reset-branch-to-main --branch test-1 → --diff-only → 印「already equals main. Nothing to reset.」→ 略過 AskUserQuestion 直接結束 | (a) test-1 HEAD 未動 / LOSE/GAIN 仍不平衡;(b) stdout 含「already equals」/ 沒 AskUserQuestion / exit 0 | (Cancel + short-circuit) |
 
 ### 失敗常見 patterns
 
@@ -449,11 +449,11 @@ PASS / FAIL / PARTIAL。
 >
 > **Prompt**:
 > ```
-> 幫我把 test-1 重設成 main — /tp-reset-remote-test --n 1
+> 幫我把 test-1 重設成 main — /tp-reset-branch-to-main --branch test-1
 > ```
 >
 > **觀察重點**:
-> - agent 觸發 tp-reset-remote-test
+> - agent 觸發 tp-reset-branch-to-main
 > - Step 1 先跑 `--diff-only`,stdout 含 `LOSE` 3 條 commit subject + `GAIN` 5 條 + `FILES_LOST_AFTER_PUSH` 區段(因為 test-1 加了 3 個檔案,reset 後下次 push 會刪)
 > - AskUserQuestion description 含「重設後下次推送 SVN 會刪除 N 個檔案」並列出檔名
 > - 使用者選 Apply
@@ -466,7 +466,7 @@ PASS / FAIL / PARTIAL。
 >
 > **Prompt**(a):
 > ```
-> /tp-reset-remote-test --n 1
+> /tp-reset-branch-to-main --branch test-1
 > ```
 >
 > **觀察重點**(a):
@@ -479,7 +479,7 @@ PASS / FAIL / PARTIAL。
 >
 > **Prompt**(b):
 > ```
-> /tp-reset-remote-test --n 1
+> /tp-reset-branch-to-main --branch test-1
 > ```
 >
 > **觀察重點**(b):
@@ -492,8 +492,8 @@ PASS / FAIL / PARTIAL。
 
 | case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
 |---|---|---|---|---|---|---|---|
-| P2-tp-reset-remote-test-1 | Apply with LOSE/GAIN/FILES_LOST | fresh-base+setup(a)+test-1 divergent | /tp-reset-remote-test --n 1 | --diff-only → Apply → reset 後等齊 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-reset-remote-test-2 | Cancel + already-equal short-circuit | sub-run (a) divergent / (b) equal | /tp-reset-remote-test --n 1 | (a) Cancel 不動 / (b) skip modal exit 0 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-reset-branch-to-main-1 | Apply with LOSE/GAIN/FILES_LOST | fresh-base+setup(a)+test-1 divergent | /tp-reset-branch-to-main --branch test-1 | --diff-only → Apply → reset 後等齊 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-reset-branch-to-main-2 | Cancel + already-equal short-circuit | sub-run (a) divergent / (b) equal | /tp-reset-branch-to-main --branch test-1 | (a) Cancel 不動 / (b) skip modal exit 0 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
 
@@ -1421,7 +1421,7 @@ Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
 | tp-setup | 5 | _ | _ | _ | |
 | tp-pull-from-svn | 4 | _ | _ | _ | |
 | tp-push-to-svn | 6 | _ | _ | _ | case 5/6 = Step 7 release tag |
-| tp-reset-remote-test | 2 | _ | _ | _ | surface-small |
+| tp-reset-branch-to-main | 2 | _ | _ | _ | surface-small |
 | tp-build-dotnet-framework-web | 3 | _ | _ | _ | |
 | tp-run-dotnet-framework-web | 3 | _ | _ | _ | |
 | tp-stop-dotnet-framework-web | 3 | _ | _ | _ | |

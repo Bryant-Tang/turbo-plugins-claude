@@ -19,7 +19,7 @@ fail-then-fix re-run = 13 個 session slot)。
 | tp-setup | 5 | case 4 / 5 走 real-install LSP / CE / agent teams / TUI |
 | tp-pull-from-svn | 4 | |
 | tp-push-to-svn | 6 | 含 Step 7 release tag(merge commit → 問 tag / nothing-to-push → 不問) |
-| tp-reset-remote-test | 2 | **surface-small skill** — below R12 通用 floor(reset 操作只有 4 條 path:diff-only preview / Apply / Cancel / already-equal,2 case 即覆蓋) |
+| tp-reset-branch-to-main | 2 | **surface-small skill** — below R12 通用 floor(reset 操作只有 4 條 path:diff-only preview / Apply / Cancel / already-equal,2 case 即覆蓋) |
 | tp-build-dotnet-framework-web | 3 | |
 | tp-run-dotnet-framework-web | 3 | |
 | tp-stop-dotnet-framework-web | 3 | |
@@ -35,7 +35,7 @@ fail-then-fix re-run = 13 個 session slot)。
 
 > **R12 floor not ceiling**(plan trade-off 5 resolution):「1 happy + 2-3 error +
 > 1 中文 = 4 最少數」是通用 floor,但對 surface 表面狹窄的 skill(comment 系列
-> 只有「跑 + verify 覆蓋」、reset-remote-test 只有 4 條 path)2 case 即足夠覆蓋
+> 只有「跑 + verify 覆蓋」、reset-branch-to-main 只有 4 條 path)2 case 即足夠覆蓋
 > 全部行為。三個 surface-small skill 上方表格標 **surface-small** 並寫理由。
 
 ---
@@ -102,14 +102,14 @@ fail-then-fix re-run = 13 個 session slot)。
   - P2-tp-cleanup-orphan-iis-1 / 2 / 3
 - **session 結束 state**:bin/Publish/ 有 publish artifact;applicationhost.config orphan sites 已清(case 1)
 
-### Session 7 — tp-push-to-svn(含 Step 7 release tag)+ tp-reset-remote-test
+### Session 7 — tp-push-to-svn(含 Step 7 release tag)+ tp-reset-branch-to-main
 
 - **預估時間**:30-40 分鐘
 - **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` 重置 SVN history + 重跑 setup + 在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`(避免 session 4 / 5 在 SVN 留下 r21+ 影響 push test)
 - **cases**:
   - P2-tp-push-to-svn-1 / 2 / 3 / 4(基本 push 篩選)
   - P2-tp-push-to-svn-5 / 6(Step 7 release tag:merge commit 仍問 tag / nothing-to-push 不問)
-  - P2-tp-reset-remote-test-1 / 2
+  - P2-tp-reset-branch-to-main-1 / 2
 - **session 結束 state**:SVN log 含若干 push 進去的 commit(case 1-3 各 push 一次);case 5 建了一個 `main-release-*` tag;test-1 已 reset
 
 ### Session 8 — tp-svn-log(pagination + 中文 + revision spec + escape)
@@ -156,7 +156,7 @@ flowchart LR
   S3 --> S4[Session 4<br>tp-suggest-ignore]
   S4 --> S5[Session 5<br>build + run + stop]
   S5 --> S6[Session 6<br>publish + cleanup-orphan-iis]
-  S6 --> S7[Session 7<br>push-to-svn + release tag + reset-remote-test]
+  S6 --> S7[Session 7<br>push-to-svn + release tag + reset-branch-to-main]
   S7 --> S8[Session 8<br>tp-svn-log]
   S8 --> S9[Session 9<br>csharp-comment + js-comment]
   S9 --> S10b[Session 10<br>merge-main-into-all + db-management]

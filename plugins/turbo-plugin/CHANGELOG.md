@@ -19,6 +19,7 @@
 - feat: `Resolve-RemoteWorktree` / `resolve_remote_worktree` 一般化,接受**任意 branch**(不再限 `main`/`test-<n>`)——ref `remote-svn/<branch>`(保留斜線)、worktree 目錄 `remote-svn-<branch-dash>`;新增 allowlist 消毒(拒 `..` / 前導 `-` / `\`/`:`/控制字元 / 結尾點或空白 / 保留名 `main` 非小寫與 Windows 裝置名 CON/PRN/AUX/NUL/COM1-9/LPT1-9)、normalize-then-compare 碰撞偵測(`Find-RemoteWorktreeCollision`)、MAX_PATH>260 hard-fail + 引導;PS/bash 兩端一致（U7）
 - refactor: 去耦其餘寫死 `main|test-<n>` 的 call site——`Set-SvnIgnore` / `set-svn-ignore.sh` 的 remote worktree 列舉改掃任意 `remote-svn-*`(不再 regex 限定 main/test-`<n>`);各 SVN 腳本(Build/Submit/Sync/Get-SvnLog/Tag-Release 之 `.ps1`+`.sh`)的 usage / 錯誤訊息字串改泛指 `<branch>`（U8）
 - refactor: `New-RemoteTest.ps1`/`.sh` 改名 `New-RemoteBridge.ps1`/`.sh` 並一般化(收 `--branch` + `--svn-url`、去 `test-<n>` 編號),成為 `tp-push-to-svn` 首推呼叫的內部 helper;首推模型下**不建工作分支**(工作分支即當前分支),只建 bridge ref + worktree + svn checkout;`svn copy` commit message 用消毒後 dash-form;rollback 只清本機 git 端(已建的 SVN 路徑為永久,重跑首推 idempotent 接續)。`Build-SvnCommit` 的 backstop `BRANCH_MISMATCH_WARNING` 改發 `TP_TOKEN:` 前綴(R3-1),`tp-push-to-svn` SKILL 加 Step 0 bootstrap pre-flight + 三道 gate（U9）
+- refactor: `tp-reset-remote-test` 改名 `tp-reset-branch-to-main` 並一般化——`Reset-RemoteTest.*` → `Reset-BranchToMain.*`,參數 `--n <number>` → `--branch <name>`,適用任意分支(不再限 `test-<n>`);保留 LOSE/GAIN/FILES_LOST 預覽(三基準刻意不同:LOSE=`main..<branch>` 本機毀掉的 commit、FILES_LOST_AFTER_PUSH=`main..remote-svn/<branch>` SVN 端刪的檔)+ 強制確認 gate + footgun 強警告(顯示 N 個不在 main 的 commit);加統一執行路由、移除 `force_bash` 規則（U10）
 
 ### Removed
 
