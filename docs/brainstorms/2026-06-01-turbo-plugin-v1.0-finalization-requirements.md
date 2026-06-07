@@ -13,7 +13,7 @@ topic: turbo-plugin-v1.0-finalization
 
 turbo-plugin 是用來取代 tdp/tnf/tgs/tpi 四個舊 plugin 的整併產物,目前在 `feat/turbo-plugin-v1.0` 分支累積到接近可發版。但收尾階段暴露出幾個彼此牽連的問題:
 
-- 既有 script test 把工作根寫死成 `C:\Turbo\test-turbo-plugin`,跑的過程甚至會在 `C:\Turbo` 同層建立暫存物再刪除——既污染使用者環境,也讓「上 GitHub CI 自動跑」與「換一台機器就能跑」變不可能。先前一次 containment 重構只是把寫死路徑換成另一個寫死路徑,沒解決可攜性。
+- 既有 script test 把工作根寫死成 `<MACHINE-PATH>`,跑的過程甚至會在其同層建立暫存物再刪除——既污染使用者環境,也讓「上 GitHub CI 自動跑」與「換一台機器就能跑」變不可能。先前一次 containment 重構只是把寫死路徑換成另一個寫死路徑,沒解決可攜性。
 - skill 層的驗證從沒被當成常駐、可重複的測試;它只有一份含寫死路徑、結構已過時的草稿文件,沒辦法在「以後每次改 plugin」時重跑。
 - consolidation 過程靜默漏搬了能力(已確認 push-to-svn 的 release tag 整個不見),退役舊 plugin 前若不盤點,會造成靜默失能。
 - CLAUDE.md 目前塞滿 plugin 專屬內容並硬列 plugin 清單,每次增刪 plugin 都得改它;它應該是整個 marketplace 的通用規範。CI 同理:不該每加一個 plugin 就手寫一支 workflow。
@@ -42,8 +42,8 @@ turbo-plugin 是用來取代 tdp/tnf/tgs/tpi 四個舊 plugin 的整併產物,�
 
 - R1. 測試**自己導向的寫入**(測試直接寫、或傳給工具的路徑)只能落在 `plugins/turbo-plugin/tests/.sandbox/`(repo 樹內);執行全程不得在 `C:\Turbo` 或 repo 樹內 sandbox 以外的位置建立檔案/目錄,**即使「建立後又刪除」也不允許**。此規範涵蓋測試直接導向的寫入;工具自身的全域狀態(如 `%APPDATA%\Subversion` 的 config/servers skeleton——測試全走 `file:///`、不做認證,故不會寫 auth credential)不在「零寫入」字面內——`svn` client 改用 sandbox-local `--config-dir` 使其也不被污染(見 R4、AE5)。
 - R2. 任何會進 PR 的檔案(script、test、docs、results、CI 設定)都不得含機器本機絕對路徑。
-- R3. 移除先前 containment commit 留下的寫死 `C:\Turbo\test-turbo-plugin`,改用 R1 的 sandbox 機制(此項是改寫,不是新增另一條寫死路徑)。
-- R4. 測試所需的 svn `file:///` URL、git worktree 路徑等,一律由 sandbox 根動態推導,不得硬編碼;此「動態推導 + path-free」**同樣適用 bash fixture helper**(`new_sb` / `new_sandbox` / `rm_sb` 等——目前 5 個 `.sh` 測試硬編 `/c/Turbo`),不是只有 `.ps1`。sandbox 根解析層**必須容忍含空格或 8.3 短檔名的 parent path**(例如 repo clone 在 `C:\Users\Mel Wu\…` 之下):以長形 `[System.IO.Path]::GetFullPath` 解析、對每個 `svnadmin` / `cmd` 重導 / `Push-Location` 傳長形 quoted LiteralPath,避免重現先前寫死 `C:\Turbo` 所迴避的 PS 5.1 8.3 短檔名 tilde-expansion bug。SVN 全域狀態隔離**只套用 `svn` client(checkout/info/copy/commit/update)的 `--config-dir`**;`svnadmin` / `svnlook` 無此選項、也不讀 `%APPDATA%`,只需給長形 quoted 路徑。
+- R3. 移除先前 containment commit 留下的寫死 `<MACHINE-PATH>`,改用 R1 的 sandbox 機制(此項是改寫,不是新增另一條寫死路徑)。
+- R4. 測試所需的 svn `file:///` URL、git worktree 路徑等,一律由 sandbox 根動態推導,不得硬編碼;此「動態推導 + path-free」**同樣適用 bash fixture helper**(`new_sb` / `new_sandbox` / `rm_sb` 等——目前 5 個 `.sh` 測試硬編 `<MACHINE-PATH>`),不是只有 `.ps1`。sandbox 根解析層**必須容忍含空格或 8.3 短檔名的 parent path**(例如 repo clone 在 `<MACHINE-PATH>` 之下):以長形 `[System.IO.Path]::GetFullPath` 解析、對每個 `svnadmin` / `cmd` 重導 / `Push-Location` 傳長形 quoted LiteralPath,避免重現先前寫死 `C:\Turbo` 所迴避的 PS 5.1 8.3 短檔名 tilde-expansion bug。SVN 全域狀態隔離**只套用 `svn` client(checkout/info/copy/commit/update)的 `--config-dir`**;`svnadmin` / `svnlook` 無此選項、也不讀 `%APPDATA%`,只需給長形 quoted 路徑。
 - R5. sandbox 在每次測試執行的開頭/結尾清理,確保可重複且不殘留。
 
 ### CI 自動化（主題 1）
@@ -102,7 +102,7 @@ turbo-plugin 是用來取代 tdp/tnf/tgs/tpi 四個舊 plugin 的整併產物,�
 - AE5. **Covers R1.** 完整跑一輪 script test 後,`C:\Turbo` 頂層與 `tests/.sandbox/` 以外位置零**測試導向**產物;工具全域狀態(SVN config skeleton)因 `svn` client 走 sandbox-local `--config-dir` 而不污染 `%APPDATA%`;sandbox 內產物在結尾被清掉。
 - AE6. **Covers R2, R15.** 對整個會進 PR 的檔案樹搜尋本機絕對路徑樣式(`C:\Turbo`、`/c/Users` 等)→ 零命中;`skill-tests-results.md` 以 `<VALIDATION_ROOT>` 等 placeholder 記錄。
 - AE7. **Covers R16, R17, R18.** 讀 `CLAUDE.md`:找不到任何特定 plugin 名稱或 plugin 清單;有一句指向各 plugin `README.md`;有一段明訂所有 plugin 必須具備兩層測試 + CI 且擺在慣例路徑。
-- AE8. **Covers R4.** 把 repo clone 到含空格的 parent path(如 `C:\Users\Mel Wu\…`)再跑完整 script test → 全程不因 8.3 短檔名 tilde-expansion 而 fail;sandbox / svn repo / worktree 都正確解析,且 `Invoke-PsScript` 經 `cmd.exe /c` 重導的 stdout/stderr tempfile 也能在含空格路徑下寫入並讀回(至少一個經 `Invoke-PsScript` 的 `.test.ps1` 在含空格 clone 下綠燈)。
+- AE8. **Covers R4.** 把 repo clone 到含空格的 parent path(如 `<MACHINE-PATH>`,路徑含空格)再跑完整 script test → 全程不因 8.3 短檔名 tilde-expansion 而 fail;sandbox / svn repo / worktree 都正確解析,且 `Invoke-PsScript` 經 `cmd.exe /c` 重導的 stdout/stderr tempfile 也能在含空格路徑下寫入並讀回(至少一個經 `Invoke-PsScript` 的 `.test.ps1` 在含空格 clone 下綠燈)。
 - AE9. **Covers R24.** `tp-setup` 後建立一個 remote worktree,立刻在主 worktree 跑 `git status --porcelain` → 輸出為空(`.turbo-plugin/worktrees/` 已被 ignore,巢狀 worktree 不顯示為未追蹤)。
 - AE10. **Covers R31, R20.** 執行 R20 刪除前,PR 內可找到一份標記完整的能力對照清單(每個 gap 皆有「補 / 不補 / 刻意不要」決策 + 使用者簽核紀錄),刪除 commit 時序晚於簽核(或對照清單與刪除同 PR、簽核在 review thread);且每個 non-trivial「補」項皆有追蹤 issue/task。
 

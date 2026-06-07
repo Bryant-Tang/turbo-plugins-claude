@@ -12,7 +12,7 @@ status: superseded
 ## Summary
 
 turbo-plugin v0.2.0 → v0.2.4 經 4 輪 ce-code-review + 1 輪實機 script-level
-acceptance(在 `C:\Turbo\SampleGitWithSvn`)後,**SKILL agent-flow 部分**
+acceptance(在 `<MACHINE-PATH>`)後,**SKILL agent-flow 部分**
 仍須在真實 Claude Code session 由使用者驗。本 plan 列 11 個 Implementation
 Unit 覆蓋 **12 個 SKILL**(全 13 個中 tp-svn-log 留 Deferred);優先驗「主 worktree 開 Claude → EnterWorktree 進
 peer worktree → build/run」這個原 `tnf` plugin 帶來的 pain point 是否在
@@ -29,7 +29,7 @@ file:// repo)已備好;`.gitignore` union merge / `.pubxml` profile 已 commit
 
 ## Problem Frame
 
-- **Script-level autonomous 已驗**:agent 在 SampleGitWithSvn 直接 invoke
+- **Script-level autonomous 已驗**:agent 在 <MACHINE-PATH> 直接 invoke
   20+ `.ps1` 跑通,**抓出 3 P0(PS 5.1 incompat)+ 2 P2(svn:ignore
   over-sensitive、PostToolUse off-by-N)+ docs**,全部修進 v0.2.1 ~ v0.2.4
 - **SKILL agent-flow 未驗**:agent 對 SKILL.md 文字的解讀、SKILL 串多
@@ -73,14 +73,14 @@ file:// repo)已備好;`.gitignore` union merge / `.pubxml` profile 已 commit
 
 - 既有 4 plugin(tdp/tnf/tgs/tpi)acceptance:cutover 計畫 disable + 移除
   之,不需 acceptance test
-- 生產 SVN repo 測試:本 plan 只用 fixture SampleSvnServer
+- 生產 SVN repo 測試:本 plan 只用 fixture <INTERNAL-SVN-URL>
 - 自動化 GUI 互動(browser / IIS Express crash report)— 留 manual 觀察
 
 ---
 
 ## Key Technical Decisions
 
-1. **fixture-based 測試,不動生產**:`C:\Turbo\SampleGitWithSvn` 是專屬
+1. **fixture-based 測試,不動生產**:`<MACHINE-PATH>` 是專屬
    測試環境,內容隨意改。SampleGit 已 commit MinimalWebApp(.NET FW 4.8
    minimal Web App)+ `.turbo-plugin/` config + `.pubxml` profile
 2. **`.NET FW Web` skill 全 4 個都用 MinimalWebApp fixture**:build / run /
@@ -106,7 +106,7 @@ file:// repo)已備好;`.gitignore` union merge / `.pubxml` profile 已 commit
 ## Output Structure
 
 ```
-C:\Turbo\SampleGitWithSvn\                    # fixture 根目錄
+<MACHINE-PATH>\                               # fixture 根目錄
 ├── SampleGit\                                # main worktree
 │   ├── .turbo-plugin\                        # config + apphost source + dbhub.example
 │   ├── .vs\MinimalWebApp\config\             # 由 tp-setup 或 VS 生成
@@ -129,7 +129,7 @@ C:\Turbo\SampleGitWithSvn\                    # fixture 根目錄
 │   ├── test-1\                               # 原存在 test/rc1
 │   └── remote-test-3\                        # 由 U9 D.3 建立
 │
-└── SampleSvnServer\                          # 本機 SVN repo (file://)
+└── <INTERNAL-SVN-URL>\                        # 本機 SVN repo (file://)
     ├── main/                                  # rev 21
     ├── test/                                  # 原 test/rc1 對應
     └── test3/                                 # 由 U9 D.3 建立
@@ -298,7 +298,7 @@ mtime 不變),此 Unit 補 SKILL agent-flow 完整鏈路。
 **Test scenarios**:
 
 - **B.1.1 PostToolUse hook fire**:EnterWorktree 後 systemMessage 出現
-  `turbo-plugin: refreshed applicationhost.config for 1 site(s) in c:\Turbo\SampleGitWithSvn\SampleGit.worktrees\dev-1`
+  `turbo-plugin: refreshed applicationhost.config for 1 site(s) in <MACHINE-PATH>\SampleGit.worktrees\dev-1`
   (**「1 site(s)」不是「4」— v0.2.3 P3 fix 驗證**)
   - **前提**:已依 §K3 第 3 條跑完 VS site bootstrap;否則 `.turbo-plugin/applicationhost.config` 無 site,hook update 0 個,**不會** emit systemMessage,B.1.1 必 fail
 - **B.1.2 apphost physicalPath update**:
@@ -337,7 +337,7 @@ tp-stop 仍能殺到。
 - **B.2.1 IIS Express 啟動**:`Started IIS Express (site: MinimalWebApp-0eb9b6ee,
   PID: <n>)` + `Listening on http://localhost:51999/`
 - **B.2.2 瀏覽器 MapPath**:`http://localhost:51999/` 頁面顯示 MapPath ==
-  `C:\Turbo\SampleGitWithSvn\SampleGit.worktrees\dev-1\src\MinimalWebApp\`
+  `<MACHINE-PATH>\SampleGit.worktrees\dev-1\src\MinimalWebApp\`
   (**dev-1 path,非 main**)
 - **B.2.3 跨 session stop**:從 SampleGit/ 主 session 跑 tp-stop →
   `Stopped IIS Express PID <n>`(殺到了 dev-1 啟的 — 因 site name 跨 worktree
@@ -381,7 +381,7 @@ prompt。
   4. 開新 session 在 dev-1/
   5. **Expected**:systemMessage:「turbo-plugin: 偵測到本 worktree 尚未
      bootstrap,且這裡是 peer worktree。請到主 worktree
-     (`C:\Turbo\SampleGitWithSvn\SampleGit`) 啟動 Claude 並執行 `/tp-setup`,
+     (`<MACHINE-PATH>\SampleGit`) 啟動 Claude 並執行 `/tp-setup`,
      完成 bootstrap 後再回此 worktree 工作。」
   6. **重點**:main path 是真實絕對路徑,**非字面 `$mainPath`**(v0.2.1 fix)
   7. Cleanup:`Move-Item dev-1/.turbo-plugin-original dev-1/.turbo-plugin`
@@ -419,7 +419,7 @@ rollback 三條 path 行為符合 SKILL spec。
 **Files**:
 - `SampleGit/`(主 worktree git state)
 - `SampleGit.worktrees/remote-main/`(SVN sync bridge)
-- `SampleSvnServer/main/`(SVN trunk)
+- `<INTERNAL-SVN-URL>/main/`(SVN trunk)
 
 **Approach**:在 main + remote-main 各做衝突 commit,跑 pull → 觀察 auto-rollback。
 
@@ -463,11 +463,11 @@ SVN URL → ERR-trap rollback git branches/worktree)。
 **Files**:
 - `SampleGit/`(git branches)
 - `SampleGit.worktrees/remote-test-3/`(新 worktree,由 happy path 建)
-- `SampleSvnServer/test3/`(新 SVN branch)
+- `<INTERNAL-SVN-URL>/test3/`(新 SVN branch)
 
 **Approach**:
 1. happy path:`/turbo-plugin:tp-create-remote-test --n 3 --svn-url
-   file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/test3`,SKILL 走
+   <INTERNAL-SVN-URL>/test3`,SKILL 走
    Step 2.5 AskUserQuestion → 選 Confirm
 2. cancel path:同 happy 但 confirm 選 Cancel
 3. fail path:`--svn-url file:///nonexistent/path` 觸發 ERR-trap rollback
@@ -480,7 +480,7 @@ SVN URL → ERR-trap rollback git branches/worktree)。
   - **不再 throw `svn:ignore not found`**(v0.2.2 fix)
   - `git branch -a` 含 `test-3` + `remote/test-3`
   - `git worktree list` 含 `remote-test-3`
-  - `svn ls file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/` 含 `test3/`
+  - `svn ls <INTERNAL-SVN-URL>/` 含 `test3/`
 - **D.4 cancel path**(N=4):confirm 選 Cancel → branches/worktree/SVN
   都沒新東西
 - **D.5 fail-rollback path**(N=5,無效 SVN URL):
@@ -508,7 +508,7 @@ SVN URL → ERR-trap rollback git branches/worktree)。
 **Files**:
 - `SampleGit/`(test-3 branch + commits)
 - `SampleGit/.git/worktrees/remote-test-3/MERGE_HEAD.tp_branch_sha`(SHA pin file;**linked worktree 的 `.git` 是 pointer file 不是 dir**,真正的 gitdir 在 main 的 `.git/worktrees/<name>/`)
-- `SampleSvnServer/test3/`(SVN history)
+- `<INTERNAL-SVN-URL>/test3/`(SVN history)
 
 **Approach**:在 test-3 做 4 個 commit(feat/docs/fix/chore 各 1),跑
 push-to-svn 觀察篩選 + lifecycle 各 step。
@@ -531,7 +531,7 @@ push-to-svn 觀察篩選 + lifecycle 各 step。
     - **post-condition pin cleanup**:成功 push 後 `Test-Path <main>/.git/worktrees/remote-test-3/MERGE_HEAD.tp_branch_sha` = False(v0.2.1+v0.2.2 fix);若 happy 結束 pin 仍在 = FAIL
     - 中文 commit subject 在 SVN 顯示**不亂碼**(`svn log SampleGit.worktrees/remote-test-3 --limit 1`)
 - **(已併入 D.6)D.7 SHA pin mismatch throw** — script-level deterministic 邏輯,由 sibling plan 002 U16.3 直驗,本 unit 不重跑「另開 terminal 加 commit」race-condition setup
-- **(已砍)D.8 failure-retain pin** — 本來要 rename `SampleSvnServer/db` 模擬 SVN 失敗,但該目錄是 FSFS SVN repo 的 revision data 核心,rename 後 cleanup 漏跑會 corrupt 整 SVN repo。failure-retain pin 行為已由 sibling plan 002 U16.6 script-level 完整驗證
+- **(已砍)D.8 failure-retain pin** — 本來要 rename `<INTERNAL-SVN-URL>/db` 模擬 SVN 失敗,但該目錄是 FSFS SVN repo 的 revision data 核心,rename 後 cleanup 漏跑會 corrupt 整 SVN repo。failure-retain pin 行為已由 sibling plan 002 U16.6 script-level 完整驗證
 
 **Verification**:D.6 中文無亂碼 = v0.2.4 fix 驗證;pin file cleanup post-condition = v0.2.1+v0.2.2 fix。
 
@@ -636,7 +636,7 @@ analysis 完整跑通;E PARTIAL_FAILURE token + exit 2 = v0.2.0 WF4 設計驗證
 - **tp-svn-log Deferred**:本 plan 不覆蓋(留 follow-up,見 §Deferred to Follow-Up Work)
 - **兩個 hook** 都跑:`PostToolUse EnterWorktree`(U5)+ `SessionStart`(U7)
 - **fixture mutation**:SampleGit `main` 多 1-2 個 commit(D.2 conflict + D.11
-  suggest-ignore);SampleSvnServer 多 `^/test3` SVN branch(D.3 land)+ test3
+  suggest-ignore);<INTERNAL-SVN-URL> 多 `^/test3` SVN branch(D.3 land)+ test3
   上的 SVN commit(D.6 push)
 - **SVN side-effect 不可逆**:任何 SVN commit、`svn copy ^/test3` 都是 server-side
   永久 history。`^/test2` 已 clean,`^/test3` cleanup 由本 plan 結尾處理
@@ -647,7 +647,7 @@ analysis 完整跑通;E PARTIAL_FAILURE token + exit 2 = v0.2.0 WF4 設計驗證
 
 | 項目 | 動作 |
 |---|---|
-| SVN test3 殘留 | `svn delete file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/test3 -m "cleanup"` |
+| SVN test3 殘留 | `svn delete <INTERNAL-SVN-URL>/test3 -m "cleanup"` |
 | git remote-test-3 worktree | `git -C SampleGit worktree remove --force SampleGit.worktrees/remote-test-3` |
 | git branches `test-3` `remote/test-3` | `git -C SampleGit branch -D test-3 remote/test-3` |
 | iisexpress 殘留 | `Get-Process iisexpress -ErrorAction SilentlyContinue \| Stop-Process -Force` |

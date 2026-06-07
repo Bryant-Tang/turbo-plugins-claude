@@ -137,7 +137,7 @@ flowchart TD
   - `plugins/turbo-plugin/tests/fixtures/base/` — fixture base mirror source 含 `.sln`、樣本 `.csproj`、`samples/HelloController.cs`、`samples/script.js`、`.turbo-plugin/applicationhost.config`(含 `__TURBO_PLUGIN_PHYSICAL_PATH__` placeholder)、`.turbo-plugin/config.toml`(`[iis] enabled = true`)、`.git/`(初始化空 repo)、`.worktrees/remote-main/` + `.worktrees/remote-test-1/` skeleton
   - `plugins/turbo-plugin/tests/fixtures/seed/build-seed-repo.ps1` — orchestrator setup script:`svnadmin create test-turbo-plugin-svn-repo` → seed r1-r20(其中 r5/r10/r15 含中文 commit msg,從 inline 字典 #1 / #2 / #3 取)→ `svnadmin dump > plugins/turbo-plugin/tests/fixtures/seed/svn-repo-r1-r20.dump`
   - `plugins/turbo-plugin/tests/fixtures/seed/svn-repo-r1-r20.dump` — 產出物,進 git(small,~10KB)
-  - `plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` — per-case reset entry:`robocopy /MIR plugins/turbo-plugin/tests/fixtures/base C:\Turbo\test-turbo-plugin` + `svnadmin load < seed.dump` → `svn checkout` `remote-main` 與 `remote-test-1` worktree
+  - `plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` — per-case reset entry:`robocopy /MIR plugins/turbo-plugin/tests/fixtures/base <MACHINE-PATH>` + `svnadmin load < seed.dump` → `svn checkout` `remote-main` 與 `remote-test-1` worktree
   - `plugins/turbo-plugin/tests/fixtures/reset/reset_fixture.sh` — Bash mirror(`rsync -a --delete` 取代 robocopy)
   - `plugins/turbo-plugin/tests/fixtures/reset/test_reset_fixture.ps1` — Pester test:reset idempotency + 髒環境還原 + 中文路徑(模擬 `test-turbo-plugin` 改名為 `test-turbo-plugin 測試 ™` 後 reset 仍 OK)
   - `plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md` — 開頭 `## 中文 fixture 樣本` section(inline 字典)+ schema 範例
@@ -532,7 +532,7 @@ plugins/turbo-plugin/tests/
 - **AE1-AE16**:照 origin(已在 ce-doc-review 修完版本)。AE16 plan correction:`zh-samples.md` 描述改為「inline 中文字典 section 在 `phase1-scripts-schema.md`」對齊 R19。
 - **AE17** *(new — Covers U1, R31)*. Given fixture mid-state with `test-turbo-plugin/extras/garbage.txt` + SVN repo at r25(extra 5 commits),when orchestrator 跑 `Reset-Fixture.ps1`,then `test-turbo-plugin` diff vs `plugins/turbo-plugin/tests/fixtures/base/` = empty + `svn log -r 20` 為 base seed last revision + 沒有 r21+。
 - **AE18** *(new — Covers U2, R30)*. Given orchestrator 故意 inject 一個 3-arg `Join-Path` 到 `scripts/svn-log.ps1` 上方 stub 註解,when 跑 `Run-Phase1.ps1`,then pre-flight 階段 exit 非 0、stderr 含「svn-log.ps1:1: 3+ arg Join-Path 違規」、Pester 階段未啟動。
-- **AE19** *(new — Covers U3, R2(e))*. Given `plugins/turbo-plugin/tests/unit/scripts/compute-project-identity.Tests.ps1` 的 SKILL entry case,fixture 預設 `$env:TGS_PROJECT_ROOT = "C:\Turbo\test-turbo-plugin"`,when test 跑該 case,then identity hash 與 direct call(無 env)的 hash 完全相同(SKILL/script env contract 一致)。
+- **AE19** *(new — Covers U3, R2(e))*. Given `plugins/turbo-plugin/tests/unit/scripts/compute-project-identity.Tests.ps1` 的 SKILL entry case,fixture 預設 `$env:TGS_PROJECT_ROOT = "<MACHINE-PATH>"`,when test 跑該 case,then identity hash 與 direct call(無 env)的 hash 完全相同(SKILL/script env contract 一致)。
 - **AE20** *(new — Covers U4, R7a, AE13)*. Given fixture mid-state(r21 已 mutate),when `plugins/turbo-plugin/tests/unit/scripts/svn-ignore.Tests.ps1` cross-worktree case 開始 → orchestrator 先 `svnadmin load < seed.dump` reset → 跑 svn-ignore → 結束驗證 `svn log` 顯示 r21 + r22(per-worktree commit),then case 結束後下一個 case 開始前 reset 再次跑,SVN repo 回到 r20 baseline。
 - **AE21** *(new — Covers U5, R12 floor)*. Given `plugins/turbo-plugin/tests/docs/phase2-session-plan.md` 列 per-skill case-count table,when orchestrator 在 Phase 2 開跑前 emit「session 1 預計測 tp-setup 5 cases」,then 使用者轉述「我看到 5 cases:1 happy / 2 IIS 未裝 / 3 中文 path / 4 + 5 real-install LSP / CE / agent teams」對齊 table。
 - **AE22** *(new — Covers U7, R32, R33)*. Given Phase 1 case `P1-svn-log-中文` fail 3 次後 mark `FAIL-known`,when 使用者打開 `runs/v1.0.0/phase1-results.md`,then row 顯示 `result: FAIL-known | evidence: 修復 attempt #1 commit abc, #2 def, #3 ghi 仍 FAIL | escalation: user-confirmed not blocking 1.0 PR`;`runs/v1.0.0/known-issues.md` 列入該 case 摘要 + planning 階段建議的 follow-up issue。
@@ -552,8 +552,8 @@ plugins/turbo-plugin/tests/
 
 ### Dependencies
 
-- 假設 `C:\Turbo\test-turbo-plugin` 內所有檔案可任意改 / 砍 / 重建(已 confirm,A1)
-- 假設 `C:\Turbo\test-turbo-plugin-svn-repo` 可建立為 SVN 檔案庫(`svnadmin create` 權限,svn cli 在 PATH)
+- 假設 `<MACHINE-PATH>` 內所有檔案可任意改 / 砍 / 重建(已 confirm,A1)
+- 假設 `<MACHINE-PATH>` 可建立為 SVN 檔案庫(`svnadmin create` 權限,svn cli 在 PATH)
 - 假設 Windows PowerShell 5.1 (`powershell.exe`) 是 system default
 - 假設 Git for Windows 已安裝(Git Bash 在 `C:\Program Files\Git\bin\bash.exe`)
 - 假設 svn cli >= 1.10 with `--xml`
@@ -570,7 +570,7 @@ plugins/turbo-plugin/tests/
 
 從 origin RBP resolution(已 confirm)+ ce-doc-review trade-off resolution(K-Decision)+ plan-time research finding:
 
-- **A1**:`C:\Turbo\test-turbo-plugin` 全清重建(從 `plugins/turbo-plugin/tests/fixtures/base/` mirror),fixture 設置流程進 `phase1-scripts-schema.md` 開頭 + `build-seed-repo.ps1` 註解(可重現)— RBP Q1 resolution。
+- **A1**:`<MACHINE-PATH>` 全清重建(從 `plugins/turbo-plugin/tests/fixtures/base/` mirror),fixture 設置流程進 `phase1-scripts-schema.md` 開頭 + `build-seed-repo.ps1` 註解(可重現)— RBP Q1 resolution。
 - **A2**:SVN repo seed 由 orchestrator 自動產生(`build-seed-repo.ps1`),seed 內容明文寫在 script 註解(任何人可重現)— RBP Q2 resolution。
 - **A3**:Phase 2 tp-setup 推薦項目實際安裝,跑完後**(b) 留到 Phase 2 全部結束再一次性 rollback** — RBP Q3 resolution。
 - **A4**:Pester 3.4 bundled with PS 5.1 為 Phase 1 `.ps1` assertion 主軸;`.sh` 用 inline `if/echo`(R8 已修);hand-rolled `Assert-Helpers.ps1` 為 fallback。
@@ -582,8 +582,8 @@ plugins/turbo-plugin/tests/
 ## System-Wide Impact
 
 - **`feat/turbo-plugin-v1.0` branch**:加 `plugins/turbo-plugin/tests/` 目錄(~30+ 個檔)、`plugins/turbo-plugin/tests/docs/` 目錄(~70+ 個檔含 prompt 範本 + skill notes),共 ~100 個新檔。`squash-merge` v1.0.0 PR 時 release commit message 摘要包含 Phase 1+2 evidence summary。
-- **`C:\Turbo\test-turbo-plugin`**:使用者環境完全重建(clear + restore base fixture)。Phase 1 + Phase 2 進行期間此目錄為「testing zone」,不要在裡面寫其他內容。
-- **`C:\Turbo\test-turbo-plugin-svn-repo`**:新建 SVN repo,在 Phase 1+2 期間多次 `svnadmin load` reset。Phase 2 結束後可保留或刪除。
+- **`<MACHINE-PATH>`**:使用者環境完全重建(clear + restore base fixture)。Phase 1 + Phase 2 進行期間此目錄為「testing zone」,不要在裡面寫其他內容。
+- **`<MACHINE-PATH>`(SVN repo)**:新建 SVN repo,在 Phase 1+2 期間多次 `svnadmin load` reset。Phase 2 結束後可保留或刪除。
 - **使用者 `~/.claude/settings.json`**:Phase 2 tp-setup case 期間多 LSP plugin / CE plugin / agent teams / TUI fullscreen 等 entry。Phase 2 結束依 `rollback-checklist.md` 還原。
 - **使用者 `dotnet tool -g` / `npm -g`**:Phase 2 期間 install `csharp-ls` / `typescript-language-server typescript`。Phase 2 結束 uninstall。
 - **`~/.claude/plugins/cache/`**:Phase 2 期間下載 `csharp-lsp@claude-plugins-official` + `typescript-lsp@claude-plugins-official` + `compound-engineering@compound-engineering-plugin`。Phase 2 結束 `claude plugins uninstall`。

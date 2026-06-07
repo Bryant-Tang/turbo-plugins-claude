@@ -7,7 +7,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 
 ## Summary
 
-兩階段的 v1.0.0 PR 驗證計畫。**Phase 1**(由 orchestrator 自動跑):18 個 `.ps1`(Windows PowerShell 5.1)+ 18 個 `.sh`(Git Bash for Windows)共 36 個 script,完整覆蓋每一條 happy / error / decision branch / 中文 edge,**全綠才進下一階段**。**Phase 2**(使用者手動跑):14 個 skill 各跑 1 個快樂路徑 + 2-3 個主要錯誤路徑 + 中文 edge,使用者在 `C:\Turbo\test-turbo-plugin` 開 Claude Code 執行 prompt 並把 agent 回覆轉述回來;orchestrator 準備 fixture / prompt / SVN repo / tracking,並在 case fail 時即停 root-cause + 修 turbo-plugin + 重跑該 case。
+兩階段的 v1.0.0 PR 驗證計畫。**Phase 1**(由 orchestrator 自動跑):18 個 `.ps1`(Windows PowerShell 5.1)+ 18 個 `.sh`(Git Bash for Windows)共 36 個 script,完整覆蓋每一條 happy / error / decision branch / 中文 edge,**全綠才進下一階段**。**Phase 2**(使用者手動跑):14 個 skill 各跑 1 個快樂路徑 + 2-3 個主要錯誤路徑 + 中文 edge,使用者在 `<MACHINE-PATH>` 開 Claude Code 執行 prompt 並把 agent 回覆轉述回來;orchestrator 準備 fixture / prompt / SVN repo / tracking,並在 case fail 時即停 root-cause + 修 turbo-plugin + 重跑該 case。
 
 ---
 
@@ -28,8 +28,8 @@ topic: turbo-plugin-v1.0-manual-test-plan
   - **Trigger:** Phase 1 啟動。
   - **Actors:** A1(orchestrator)。
   - **Steps:**
-    1. orchestrator 在 `C:\Turbo\test-turbo-plugin` 建立 base fixture(`.sln` + 樣本 `.csproj` + 樣本 source + `applicationhost.config` + `.turbo-plugin/` 結構 + `.git` + SVN bridge worktree skeleton)。
-    2. SVN repo 建立在 `C:\Turbo\test-turbo-plugin-svn-repo`(test-turbo-plugin 外面),seed 包含中文 commit msg 樣本的 r1-r20 歷史。
+    1. orchestrator 在 `<MACHINE-PATH>` 建立 base fixture(`.sln` + 樣本 `.csproj` + 樣本 source + `applicationhost.config` + `.turbo-plugin/` 結構 + `.git` + SVN bridge worktree skeleton)。
+    2. SVN repo 建立在 `<MACHINE-PATH>`(test-turbo-plugin 外面),seed 包含中文 commit msg 樣本的 r1-r20 歷史。
     3. 對每個 `.ps1` script,逐個 case 從一個乾淨的 fixture snapshot 開始 → orchestrator 用 `powershell.exe -File <script>.ps1 <args>` 直接 invoke → 收集 exit code / stdout / stderr / fixture 結果差異 → 對照預期 assertion → 標 PASS/FAIL。
     4. 對應的 `.sh` script 用 Git Bash(`C:\Program Files\Git\bin\bash.exe -c "..."`)同樣方式 invoke。
     5. case fail → 進 F5 fail-then-fix loop;PASS → 換下一個 case。
@@ -41,9 +41,9 @@ topic: turbo-plugin-v1.0-manual-test-plan
   - **Trigger:** Phase 1 全綠後 + 使用者準備好開始 Phase 2。
   - **Actors:** A1(orchestrator)、A2(使用者)、A3(test-turbo-plugin 的 Claude Code agent)。
   - **Steps:**
-    1. orchestrator 預先準備本 session 要跑的 1-2 個 skill 的 fixture 狀態(SVN state、env、檔案結構),直接寫到 `C:\Turbo\test-turbo-plugin`。
+    1. orchestrator 預先準備本 session 要跑的 1-2 個 skill 的 fixture 狀態(SVN state、env、檔案結構),直接寫到 `<MACHINE-PATH>`。
     2. orchestrator 給使用者一個 prompt + 預期觀察點(「應該觸發 X skill,應該問 Y 問題,應該寫 Z 檔案」)。
-    3. 使用者在 `C:\Turbo\test-turbo-plugin` 開 Claude Code,貼入 prompt,讓 agent 跑完。
+    3. 使用者在 `<MACHINE-PATH>` 開 Claude Code,貼入 prompt,讓 agent 跑完。
     4. 使用者把 agent 完整回覆(text + 主要 tool calls 摘要 + 任何問題)轉述回來。
     5. orchestrator 判讀 → 標 PASS/FAIL/PARTIAL + 紀錄 evidence(轉述摘要、檔案差異)。
     6. case fail → 進 F5;PASS → 換下一個 case。
@@ -96,7 +96,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 - R4. `.sh` script **必須**在 Git Bash for Windows(隨 Git for Windows 安裝的 `bash.exe`)環境跑;**不**測試 WSL / Linux native / macOS。
 - R5. 每個 script case **必須**在獨立 fixture snapshot 上跑(從 base fixture 複製出工作目錄,跑完後丟棄),避免互相污染。
 - R6. base fixture **必須**包含完整代表性 test-turbo-plugin 環境:(a) 一個合法 `.sln` + `.csproj` + 樣本 C# / JS source、(b) `.turbo-plugin/applicationhost.config`(含 `__TURBO_PLUGIN_PHYSICAL_PATH__` placeholder)、(c) `.turbo-plugin/config.toml`(`[iis] enabled = true`)、(d) 樣本 `config.local.toml` 模板、(e) git repo 已 init、(f) SVN bridge worktree skeleton(`.worktrees/remote-main` 等 placeholder)。
-- R7. SVN repo **必須**建立在 `C:\Turbo\test-turbo-plugin-svn-repo`(`test-turbo-plugin` 路徑**外面**,避免被 fixture reset 誤刪),seed 包含至少 r1-r20 的歷史,其中至少 r5 / r10 / r15 三筆 commit message 含中文(分別含繁中常用字、半形符號 + 中文混排、SVN 換行 commit msg)。
+- R7. SVN repo **必須**建立在 `<MACHINE-PATH>`(`test-turbo-plugin` 路徑**外面**,避免被 fixture reset 誤刪),seed 包含至少 r1-r20 的歷史,其中至少 r5 / r10 / r15 三筆 commit message 含中文(分別含繁中常用字、半形符號 + 中文混排、SVN 換行 commit msg)。
 - R7a. SVN repo **必須**在每個 SVN-touching case 跑之前 reset 到 seed (r1-r20) — orchestrator 維護一份 `svnadmin dump` 形式的 snapshot,case 開始前用 `svnadmin load` 還原(或砍掉重建 + 重跑 seed script,擇一)。對應的 `.worktrees/remote-*` 本機 SVN working copy 在 case 開始前也要還原(`svn update -r 20` 或重新 `svn checkout`),確保跨 case 的 SVN state 為 known baseline,assertion 不被 prior case 的 mutation 污染。
 - R8. Phase 1 assertion 在 `.ps1` 採 **Pester**(隨 Windows PowerShell 5.1 內建出貨,Win 10 / 11 預設可用,**不**算額外環境依賴);`.sh` 在 Git Bash 採 inline `if [ ... ]; then echo OK; else echo FAIL; exit 1; fi` 對應(bats 不引入 — 那才會真正增加環境依賴)。Pester 的 structured PASS/FAIL 輸出(`Invoke-Pester -OutputFile TestResult.xml -OutputFormat NUnitXml`)直接餵 R9 / R28 的 evidence row,免手寫 Assert helper。
 - R9. Phase 1 tracking row 寫到 `plugins/turbo-plugin/tests/runs/<release>/phase1-results.md`(schema 來源:`plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md`;每個 script 一個 section,每個 case 一個 row:case ID / 描述 / 輸入摘要 / 預期 / 實際 / PASS-FAIL / evidence link 或 inline 摘要);**進 git**(此測試紀錄為 v1.0 release 的一部分,值得 commit 與 push)。
@@ -106,7 +106,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 
 - R11. Phase 2 **必須**涵蓋 14 個 skill:`tp-setup`、`tp-pull-from-svn`、`tp-push-to-svn`、`tp-create-remote-test`、`tp-reset-remote-test`、`tp-build-dotnet-framework-web`、`tp-run-dotnet-framework-web`、`tp-stop-dotnet-framework-web`、`tp-publish-dotnet-framework-web`、`tp-cleanup-orphan-iis`、`tp-suggest-ignore`、`tp-svn-log`、`tp-csharp-comment`、`tp-js-comment`。
 - R12. 每個 skill **必須**至少測試:(a) 1 個快樂路徑 case、(b) 2-3 個主要錯誤路徑 case(從 SKILL.md 的 Decision Rules / Procedure 直接挑常見錯誤點)、(c) 1 個中文相關 case(如不適用則明確標 N/A 並說明)。
-- R13. 每個 case orchestrator **必須**事先在 `C:\Turbo\test-turbo-plugin` 準備完整的 fixture 狀態(檔案結構、git state、SVN state、`.turbo-plugin/config.toml`、`.claude/settings.local.json` env),使用者只需開 Claude Code 跑 prompt。
+- R13. 每個 case orchestrator **必須**事先在 `<MACHINE-PATH>` 準備完整的 fixture 狀態(檔案結構、git state、SVN state、`.turbo-plugin/config.toml`、`.claude/settings.local.json` env),使用者只需開 Claude Code 跑 prompt。
 - R14. 每個 case orchestrator **必須**提供:(a) 完整 prompt 字串(可直接 copy-paste 給 Claude Code)、(b) 預期 agent 行為摘要(該觸發哪個 SKILL、預期問什麼 AskUserQuestion、預期寫什麼檔案)、(c) 使用者轉述時的觀察重點。
 - R15. 使用者轉述格式:agent 主要文字回覆 + tool call 摘要(skill 觸發 / file write / bash 執行)+ 任何 AskUserQuestion 提示 + 任何視覺異常(中文亂碼、檔名亂掉)。orchestrator **不**要求使用者貼完整 raw log,但要求關鍵觀察點都有覆蓋。
 - R16. Phase 2 tracking row 寫到 `plugins/turbo-plugin/tests/runs/<release>/phase2-results.md`(schema + case spec + prompt 範本 + 失敗 patterns 來源:`plugins/turbo-plugin/tests/docs/phase2-skills.md`;每個 skill 一個 section,case ID / 描述 / fixture 摘要 / prompt 摘要 / 預期 / 實際轉述 / PASS-FAIL-PARTIAL / evidence)。**進 git**。
@@ -115,7 +115,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 **中文測試(跨階段共用)**
 
 - R18. 中文測試**必須**覆蓋以下面向(每個 script / skill 至少挑 1 個適用面向,不適用標 N/A):
-  - 工作目錄路徑含中文(e.g., `C:\Turbo\test-turbo-plugin\測試專案 ™\src\...`)
+  - 工作目錄路徑含中文(e.g., `<MACHINE-PATH>\測試專案 ™\src\...`)
   - 檔名含中文(e.g., `中文檔名.cs`)
   - SVN commit message 含中文
   - SVN log / svn-log 輸出含中文(驗證 console codepage 950 vs UTF-8 不變 `?`)
@@ -155,8 +155,8 @@ topic: turbo-plugin-v1.0-manual-test-plan
 - AE5. **Covers R6, R7, R8.** Given Phase 1 跑 `pull-from-svn.ps1` 的 happy path,fixture 含 `.worktrees/remote-main` + SVN repo seed,when orchestrator invoke,then exit code = 0、SVN repo r20 後沒新 revision、main worktree 的 git HEAD 跟 SVN trunk 對得上(`git log --oneline -1` 對應 SVN r20 內容)。
 - AE6. **Covers R9, R28, R29.** Given Phase 1 跑完 `build-web.ps1` 的 3 個 case(happy / sln 不存在 / MSBuild path 未設定),when orchestrator 寫入 `runs/<release>/phase1-results.md` 對應 row(schema 來源 `docs/phase1-scripts-schema.md`),then row 含 case ID(`P1-build-web-ps1-happy` 等)、輸入摘要、預期、實際 stdout 摘要、結果欄,所有 3 row 標 PASS。
 - AE7. **Covers R10.** Given Phase 1 跑 `push-to-svn-commit.ps1` 出現中文 commit msg 變 `?` 的 FAIL,when orchestrator 評估,then **不**繼續跑下一個 script,進 F5 fail-then-fix。
-- AE8. **Covers R11, R12, R13.** Given Phase 2 跑 `tp-setup` 的 case (a) 新建,fixture 為 empty workspace `C:\Turbo\test-turbo-plugin\fresh`,when 使用者貼入 orchestrator 給的 prompt 「我剛開了一個新專案,幫我設定 turbo-plugin」,then agent 觸發 tp-setup SKILL、跑完 4 個 Phase、Phase 4 完成報告列出寫入的設定檔位置,使用者轉述後 orchestrator 標 PASS。
-- AE9. **Covers R12, R18.** Given Phase 2 跑 `tp-setup` 中文路徑 case,fixture 工作目錄 = `C:\Turbo\test-turbo-plugin\測試專案 ™`,when 使用者跑相同 prompt,then agent 不 crash、`.turbo-plugin/config.toml` 與 `.claude/settings.local.json` 順利寫入、檔案 byte-level 為 UTF-8 (BOM 對 `.ps1` 適用),使用者轉述後 orchestrator 標 PASS。
+- AE8. **Covers R11, R12, R13.** Given Phase 2 跑 `tp-setup` 的 case (a) 新建,fixture 為 empty workspace `<MACHINE-PATH>\fresh`,when 使用者貼入 orchestrator 給的 prompt 「我剛開了一個新專案,幫我設定 turbo-plugin」,then agent 觸發 tp-setup SKILL、跑完 4 個 Phase、Phase 4 完成報告列出寫入的設定檔位置,使用者轉述後 orchestrator 標 PASS。
+- AE9. **Covers R12, R18.** Given Phase 2 跑 `tp-setup` 中文路徑 case,fixture 工作目錄 = `<MACHINE-PATH>\測試專案 ™`,when 使用者跑相同 prompt,then agent 不 crash、`.turbo-plugin/config.toml` 與 `.claude/settings.local.json` 順利寫入、檔案 byte-level 為 UTF-8 (BOM 對 `.ps1` 適用),使用者轉述後 orchestrator 標 PASS。
 - AE10. **Covers R12.** Given Phase 2 跑 `tp-setup` 的 IIS Express 未安裝 error case,fixture 預先把 IIS Express 從 PATH 移除(或 mock 用空殼 `.exe`),when 使用者跑 prompt,then agent 觸發 AskUserQuestion 三選一(R1 對應 doc 1.0-refinements 已實作),使用者選 (2) 接受沒有 IIS → `config.toml` 寫入 `[iis] enabled = false`,使用者轉述後 orchestrator 標 PASS。
 - AE11. **Covers R14, R15.** Given Phase 2 跑 `tp-push-to-svn` 中文 commit msg case,orchestrator prompt 摘要:「改一個檔,commit msg 寫『修正中文編碼 bug』,然後 push 到 SVN」,when 使用者跑完轉述「agent 跑了 push-to-svn-prepare → 顯示 commit msg → 跑 push-to-svn-commit → SVN r21 已寫入」,then orchestrator 用 `svn log -r 21` 驗證 SVN repo r21 的 msg 正確含中文,標 PASS。
 - AE12. **Covers R12.** Given Phase 2 跑 `tp-svn-log` 下一頁互動 case,fixture SVN repo r1-r20,orchestrator prompt:「幫我看 SVN log」,when 使用者跑後 agent 顯示 r20-r16 + 下一步選項,使用者再回「1」,then agent 重新跑 svn-log 顯示 r15-r11,使用者轉述後 orchestrator 標 PASS。
@@ -198,7 +198,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 - **`.sh` 在 Git Bash for Windows 跑(全測 18 個,跳過 Linux/Mac native)** — Git Bash 是 `.sh` 在 Windows 上**唯一**的 production execution path;`.sh` 程式碼存在的意義就是給 Git Bash 跑(未來 Linux / Mac 是 follow-up)。跳過 = 等於不測這 18 個檔案。為什麼「Git Bash 全測 18 個」是 sweet spot:
   - **不是只測 3-5 個 encoding-divergent**:那會失去其他 13 個的 syntax 基線保證 — 即使是「薄 wrapper」script 也可能有未發現的 PS/Bash 行為差異(line ending、quoting、locale defaults),全測 18 個能撐住整個 `.sh` surface 的 happy-path syntactic correctness。
   - **不是 Git Bash 18 + WSL Ubuntu smoke**:WSL Ubuntu 不在 1.0 預期使用環境(`marketplace.json` 沒承諾 Linux 支援);為了未發布的 platform 加 ~30% 工作量不合理。Linux / macOS native 留到 1.0 後另開 brainstorm 補(需對應平台環境)。
-- **使用真實 SVN repo(`file:///...`)而非 mock** — SVN 的中文 codepage / locale / propset / commit msg 行為只在真實 svn cli 才現形;mock 一層就等於不測。SVN repo 放在 test-turbo-plugin **外面**(`C:\Turbo\test-turbo-plugin-svn-repo`)避免 fixture reset 誤刪。
+- **使用真實 SVN repo(`file:///...`)而非 mock** — SVN 的中文 codepage / locale / propset / commit msg 行為只在真實 svn cli 才現形;mock 一層就等於不測。SVN repo 放在 test-turbo-plugin **外面**(`<MACHINE-PATH>`)避免 fixture reset 誤刪。
 - **Fail 即停 + root-cause + 修 + re-run** — v1.0 PR 前的 default。Batch 留到最後等於把每個 bug 的 context 都 page-out 一次,修復成本反而高;且累積 N 個 bug 之後修一個改一段,可能其他 N-1 個的觀察都失效。
 - **tp-setup 推薦項目實際安裝(不 mock)** — 整個 tp-setup R24-R25 的核心驗證點就是「真的裝得起來嗎」、「使用者選了 user-level 真的寫到 user-level 嗎」、「LSP plugin 真的 enable 並能用嗎」。mock 沒辦法答這些。代價是使用者 user-level settings + 機器 binary 留下實際痕跡,事前明示 + 事後列出手動 rollback 清單作為補救。
 - **Tracking doc 進 git** — 此測試紀錄等同 v1.0 release 的 evidence trail,值得 commit + push 到 `feat/turbo-plugin-v1.0`,後續 PR review 可審查、上線後出 bug 可回查當時驗證範圍。
@@ -210,8 +210,8 @@ topic: turbo-plugin-v1.0-manual-test-plan
 
 ## Dependencies / Assumptions
 
-- 假設 `C:\Turbo\test-turbo-plugin` 內所有檔案可任意改 / 砍 / 重建(使用者已明確確認)。
-- 假設 `C:\Turbo\test-turbo-plugin-svn-repo` 可建立為 SVN 檔案庫(使用者有 `svnadmin create` 權限,svn cli 在 PATH 中可用)。
+- 假設 `<MACHINE-PATH>` 內所有檔案可任意改 / 砍 / 重建(使用者已明確確認)。
+- 假設 `<MACHINE-PATH>`(SVN repo)可建立為 SVN 檔案庫(使用者有 `svnadmin create` 權限,svn cli 在 PATH 中可用)。
 - 假設 Windows PowerShell 5.1 是預設 `powershell.exe`;若使用者改裝過 PS 7 為預設 shell,需要明確 `powershell.exe -File` 觸發 5.1。
 - 假設 Git for Windows 已安裝(因為 turbo-plugin 本身依賴 git),Git Bash 隨之安裝於 `C:\Program Files\Git\bin\bash.exe` 或同等位置。
 - 假設 svn cli 已安裝在 PATH 中,且支援 `--xml` flag(>= 1.10)。
@@ -228,7 +228,7 @@ topic: turbo-plugin-v1.0-manual-test-plan
 
 ### Resolve Before Planning
 
-- [Affects R6, R7][Needs decision] `C:\Turbo\test-turbo-plugin` 目前的內容要全清重建,還是保留某些當基礎 fixture?如果使用者之前已經在裡面手動裝過 turbo-plugin / 開過 IIS / 有 .git,從乾淨重建會比較單純(可重複);保留可能會混進 unintended state。建議:全清重建,fixture 設置流程進 tracking doc 以利重現。需要使用者確認。
+- [Affects R6, R7][Needs decision] `<MACHINE-PATH>` 目前的內容要全清重建,還是保留某些當基礎 fixture?如果使用者之前已經在裡面手動裝過 turbo-plugin / 開過 IIS / 有 .git,從乾淨重建會比較單純(可重複);保留可能會混進 unintended state。建議:全清重建,fixture 設置流程進 tracking doc 以利重現。需要使用者確認。
 - [Affects R7][Needs decision] SVN repo 的 seed 內容由 orchestrator 自動產生(寫一個 PowerShell setup script 跑 `svnadmin create` + 20 個 dummy commit),還是使用者提供現成 SVN repo 拷貝過來?自動產生最可重現;使用者提供可能更接近真實使用情境。建議:orchestrator 自動產生,但 seed 內容明文寫在 tracking doc 內(任何人都可重現)。
 - [Affects R24, R25][Needs decision] Phase 2 tp-setup 推薦項目實際安裝 case,跑完之後是 (a) 立刻 rollback 還繼續其他 Phase 2 case、(b) 留著直到所有 Phase 2 結束再一次性 rollback、(c) 不主動 rollback,使用者自己決定要不要留著繼續用?建議 (b),因為 (a) 後續依賴 LSP / CE 的 skill case 沒辦法在真實環境上跑;但需要使用者確認 user-level 痕跡留到 Phase 2 全程的接受度。
 

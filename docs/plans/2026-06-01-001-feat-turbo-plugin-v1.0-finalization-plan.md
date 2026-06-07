@@ -15,7 +15,7 @@ origin: docs/brainstorms/2026-06-01-turbo-plugin-v1.0-finalization-requirements.
 
 turbo-plugin(`plugins/turbo-plugin/`)已在 `feat/turbo-plugin-v1.0` 分支累積到接近可發版,但收尾階段暴露幾個彼此牽連、不修完就不能發版的問題(完整背景見 origin):
 
-- 測試把工作根寫死成 `C:\Turbo\test-turbo-plugin`(orchestrator、ScriptsCommon、reset fixture 共 4 處),既污染環境也讓 CI / 換機不可行;先前一次 containment 重構只是換成另一條寫死路徑。
+- 測試把工作根寫死成 `<MACHINE-PATH>`(orchestrator、ScriptsCommon、reset fixture 共 4 處),既污染環境也讓 CI / 換機不可行;先前一次 containment 重構只是換成另一條寫死路徑。
 - skill 層驗證從未被當成常駐、可重複的測試,只有一份含寫死路徑、結構過時的草稿。
 - consolidation 靜默漏搬能力:已確認 push-to-svn 的 release tag 整個不見,且 `tp-reset-remote-test` SKILL 還在宣稱「丟掉的 commit 可用 release tag 找回」這個空頭支票。
 - CLAUDE.md 塞滿 plugin 專屬內容並硬列 plugin 清單,每次增刪都要改;CI 同理不該每加一個 plugin 就手寫一支 workflow。
@@ -215,7 +215,7 @@ CLAUDE.md                               ← U12 改 marketplace 通用規範
 - **Requirements**:R11, R12, R13, R14, R15;AE6。
 - **Dependencies**:U2, U9(case 要反映新命名 + release tag step)。
 - **Files**:`tests/docs/skill-tests.md`、`tests/docs/skill-tests-session-plan.md`、`tests/runs/v1.0.0/skill-tests-results.md`(path-free 模板)。
-- **Approach**:所有 `C:\Turbo\test-turbo-plugin\...` → `<VALIDATION_ROOT>\...` placeholder;case 結構統一為「agent 建 fixture → 給操作指示 → 使用者跑 → 記錄」;更新 case 反映 `remote-svn/*`、`.turbo-plugin/worktrees/`、push-to-svn Step 7 release tag、無 `.code-workspace`;新增 tp-merge-main-into-all、tp-db-management 的 case。
+- **Approach**:所有 `<MACHINE-PATH>\...` → `<VALIDATION_ROOT>\...` placeholder;case 結構統一為「agent 建 fixture → 給操作指示 → 使用者跑 → 記錄」;更新 case 反映 `remote-svn/*`、`.turbo-plugin/worktrees/`、push-to-svn Step 7 release tag、無 `.code-workspace`;新增 tp-merge-main-into-all、tp-db-management 的 case。
 - **Test expectation**:none -- 文件;**Covers AE6**(grep PR 樹零本機路徑);本套件即 PR 前人工 gate 的腳本。
 - **Verification**:grep `C:\Turbo` / `/c/Users` 在 PR 樹零命中;任何人可照 case 重跑。
 

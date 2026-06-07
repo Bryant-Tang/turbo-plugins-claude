@@ -371,7 +371,7 @@ User next turn: "其他" / "幫我看 build.ps1" / 完全 unrelated
 - AskUserQuestion override: 偵測為 case (c),使用者選「改執行 case (a)」 → 進入 case (a) 完整流程
 - Covers AE1.
 
-**Verification:** Manual:在 `SampleGitWithSvn` 測試資料夾跑 tp-setup case (a) → 完成 setup 後 `.turbo-plugin/applicationhost.config` 存在;跑兩次 tp-setup case (c) 結果一致(idempotent)。
+**Verification:** Manual:在 `<MACHINE-PATH>` 測試資料夾跑 tp-setup case (a) → 完成 setup 後 `.turbo-plugin/applicationhost.config` 存在;跑兩次 tp-setup case (c) 結果一致(idempotent)。
 
 ---
 
@@ -563,7 +563,7 @@ turbo-plugin v1.0 是首次 release,**沒有任何 v0.2.x user**(plugin 從未�
 - Invalid `--limit`: `--limit 0` 或 `--limit abc` → throw "Limit must be a positive integer"(既有檢查保留)
 - Covers AE5、AE6
 
-**Verification:** Manual:在 SampleGitWithSvn 跑各 `--revision` / `--limit` 組合確認;手動裝 / 卸 xmllint 跑 .sh 確認雙路徑都動。
+**Verification:** Manual:在 <MACHINE-PATH> 跑各 `--revision` / `--limit` 組合確認;手動裝 / 卸 xmllint 跑 .sh 確認雙路徑都動。
 
 ---
 
@@ -626,7 +626,7 @@ turbo-plugin v1.0 是首次 release,**沒有任何 v0.2.x user**(plugin 從未�
 - Reach SVN history boundary: 顯示到 r5-r1,使用者回「1」想看更舊 → svn log `--revision 0:1` 無結果 / 或 svn 報錯 → SKILL 顯示「已到歷史最舊」,emit 選項(讓使用者跳 revision 或退出)
 - Covers AE8、AE9、AE10
 
-**Verification:** Manual:在 SampleGitWithSvn(設好 >10 個 commits)跑 tp-svn-log,測試上述各個分頁與退出路徑。
+**Verification:** Manual:在 <MACHINE-PATH>(設好 >10 個 commits)跑 tp-svn-log,測試上述各個分頁與退出路徑。
 
 ---
 
@@ -735,7 +735,7 @@ turbo-plugin v1.0 是首次 release,**沒有任何 v0.2.x user**(plugin 從未�
 ## Operational Notes
 
 - **Release validation**:v1.0 PR merge 前完成 manual smoke test:
-  - 在 `SampleGitWithSvn` 上跑 tp-setup case (a) 全流程
+  - 在 `<MACHINE-PATH>` 上跑 tp-setup case (a) 全流程
   - 跑 tp-build → tp-run → 開瀏覽器確認 IIS Express 服務
   - 跑 tp-svn-log 確認中文不變 `?`、互動分頁、`--revision` 各格式
 - **Rollback plan**:turbo-plugin v1.0 是首次 release,沒有先前版本可 rollback。若 v1.0 release 後爆嚴重 bug,emergency 處理是 hot-fix v1.0.1 或從 marketplace `/plugin disable turbo-plugin` 停用整個 plugin,等修好再啟用。

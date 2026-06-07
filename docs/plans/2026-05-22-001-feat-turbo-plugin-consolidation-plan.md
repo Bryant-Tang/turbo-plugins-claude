@@ -281,7 +281,7 @@ SessionStart * :
 - Manual: 在 main worktree 啟 Claude session(無 marker)→ SessionStart 跑分支 (iii-a),提示「請在此目錄執行 /tp-setup」
 - Manual: 在 peer worktree 啟 Claude session(無 marker)→ SessionStart 跑分支 (iii-b),提示含主 worktree 實際路徑
 - Manual: 在 submodule 內啟 Claude session → silent exit(無 prompt)
-- Manual: 在非 git 目錄啟 Claude session(例如 `C:\Users\<name>`)→ silent exit
+- Manual: 在非 git 目錄啟 Claude session(例如 `<MACHINE-PATH>`)→ silent exit
 - Manual: marker 存在 + applicationhost.config 對應 site physicalPath 已正確 → silent exit(無多餘 prompt)
 - Manual: Pattern A 場景(主 worktree 啟 + EnterWorktree 進 peer)→ peer 內沒 dbhub.local.toml 不會被 SessionStart 分支 (ii) 干擾(因為 session 是在主 worktree 啟動,session start 時看 main worktree 有 dbhub.local.toml,branch (ii) 不 fire)
 - Manual: Pattern B 場景(直接 peer 啟 Claude + peer 缺 dbhub.local.toml)→ SessionStart 分支 (ii) 觸發,prompt 含 hybrid warning

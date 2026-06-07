@@ -18,7 +18,7 @@ phase**(Foundation / Build & IIS & Publish / SVN Bridge / SVN Tools / Hooks
 SKILL agent-flow 部分由另一份 plan
 (`2026-05-25-001-feat-turbo-plugin-acceptance-test-plan.md`)由人 manual 跑。
 
-test 環境:`C:\Turbo\SampleGitWithSvn`(fixture,內容可隨意改)。每 unit
+test 環境:`<MACHINE-PATH>`(fixture,內容可隨意改)。每 unit
 含 precondition / action / verification + pass-fail 判準,失敗時 agent 應
 直接修(若 P0/P1)或記為 finding(若 P2/P3)。
 
@@ -78,7 +78,7 @@ test 環境:`C:\Turbo\SampleGitWithSvn`(fixture,內容可隨意改)。每 unit
 ### Outside this product's identity
 
 - 既有 4 plugin (tdp/tnf/tgs/tpi) script test — cutover 後 disable,不測
-- 生產 SVN repo 測試 — 只用本機 `SampleSvnServer/`
+- 生產 SVN repo 測試 — 只用本機 `<INTERNAL-SVN-URL>/`
 - Performance / load test — 非設計目標
 
 ---
@@ -116,7 +116,7 @@ test 環境:`C:\Turbo\SampleGitWithSvn`(fixture,內容可隨意改)。每 unit
 ## Output Structure
 
 ```
-C:\Turbo\SampleGitWithSvn\                       # fixture
+<MACHINE-PATH>\                                  # fixture
 ├── SampleGit\                                   # main worktree(已備)
 │   ├── src\MinimalWebApp\                       # 主測 fixture
 │   ├── src\測試專案\                            # 中文路徑測試 fixture(新)
@@ -126,12 +126,12 @@ C:\Turbo\SampleGitWithSvn\                       # fixture
 │   ├── dev-1\                                   # peer worktree
 │   ├── remote-main\                             # SVN trunk
 │   └── remote-test-script-N\                    # 各 test unit 暫時建用
-└── SampleSvnServer\
+└── <INTERNAL-SVN-URL>\
     ├── main/
     ├── test/
     └── test-script-N/                           # 各 test unit 暫時建用
 
-C:\Users\Mel Wu\.claude\jobs\<job-id>\           # agent 暫存
+<MACHINE-PATH>\.claude\jobs\<job-id>\            # agent 暫存
 ├── test-output\                                 # 各 unit 暫存 stdout/stderr
 │   ├── U2-common-ps1.log
 │   ├── U13-push-chinese-fname.log
@@ -193,18 +193,18 @@ Count check:17 user-facing(`build-web` ~ `svn-log`)+ 2 hook + 2 lib = **21 .ps1*
 **Files**:
 - `SampleGit/` git state probe
 - `tools/lint-ps-compat.ps1`(run)
-- `C:\Users\Mel Wu\.claude\jobs\<job>\test-output\U1-preflight.log`
+- `<MACHINE-PATH>\.claude\jobs\<job>\test-output\U1-preflight.log`
 
 **Approach**:
 1. probe SampleGit state(branch / HEAD / working tree clean)
-2. probe SVN server up(`svn info file:///.../SampleSvnServer/main` exit 0)
+2. probe SVN server up(`svn info <INTERNAL-SVN-URL>/main` exit 0)
 3. probe MSBuild + IIS Express path exist
 4. run `tools/lint-ps-compat.ps1 -Path <turbo-plugin>` 確認 0 violation
 
 **Test scenarios**:
 
 - **U1.1 SampleGit clean**:`git -C SampleGit status --porcelain` 空(除 `.claude/` `.turbo-plugin/dbhub.local.toml` 等 gitignored)
-- **U1.2 SVN server up**:`svn ls file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/` exit 0,輸出含 `main/` `test/`
+- **U1.2 SVN server up**:`svn ls <INTERNAL-SVN-URL>/` exit 0,輸出含 `main/` `test/`
 - **U1.3 MSBuild + IIS path**:`Test-Path 'C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe'` + `Test-Path 'C:/Program Files/IIS Express/iisexpress.exe'` 各 True
 - **U1.4 Lint clean**:`tools/lint-ps-compat.ps1 -Path plugins/turbo-plugin` exit 0,訊息 `0 violations`
 - **U1.5 PATH 工具齊**(F-U1.5 修正):`Get-Command svn,git,powershell -ErrorAction SilentlyContinue` 各 Source 非空;**iisexpress 不在 default PATH**(Windows 設計上裝在 `C:\Program Files\IIS Express\` 不加 PATH),改用 U1.3 file existence check 已涵蓋;`node` / `npm` 缺則 U7.10 / U8.1 / U8.6 mark `skip - no node`
@@ -234,12 +234,12 @@ function 跑 happy + edge + failure case。所有 Assert 失敗即 finding。
   - happy:git 2.31+ → no throw
   - failure:模擬 git < 2.31(難 — skip 或 mock)
 - **U2.2 `Get-NormalizedAbsolutePath`**:
-  - input `C:\Turbo\SampleGitWithSvn\SampleGit` → return `c:\Turbo\...`(lowercase drive)
-  - input `/c/Turbo/SampleGitWithSvn/SampleGit`(Git Bash)→ return Windows-form lowercase drive
-  - input `C:/Turbo/...`(forward slash)→ normalize
+  - input `<MACHINE-PATH>\SampleGit` → return lowercase-drive Windows form
+  - input Git-Bash-form `<MACHINE-PATH>/SampleGit`(`/c/...`)→ return Windows-form lowercase drive
+  - input forward-slash `<MACHINE-PATH>/...`→ normalize
   - input `'  '` empty → throw `'empty path'`
 - **U2.3 `Get-MainWorktree`**:
-  - 從 main worktree cwd → return `c:\Turbo\SampleGitWithSvn\SampleGit`
+  - 從 main worktree cwd → return `<MACHINE-PATH>\SampleGit`
   - 從 peer worktree cwd → return same main path
   - 從非 git repo cwd → throw `Not inside a git repository.`
 - **U2.4 `Test-IsMainWorktree`**:main → True;dev-1 → False;remote-main → False
@@ -247,7 +247,7 @@ function 跑 happy + edge + failure case。所有 Assert 失敗即 finding。
 - **U2.6 `Resolve-RepoPath`**:
   - relative input `src/x.csproj` → join with RepoRoot
   - absolute input → return as-is normalized
-  - Git Bash style `/c/Turbo/...` → convert to Windows
+  - Git Bash style `<MACHINE-PATH>`(`/c/...` form)→ convert to Windows
   - empty → return $null
 - **U2.7 `Resolve-RemoteWorktree`**:
   - `-BranchName main` → `{Name='remote-main', Branch='remote/main', Path='.../remote-main'}`
@@ -760,7 +760,7 @@ SKILL three-option choreography 的前提。
   - git commit 該檔
   - 跑 push-to-svn-commit → svn add 該檔 → svn commit
   - **assert server bytes(URL form 直接打 server,不靠 working-copy index)**:
-    - `svn ls file:///C:/Turbo/SampleGitWithSvn/SampleSvnServer/test-script-N/` 含 `測試檔案-${rand}.txt`(**正確檔名,非 mojibake 也非 quote-printable**)
+    - `svn ls <INTERNAL-SVN-URL>/test-script-N/` 含 `測試檔案-${rand}.txt`(**正確檔名,非 mojibake 也非 quote-printable**)
     - `svn log -v --xml -r HEAD file:///.../test-script-N/` 解析 `<path>` element 確認 server 端 bytes 為正確 UTF-8
 - **U16.10 中文目錄名 + 中文檔名**:
   - 加 `測試目錄/中文檔.txt` → svn add --parents → 兩層都正確
@@ -867,7 +867,7 @@ cross-platform parity。
 - **U19.6 --path subdirectory**:對子目錄 propset
 - **U19.7 2-phase commit + partial failure**(Pass 2 F26 + Pass 3 WF4):
   - 多 remote worktree(remote-main + remote-test-N)
-  - 第二個 commit 故意 lock(rename SampleSvnServer/db 短時間)
+  - 第二個 commit 故意 lock(rename <INTERNAL-SVN-URL>/db 短時間)
   - assert pass-1 全 propset OK,pass-2 第一個 commit OK,第二個 fail
   - **per-iteration capture**(不 abort),loop 結束後 emit structured error 列
     succeeded vs failed list,exit 1
@@ -957,7 +957,7 @@ UTF-8 console output fix regression。
   - 在 fake non-Windows env(Git Bash 假裝)→ hook exit 0,不 block
 - **U21.14 hooks.json bash command quoting 完整套**(v0.2.0 SF4 + SEC-011):
   - (a) **space**:`${CLAUDE_PLUGIN_ROOT}` 含 space(`Program Files\...`)→ hook 仍正確 invoke
-  - (b) **single-quote**:plugin 安裝於 `C:\Users\O'Brien\...` → hook 仍正確 invoke,不 break shell quoting
+  - (b) **single-quote**:plugin 安裝路徑含單引號(如目錄名 `O'Brien`)→ hook 仍正確 invoke,不 break shell quoting
   - (c) **subshell metachar `$()`**:plugin 安裝路徑含 `$(evil)`(理論上 file system 允許)→ hook 不 evaluate
   - 先確認 hooks.json 用哪種 quoting strategy(double-quoting / single-quoting),test 對應 strategy 的 holdout case
 
@@ -979,7 +979,7 @@ UTF-8 console output fix regression。
   - 從主 worktree(無 `.turbo-plugin/`)→ stdout JSON 含「請執行 /tp-setup」
 - **U22.2 Branch (ii) peer no marker**:
   - 從 peer worktree(無 `.turbo-plugin/`)→ stdout JSON 含**真正 main path**
-    (`c:\Turbo\SampleGitWithSvn\SampleGit` 之類絕對路徑,**非字面 `$mainPath`** —
+    (`<MACHINE-PATH>\SampleGit` 之類絕對路徑,**非字面 `$mainPath`** —
     Pass 2 AF1 fix)
 - **U22.3 Branch (iii) marker 在但 dbhub.local.toml 缺**:
   - 從 main / peer with marker but no dbhub.local.toml → stdout JSON 含
@@ -1091,7 +1091,7 @@ git branches。
 - **U25.1 lint 0 violation**:同 U1.4
 - **U25.2 SVN 殘留清掉**:
   - `svn delete file:///.../test-script-N` 各 N
-  - 確認 `svn ls SampleSvnServer/` 只剩 `main/` `test/`
+  - 確認 `svn ls <INTERNAL-SVN-URL>/` 只剩 `main/` `test/`
 - **U25.3 git branches 清掉**:
   - `git branch -D test/rc-script-N remote/test-script-N` 各 N
   - `git worktree remove --force <each>`
@@ -1165,7 +1165,7 @@ land。
 - **All script files touched**:21 個 `.ps1` + 17 個 `.sh` + 3 lib + 2 hook
   pairs = 完整 turbo-plugin scripts/ 範圍
 - **Fixture mutation**:
-  - SampleSvnServer 新增 `^/test-script-N` SVN paths(由 U17 / U16 建,U25 清)
+  - <INTERNAL-SVN-URL> 新增 `^/test-script-N` SVN paths(由 U17 / U16 建,U25 清)
   - SampleGit `main` 可能多測試 commits(中文檔名 / pattern 等),U25 視情況 reset
   - SampleGit.worktrees 可能多 `remote-test-script-N` worktree(U25 清)
 - **iisexpress process**:U10-U13 模擬 / 啟用 fake instance,U25 統一 kill

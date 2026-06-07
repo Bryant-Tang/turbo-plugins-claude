@@ -102,7 +102,7 @@ turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `t
 
 ### Fixed
 
-- **🔴 P0 `create-remote-test.ps1` happy path 在 PS 5.1 + StrictMode 完全跑不過 — 三條 bug 連環**(plan 002 U17.1 在實機 SampleGitWithSvn 跑時抓到,沒人能成功跑 tp-create-remote-test):
+- **🔴 P0 `create-remote-test.ps1` happy path 在 PS 5.1 + StrictMode 完全跑不過 — 三條 bug 連環**(plan 002 U17.1 在實機 <MACHINE-PATH> 跑時抓到,沒人能成功跑 tp-create-remote-test):
   1. **`svn propget svn:ignore` 對乾淨 remote-main 寫 `W200017 Property 'svn:ignore' not found`** → PS 5.1 + StrictMode + `$ErrorActionPreference='Stop'` 在 stderr stream 被 redirect **之前**就把 native exe stderr 當 terminating NativeCommandError throw,`2>$null` 完全擋不住(v0.2.2 fix 設計不完整)。修:`svn propget` call 包進 nested try/catch,在 call site swallow + 設 `$inherited` 為空,outer rollback catch 不觸發
   2. **`git worktree add` 先建 `.git` pointer file + init-commit 內容(`init.txt`)**,然後 `svn checkout` 遇到既有檔案 → 標 "obstructed/conflict",`svn commit` 拒絕。修:`svn checkout --force` 把既有檔當 svn-added
   3. **`--force` 把 git 的 `.git` pointer file 也加進 svn 控管 → svn commit 推 `.git` 進 SVN 永久 history,污染其它人 svn checkout 的 test-N 分支**(`.git` 指向原 committer 的本機路徑)。修:`svn checkout --force` 之後立刻 `svn rm --keep-local .git`,從 svn 控管移除但保留檔案(git 仍要它),然後再 svn propset svn:ignore + svn commit。**`.sh` 同步同樣修法**(bug #2+#3 universal,跟 PS 5.1 無關)
@@ -149,7 +149,7 @@ turbo-plugin 第一次 marketplace release。整合 4 個舊 plugin（`tdp` / `t
 
 ### Test verification
 
-實機在 `SampleGitWithSvn` 跑通:
+實機在 `<MACHINE-PATH>` 跑通:
 - compute-project-identity 跨 worktree hash 完全一致(`0eb9b6ee` from main = from dev-1)
 - build 從 dev-1 → 產物只進 dev-1 bin/、main bin/ mtime 不變(關鍵 EnterWorktree bug 不重現)
 - PostToolUse hook 接 stdin JSON → applicationhost.config physicalPath 從 main 改到 dev-1

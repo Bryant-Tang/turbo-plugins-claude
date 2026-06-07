@@ -20,7 +20,7 @@ PASS / FAIL / PARTIAL。
 本套件**完全 path-free**:所有 case 不寫死任何本機絕對路徑。
 
 - `<VALIDATION_ROOT>` = 操作者在執行時自選的一個**真實本機目錄**,需在 **repo 之外**、
-  且在 **`C:\Turbo` 之外**(避免和 plugin 開發樹或既有測試遺留物混淆)。底下所有路徑
+  且在 **plugin 開發樹(本 marketplace repo 的 checkout 位置)之外**(避免和 plugin 開發樹或既有測試遺留物混淆)。底下所有路徑
   都是**相對於 `<VALIDATION_ROOT>`** 表達。
 - 操作者把 `<VALIDATION_ROOT>` 心裡換成自己挑的實際目錄(例如某個 scratch 資料夾),
   本檔不規定也不假設它在哪。
