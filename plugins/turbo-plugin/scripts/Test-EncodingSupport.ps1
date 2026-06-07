@@ -1,6 +1,11 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Render this detector's own output as UTF-8. Detection below reads
+# [System.Text.Encoding]::Default (CP_ACP), which is independent of these Console
+# settings, so forcing UTF-8 here does NOT skew the codepage detection.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 # Detect whether the current PowerShell + Windows codepage supports lossless UTF-8 argv
 # passing to native exes (svn / git / msbuild). On zh-TW / zh-CN / ja-JP Windows running

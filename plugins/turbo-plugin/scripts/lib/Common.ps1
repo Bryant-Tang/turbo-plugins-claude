@@ -8,6 +8,10 @@ $ErrorActionPreference = 'Stop'
 # dot-sources Common.ps1.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
+# Also read console input as UTF-8. Guarded: in non-interactive / redirected contexts
+# (CI, piped stdin — no console input handle) assigning InputEncoding throws; swallow
+# it. The OutputEncoding settings above are the load-bearing part.
+try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 function Probe-GitVersion {
     $raw = (& git --version | Out-String).Trim()

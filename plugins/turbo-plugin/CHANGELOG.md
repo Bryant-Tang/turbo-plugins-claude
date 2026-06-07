@@ -9,6 +9,8 @@
 ### Changed
 
 - chore: 版本號重編,修正先前誤用 `1.0.0` 的版本語意——原 `## [1.0.0]` 改列為 `## [0.3.0]`、原 `## [Unreleased]` 定版為 `## [0.4.0]`;`plugin.json` `version` 由 `1.0.0` 改為 `0.5.0`,三份檔(`plugin.json` 描述、`README.md` 行 3 與行 141)的 skill 數由「14」更正為「16」（U1）
+- chore: 清除版控文件中僅限本機之物為固定 placeholder token(機器絕對路徑 → `<MACHINE-PATH>`、內部 SVN/host → `<INTERNAL-SVN-URL>`),範圍限 `docs/`、CHANGELOG、`tests/docs/skill-tests.md`,保留泛 Windows 字串;根 `CLAUDE.md` 加常駐規則「不得提交僅限本機之物」(advisory)（U2/U3）
+- refactor: 編碼初始化集中到共用 lib——`Common.ps1` 加 guarded `[Console]::InputEncoding`(補齊三編碼變數)、`common.sh` 開頭加 portable 且非致命的 UTF-8 locale 設定(R-2 fallback);`Test-EncodingSupport.ps1` 補齊三編碼變數(維持獨立偵測語意不受影響)、`Invoke-PostToolUseEnterWorktree.ps1` 補 guarded 編碼 init(保留 EAP=Continue)（U4）
 
 ## [0.4.0] - 2026-06-06
 

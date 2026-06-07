@@ -2,6 +2,13 @@
 # Hooks must not throw the host session. Surface errors as stderr but never exit non-zero.
 $ErrorActionPreference = 'Continue'
 
+# UTF-8 I/O for the JSON exchanged with Claude Code over stdin/stdout. Guarded so a
+# missing console handle never breaks the hook; EAP stays 'Continue' (above) — this
+# hook must never throw the host session.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 # v1.0 (U3) — PostToolUse EnterWorktree hook is fully no-op.
 #
 # Prior to v1.0, this hook copied .turbo-plugin/applicationhost.config into

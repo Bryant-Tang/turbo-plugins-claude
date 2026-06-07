@@ -4,6 +4,22 @@
 
 set -euo pipefail
 
+# UTF-8 locale (R4/R5): svn / git need a UTF-8 locale to handle non-ASCII (Chinese)
+# commit messages and filenames consistently. Portable + non-fatal: keep the current
+# locale if it is already UTF-8; otherwise adopt the first available UTF-8 locale
+# (prefer C.UTF-8 / en_US.UTF-8); if none is available, degrade silently rather than
+# fail (R-2: C.UTF-8 is absent on some minimal images).
+if ! printf '%s' "${LC_ALL:-${LANG:-}}" | grep -qiE 'utf-?8'; then
+  _tp_loc="$(locale -a 2>/dev/null | grep -iE 'utf-?8' | grep -iE '(^|/)(C\.|en_US\.)' | head -n1 || true)"
+  if [[ -z "$_tp_loc" ]]; then
+    _tp_loc="$(locale -a 2>/dev/null | grep -iE 'utf-?8' | head -n1 || true)"
+  fi
+  if [[ -n "$_tp_loc" ]]; then
+    export LC_ALL="$_tp_loc" LANG="$_tp_loc"
+  fi
+  unset _tp_loc
+fi
+
 probe_git_version() {
   local raw major minor
   raw="$(git --version 2>/dev/null || true)"
