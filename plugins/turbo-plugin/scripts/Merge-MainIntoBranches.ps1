@@ -1,13 +1,19 @@
 ﻿[CmdletBinding()]
-param()
+param([string[]]$Branch = @())
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
 
-# Merge the latest `main` into every local branch that is neither `main` itself nor a
-# `remote-svn/*` bridge branch.
+# Merge the latest `main` into a set of local branches.
+#
+#   - Default (no -Branch given): target = EVERY local branch that is neither `main`
+#     itself nor a `remote-svn/*` bridge branch.
+#   - When -Branch is given: target = exactly those branches. Each is validated to exist
+#     (git branch --list), and to be neither `main` nor `remote-svn/*`. A branch that is
+#     missing or excluded is reported as `SKIP <b> (not found / excluded)` and skipped,
+#     never aborting the whole run.
 #
 # NEW semantics vs the old tgs merge-main-into-all this was ported from:
 #   - Exclude filter excludes `main` AND `remote-svn/*` only. The old `^archives/`
@@ -30,18 +36,40 @@ try {
     # Refuse to run from / against a dirty main worktree.
     $status = (& git -C $mainWorktree status --porcelain 2>$null | Out-String).Trim()
     if (-not [string]::IsNullOrWhiteSpace($status)) {
-        throw "Main worktree is dirty ($mainWorktree). Commit or stash changes before merging main into all branches."
+        throw "Main worktree is dirty ($mainWorktree). Commit or stash changes before merging main into branches."
     }
 
-    # Collect all local branches except 'main' and 'remote-svn/*'.
-    $targetBranches = @(
-        (& git -C $mainWorktree branch --format='%(refname:short)' 2>$null | Out-String) -split "`n" |
-            ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^remote-svn/' }
-    )
+    if ($Branch.Count -gt 0) {
+        # Caller specified branches: validate each (exists, not main, not remote-svn/*).
+        $targetBranches = @()
+        foreach ($b in $Branch) {
+            $name = ($b | Out-String).Trim()
+            if ($name -eq '') { continue }
+
+            if ($name -eq 'main' -or $name -match '^remote-svn/') {
+                Write-Output "SKIP $name (not found / excluded)"
+                continue
+            }
+
+            $exists = (& git -C $mainWorktree branch --list $name 2>$null | Out-String).Trim()
+            if ([string]::IsNullOrWhiteSpace($exists)) {
+                Write-Output "SKIP $name (not found / excluded)"
+                continue
+            }
+
+            $targetBranches += $name
+        }
+    } else {
+        # Default: all local branches except 'main' and 'remote-svn/*'.
+        $targetBranches = @(
+            (& git -C $mainWorktree branch --format='%(refname:short)' 2>$null | Out-String) -split "`n" |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^remote-svn/' }
+        )
+    }
 
     if ($targetBranches.Count -eq 0) {
-        Write-Output 'No branches to merge into (only main and remote-svn/* branches exist).'
+        Write-Output 'No branches to merge into.'
         exit 0
     }
 

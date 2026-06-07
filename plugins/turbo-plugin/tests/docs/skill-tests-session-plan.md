@@ -29,9 +29,9 @@ fail-then-fix re-run = 13 個 session slot)。
 | tp-svn-log | 4 | 含 pagination + 中文 + revision spec + escape |
 | tp-csharp-comment | 2 | **surface-small skill** — below R12 通用 floor |
 | tp-js-comment | 2 | **surface-small skill** — below R12 通用 floor |
-| tp-merge-main-into-all | 3 | parity 補(v1.0.0)— happy multi-branch + exclude remote-svn/* + conflict |
+| tp-merge-main-into-branches | 4 | parity 補(v1.0.0)— happy multi-branch + exclude remote-svn/* + conflict + specify subset |
 | tp-db-management | 4 | parity 補(v1.0.0)— 唯讀 + SQL 落點 + slash→dash + fail-loudly |
-| **Total** | **51** | |
+| **Total** | **52** | |
 
 > **R12 floor not ceiling**(plan trade-off 5 resolution):「1 happy + 2-3 error +
 > 1 中文 = 4 最少數」是通用 floor,但對 surface 表面狹窄的 skill(comment 系列
@@ -129,12 +129,12 @@ fail-then-fix re-run = 13 個 session slot)。
   - P2-tp-js-comment-1 / 2
 - **session 結束 state**:source files 含註解(用後 fixture 重置即清)
 
-### Session 10 — tp-merge-main-into-all + tp-db-management(parity 補)
+### Session 10 — tp-merge-main-into-branches + tp-db-management(parity 補)
 
 - **預估時間**:20-30 分鐘
 - **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup(a) + 在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`(merge 需要有 `remote-svn/*` 分支驗 exclude);db-management case 另需 `tp-dbhub` MCP 可用(case 3 反向需不可用)
 - **cases**:
-  - P2-tp-merge-main-into-all-1 / 2 / 3(happy multi-branch / exclude remote-svn/* + main / conflict per-branch abort)
+  - P2-tp-merge-main-into-branches-1 / 2 / 3 / 4(happy multi-branch / exclude remote-svn/* + main / conflict per-branch abort / specify subset + SKIP excluded/missing)
   - P2-tp-db-management-1 / 2 / 3 / 4(唯讀+SQL 落點 / slash→dash / dbhub 不可用 fail-loudly / detached HEAD guard)
 - **session 結束 state**:本地多了 `feature-*` 測試分支(用後 fixture 重置即清);`.turbo-plugin/sql/` 下有測試 SQL 檔(case 1/2 產出,屬版控檔,測完清掉)
 
@@ -159,7 +159,7 @@ flowchart LR
   S6 --> S7[Session 7<br>push-to-svn + release tag + reset-branch-to-main]
   S7 --> S8[Session 8<br>tp-svn-log]
   S8 --> S9[Session 9<br>csharp-comment + js-comment]
-  S9 --> S10b[Session 10<br>merge-main-into-all + db-management]
+  S9 --> S10b[Session 10<br>merge-main-into-branches + db-management]
   S10b --> RB["Skill tests 結束<br>rollback-checklist.md"]
   S1 -.fail-then-fix.-> S11[Session 11<br>reserved]
   S5 -.fail-then-fix.-> S12[Session 12<br>reserved]

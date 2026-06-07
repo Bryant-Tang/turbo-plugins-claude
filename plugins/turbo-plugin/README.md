@@ -30,6 +30,7 @@
 | `/tp-push-to-svn` | 將工作分支推送上 SVN(自 parse subject 篩選 conventional commit type) |
 | `/tp-svn-log` | 在 `remote-svn-*` worktree 跑 SVN log |
 | `/tp-reset-branch-to-main` | 把指定分支 `git reset --hard` 成 main 內容 |
+| `/tp-merge-main-into-branches` | 把最新 main merge 進指定(預設全部非 remote-svn)本地分支 |
 | `/tp-build-dotnet-framework-web` | MSBuild build .NET Framework Web 專案 |
 | `/tp-run-dotnet-framework-web` | 啟動 IIS Express 跑專案,內含 listening 健康檢查 + 跨 worktree self-heal |
 | `/tp-stop-dotnet-framework-web` | 停止對應 project identity 的 IIS Express instance(跨 worktree 識別) |

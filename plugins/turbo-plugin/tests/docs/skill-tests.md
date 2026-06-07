@@ -1241,15 +1241,16 @@ PASS / FAIL / PARTIAL。
 
 ---
 
-## tp-merge-main-into-all
+## tp-merge-main-into-branches
 
 ### Cases
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-merge-main-into-all-1 | Happy:多分支落後 main 一起 merge | fresh-base + setup(a)(已有 `remote-svn/main`)+ 用 `New-RemoteBridge` 建 test-1 bridge(已有 `remote-svn/test-1`)+ 在 main 多 2 commit 領先 + 另建兩個本地分支 `feature-a` / `feature-b`(從 main 較舊的 commit 起跳,落後 main) | /tp-merge-main-into-all(無參數)→ script 列目標分支(排除 `main` 與 `remote-svn/*`)→ 逐支 `checkout` + `git merge main` + 還原原分支 → summary | stdout 末尾含 `Merged cleanly: feature-a, feature-b`(順序不拘)/ `feature-a` / `feature-b` 都含 main tip(`git log feature-a..main` 為空)/ `main` 與 `remote-svn/main` / `remote-svn/test-1` **不**在目標、未被動 / 跑完 HEAD 回開跑時原分支 | (Happy multi-branch merge) |
-| P2-tp-merge-main-into-all-2 | Exclude:`remote-svn/*` 與 main 被跳過 | 同 case 1 fixture(可接 case 1 後直接續) | /tp-merge-main-into-all → script 目標清單不含 `main` / `remote-svn/main` / `remote-svn/test-1` | summary 的 `Merged cleanly:` 不列任何 `remote-svn/*` 或 `main` / `git log -1 remote-svn/main` 與 `remote-svn/test-1` 的 tip 跑前跑後 SHA 不變 | (Exclude filter) |
-| P2-tp-merge-main-into-all-3 | Conflict:衝突分支中止、其餘照常 | fresh-base + setup(a) + 在 main 改 `shared.txt` 某行 + commit;另建 `feature-conflict`(改同一行造成衝突)與 `feature-clean`(改不相干檔,可乾淨 merge) | /tp-merge-main-into-all → `feature-conflict` merge 衝突 → 對該分支 `git merge --abort` → 標 CONFLICT → 繼續 merge `feature-clean` → summary | stdout 末尾含 `CONFLICT (aborted): feature-conflict` + `Merged cleanly: feature-clean` / `feature-conflict` 仍是衝突前的 tip(未含 main、無殘留衝突狀態 `git status` 乾淨)/ `feature-clean` 含 main tip / script exit 1 / 跑完 HEAD 回原分支 | (Conflict per-branch abort) |
+| P2-tp-merge-main-into-branches-1 | Happy:多分支落後 main 一起 merge | fresh-base + setup(a)(已有 `remote-svn/main`)+ 用 `New-RemoteBridge` 建 test-1 bridge(已有 `remote-svn/test-1`)+ 在 main 多 2 commit 領先 + 另建兩個本地分支 `feature-a` / `feature-b`(從 main 較舊的 commit 起跳,落後 main) | /tp-merge-main-into-branches(無參數)→ script 列目標分支(排除 `main` 與 `remote-svn/*`)→ 逐支 `checkout` + `git merge main` + 還原原分支 → summary | stdout 末尾含 `Merged cleanly: feature-a, feature-b`(順序不拘)/ `feature-a` / `feature-b` 都含 main tip(`git log feature-a..main` 為空)/ `main` 與 `remote-svn/main` / `remote-svn/test-1` **不**在目標、未被動 / 跑完 HEAD 回開跑時原分支 | (Happy multi-branch merge) |
+| P2-tp-merge-main-into-branches-2 | Exclude:`remote-svn/*` 與 main 被跳過 | 同 case 1 fixture(可接 case 1 後直接續) | /tp-merge-main-into-branches → script 目標清單不含 `main` / `remote-svn/main` / `remote-svn/test-1` | summary 的 `Merged cleanly:` 不列任何 `remote-svn/*` 或 `main` / `git log -1 remote-svn/main` 與 `remote-svn/test-1` 的 tip 跑前跑後 SHA 不變 | (Exclude filter) |
+| P2-tp-merge-main-into-branches-3 | Conflict:衝突分支中止、其餘照常 | fresh-base + setup(a) + 在 main 改 `shared.txt` 某行 + commit;另建 `feature-conflict`(改同一行造成衝突)與 `feature-clean`(改不相干檔,可乾淨 merge) | /tp-merge-main-into-branches → `feature-conflict` merge 衝突 → 對該分支 `git merge --abort` → 標 CONFLICT → 繼續 merge `feature-clean` → summary | stdout 末尾含 `CONFLICT (aborted): feature-conflict` + `Merged cleanly: feature-clean` / `feature-conflict` 仍是衝突前的 tip(未含 main、無殘留衝突狀態 `git status` 乾淨)/ `feature-clean` 含 main tip / script exit 1 / 跑完 HEAD 回原分支 | (Conflict per-branch abort) |
+| P2-tp-merge-main-into-branches-4 | Specify subset:只 merge 指定分支,其餘不動;不存在/被排除的印 SKIP | 同 case 1 fixture(`feature-a` / `feature-b` 兩支落後 main) | /tp-merge-main-into-branches 指定 `--branch feature-a`(`.ps1`:`-Branch feature-a`)+ 同時傳一個不存在分支 `nope` 與 `remote-svn/main` | stdout 含 `OK feature-a` / `SKIP nope (not found / excluded)` / `SKIP remote-svn/main (not found / excluded)` / `feature-a` 含 main tip、`feature-b` **未**被動(`git log feature-b..main` 非空)/ 跑完 HEAD 回原分支 | (Specify subset + SKIP excluded/missing) |
 
 ### 失敗常見 patterns
 
@@ -1270,11 +1271,11 @@ PASS / FAIL / PARTIAL。
 >
 > **Prompt**:
 > ```
-> 幫我把 main 同步進所有分支 — /tp-merge-main-into-all
+> 幫我把 main 同步進所有分支 — /tp-merge-main-into-branches
 > ```
 >
 > **觀察重點**:
-> - agent 觸發 tp-merge-main-into-all
+> - agent 觸發 tp-merge-main-into-branches
 > - script 列目標分支 = `feature-a` / `feature-b`(不含 `main`、不含 `remote-svn/main` / `remote-svn/test-1`)
 > - stdout 末尾 `Merged cleanly: feature-a, feature-b`(順序不拘)
 > - `git log feature-a..main` 與 `git log feature-b..main` 皆為空(都含 main tip)
@@ -1285,7 +1286,7 @@ PASS / FAIL / PARTIAL。
 >
 > **Prompt**:
 > ```
-> /tp-merge-main-into-all
+> /tp-merge-main-into-branches
 > ```
 >
 > **觀察重點**:
@@ -1302,7 +1303,7 @@ PASS / FAIL / PARTIAL。
 >
 > **Prompt**:
 > ```
-> /tp-merge-main-into-all
+> /tp-merge-main-into-branches
 > ```
 >
 > **觀察重點**:
@@ -1314,13 +1315,29 @@ PASS / FAIL / PARTIAL。
 > - script exit 1(至少一支 CONFLICT)
 > - 跑完 HEAD 回原分支
 
+> **Setup**(case 4):同 case 1 fixture(`feature-a` / `feature-b` 兩支落後 main)。記下 `git rev-parse feature-b`。
+>
+> **Prompt**:
+> ```
+> 只把 main merge 進 feature-a — /tp-merge-main-into-branches --branch feature-a --branch nope --branch remote-svn/main
+> ```
+>
+> **觀察重點**:
+> - script 對 `.sh` 用可重複 `--branch`,對 `.ps1` 用 `-Branch feature-a,nope,remote-svn/main`
+> - stdout 含 `OK feature-a`
+> - stdout 含 `SKIP nope (not found / excluded)` 與 `SKIP remote-svn/main (not found / excluded)`
+> - `git log feature-a..main` 為空(含 main tip)
+> - `feature-b` 未被動:`git rev-parse feature-b` 與跑前相同、`git log feature-b..main` 非空
+> - 跑完 HEAD 回開跑時原分支
+
 ### Row table
 
 | case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
 |---|---|---|---|---|---|---|---|
-| P2-tp-merge-main-into-all-1 | Happy multi-branch merge | fresh-base+setup+test-1 + feature-a/b 落後 | /tp-merge-main-into-all | feature-a/b 含 main tip / remote-svn/* + main 排除 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-merge-main-into-all-2 | Exclude remote-svn/* + main | 同 case 1 | /tp-merge-main-into-all | remote-svn/* + main 不被動 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-merge-main-into-all-3 | Conflict per-branch abort | feature-conflict + feature-clean | /tp-merge-main-into-all | conflict 分支 abort + clean 分支 merge / exit 1 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-merge-main-into-branches-1 | Happy multi-branch merge | fresh-base+setup+test-1 + feature-a/b 落後 | /tp-merge-main-into-branches | feature-a/b 含 main tip / remote-svn/* + main 排除 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-merge-main-into-branches-2 | Exclude remote-svn/* + main | 同 case 1 | /tp-merge-main-into-branches | remote-svn/* + main 不被動 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-merge-main-into-branches-3 | Conflict per-branch abort | feature-conflict + feature-clean | /tp-merge-main-into-branches | conflict 分支 abort + clean 分支 merge / exit 1 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-merge-main-into-branches-4 | Specify subset + SKIP excluded/missing | 同 case 1(feature-a/b 落後) | /tp-merge-main-into-branches --branch feature-a + nope + remote-svn/main | feature-a merge / feature-b 不動 / nope + remote-svn/main 印 SKIP | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
 
@@ -1431,9 +1448,9 @@ Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
 | tp-svn-log | 4 | _ | _ | _ | |
 | tp-csharp-comment | 2 | _ | _ | _ | surface-small |
 | tp-js-comment | 2 | _ | _ | _ | surface-small |
-| tp-merge-main-into-all | 3 | _ | _ | _ | parity 補(v1.0.0) |
+| tp-merge-main-into-branches | 4 | _ | _ | _ | parity 補(v1.0.0) + specify subset |
 | tp-db-management | 4 | _ | _ | _ | parity 補(v1.0.0) |
-| **Total** | **51** | _ | _ | _ | |
+| **Total** | **52** | _ | _ | _ | |
 
 ---
 
