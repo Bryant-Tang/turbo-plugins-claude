@@ -162,7 +162,7 @@ Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 gi
 - **Yes**:建立 release tag
 - **No**:略過 tagging
 
-選 Yes → 呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/Tag-Release.ps1`(或依 force_bash routing 改 `${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.sh`)帶 `--branch <name>`:
+選 Yes → 呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/Tag-Release.ps1`(或依執行路由改 `${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.sh`)帶 `--branch <name>`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Tag-Release.ps1" -Branch "main"
@@ -175,7 +175,11 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
 
 ## Decision Rules
 
-- **force_bash routing**: 呼叫 prepare / commit script 前,讀取 `.turbo-plugin/config.toml` 中 `[svn] force_bash` 的值(透過 `Resolve-ConfigValue -Section 'svn' -Key 'force_bash' -Default 'false'`)。若為 `true`,改以 Git Bash 執行對應的 `.sh` sibling 而非 `.ps1`(對應 Step 0.5 case (a) 的中文 Windows 使用者)。
+- **執行路由(挑 `.ps1` 還是 `.sh`)**:依環境選工具,**不要用 Bash 工具去呼叫 `pwsh` / `powershell`**——
+  - Windows + 有 Git Bash → 用 **Bash 工具**跑 `.sh`。
+  - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
+  - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
+  Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **Valid type 動態讀取 + 安全 fallback**:每次跑都重讀 `.commitlintrc.json`,使用者改該檔加 / 移除 type 後本 skill 自動同步。fallback 用 default 12 類 + stderr notice,**不靜默失敗也不 fail 拒跑**。
 - **Kept-subset hard-code 在本 skill,不從 `.commitlintrc.json` 讀**:`.commitlintrc.json` 定義「什麼是有效 commit type」(諮詢),turbo-plugin 定義「哪些 type 該進 SVN body」(篩選決策)。兩者刻意分離。
 - **Unknown type 必須 prompt,不能猜**:SVN history 是永久紀錄,猜錯比明確問代價高。

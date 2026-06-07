@@ -86,6 +86,11 @@ allowed-tools: Bash, Read
 
 ## Decision Rules
 
+- **執行路由(挑 `.ps1` 還是 `.sh`)**:依環境選工具,**不要用 Bash 工具去呼叫 `pwsh` / `powershell`**——
+  - Windows + 有 Git Bash → 用 **Bash 工具**跑 `.sh`。
+  - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
+  - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
+  Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - 必須在 main worktree 跑;script 內部自動定位 main + 對應 remote worktree。
 - `--limit` 必須是正整數,非法值 → script 拋錯。
 - `--revision` 的值不經 script validate,直接透傳給 svn — 由 svn 自己決定接受與否。**禁止** 在組指令時把多個 args 拼成單一字串(security invariant per F10);PS / bash script 內部都以 array splatting 傳值。

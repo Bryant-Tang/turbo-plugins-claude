@@ -22,7 +22,11 @@ allowed-tools: Bash, Read
 
 ## Decision Rules
 
-- **force_bash routing**: 呼叫 script 前,讀取 `.turbo-plugin/config.toml` 中 `[svn] force_bash` 的值(透過 `Resolve-ConfigValue -Section 'svn' -Key 'force_bash' -Default 'false'`)。若為 `true`,改以 Git Bash 執行 `.sh` sibling 而非 `.ps1`(對應 Step 0.5 case (a) 的中文 Windows 使用者)。
+- **執行路由(挑 `.ps1` 還是 `.sh`)**:依環境選工具,**不要用 Bash 工具去呼叫 `pwsh` / `powershell`**——
+  - Windows + 有 Git Bash → 用 **Bash 工具**跑 `.sh`。
+  - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
+  - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
+  Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - 必須在 main worktree 跑;script 內部會自動定位主 worktree。
 - main worktree 不乾淨(`git status --porcelain` 非空)→ 拒跑,提示先 commit / stash。
 - 衝突時 **不自動 abort**,讓使用者選擇手動解決。

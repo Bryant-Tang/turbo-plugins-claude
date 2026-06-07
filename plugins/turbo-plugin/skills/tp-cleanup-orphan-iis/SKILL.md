@@ -82,6 +82,11 @@ Both `-RemoveSite` and `-RemoveAll` honor the same exit code contract. For the a
 
 ## Decision Rules
 
+- **執行路由(挑 `.ps1` 還是 `.sh`)**:依環境選工具,**不要用 Bash 工具去呼叫 `pwsh` / `powershell`**——
+  - Windows + 有 Git Bash → 用 **Bash 工具**跑 `.sh`。
+  - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
+  - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
+  Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **只處理 turbo-plugin 格式的 site name**(`<stem>-<8hex>`);script 本身已過濾,Skill 無需重複判斷。
 - **不自動清除**:Step 2 的使用者確認不可跳過;絕不在沒有明確選擇下呼叫 `-RemoveAll`。
 - **不嘗試重建正確 site 條目**:清除後,使用者應重跑 `/tp-setup` 或用 Visual Studio 開啟 .sln 讓 VS 重建正確條目。

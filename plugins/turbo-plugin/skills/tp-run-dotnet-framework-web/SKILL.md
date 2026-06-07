@@ -44,6 +44,11 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ## Decision Rules
 
+- **執行路由(挑 `.ps1` 還是 `.sh`)**:依環境選工具,**不要用 Bash 工具去呼叫 `pwsh` / `powershell`**——
+  - Windows + 有 Git Bash → 用 **Bash 工具**跑 `.sh`。
+  - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
+  - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
+  Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **跨 worktree self-heal(R15a)**:同 project 在別 worktree 已啟 → 自動停舊 instance,**不**詢問使用者(這是 brainstorm 動機 bug fix)。
 - **別 project 撞 port(R15b)**:fail loudly,**不**自動停別 project 的 instance。
 - **不直接寫 applicationhost.config 的 site 結構**:只 update 既有 site 的 physicalPath。若 site 不存在(VS 首次啟動會建)→ 跳過 update,start-iis 仍嘗試啟動,讓 IIS Express 自己處理。
