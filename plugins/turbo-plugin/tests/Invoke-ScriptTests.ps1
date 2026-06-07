@@ -40,6 +40,11 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+# PS executable for child processes: Windows PowerShell 5.1 (Desktop) ships `powershell`;
+# PowerShell 7+ (Core, e.g. the ubuntu CI runner) ships `pwsh`. Spawn children with the
+# SAME edition the orchestrator is running under so the .ps1 suite works on both.
+$psExe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
+
 # ─── Paths ───────────────────────────────────────────────────────────────────
 $scriptDir = $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -65,7 +70,7 @@ if (-not $SkipPreflight) {
     if (-not [System.IO.File]::Exists($lintPs1)) {
         throw "Pre-flight: lint-ps-compat.ps1 not found at $lintPs1"
     }
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $lintPs1 -Path $scriptsDir
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $lintPs1 -Path $scriptsDir
     if ($LASTEXITCODE -ne 0) {
         Write-Output "Pre-flight FAILED: lint-ps-compat.ps1 returned exit $LASTEXITCODE"
         exit 1
@@ -135,7 +140,7 @@ foreach ($t in $psTests) {
         # runner) is logged, not fatal — fixture-dependent It blocks self-SKIP on the
         # missing tool, and tests that build their own sandbox are unaffected.
         try {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $resetPs1 2>$null | Out-Null
+            & $psExe -NoProfile -ExecutionPolicy Bypass -File $resetPs1 2>$null | Out-Null
         } catch { }
     }
     # Run each file in its OWN powershell child process. Pester state (functions/vars
@@ -151,7 +156,7 @@ foreach ($t in $psTests) {
                 "`$r = Invoke-Pester -Configuration `$c; " +
                 "Write-Output ('TPCOUNT ' + `$r.PassedCount + ' ' + `$r.FailedCount + ' ' + `$r.SkippedCount); " +
                 "exit ([int]`$r.FailedCount)"
-    $childOut = & powershell -NoProfile -ExecutionPolicy Bypass -Command $childCmd
+    $childOut = & $psExe -NoProfile -ExecutionPolicy Bypass -Command $childCmd
     foreach ($l in $childOut) { Write-Output $l }
     $countLine = @($childOut | Where-Object { $_ -match '^TPCOUNT ' }) | Select-Object -Last 1
     if ($countLine -and ($countLine -match '^TPCOUNT (\d+) (\d+) (\d+)$')) {
@@ -179,7 +184,7 @@ foreach ($t in $shTests) {
         continue
     }
     if (-not $SkipReset -and [System.IO.File]::Exists($resetPs1)) {
-        try { & powershell -NoProfile -ExecutionPolicy Bypass -File $resetPs1 2>$null | Out-Null } catch { }
+        try { & $psExe -NoProfile -ExecutionPolicy Bypass -File $resetPs1 2>$null | Out-Null } catch { }
     }
     $bashFile = ([regex]::Replace($t.FullName, '^([A-Za-z]):', { param($m) '/' + $m.Groups[1].Value.ToLower() })) -replace '\\', '/'
     & $BashPath -c "'$bashFile'"

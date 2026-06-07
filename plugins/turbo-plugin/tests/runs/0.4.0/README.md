@@ -1,13 +1,15 @@
-# turbo-plugin v1.0.0 — PR Validation Run
+# turbo-plugin 0.4.0 — PR Validation Run（歷史紀錄）
 
-本目錄為 **turbo-plugin v1.0.0 release PR readiness 測試的執行紀錄**(per-release
+> **版本重編註(v0.5.0 U1/U18)**:本目錄原名 `runs/v1.0.0/`,隨版本號重編改為 `runs/0.4.0/`(對應 CHANGELOG `[Unreleased]`→`[0.4.0]` finalization 那批工作的執行證據)。內容為當時手刻測試框架(AssertHelpers / 自刻 bash counter)的紀錄;v0.5.0 起測試改用 Pester 5 + shUnit2,不再產出此種 per-case tracking 文件,故本目錄為**凍結的歷史證據**。
+
+本目錄為 **turbo-plugin 0.4.0 finalization 測試的執行紀錄**(per-release
 execution evidence)。所有檔案結構衍生自上層 `../../docs/` 的 schema templates,
 本目錄填入實際執行結果。
 
 ## 目錄結構
 
 ```
-runs/v1.0.0/
+runs/0.4.0/
 ├── README.md                   # 本檔
 ├── script-tests-results.md     # Script tests 自動測試結果(由 Invoke-ScriptTests.ps1 append rows)
 ├── skill-tests-results.md      # Skill tests 手動測試結果(使用者跑 session 時手動填 rows)
