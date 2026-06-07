@@ -12,6 +12,7 @@
 - chore: 清除版控文件中僅限本機之物為固定 placeholder token(機器絕對路徑 → `<MACHINE-PATH>`、內部 SVN/host → `<INTERNAL-SVN-URL>`),範圍限 `docs/`、CHANGELOG、`tests/docs/skill-tests.md`,保留泛 Windows 字串;根 `CLAUDE.md` 加常駐規則「不得提交僅限本機之物」(advisory)（U2/U3）
 - refactor: 編碼初始化集中到共用 lib——`Common.ps1` 加 guarded `[Console]::InputEncoding`(補齊三編碼變數)、`common.sh` 開頭加 portable 且非致命的 UTF-8 locale 設定(R-2 fallback);`Test-EncodingSupport.ps1` 補齊三編碼變數(維持獨立偵測語意不受影響)、`Invoke-PostToolUseEnterWorktree.ps1` 補 guarded 編碼 init(保留 EAP=Continue)（U4）
 - refactor: 所有呼叫配對 `.ps1`/`.sh` 的 skill(push / pull / svn-log / suggest-ignore / 四個 .NET skill / cleanup-orphan-iis)改用統一執行路由——依環境 + Git Bash 偵測選工具(排除 WSL `System32\bash.exe`),不再用 Bash 工具呼叫 `pwsh`/`powershell`;移除舊 `[svn] force_bash` 機制(skill 規則、tp-setup option (a) 寫入、config 範本註解)（U5）
+- feat: `Resolve-RemoteWorktree` / `resolve_remote_worktree` 一般化,接受**任意 branch**(不再限 `main`/`test-<n>`)——ref `remote-svn/<branch>`(保留斜線)、worktree 目錄 `remote-svn-<branch-dash>`;新增 allowlist 消毒(拒 `..` / 前導 `-` / `\`/`:`/控制字元 / 結尾點或空白 / 保留名 `main` 非小寫與 Windows 裝置名 CON/PRN/AUX/NUL/COM1-9/LPT1-9)、normalize-then-compare 碰撞偵測(`Find-RemoteWorktreeCollision`)、MAX_PATH>260 hard-fail + 引導;PS/bash 兩端一致（U7）
 
 ### Removed
 

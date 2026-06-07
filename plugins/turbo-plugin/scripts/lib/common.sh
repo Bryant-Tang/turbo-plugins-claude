@@ -132,22 +132,89 @@ resolve_repo_path() {
   fi
 }
 
+# Validate a branch name for remote-svn worktree mapping (v0.5.0 U7 allowlist).
+# Returns 0 if OK, else prints the reason to stderr and returns 1. 'main' is the
+# canonical trust anchor and always passes; other casings of 'main' are rejected so
+# they cannot impersonate the anchor directory.
+assert_valid_remote_branch_name() {
+  local branch_name="$1"
+  if [[ -z "$branch_name" ]]; then
+    echo "Error: invalid branch name: empty." >&2; return 1
+  fi
+  if [[ "$branch_name" == 'main' ]]; then
+    return 0
+  fi
+  if [[ "$branch_name" == *".."* ]]; then
+    echo "Error: invalid branch name '$branch_name': must not contain '..'." >&2; return 1
+  fi
+  if [[ "$branch_name" == -* ]]; then
+    echo "Error: invalid branch name '$branch_name': must not start with '-'." >&2; return 1
+  fi
+  if [[ "$branch_name" =~ [[:space:].]$ ]]; then
+    echo "Error: invalid branch name '$branch_name': must not end with '.' or whitespace." >&2; return 1
+  fi
+  # Allowlist: letters, digits, '.', '_', '-', '/'. Rejects '\', ':', spaces,
+  # control characters, and any other separator.
+  if [[ ! "$branch_name" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "Error: invalid branch name '$branch_name': only letters, digits, '.', '_', '-', and '/' are allowed." >&2; return 1
+  fi
+  # Reserved names (case-insensitive): the dash-form plus each '/'-separated segment.
+  local seg lower dash="${branch_name//\//-}"
+  local -a segments=("$dash")
+  local -a _parts
+  IFS='/' read -ra _parts <<< "$branch_name"
+  segments+=("${_parts[@]}")
+  for seg in "${segments[@]}"; do
+    lower="$(printf '%s' "$seg" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+      main|con|prn|aux|nul|com1|com2|com3|com4|com5|com6|com7|com8|com9|lpt1|lpt2|lpt3|lpt4|lpt5|lpt6|lpt7|lpt8|lpt9)
+        echo "Error: invalid branch name '$branch_name': '$seg' is a reserved name." >&2; return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# Echoes the existing remote-svn branch that collides with <branch_name> (same dir
+# name, different ref), or nothing. Pure: caller passes existing branches as args
+# (e.g. from `git branch --list 'remote-svn/*'` with the prefix stripped).
+# Args: <branch_name> [existing_branch...]
+find_remote_worktree_collision() {
+  local branch_name="$1"; shift
+  local existing dash="${branch_name//\//-}"
+  for existing in "$@"; do
+    [[ -z "$existing" ]] && continue
+    [[ "$existing" == "$branch_name" ]] && continue
+    if [[ "${existing//\//-}" == "$dash" ]]; then
+      echo "$existing"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# Map any branch to its remote-svn ref + worktree dir (v0.5.0 U7 — generalized from
+# the old hard-coded main / test-<n>). Mapping:
+#   name = remote-svn-<branch with '/' -> '-'>, ref = remote-svn/<branch>
 # Args: <branch_name> <worktrees_dir>
-# Echoes "<name>|<branch>|<path>".
+# Echoes "<name>|<branch>|<path>" on success; prints error + returns 1 on invalid
+# name or MAX_PATH violation.
 resolve_remote_worktree() {
   local branch_name="$1"
   local worktrees_dir="$2"
-  if [[ "$branch_name" == 'main' ]]; then
-    echo "remote-svn-main|remote-svn/main|$worktrees_dir/remote-svn-main"
-    return 0
+
+  assert_valid_remote_branch_name "$branch_name" || return 1
+
+  local dash="${branch_name//\//-}"
+  local name="remote-svn-${dash}"
+  local path="${worktrees_dir}/${name}"
+
+  # MAX_PATH guard — parity with the PS side (Windows is the constrained host).
+  if (( ${#path} > 260 )); then
+    echo "Error: worktree path exceeds the Windows MAX_PATH limit (260): '$path' is ${#path} chars. Shorten the clone path, or enable long-path support (git config core.longpaths true, or the \\\\?\\ prefix)." >&2
+    return 1
   fi
-  if [[ "$branch_name" =~ ^test-([0-9]+)$ ]]; then
-    local n="${BASH_REMATCH[1]}"
-    echo "remote-svn-test-$n|remote-svn/test-$n|$worktrees_dir/remote-svn-test-$n"
-    return 0
-  fi
-  echo "Error: unsupported branch '$branch_name'. Only 'main' and 'test-<n>' branches can be synced from SVN." >&2
-  return 1
+
+  echo "${name}|remote-svn/${branch_name}|${path}"
 }
 
 # Percent-decode a string (RFC 3986 %XX). Pure-bash; no external deps.

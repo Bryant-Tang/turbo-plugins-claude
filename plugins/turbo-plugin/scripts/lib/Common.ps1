@@ -121,28 +121,97 @@ function Resolve-RepoPath {
     return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $PathValue))
 }
 
+# Validate a branch name for remote-svn worktree mapping (v0.5.0 U7 allowlist).
+# Throws with a sanitization message on rejection. 'main' is the canonical trust
+# anchor and always passes; other casings of 'main' are rejected so they cannot
+# impersonate the anchor directory.
+function Assert-ValidRemoteBranchName {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$BranchName)
+
+    if ([string]::IsNullOrEmpty($BranchName)) {
+        throw "Invalid branch name: empty."
+    }
+    # Case-SENSITIVE: only the exact lowercase 'main' is the trust anchor. Other
+    # casings (Main / MAIN) fall through to the reserved-name rejection below.
+    if ($BranchName -ceq 'main') { return }
+
+    if ($BranchName.Contains('..')) {
+        throw "Invalid branch name '$BranchName': must not contain '..'."
+    }
+    if ($BranchName.StartsWith('-')) {
+        throw "Invalid branch name '$BranchName': must not start with '-'."
+    }
+    if ($BranchName -match '[\s.]$') {
+        throw "Invalid branch name '$BranchName': must not end with '.' or whitespace."
+    }
+    # Allowlist: letters, digits, '.', '_', '-', '/'. Rejects '\', ':', spaces,
+    # control characters, and any other separator.
+    if ($BranchName -notmatch '^[A-Za-z0-9._/-]+$') {
+        throw "Invalid branch name '$BranchName': only letters, digits, '.', '_', '-', and '/' are allowed."
+    }
+    # Reserved names (case-insensitive): the 'main' anchor dir (any non-exact casing)
+    # plus Windows reserved device names, checked against the dash-form and each
+    # '/'-separated segment.
+    $segments = @(($BranchName -replace '/', '-')) + ($BranchName -split '/')
+    foreach ($seg in $segments) {
+        $low = $seg.ToLowerInvariant()
+        if ($low -eq 'main' -or $low -match '^(con|prn|aux|nul|com[1-9]|lpt[1-9])$') {
+            throw "Invalid branch name '$BranchName': '$seg' is a reserved name."
+        }
+    }
+}
+
+# Returns the existing remote-svn branch that collides with $BranchName (maps to the
+# same worktree dir name but is a different ref), or $null when there is no collision.
+# Pure: the caller supplies the existing branch list (e.g. from
+# `git branch --list 'remote-svn/*'` with the 'remote-svn/' prefix stripped).
+function Find-RemoteWorktreeCollision {
+    param(
+        [Parameter(Mandatory = $true)][string]$BranchName,
+        [string[]]$ExistingBranches
+    )
+    if ($null -eq $ExistingBranches) { return $null }
+    $dash = $BranchName -replace '/', '-'
+    foreach ($existing in $ExistingBranches) {
+        if ([string]::IsNullOrEmpty($existing)) { continue }
+        if ($existing -eq $BranchName) { continue }
+        if (($existing -replace '/', '-') -eq $dash) {
+            return $existing
+        }
+    }
+    return $null
+}
+
+# Map any branch to its remote-svn ref + worktree dir (v0.5.0 U7 — generalized from
+# the old hard-coded main / test-<n>). Mapping:
+#   ref      = remote-svn/<branch>                 (slashes preserved)
+#   worktree = remote-svn-<branch with '/' -> '-'>
+# Sanitization + MAX_PATH guard run here; collision is the caller's concern
+# (Find-RemoteWorktreeCollision) since it needs the live branch list.
 function Resolve-RemoteWorktree {
     param(
         [Parameter(Mandatory = $true)][string]$BranchName,
         [Parameter(Mandatory = $true)][string]$WorktreesDir
     )
 
-    if ($BranchName -eq 'main') {
-        return @{
-            Name   = 'remote-svn-main'
-            Branch = 'remote-svn/main'
-            Path   = Join-Path $WorktreesDir 'remote-svn-main'
-        }
+    Assert-ValidRemoteBranchName -BranchName $BranchName
+
+    $dash = $BranchName -replace '/', '-'
+    $name = "remote-svn-$dash"
+    $path = [System.IO.Path]::Combine($WorktreesDir, $name)
+
+    # MAX_PATH guard — distinct from the sanitization rejection above. Windows PS 5.1
+    # / .NET Framework cannot create paths longer than 260 chars without long-path
+    # support; fail loudly with guidance rather than letting the create blow up later.
+    if ($path.Length -gt 260) {
+        throw "Worktree path exceeds the Windows MAX_PATH limit (260): '$path' is $($path.Length) chars. Shorten the clone path, or enable long-path support (git config core.longpaths true, or the \\?\ prefix)."
     }
-    if ($BranchName -match '^test-(\d+)$') {
-        $n = $Matches[1]
-        return @{
-            Name   = "remote-svn-test-$n"
-            Branch = "remote-svn/test-$n"
-            Path   = Join-Path $WorktreesDir "remote-svn-test-$n"
-        }
+
+    return @{
+        Name   = $name
+        Branch = "remote-svn/$BranchName"
+        Path   = $path
     }
-    throw "Unsupported branch '$BranchName'. Only 'main' and 'test-<n>' branches can be synced from SVN."
 }
 
 # Normalize an SVN URL for boundary-safe trust comparison:
