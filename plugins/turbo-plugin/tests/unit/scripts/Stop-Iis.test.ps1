@@ -1,4 +1,4 @@
-﻿# stop-iis.Tests.ps1
+﻿# Stop-Iis.test.ps1 (Pester 5)
 #
 # Script: plugins/turbo-plugin/scripts/Stop-Iis.ps1
 # Behavior: 跑 [iis] enabled gate;若 enabled,從 CIM 找 iisexpress.exe 並用 /site:<name> match 殺。
@@ -10,125 +10,118 @@
 #   2. [iis] enabled = false consistency: 改 config.toml 為 disabled → exit ≠ 0,stderr 含「IIS 已停用」
 #   3. SKILL entry: 再呼叫 no-running case → 行為一致
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+BeforeAll {
+    $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
+    $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Stop-Iis.ps1')
 
-$LibPath = [System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'lib', 'AssertHelpers.ps1')
-. $LibPath
-Reset-Counters
+    $script:TestRoot = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'test-turbo-plugin')
+    $script:CfgPath  = [System.IO.Path]::Combine($script:TestRoot, '.turbo-plugin', 'config.toml')
 
-
-# ─── Git helper: PS 5.1 + EAP=Stop bites on git stderr warnings (LF/CRLF etc) ───
-# wrap each git call so stderr noise doesn't trigger NativeCommandError termination.
-function Invoke-GitSilent {
-    $allArgs = $args
-    $oldEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & git @allArgs 2>$null | Out-Null
-    } catch {
-        # tolerate;tests assert outcomes from script-under-test, not fixture-init noise
-    } finally {
-        $ErrorActionPreference = $oldEap
-    }
-}
-
-$pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Stop-Iis.ps1')
-
-$testRoot = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'test-turbo-plugin')
-$cfgPath = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'config.toml')
-
-function Ensure-FixtureGit {
-    if (-not [System.IO.Directory]::Exists($testRoot)) { return $false }
-    if (-not [System.IO.Directory]::Exists([System.IO.Path]::Combine($testRoot, '.git'))) {
-        Push-Location -LiteralPath $testRoot
+    # ─── Git helper: PS 5.1 + EAP=Stop bites on git stderr warnings (LF/CRLF etc) ───
+    # wrap each git call so stderr noise doesn't trigger NativeCommandError termination.
+    function Invoke-GitSilent {
+        $allArgs = $args
+        $oldEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         try {
-            Invoke-GitSilent init -q
-            Invoke-GitSilent config user.email 'test@example.invalid'
-            Invoke-GitSilent config user.name 'Test'
-            Invoke-GitSilent add -A
-            & git -c commit.gpgsign=false commit -q -m init *>$null
-        } finally { Pop-Location }
-    }
-    return $true
-}
-
-function Set-IisEnabled {
-    param([bool]$Enabled)
-    if (-not [System.IO.File]::Exists($cfgPath)) { throw "cfg not found: $cfgPath" }
-    $text = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
-    $valueLine = if ($Enabled) { 'enabled = true' } else { 'enabled = false' }
-    $patched = [regex]::Replace($text, '(?m)^enabled\s*=\s*(true|false)\s*$', $valueLine)
-    [System.IO.File]::WriteAllText($cfgPath, $patched, (New-Object System.Text.UTF8Encoding($false)))
-}
-
-function Invoke-Script {
-    param([string]$WorkDir, [string[]]$ExtraArgs = @())
-    $oldLoc = Get-Location
-    try {
-        Set-Location -LiteralPath $WorkDir
-        $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
-        $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
-        try {
-            # Quote -File (and any spaced ExtraArg) so a spaced repo/parent path (AE8) survives
-            # Start-Process's naive space-join of -ArgumentList.
-            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
-            $proc = Start-Process -FilePath 'powershell.exe' `
-                -ArgumentList $argList -WorkingDirectory $WorkDir `
-                -RedirectStandardOutput $tmpStdout -RedirectStandardError $tmpStderr `
-                -NoNewWindow -PassThru -Wait
-            $stdout = if (Test-Path -LiteralPath $tmpStdout -PathType Leaf) { [System.IO.File]::ReadAllText($tmpStdout, [System.Text.Encoding]::UTF8) } else { '' }
-            $stderr = if (Test-Path -LiteralPath $tmpStderr -PathType Leaf) { [System.IO.File]::ReadAllText($tmpStderr, [System.Text.Encoding]::UTF8) } else { '' }
-            return @{ Stdout = $stdout; Stderr = $stderr; Exit = $proc.ExitCode }
+            & git @allArgs 2>$null | Out-Null
+        } catch {
+            # tolerate;tests assert outcomes from script-under-test, not fixture-init noise
         } finally {
-            foreach ($t in @($tmpStdout, $tmpStderr)) {
-                if (Test-Path -LiteralPath $t -PathType Leaf) {
-                    try { [System.IO.File]::Delete($t) } catch { }
+            $ErrorActionPreference = $oldEap
+        }
+    }
+
+    function Ensure-FixtureGit {
+        if (-not [System.IO.Directory]::Exists($script:TestRoot)) { return $false }
+        if (-not [System.IO.Directory]::Exists([System.IO.Path]::Combine($script:TestRoot, '.git'))) {
+            Push-Location -LiteralPath $script:TestRoot
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                Invoke-GitSilent add -A
+                & git -c commit.gpgsign=false commit -q -m init *>$null
+            } finally { Pop-Location }
+        }
+        return $true
+    }
+
+    function Set-IisEnabled {
+        param([bool]$Enabled)
+        if (-not [System.IO.File]::Exists($script:CfgPath)) { throw "cfg not found: $script:CfgPath" }
+        $text = [System.IO.File]::ReadAllText($script:CfgPath, [System.Text.Encoding]::UTF8)
+        $valueLine = if ($Enabled) { 'enabled = true' } else { 'enabled = false' }
+        $patched = [regex]::Replace($text, '(?m)^enabled\s*=\s*(true|false)\s*$', $valueLine)
+        [System.IO.File]::WriteAllText($script:CfgPath, $patched, (New-Object System.Text.UTF8Encoding($false)))
+    }
+
+    function Invoke-Script {
+        param([string]$WorkDir, [string[]]$ExtraArgs = @())
+        $oldLoc = Get-Location
+        try {
+            Set-Location -LiteralPath $WorkDir
+            $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
+            $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
+            try {
+                # Quote -File (and any spaced ExtraArg) so a spaced repo/parent path (AE8) survives
+                # Start-Process's naive space-join of -ArgumentList.
+                $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $script:ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+                $proc = Start-Process -FilePath 'powershell.exe' `
+                    -ArgumentList $argList -WorkingDirectory $WorkDir `
+                    -RedirectStandardOutput $tmpStdout -RedirectStandardError $tmpStderr `
+                    -NoNewWindow -PassThru -Wait
+                $stdout = if (Test-Path -LiteralPath $tmpStdout -PathType Leaf) { [System.IO.File]::ReadAllText($tmpStdout, [System.Text.Encoding]::UTF8) } else { '' }
+                $stderr = if (Test-Path -LiteralPath $tmpStderr -PathType Leaf) { [System.IO.File]::ReadAllText($tmpStderr, [System.Text.Encoding]::UTF8) } else { '' }
+                return @{ Stdout = $stdout; Stderr = $stderr; Exit = $proc.ExitCode }
+            } finally {
+                foreach ($t in @($tmpStdout, $tmpStderr)) {
+                    if (Test-Path -LiteralPath $t -PathType Leaf) {
+                        try { [System.IO.File]::Delete($t) } catch { }
+                    }
                 }
             }
-        }
-    } finally { Set-Location -LiteralPath $oldLoc }
-}
-
-if (-not (Ensure-FixtureGit)) {
-    Write-Output "  [FAIL] setup: $testRoot missing"
-    exit 1
-}
-
-try {
-    # Case 1: no IIS running (fresh fixture, [iis]=true default)
-    $r1 = Invoke-Script -WorkDir $testRoot
-    Assert-Equal -Name 'case1: no-IIS exit 0' -Expected 0 -Actual $r1.Exit
-    Assert-Match -Name 'case1: stdout 含 No IIS Express process found' `
-                 -Pattern 'No IIS Express process found' -InputText $r1.Stdout
-
-    # Case 2: [iis] disabled consistency
-    Set-IisEnabled -Enabled $false
-    try {
-        $r2 = Invoke-Script -WorkDir $testRoot
-        Assert-True -Name 'case2: [iis]=false exit ≠ 0' -Condition ($r2.Exit -ne 0)
-        $combined2 = $r2.Stdout + "`n" + $r2.Stderr
-        Assert-Match -Name 'case2: stderr 含 IIS 已停用' -Pattern 'IIS 已停用' -InputText $combined2
-    } finally {
-        Set-IisEnabled -Enabled $true
+        } finally { Set-Location -LiteralPath $oldLoc }
     }
 
-    # Case 3: SKILL entry re-invoke (no-running) → 一致
-    $r3 = Invoke-Script -WorkDir $testRoot
-    Assert-Equal -Name 'case3: SKILL-entry no-IIS exit 0' -Expected 0 -Actual $r3.Exit
-    Assert-Match -Name 'case3: 訊息一致' -Pattern 'No IIS Express process found' -InputText $r3.Stdout
-}
-catch {
-    Write-Output "  [FAIL] unhandled: $($_.Exception.Message)"
-    $script:Failed++
+    $script:FixtureReady = Ensure-FixtureGit
 }
 
-Write-Output ''
-Write-Output "stop-iis.Tests: Passed=$($script:Passed) Failed=$($script:Failed)"
-if ($script:Failed -gt 0) {
-    foreach ($f in $script:Failures) { Write-Output "  - $f" }
-    exit 1
+Describe 'Stop-Iis' {
+
+    It 'fixture git repo is present (Reset-Fixture should have created it)' {
+        $script:FixtureReady | Should -BeTrue
+    }
+
+    Context 'Case 1: no IIS running (fresh fixture, [iis]=true default)' {
+        BeforeAll { $script:r1 = Invoke-Script -WorkDir $script:TestRoot }
+
+        It 'no-IIS exit 0' { $script:r1.Exit | Should -Be 0 }
+        It 'stdout 含 No IIS Express process found' {
+            $script:r1.Stdout | Should -Match 'No IIS Express process found'
+        }
+    }
+
+    Context 'Case 2: [iis] disabled consistency' {
+        BeforeAll {
+            Set-IisEnabled -Enabled $false
+            try {
+                $script:r2 = Invoke-Script -WorkDir $script:TestRoot
+            } finally {
+                Set-IisEnabled -Enabled $true
+            }
+        }
+
+        It '[iis]=false exit ≠ 0' { ($script:r2.Exit -ne 0) | Should -BeTrue }
+        It 'stderr 含 IIS 已停用' {
+            ($script:r2.Stdout + "`n" + $script:r2.Stderr) | Should -Match 'IIS 已停用'
+        }
+    }
+
+    Context 'Case 3: SKILL entry re-invoke (no-running) → 一致' {
+        BeforeAll { $script:r3 = Invoke-Script -WorkDir $script:TestRoot }
+
+        It 'SKILL-entry no-IIS exit 0' { $script:r3.Exit | Should -Be 0 }
+        It '訊息一致' { $script:r3.Stdout | Should -Match 'No IIS Express process found' }
+    }
 }
-exit 0

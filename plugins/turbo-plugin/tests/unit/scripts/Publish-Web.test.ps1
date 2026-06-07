@@ -1,4 +1,4 @@
-﻿# publish-web.Tests.ps1
+﻿# Publish-Web.test.ps1 (Pester 5)
 #
 # Script: plugins/turbo-plugin/scripts/Publish-Web.ps1
 # Behavior: 找 csproj → 找 MSBuild → 找 .pubxml → pack-content → msbuild /p:DeployOnBuild=true
@@ -11,57 +11,52 @@
 #   3. SKILL entry consistency: re-invoke 行為一致
 #   4. Real publish: SKIP (Phase 2 territory)
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+BeforeAll {
+    $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
+    $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Publish-Web.ps1')
+    $script:SandboxBase = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes')
 
-$LibPath = [System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'lib', 'AssertHelpers.ps1')
-. $LibPath
-Reset-Counters
-
-
-# ─── Git helper: PS 5.1 + EAP=Stop bites on git stderr warnings (LF/CRLF etc) ───
-# wrap each git call so stderr noise doesn't trigger NativeCommandError termination.
-function Invoke-GitSilent {
-    $allArgs = $args
-    $oldEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & git @allArgs 2>$null | Out-Null
-    } catch {
-        # tolerate;tests assert outcomes from script-under-test, not fixture-init noise
-    } finally {
-        $ErrorActionPreference = $oldEap
-    }
-}
-
-$pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-$ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Publish-Web.ps1')
-
-function New-Sandbox { param([string]$Purpose)
-    $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $dir = [System.IO.Path]::Combine([System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-test-$Purpose-$guid")
-    $null = New-Item -ItemType Directory -Path $dir -Force
-    return $dir
-}
-function Remove-Sandbox { param([string]$Dir)
-    if ([string]::IsNullOrWhiteSpace($Dir)) { return }
-    try {
-        if ([System.IO.Directory]::Exists($Dir)) {
-            foreach ($f in [System.IO.Directory]::EnumerateFiles($Dir, '*', [System.IO.SearchOption]::AllDirectories)) {
-                try {
-                    $fa = [System.IO.File]::GetAttributes($f)
-                    if ($fa -band [System.IO.FileAttributes]::ReadOnly) {
-                        [System.IO.File]::SetAttributes($f, $fa -band (-bnot [System.IO.FileAttributes]::ReadOnly))
-                    }
-                } catch { }
-            }
-            [System.IO.Directory]::Delete($Dir, $true)
+    # ─── Git helper: PS 5.1 + EAP=Stop bites on git stderr warnings (LF/CRLF etc) ───
+    function Invoke-GitSilent {
+        $allArgs = $args
+        $oldEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & git @allArgs 2>$null | Out-Null
+        } catch {
+            # tolerate;tests assert outcomes from script-under-test, not fixture-init noise
+        } finally {
+            $ErrorActionPreference = $oldEap
         }
-    } catch { }
-}
+    }
 
-$minimalCsproj = @'
+    function New-Sandbox {
+        param([string]$Purpose)
+        $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
+        $dir = [System.IO.Path]::Combine($script:SandboxBase, "turbo-plugin-test-$Purpose-$guid")
+        $null = New-Item -ItemType Directory -Path $dir -Force
+        return $dir
+    }
+
+    function Remove-Sandbox {
+        param([string]$Dir)
+        if ([string]::IsNullOrWhiteSpace($Dir)) { return }
+        try {
+            if ([System.IO.Directory]::Exists($Dir)) {
+                foreach ($f in [System.IO.Directory]::EnumerateFiles($Dir, '*', [System.IO.SearchOption]::AllDirectories)) {
+                    try {
+                        $fa = [System.IO.File]::GetAttributes($f)
+                        if ($fa -band [System.IO.FileAttributes]::ReadOnly) {
+                            [System.IO.File]::SetAttributes($f, $fa -band (-bnot [System.IO.FileAttributes]::ReadOnly))
+                        }
+                    } catch { }
+                }
+                [System.IO.Directory]::Delete($Dir, $true)
+            }
+        } catch { }
+    }
+
+    $script:MinimalCsproj = @'
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
@@ -74,17 +69,14 @@ $minimalCsproj = @'
 </Project>
 '@
 
-function Invoke-Script {
-    param([string]$WorkDir, [string[]]$ExtraArgs = @())
-    $oldLoc = Get-Location
-    try {
-        Set-Location -LiteralPath $WorkDir
+    function Invoke-Script {
+        param([string]$WorkDir, [string[]]$ExtraArgs = @())
         $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
         $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
         try {
             # Quote -File (and any spaced ExtraArg) so a spaced repo/parent path (AE8) survives
             # Start-Process's naive space-join of -ArgumentList.
-            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+            $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $script:ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
             $proc = Start-Process -FilePath 'powershell.exe' `
                 -ArgumentList $argList -WorkingDirectory $WorkDir `
                 -RedirectStandardOutput $tmpStdout -RedirectStandardError $tmpStderr `
@@ -99,69 +91,61 @@ function Invoke-Script {
                 }
             }
         }
-    } finally { Set-Location -LiteralPath $oldLoc }
+    }
 }
 
-$sb1 = $null
-$sb2 = $null
+Describe 'Publish-Web' {
 
-try {
-    # Case 1: missing csproj
-    $sb1 = New-Sandbox 'publish-nocsproj'
-    Push-Location -LiteralPath $sb1
-    try {
-        Invoke-GitSilent init -q
-        Invoke-GitSilent config user.email 'test@example.invalid'
-        Invoke-GitSilent config user.name 'Test'
-        [System.IO.File]::WriteAllText((Join-Path $sb1 'README.txt'), 'no csproj', (New-Object System.Text.UTF8Encoding($false)))
-        Invoke-GitSilent add -A
-        & git -c commit.gpgsign=false commit -q -m init *>$null
-    } finally { Pop-Location }
-    $r1 = Invoke-Script -WorkDir $sb1
-    Assert-True -Name 'case1: missing csproj exit ≠ 0' -Condition ($r1.Exit -ne 0)
-    $combined1 = $r1.Stdout + "`n" + $r1.Stderr
-    Assert-Match -Name 'case1: 訊息提及 .csproj' -Pattern '\.csproj' -InputText $combined1
+    Context 'Case 1: missing csproj → fail-loudly' {
+        BeforeAll {
+            $script:sb1 = New-Sandbox 'publish-nocsproj'
+            Push-Location -LiteralPath $script:sb1
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                [System.IO.File]::WriteAllText((Join-Path $script:sb1 'README.txt'), 'no csproj', (New-Object System.Text.UTF8Encoding($false)))
+                Invoke-GitSilent add -A
+                Invoke-GitSilent -c commit.gpgsign=false commit -q -m init
+            } finally { Pop-Location }
+            $script:r1 = Invoke-Script -WorkDir $script:sb1
+            $script:combined1 = $script:r1.Stdout + "`n" + $script:r1.Stderr
+        }
+        AfterAll { Remove-Sandbox $script:sb1 }
 
-    # Case 2: missing pubxml (has csproj, no .pubxml under Properties/PublishProfiles)
-    $sb2 = New-Sandbox 'publish-nopubxml'
-    [System.IO.File]::WriteAllText(
-        [System.IO.Path]::Combine($sb2, 'HelloApp.csproj'),
-        $minimalCsproj,
-        (New-Object System.Text.UTF8Encoding($false)))
-    Push-Location -LiteralPath $sb2
-    try {
-        Invoke-GitSilent init -q
-        Invoke-GitSilent config user.email 'test@example.invalid'
-        Invoke-GitSilent config user.name 'Test'
-        Invoke-GitSilent add -A
-        & git -c commit.gpgsign=false commit -q -m init *>$null
-    } finally { Pop-Location }
-    $r2 = Invoke-Script -WorkDir $sb2
-    Assert-True -Name 'case2: missing pubxml exit ≠ 0' -Condition ($r2.Exit -ne 0)
-    $combined2 = $r2.Stdout + "`n" + $r2.Stderr
-    Assert-Match -Name 'case2: 訊息提及 pubxml' -Pattern '(?i)pubxml' -InputText $combined2
+        It 'case1: missing csproj exit ≠ 0' { ($script:r1.Exit -ne 0) | Should -BeTrue }
+        It 'case1: 訊息提及 .csproj' { $script:combined1 | Should -Match '\.csproj' }
+    }
 
-    # Case 3: SKILL entry consistency (re-invoke missing-pubxml)
-    $r3 = Invoke-Script -WorkDir $sb2
-    Assert-True -Name 'case3: SKILL-entry exit ≠ 0' -Condition ($r3.Exit -ne 0)
+    Context 'Case 2 & 3: missing pubxml (has csproj) + SKILL re-invoke consistency' {
+        BeforeAll {
+            $script:sb2 = New-Sandbox 'publish-nopubxml'
+            [System.IO.File]::WriteAllText(
+                [System.IO.Path]::Combine($script:sb2, 'HelloApp.csproj'),
+                $script:MinimalCsproj,
+                (New-Object System.Text.UTF8Encoding($false)))
+            Push-Location -LiteralPath $script:sb2
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                Invoke-GitSilent add -A
+                Invoke-GitSilent -c commit.gpgsign=false commit -q -m init
+            } finally { Pop-Location }
+            $script:r2 = Invoke-Script -WorkDir $script:sb2
+            $script:combined2 = $script:r2.Stdout + "`n" + $script:r2.Stderr
+            $script:r3 = Invoke-Script -WorkDir $script:sb2
+        }
+        AfterAll { Remove-Sandbox $script:sb2 }
+
+        It 'case2: missing pubxml exit ≠ 0' { ($script:r2.Exit -ne 0) | Should -BeTrue }
+        It 'case2: 訊息提及 pubxml' { $script:combined2 | Should -Match '(?i)pubxml' }
+        It 'case3: SKILL-entry exit ≠ 0' { ($script:r3.Exit -ne 0) | Should -BeTrue }
+    }
+
+    Context 'Case 4: real MSBuild publish (deferred to Phase 2 SKILL)' {
+        It 'case4: real publish deferred' -Skip {
+            # Real MSBuild publish deferred to Phase 2 SKILL manual testing.
+        }
+    }
 }
-catch {
-    Write-Output "  [FAIL] unhandled: $($_.Exception.Message)"
-    $script:Failed++
-}
-finally {
-    Remove-Sandbox $sb1
-    Remove-Sandbox $sb2
-}
-
-# Case 4 SKIP
-$script:Passed++
-Write-Output '  [PASS] case4 (SKIP): real MSBuild publish deferred to Phase 2 SKILL'
-
-Write-Output ''
-Write-Output "publish-web.Tests: Passed=$($script:Passed) Failed=$($script:Failed)"
-if ($script:Failed -gt 0) {
-    foreach ($f in $script:Failures) { Write-Output "  - $f" }
-    exit 1
-}
-exit 0
