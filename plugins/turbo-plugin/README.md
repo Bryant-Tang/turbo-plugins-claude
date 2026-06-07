@@ -38,6 +38,7 @@
 | `/tp-suggest-ignore` | 偵測 untracked 檔案,建議加入 `.gitignore` + `svn:ignore` |
 | `/tp-csharp-comment` | 對 C# 程式碼套用本專案註解 convention |
 | `/tp-js-comment` | 對 JS / TS(含 `.vue` / `.cshtml` `<script>`)套用本專案註解 convention |
+| `/tp-commit-msg` | 撰寫 / 檢查 commit message 語意(type 依 commitlint;禁 SHA / 本地識別碼) |
 
 ## 集中設定目錄 `.turbo-plugin/`
 

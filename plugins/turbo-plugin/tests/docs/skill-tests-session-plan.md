@@ -6,7 +6,7 @@ turbo-plugin v1.0 PR-readiness Skill tests 是 **使用者主導** 的測試階�
 轉述給 orchestrator 判讀 PASS / FAIL。本檔規劃 10-13 個建議 session(分 10 主場 + 3 reserved
 fail-then-fix re-run = 13 個 session slot)。
 
-> 使用者可以合併 / 拆分 session;case 數總和 **51** 不變(涵蓋 15 個 skill)。
+> 使用者可以合併 / 拆分 session;case 數總和 **53** 不變(涵蓋 16 個 skill)。
 
 ---
 
@@ -29,9 +29,10 @@ fail-then-fix re-run = 13 個 session slot)。
 | tp-svn-log | 4 | 含 pagination + 中文 + revision spec + escape |
 | tp-csharp-comment | 2 | **surface-small skill** — below R12 通用 floor |
 | tp-js-comment | 2 | **surface-small skill** — below R12 通用 floor |
+| tp-commit-msg | 2 | **surface-small skill** — below R12 通用 floor(LLM-only 語意檢查/改寫:不得引用 git SHA / 本地識別碼,type 交給 commitlint) |
 | tp-merge-main-into-branches | 4 | parity 補(v1.0.0)— happy multi-branch + exclude remote-svn/* + conflict + specify subset |
 | tp-db-management | 4 | parity 補(v1.0.0)— 唯讀 + SQL 落點 + slash→dash + fail-loudly |
-| **Total** | **52** | |
+| **Total** | **54** | |
 
 > **R12 floor not ceiling**(plan trade-off 5 resolution):「1 happy + 2-3 error +
 > 1 中文 = 4 最少數」是通用 floor,但對 surface 表面狹窄的 skill(comment 系列
@@ -120,14 +121,15 @@ fail-then-fix re-run = 13 個 session slot)。
   - P2-tp-svn-log-1 / 2 / 3 / 4
 - **session 結束 state**:fixture 不變(svn-log 是 read-only)
 
-### Session 9 — tp-csharp-comment + tp-js-comment
+### Session 9 — tp-csharp-comment + tp-js-comment + tp-commit-msg(LLM-only)
 
-- **預估時間**:15-25 分鐘
-- **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup(a) + 預製 case stub(per `skill-tests.md` Setup 段)
+- **預估時間**:20-30 分鐘
+- **fixture pre-state**:orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup(a) + 預製 comment case stub(per `skill-tests.md` Setup 段);tp-commit-msg 是 LLM-only 語意檢查,不需額外 stub
 - **cases**:
   - P2-tp-csharp-comment-1 / 2
   - P2-tp-js-comment-1 / 2
-- **session 結束 state**:source files 含註解(用後 fixture 重置即清)
+  - P2-tp-commit-msg-1 / 2(LLM-only:不得引用 git SHA / 本地識別碼)
+- **session 結束 state**:source files 含註解(用後 fixture 重置即清);tp-commit-msg 不動檔案(純語意檢查/改寫)
 
 ### Session 10 — tp-merge-main-into-branches + tp-db-management(parity 補)
 
@@ -158,7 +160,7 @@ flowchart LR
   S5 --> S6[Session 6<br>publish + cleanup-orphan-iis]
   S6 --> S7[Session 7<br>push-to-svn + release tag + reset-branch-to-main]
   S7 --> S8[Session 8<br>tp-svn-log]
-  S8 --> S9[Session 9<br>csharp-comment + js-comment]
+  S8 --> S9[Session 9<br>csharp-comment + js-comment + commit-msg]
   S9 --> S10b[Session 10<br>merge-main-into-branches + db-management]
   S10b --> RB["Skill tests 結束<br>rollback-checklist.md"]
   S1 -.fail-then-fix.-> S11[Session 11<br>reserved]

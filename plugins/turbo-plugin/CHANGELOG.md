@@ -8,6 +8,7 @@
 
 ### Added
 
+- feat: 新增 `tp-commit-msg` skill(LLM-only)——撰寫 / 檢查 commit message 的**語意**規範:commit type 一律依 `.commitlintrc.json`(skill 不列舉 type);**不得**引用特定 git SHA(遠端 SVN、跨 clone 不一致)或僅本地識別碼(需求 / 計畫 / 任務代號、session 項目編號);要求祈使句、what+why、語言一致(U13)
 - feat: `tp-push-to-svn` 首推自動建 bridge——偵測到某分支尚無 git↔SVN bridge 時,確認後自動建立(取代手動 `/tp-create-remote-test`)。新增 pre-flight 偵測腳本 `Get-PushPreflight.ps1` / `get-push-preflight.sh`,發**單一終結 token**(`TP_TOKEN:` 前綴,優先序 `DETACHED_HEAD` > `BRANCH_MISMATCH_WARNING` > `BRIDGE_ABSENT` > `BRIDGE_PRESENT`;detached 用 `git symbolic-ref` 偵測並拒字面 `HEAD`;發 token 前消毒 requested、帶 `current=`/`requested=`/`target=` payload);SKILL 只讀 token 分流,不自跑 git（U9）
 
 ### Changed

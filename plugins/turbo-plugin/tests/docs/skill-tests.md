@@ -1,6 +1,6 @@
 # Skill tests — Manual Test Tracking SCHEMA
 
-turbo-plugin v1.0+ PR-readiness Skill tests 手動測試的 **schema + 15 skill case spec +
+turbo-plugin v1.0+ PR-readiness Skill tests 手動測試的 **schema + 16 skill case spec +
 prompt 範本 + 失敗 patterns**。本檔為持久、可重複、path-free 的 schema reference;
 per-release 的實際執行結果寫在
 `plugins/turbo-plugin/tests/runs/<release>/skill-tests-results.md`(使用者跑每個
@@ -1241,6 +1241,69 @@ PASS / FAIL / PARTIAL。
 
 ---
 
+## tp-commit-msg
+
+> **Surface-small skill**:2 case(below R12 通用 floor)。理由:本 skill 是 LLM-only 的語意檢查/改寫,表面只有「讀草稿 commit message → 指出違規 → 改寫」。兩個 case(引用 git SHA / 引用本地識別碼)即覆蓋 SKILL.md 兩條 hard 規則;commit type 一律交給 `.commitlintrc.json`,skill **不**列舉 type,故不需獨立 type case。
+
+### Cases
+
+| Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
+|---|---|---|---|---|---|
+| P2-tp-commit-msg-1 | 草稿引用 git SHA → 指出不得引用 SHA 並改寫 | fresh-base + setup(a)(LLM-only,不需特定 source stub) | /tp-commit-msg 給一個 subject/body 含 git SHA(如「見 commit a1b2c3d」)的草稿 → skill 指出「不得引用 SHA / commit hash」(理由:遠端是 SVN,SHA 跨 clone 不一致)→ 改寫成行為描述版本(把「見 commit a1b2c3d」換成那次變更實際做了什麼)→ type **不**被 skill 硬列(交給 commitlint) | 回應明確指出草稿引用了 git SHA / 解釋 SHA 跨 clone 不穩定 → 不得引用 / 改寫稿移除 `a1b2c3d` 字面、改以行為描述 / skill 沒自行列舉 / 限制 commit type 清單(type 由 `.commitlintrc.json` 決定)/ 維持祈使句、語言一致 | (hard rule:不得引用 SHA) |
+| P2-tp-commit-msg-2 | 草稿引用本地識別碼 → 指出不得引用並改寫 | fresh-base + setup(a)(LLM-only) | /tp-commit-msg 給草稿「feat: 實作 U7 的 worktree 解析」(帶本地需求/計畫/任務代號 `U7`)→ skill 指出「不得引用僅本地識別碼(需求/計畫/任務代號、單一 session 項目編號)」→ 改寫:**保留** type(`feat`)、把 `U7` 換成白話動機(描述這個 worktree 解析實際要解決什麼)| 回應明確指出 `U7` 是僅本地識別碼、跨 clone / 對他人無意義 → 不得引用 / 改寫稿保留 `feat:` type、移除 `U7`、subject 改以白話描述行為與動機 / type 沒被 skill 換掉或重列(沿用草稿既有 type)/ 維持祈使句、what+why | (hard rule:不得引用本地識別碼) |
+
+### 失敗常見 patterns
+
+- **skill 自行列舉 commit type**:SKILL.md 明文 type 一律依 `.commitlintrc.json`,skill 不列舉。若回應給出一份固定的 type 清單(feat / fix / docs ...)當作權威來源 → FAIL。
+- **沒抓到 SHA 引用**:case 1 草稿含 `a1b2c3d` 卻照單全收、改寫稿仍保留該 hash → FAIL(hard rule 違反)。
+- **沒抓到本地識別碼**:case 2 草稿含 `U7` 卻保留進改寫稿、或沒指出它是僅本地識別碼 → FAIL。
+- **改寫把 type 也改掉**:case 2 草稿已是合法 `feat:`,改寫稿換成別的 type 或硬塞清單 → FAIL(type 應沿用、交由 commitlint 把關)。
+- **語言不一致 / 非祈使句**:改寫稿中英混雜無理由、或 subject 用過去式描述 → 偏離一般語意規範。
+
+### Prompt 範本
+
+> **Setup**(case 1):orchestrator 跑 reset + setup(a)(本 skill 是 LLM-only,不需任何 source/檔案 stub;只要 session 在 `<VALIDATION_ROOT>/proj` 內、turbo-plugin 已啟用即可)。
+>
+> **Prompt**:
+> ```
+> 幫我檢查這則 commit message 草稿 — /tp-commit-msg
+> 草稿:
+> fix: 修正登入逾時
+>
+> 詳細修法見 commit a1b2c3d,沿用那邊的處理。
+> ```
+>
+> **觀察重點**:
+> - agent 觸發 tp-commit-msg
+> - 明確指出草稿引用了 git SHA(`a1b2c3d`)→ 不得引用(理由:遠端是 SVN,SHA 跨 clone 不一致)
+> - 給出改寫版本:移除 `a1b2c3d` 字面,改以「那次變更實際做了什麼」的行為描述
+> - **沒有**自行列舉一份 commit type 清單(type 交給 `.commitlintrc.json`)
+> - 保持祈使句、語言一致(全繁中)
+
+> **Setup**(case 2):接 case 1 環境(LLM-only,無需額外 fixture)。
+>
+> **Prompt**:
+> ```
+> 這則 commit message 草稿可以嗎? — /tp-commit-msg
+> 草稿:feat: 實作 U7 的 worktree 解析
+> ```
+>
+> **觀察重點**:
+> - agent 觸發 tp-commit-msg
+> - 明確指出 `U7` 是僅本地識別碼(需求/計畫/任務代號)→ 不得引用(對其他 clone / 他人無意義)
+> - 給出改寫版本:**保留** `feat:` type,把 `U7` 換成白話動機(描述 worktree 解析實際解決什麼)
+> - type 沒被 skill 換掉或重列(沿用草稿的 `feat`)
+> - 保持祈使句、what+why、語言一致
+
+### Row table
+
+| case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
+|---|---|---|---|---|---|---|---|
+| P2-tp-commit-msg-1 | 草稿引用 git SHA | fresh-base+setup (LLM-only) | /tp-commit-msg 含 SHA 草稿 | 指出不得引用 SHA + 改寫成行為描述 / type 交給 commitlint | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-commit-msg-2 | 草稿引用本地識別碼 U7 | fresh-base+setup (LLM-only) | /tp-commit-msg 含 U7 草稿 | 指出不得引用本地識別碼 + 改寫 / 保留 feat type | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+
+---
+
 ## tp-merge-main-into-branches
 
 ### Cases
@@ -1448,9 +1511,10 @@ Skill tests 全部跑完後填(per-skill PASS / FAIL / SKIP 統計)。
 | tp-svn-log | 4 | _ | _ | _ | |
 | tp-csharp-comment | 2 | _ | _ | _ | surface-small |
 | tp-js-comment | 2 | _ | _ | _ | surface-small |
+| tp-commit-msg | 2 | _ | _ | _ | surface-small |
 | tp-merge-main-into-branches | 4 | _ | _ | _ | parity 補(v1.0.0) + specify subset |
 | tp-db-management | 4 | _ | _ | _ | parity 補(v1.0.0) |
-| **Total** | **52** | _ | _ | _ | |
+| **Total** | **54** | _ | _ | _ | |
 
 ---
 
