@@ -209,7 +209,10 @@ Describe 'Merge-MainIntoBranches' {
                 [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, '.git', 'index'), 'garbage-not-a-git-index')
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
                 $res.ExitCode | Should -Not -Be 0
-                $res.Combined | Should -Match 'index file'          # failed reading the index (the status stage), not elsewhere
+                # Failed at the status/index stage, not elsewhere. Accept EITHER git's native
+                # fatal (the EAP=Stop path -- 'index file') OR the script's own guard message
+                # (the rare silent-exit path) -- precise without coupling to one git version's wording.
+                $res.Combined | Should -Match 'index file|git status --porcelain failed'
                 $res.Stdout   | Should -Not -Match 'Merged cleanly'  # never reached a successful merge
             } finally {
                 Remove-Sandbox -Dir $sb

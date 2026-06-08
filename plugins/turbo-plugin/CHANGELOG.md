@@ -12,6 +12,7 @@
 
 - test: 為 v0.5.1 新行為補測試——`Get-PushPreflight` 消毒後失敗發 `TP_TOKEN:ERROR`(非 git 目錄觸發,PS+sh)、`Merge-MainIntoBranches` git status 失敗時 fail-loud 不靜默 merge(毀損 index 觸發,PS+sh)、`New-RemoteBridge` 「worktree dir 在但 ref 不在」的對稱半套狀態(PS Case 4c + sh `test_bridge_dir_without_ref`)。`Reset-BranchToMain` 的 reset/checkout **失敗**復原路徑因真 git sandbox 無法注入命令失敗而未加測試(記為已知缺口)
 - test: 複審 r3 強化上述測試穩健性——`TP_TOKEN:ERROR` 測試加「目錄非 git」hermetic 守衛(否則理論上可 false-pass)、Merge git-status 測試 PS 斷言收緊為實際失敗文字、New-RemoteBridge dir-without-ref 測試加「區分另一半套臂」斷言、sh Merge 測試補「未靜默 merge」守衛
+- test: 複審 r4 收尾——hermetic 守衛 skip 時印可見 warning(避免 regression guard 在 CI 默默消失)、Merge PS 斷言改為「git 原生訊息 `index file` 或腳本 guard 訊息」兩者任一(精準且不耦合單一 git 版本措辭)、`New-RemoteBridge` 兩臂訊息旁加註提醒測試依賴其措辭
 
 ### Changed
 

@@ -151,7 +151,12 @@ test_error_token_on_postsanitization_failure() {
     # Hermetic guard: this scenario REQUIRES $SB to be outside any git repo so
     # get_main_worktree fails. If the temp root unusually sits under a repo, skip rather
     # than false-pass (we'd otherwise get a routing token instead of TP_TOKEN:ERROR).
-    if git -C "$SB" rev-parse --git-dir >/dev/null 2>&1; then startSkipping; return 0; fi
+    if git -C "$SB" rev-parse --git-dir >/dev/null 2>&1; then
+        # Make the skip visible -- otherwise this regression guard could silently vanish
+        # (suite green) if a runner's temp root ($SB) sits under a git repo.
+        echo "WARNING: TG-1 skipped: \$SB ($SB) is inside a git repo; TP_TOKEN:ERROR regression is UNGUARDED this run." >&2
+        startSkipping; return 0
+    fi
     run_preflight "$SB" --branch feat-x   # $SB is a bare temp dir, not a git repo
     assertEquals 'post-sanitization failure exits 1' 1 "$PF_EXIT"
     case "$PF_STDOUT" in

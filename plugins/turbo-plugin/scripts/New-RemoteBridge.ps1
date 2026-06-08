@@ -53,6 +53,9 @@ try {
     # model -- the working branch IS the caller's current branch. Detect the inconsistent
     # partial states (ref XOR dir) left by an interrupted run and give explicit recovery
     # steps instead of a dead-end "already exists" that blocks the advertised re-run.
+    # NOTE: the unit tests distinguish the two arms by their UNIQUE wording -- the ref-without-dir
+    # arm says 'git branch -D', the dir-without-ref arm says 'delete that directory'. If you
+    # reword these two throws, update New-RemoteBridge.test.ps1 / new-remote-bridge.test.sh to match.
     $existingBridge = (& git -C $mainWorktree branch --list $remoteBranch | Out-String).Trim()
     $worktreeExists = Test-Path -LiteralPath $remoteWorktreePath
     if ($existingBridge -and -not $worktreeExists) {

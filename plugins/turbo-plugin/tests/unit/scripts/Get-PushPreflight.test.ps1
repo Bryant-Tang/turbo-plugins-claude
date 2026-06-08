@@ -123,7 +123,12 @@ Describe 'Get-PushPreflight token contract' {
                 # rather than false-pass (we'd otherwise get a routing token, not ERROR).
                 $inRepo = $false
                 try { & git -C $nonGit rev-parse --git-dir 2>$null | Out-Null; $inRepo = ($LASTEXITCODE -eq 0) } catch { $inRepo = $false }
-                if ($inRepo) { Set-ItResult -Skipped -Because 'temp dir is inside a git repo'; return }
+                if ($inRepo) {
+                    # Make the skip visible in CI logs -- otherwise this regression guard could
+                    # silently vanish (test green) if a runner's temp root sits under a repo.
+                    Write-Warning 'TG-1 skipped: temp dir is inside a git repo; TP_TOKEN:ERROR regression is UNGUARDED this run.'
+                    Set-ItResult -Skipped -Because 'temp dir is inside a git repo'; return
+                }
 
                 $r = Invoke-Preflight -WorkDir $nonGit -Branch 'feat-x'
                 $r.Exit | Should -Be 1

@@ -55,6 +55,9 @@ fi
 # Bridge-only already-exists guard (no working-branch creation). Detect the inconsistent
 # partial states (ref XOR dir) left by an interrupted run and give explicit recovery steps
 # instead of a dead-end "already exists" that blocks the advertised re-run.
+# NOTE: the unit tests distinguish the two arms by their UNIQUE wording -- the ref-without-dir
+# arm says 'git branch -D', the dir-without-ref arm says 'delete that directory'. If you reword
+# these two messages, update new-remote-bridge.test.sh / New-RemoteBridge.test.ps1 to match.
 BRIDGE_EXISTS=false
 if git -C "$MAIN_WORKTREE" branch --list "$REMOTE_BRANCH" | grep -q .; then BRIDGE_EXISTS=true; fi
 WT_EXISTS=false
