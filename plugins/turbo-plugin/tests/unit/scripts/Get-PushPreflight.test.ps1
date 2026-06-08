@@ -118,6 +118,13 @@ Describe 'Get-PushPreflight token contract' {
             $nonGit = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pf-nongit-$([Guid]::NewGuid().ToString('N'))")
             $null = New-Item -ItemType Directory -Path $nonGit -Force
             try {
+                # Hermetic guard: this scenario REQUIRES a dir outside any git repo so
+                # Get-MainWorktree fails. If the temp root unusually sits under a repo, skip
+                # rather than false-pass (we'd otherwise get a routing token, not ERROR).
+                $inRepo = $false
+                try { & git -C $nonGit rev-parse --git-dir 2>$null | Out-Null; $inRepo = ($LASTEXITCODE -eq 0) } catch { $inRepo = $false }
+                if ($inRepo) { Set-ItResult -Skipped -Because 'temp dir is inside a git repo'; return }
+
                 $r = Invoke-Preflight -WorkDir $nonGit -Branch 'feat-x'
                 $r.Exit | Should -Be 1
                 $r.Token | Should -BeLike 'TP_TOKEN:ERROR*'

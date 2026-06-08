@@ -169,6 +169,16 @@ test_bridge_dir_without_ref() {
         *"git worktree prune"*) assertTrue 'names recovery step' 0 ;;
         *) fail "expected 'git worktree prune' guidance, got: $out" ;;
     esac
+    # Prove it is the dir-without-ref arm specifically (not the ref-without-dir arm, which
+    # says 'git branch -D'): the dir-without-ref message says 'delete that directory'.
+    case "$out" in
+        *"delete that directory"*) assertTrue 'dir-without-ref arm fired' 0 ;;
+        *) fail "expected 'delete that directory' (dir-without-ref arm), got: $out" ;;
+    esac
+    case "$out" in
+        *"git branch -D"*) fail "wrong arm: matched ref-without-dir guidance: $out" ;;
+        *) assertTrue 'not the ref-without-dir arm' 0 ;;
+    esac
     case "$out" in
         *"Creating SVN bridge"*) fail "unexpectedly reached svn mutation: $out" ;;
         *) assertTrue 'did not reach svn mutation' 0 ;;

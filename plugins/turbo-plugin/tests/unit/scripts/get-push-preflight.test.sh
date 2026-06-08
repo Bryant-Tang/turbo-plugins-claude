@@ -148,6 +148,10 @@ test_bridge_absent() {
 # matching the .ps1 catch. This is the PS<->sh parity path hardened in v0.5.1.
 test_error_token_on_postsanitization_failure() {
     if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi
+    # Hermetic guard: this scenario REQUIRES $SB to be outside any git repo so
+    # get_main_worktree fails. If the temp root unusually sits under a repo, skip rather
+    # than false-pass (we'd otherwise get a routing token instead of TP_TOKEN:ERROR).
+    if git -C "$SB" rev-parse --git-dir >/dev/null 2>&1; then startSkipping; return 0; fi
     run_preflight "$SB" --branch feat-x   # $SB is a bare temp dir, not a git repo
     assertEquals 'post-sanitization failure exits 1' 1 "$PF_EXIT"
     case "$PF_STDOUT" in

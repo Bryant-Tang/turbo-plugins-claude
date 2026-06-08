@@ -198,15 +198,19 @@ Describe 'Merge-MainIntoBranches' {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-MergeFixture -Root $root
                 # Corrupt the index so `git status --porcelain` fails. Get-MainWorktree (runs first,
-                # does not read the index) still succeeds, so this hits the dirty-check stage. The
-                # safety contract: the script fails loud and does NOT silently treat the tree as
-                # clean and merge. (Under EAP=Stop the failing git call surfaces git's own fatal;
-                # the explicit $LASTEXITCODE guard additionally covers a silent non-zero exit.)
+                # uses rev-parse, does not read the index) still succeeds, so this hits the
+                # dirty-check stage. Safety contract: the script fails loud and does NOT silently
+                # treat the tree as clean and merge.
+                # NOTE: on PS 5.1 with EAP=Stop, 2>$null does NOT prevent the NativeCommandError
+                # when git writes to stderr (empirically verified), so the corrupt-index failure
+                # surfaces git's own fatal ("...index file...") at the status call here; the
+                # script's $LASTEXITCODE guard is the fallback for a silent non-zero exit. Hence
+                # we assert the index/status failure text, not the guard's message.
                 [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, '.git', 'index'), 'garbage-not-a-git-index')
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
                 $res.ExitCode | Should -Not -Be 0
-                $res.Combined | Should -Match 'index file|git status'   # failed on the status/index, not elsewhere
-                $res.Stdout   | Should -Not -Match 'Merged cleanly'     # never reached a successful merge
+                $res.Combined | Should -Match 'index file'          # failed reading the index (the status stage), not elsewhere
+                $res.Stdout   | Should -Not -Match 'Merged cleanly'  # never reached a successful merge
             } finally {
                 Remove-Sandbox -Dir $sb
             }

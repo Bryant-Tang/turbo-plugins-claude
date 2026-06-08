@@ -70,6 +70,7 @@ plugins/<plugin-name>/
 - ❌ **`[System.IO.Path]::GetRelativePath`**：.NET Core / .NET 5+ only，PS 5.1（.NET Framework）沒這個 method。用自備的 relative-path helper（內部用 `System.Uri.MakeRelativeUri`）。
 - ❌ **無 BOM 的含中文 `.ps1`**：PS 5.1 在中文 Windows（system codepage 950 / Big5）讀無 BOM UTF-8 → mojibake → parser fail。任何含非 ASCII 字串的 `.ps1` 都要存成 **UTF-8 with BOM**（前 3 bytes `EF BB BF`）。
 - ❌ **對 native exe 用 `2>&1`**：PS 5.1 會把 stderr 包成 `NativeCommandError`，把 exe 的 `$?` 變成 `$false`（即使 exit code 0）。改用 `2>$null` 抑制 + 明確 check `$LASTEXITCODE`，或讓 stderr 自然往上走。
+  - ⚠️ **但 `2>$null` 在 `$ErrorActionPreference = 'Stop'` 下擋不住 stderr-throw**：native exe 只要**寫了 stderr**，EAP=Stop 就會丟 terminating `NativeCommandError`——即使加了 `2>$null`（實證於 PS 5.1.26100）。後果:緊接其後的 `if ($LASTEXITCODE -ne 0)` guard 在「失敗且有 stderr」的常見情境**不可達**（throw 先發生、跳外層 catch），該 guard 只能接「非零 exit 但無 stderr」的 silent 情境。若**真的需要** `$LASTEXITCODE` 可達:用 `try { & exe ... } catch {}` 包住、或對該呼叫局部 `$ErrorActionPreference='Continue'`。多數情況靠 EAP=Stop 自然 fail-loud 即可（行為正確,只是不是 guard 在接）。
 - ❌ **單元素 pipeline 直接讀 `.Count`**：`($x | Where ...).Count` 在 result 只 1 個 object 時不會 wrap 成 array，`.Count` 可能讀到該 object 自己的 property（hashtable 的 key 數、字串長度等）。改用 `@($x | Where ...).Count` 強制 array。
 
 新增 `.ps1` 或修改既有 .ps1 時請以上 5 條對照檢查。

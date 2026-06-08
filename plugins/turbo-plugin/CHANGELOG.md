@@ -8,6 +8,11 @@
 
 > v0.5.0 合併前 code review(多 persona)修正。無 P0/P1;trust anchor(KTD-8)經確認未放寬。
 
+### Added
+
+- test: 為 v0.5.1 新行為補測試——`Get-PushPreflight` 消毒後失敗發 `TP_TOKEN:ERROR`(非 git 目錄觸發,PS+sh)、`Merge-MainIntoBranches` git status 失敗時 fail-loud 不靜默 merge(毀損 index 觸發,PS+sh)、`New-RemoteBridge` 「worktree dir 在但 ref 不在」的對稱半套狀態(PS Case 4c + sh `test_bridge_dir_without_ref`)。`Reset-BranchToMain` 的 reset/checkout **失敗**復原路徑因真 git sandbox 無法注入命令失敗而未加測試(記為已知缺口)
+- test: 複審 r3 強化上述測試穩健性——`TP_TOKEN:ERROR` 測試加「目錄非 git」hermetic 守衛(否則理論上可 false-pass)、Merge git-status 測試 PS 斷言收緊為實際失敗文字、New-RemoteBridge dir-without-ref 測試加「區分另一半套臂」斷言、sh Merge 測試補「未靜默 merge」守衛
+
 ### Changed
 
 - doc: 修正落後於程式的 agent 面向文件——`tp-pull-from-svn` / `tp-svn-log` SKILL 的 `argument-hint` 與範例由 `<main|test-<n>>` 改為泛化的 `<branch>`;`tp-suggest-ignore` SKILL 枚舉 worktree 的 pseudocode 由 `remote-svn-test-*` 改為 `remote-svn-*`;`README.md` worktree 模型圖由 `remote-svn-test-<n>` 改為 `remote-svn-<branch>`(補斜線轉 dash 說明);`tests/docs/skill-tests.md` VALIDATION_ROOT 慣例描述同步泛化(具體 `test-<n>` fixture 保留)。這些殘留的舊命名會誤導 agent 以為 bridge 只支援 `main`/`test-<n>`,抵銷 v0.5.0 的任意分支泛化
@@ -23,10 +28,6 @@
 - fix: `Common.ps1` / `common.sh`——MAX_PATH guard 由 `>260` 改為 `>=260`(260 含結尾 NUL,可用長度 259),修正放行剛好 260 字元路徑的邊界差一
 - fix: `get-push-preflight.sh`——上一條 `TP_TOKEN:ERROR` 修正只包到 `resolve_remote_worktree`(MAX_PATH)站,漏了同樣在消毒後的 `get_main_worktree` / `get_worktrees_dir`;改為同樣包進 `_die_token`,與 `.ps1` 端(消毒後任何 throw 都發 ERROR token)恢復 parity(複審 r2 發現)
 - fix: `reset-branch-to-main.sh`——reset **前**切入分支的 `git checkout` 未檢查 exit code(`.ps1` 端有);改為失敗時明示「main worktree 仍停在原分支」並 exit 1(pre-existing parity gap,複審 r2 發現)
-
-### Added
-
-- test: 為 v0.5.1 新行為補測試——`Get-PushPreflight` 消毒後失敗發 `TP_TOKEN:ERROR`(非 git 目錄觸發,PS+sh)、`Merge-MainIntoBranches` git status 失敗時 fail-loud 不靜默 merge(毀損 index 觸發,PS+sh)、`New-RemoteBridge` 「worktree dir 在但 ref 不在」的對稱半套狀態(PS Case 4c + sh `test_bridge_dir_without_ref`)。`Reset-BranchToMain` 的 reset/checkout **失敗**復原路徑因真 git sandbox 無法注入命令失敗而未加測試(記為已知缺口)
 
 ## [0.5.0] - 2026-06-07
 

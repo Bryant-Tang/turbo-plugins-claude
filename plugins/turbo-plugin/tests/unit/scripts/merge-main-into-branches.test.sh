@@ -171,6 +171,11 @@ test_git_status_failure_aborts() {
         *"git status --porcelain failed"*) assertTrue 'reports git status failure' 0 ;;
         *) fail "expected 'git status --porcelain failed', got: $out" ;;
     esac
+    # Safety: must NOT have silently treated the tree as clean and proceeded to merge.
+    case "$out" in
+        *"Merged cleanly"*) fail "unexpectedly reached a merge: $out" ;;
+        *) assertTrue 'did not merge' 0 ;;
+    esac
 }
 
 # shellcheck disable=SC1090

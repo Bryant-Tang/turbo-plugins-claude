@@ -191,6 +191,10 @@ Describe 'New-RemoteBridge' {
                 $res.ExitCode | Should -Not -Be 0
                 $res.Combined | Should -Match 'Inconsistent bridge state'
                 $res.Combined | Should -Match 'git worktree prune'
+                # Prove it is the dir-without-ref arm specifically (not the ref-without-dir arm,
+                # which says 'git branch -D'): the dir-without-ref message says 'delete that directory'.
+                $res.Combined | Should -Match 'delete that directory'
+                $res.Combined | Should -Not -Match 'git branch -D'
                 $res.Combined | Should -Not -Match 'Creating SVN bridge'
             } finally {
                 Remove-Sandbox -Dir $sb
