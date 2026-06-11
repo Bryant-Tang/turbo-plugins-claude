@@ -7,11 +7,19 @@ $ErrorActionPreference = 'Stop'
 $OutputEncoding = [System.Text.Encoding]::UTF8
 try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
-# Detect whether the current PowerShell + Windows codepage supports lossless UTF-8 argv
-# passing to native exes (svn / git / msbuild). On zh-TW / zh-CN / ja-JP Windows running
-# PowerShell 5.1, [System.Text.Encoding]::Default returns CP950 / CP936 / CP932 (DBCS),
-# and UTF-8 strings passed as argv get mangled via CreateProcessA → svn can't find files
-# with Chinese filenames. PowerShell 7+ uses CreateProcessW so this is a non-issue.
+# Detect whether the current PowerShell + Windows codepage passes Unicode argv to native exes
+# (svn / git / msbuild) WITHOUT an ANSI-codepage translation. On zh-TW / zh-CN / ja-JP Windows
+# running PowerShell 5.1, [System.Text.Encoding]::Default returns CP950 / CP936 / CP932 (DBCS),
+# and a raw UTF-8 string passed as argv goes through CreateProcessA. PowerShell 7+ uses
+# CreateProcessW, and the Win10 "Beta UTF-8" codepage makes CP_ACP == UTF-8.
+#
+# IMPORTANT (v0.5.2): a False result here does NOT mean turbo-plugin's SVN operations break.
+# The push/pull scripts handle non-ASCII filenames in BOTH shells regardless of this flag —
+# the PowerShell scripts scope [Console]::OutputEncoding to the system ANSI codepage around svn
+# calls (so capture + argv stay byte-consistent with the on-disk filename), and the Git Bash
+# (.sh) scripts parse `svn status --xml` (always UTF-8). This flag is therefore a CROSS-PLATFORM
+# PORTABILITY signal — whether non-ASCII filenames land in SVN as portable UTF-8 vs system DBCS —
+# NOT a local "will it work" gate. (Token name kept for contract stability; see WARNING below.)
 
 # Output structured tokens for SKILL parsing:
 #   PS_VERSION=<major.minor>
@@ -63,23 +71,19 @@ Write-Output "RECOMMENDATION=$recommendation"
 
 if (-not $argvSafe) {
     Write-Output ''
-    Write-Output 'WARNING: PowerShell 5.1 + non-UTF-8 ANSI codepage detected.'
-    Write-Output '  PowerShell-side SVN operations on filenames containing non-ASCII characters'
-    Write-Output '  (中文 / 日本語 / etc.) will fail with "file not found" because PS .NET uses UTF-16'
-    Write-Output '  strings + CreateProcessA argv conversion to CP_ACP; svn.exe ends up looking for'
-    Write-Output '  the wrong byte sequence on disk.'
+    Write-Output 'NOTE: PowerShell 5.1 + non-UTF-8 system ANSI codepage detected.'
+    Write-Output '  This does NOT break local SVN operations. turbo-plugin push/pull scripts (v0.5.2+)'
+    Write-Output '  handle non-ASCII filenames in THIS environment on BOTH shells: the PowerShell'
+    Write-Output '  scripts wrap svn calls in the system ANSI codepage (OutputEncoding), and the Git'
+    Write-Output '  Bash (.sh) scripts parse `svn status --xml`. Both add/commit/checkout non-ASCII'
+    Write-Output '  filenames correctly here -- you do NOT need to switch shells.'
     Write-Output ''
-    Write-Output 'Git Bash (.sh) DOES work for non-ASCII SVN in homogeneous zh-TW/zh-CN/ja-JP teams'
-    Write-Output '  because bash + svn.exe both round-trip through CP_ACP consistently, so the team sees'
-    Write-Output '  matching filenames. CAVEAT: SVN repo stores filenames as DBCS bytes (Big5/GB2312/'
-    Write-Output '  Shift-JIS), NOT UTF-8. Cross-platform team members (Mac/Linux UTF-8) will see'
-    Write-Output '  garbage filenames. Only PS 7+ or Win10 UTF-8 codepage stores filenames as UTF-8.'
-    Write-Output ''
-    Write-Output 'Choose based on your team:'
-    Write-Output '  (a) Homogeneous zh-TW Windows team: keep PS 5.1, USE Git Bash (.sh) for SVN with'
-    Write-Output '      Chinese filenames. Plugin .sh sibling scripts route through bash automatically.'
-    Write-Output '  (b) Cross-platform team (Mac/Linux contributors): need UTF-8 filenames in SVN.'
-    Write-Output '      Install PowerShell 7+ via: winget install Microsoft.PowerShell --silent'
-    Write-Output '      OR enable Win10 UTF-8 codepage via intl.cpl Administrative -> Beta UTF-8 + Reboot.'
-    Write-Output '  (c) Avoid non-ASCII filenames in SVN entirely (use ASCII names only).'
+    Write-Output '  The only remaining concern is CROSS-PLATFORM interop: in this environment SVN'
+    Write-Output '  stores non-ASCII filenames as system DBCS bytes (Big5 / GB2312 / Shift-JIS), not'
+    Write-Output '  UTF-8. If your SVN repo has Mac/Linux (UTF-8) contributors, they may see garbled'
+    Write-Output '  filenames. For portable UTF-8 filenames across operating systems, either:'
+    Write-Output '    - install PowerShell 7+   (winget install Microsoft.PowerShell --silent), or'
+    Write-Output '    - enable the Win10 UTF-8 codepage (intl.cpl -> Administrative -> Beta UTF-8 + reboot).'
+    Write-Output '  If your whole team uses the same Chinese/CJK Windows, or you avoid non-ASCII'
+    Write-Output '  filenames, no action is needed.'
 }

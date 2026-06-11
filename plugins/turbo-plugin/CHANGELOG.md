@@ -16,6 +16,7 @@
 
 - doc(tp-setup): case (a) 不再自動代填 git 提交身分(issue 1)——偵測到 `git config user.name`/`user.email` 缺時,改以 `AskUserQuestion` 請使用者輸入(寫 **repo-local**,不加 `--global`),**絕不**拿 Claude 帳號 email / 本機使用者名稱代填;新增通用 Decision Rule「不自動代填使用者身分或設定,先問再做」。case (b) 建 merge commit 前同樣先確認身分
 - doc(tp-setup): case (a) `.gitignore` 預先寫入 .NET Framework Web 產物區塊(`.vs/` / `bin/` / `obj/` / `*.user` / `packages/`),並新增明確的「初始 commit」步驟——**commit 前先列「將被 commit / 被忽略」兩份清單並 `AskUserQuestion` 確認**,避免把機器產物掃進版控、也不再事後才叫使用者跑 `/tp-suggest-ignore`(issue 2)。skill-tests.md 的 P2-tp-setup-1 期望鏈與觀察錨點同步更新
+- doc/refactor(encoding): 改寫 `Test-EncodingSupport.ps1` WARNING 與 tp-setup Phase 1.2 的中文檔名前提——v0.5.2 腳本修法後,「PowerShell 端中文 SVN 操作必壞、要自動走 `.sh`」的前提已**作廢**(實測證明該 routing 從未真正解決問題,真正修法在腳本本身)。detector 改述為:本機操作兩個 shell 皆已正確處理,`ARGV_SAFE_FOR_UNICODE=False` 只是**跨平台可攜性**訊號(SVN 端存 UTF-8 vs 系統 DBCS);Phase 1.2 的 `AskUserQuestion` 重框為「是否有 Mac/Linux 同事 checkout」的純資訊性詢問,option (a) 不再寫任何 `.sh` routing。token 契約(`PS_VERSION` / `ANSI_CODEPAGE` / `ARGV_SAFE_FOR_UNICODE` / `RECOMMENDATION`)保留不變,detector 測試全綠
 
 ### Fixed
 

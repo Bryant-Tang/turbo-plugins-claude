@@ -14,7 +14,7 @@ turbo-plugin 唯一設定入口,自動偵測當前狀態並進入對應的 case�
 
 | Phase | 內容 |
 |---|---|
-| **Phase 1 — 偵測** | Pre-check(Git version / submodule)+ Encoding profile detect(zh-TW Windows 中文檔名 SVN 相容性)+ Case detect(a/b/c/d)+ Phase summary(只列「會動到外部」的 unconditional 動作)+ AskUserQuestion 讓使用者繼續 / 取消 / 改執行其他 case |
+| **Phase 1 — 偵測** | Pre-check(Git version / submodule)+ Encoding profile detect(中文檔名 SVN 跨平台相容性,純資訊性)+ Case detect(a/b/c/d)+ Phase summary(只列「會動到外部」的 unconditional 動作)+ AskUserQuestion 讓使用者繼續 / 取消 / 改執行其他 case |
 | **Phase 2 — Case-specific bootstrap** | 進對應 case 後執行該 case 的動作序列,加 `applicationhost.config` bootstrap(R1 三選一,只在 case (a)/(b)/(c) 觸發,case (d) peer-mode 不做) |
 | **Phase 3 — 環境配置** | 偵測 Claude Code 既有設定 + 外部工具 → 列出已啟用 / 尚未配置 → 互動式詢問是否啟用 LSP / compound-engineering / agent teams / TUI fullscreen 等(本 Phase 內容由後續 unit 填入) |
 | **Phase 4 — 完成報告** | 偵測結果 / 寫入位置 / 外部安裝成功與失敗清單 / 使用者仍須手動處理事項 / 若 Phase 3 動到 `~/.claude/settings.json` 提示重啟 Claude Code / 下一步建議 |
@@ -41,30 +41,30 @@ turbo-plugin 唯一設定入口,自動偵測當前狀態並進入對應的 case�
 1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/lib/Common.ps1`(PowerShell)或 `common.sh`(Bash)的 `Probe-GitVersion` / `probe_git_version`。Git < 2.31 → fail loudly 帶升級提示。
 2. 跑 `git rev-parse --show-superproject-working-tree`。非空 → 拒跑,提示「submodule 不在 turbo-plugin 管理範圍內,請在 superproject root 設定」。
 
-#### 1.2 Encoding profile detect(zh-TW Windows 中文檔名 SVN 相容性)
+#### 1.2 Encoding profile detect(中文檔名 SVN 跨平台相容性)
 
-跑 `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Test-EncodingSupport.ps1"` 偵測當前 PowerShell + Windows codepage 是否支援中文檔名 SVN 操作。
+跑 `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Test-EncodingSupport.ps1"` 偵測當前 PowerShell + Windows codepage。
+
+> **重要(v0.5.2 後)**:`ARGV_SAFE_FOR_UNICODE=False` **不代表**本機中文檔名 SVN 操作會壞。turbo-plugin 的 push/pull 腳本已在此環境正確處理非 ASCII 檔名(`.ps1` 把 `[Console]::OutputEncoding` 設系統 ANSI codepage 包住 svn、`.sh` 用 `svn status --xml`),**兩個 shell 都能正常 add/commit/checkout、不需切換工具**。此 flag 現在純粹是**跨平台可攜性**訊號:非 ASCII 檔名存進 SVN 是 portable UTF-8(PS7 / Win10-UTF8)還是系統 DBCS(PS5.1 + 中文 codepage,如 Big5)。**舊版「中文操作要自動走 .sh」的路由前提已作廢**(實測證明它從未真正解決問題;真正修法在腳本本身)。
 
 parse stdout 取 `ARGV_SAFE_FOR_UNICODE` 值:
-- `True` → 略過此 step
-- `False` → 進入 codepage remediation。**用 `AskUserQuestion` 問 user 的實際情境**(不要用技術術語,用具體場景):
+- `True`(PS 7+ 或 Win10 UTF-8 codepage)→ SVN 端非 ASCII 檔名以 UTF-8 儲存,跨平台無虞 → 略過此 step
+- `False`(PS 5.1 + 非 UTF-8 系統 codepage)→ **本機操作無虞**,但 SVN 端非 ASCII 檔名以系統 DBCS 儲存,**只有「跨平台團隊」需要處理**。**用 `AskUserQuestion` 問 user 的實際情境**(不要用技術術語,用具體場景):
 
   **Question text**(對 user 顯示):
-  > 偵測到你用 PowerShell 5.1 + 中文 Windows。**SVN 操作含中文檔名**可能有問題。請問你的實際情況?
-  >
-  > (按一下對應選項,plugin 會自動處理或告訴你下一步)
+  > 偵測到你用 PowerShell 5.1 + 中文 Windows。**你本機用 turbo-plugin 推 / 拉含中文檔名的 SVN 都沒問題**(plugin 已處理)。唯一要確認的是會不會影響同事:**你的 SVN repo 有沒有 Mac/Linux 同事會 checkout?**(這只影響中文檔名在 SVN 裡用哪種編碼儲存)
 
   **Options**:
 
   | 選項 label | description | 動作 |
   |---|---|---|
-  | **(a) 我跟同事都用中文 Windows,沒人用 Mac/Linux** | 你的 SVN repo 同事都用中文 Windows 開發,沒有 Mac/Linux 同事用 svn checkout。 **plugin 會處理**:含中文檔名的 SVN 操作自動走 Git Bash(`.sh`)版本,你不用換工具。後續 tp-push-to-svn 等 SVN 操作都會自動選對。 **代價**:SVN repo 裡中文檔名存的是 Big5 編碼(你跟同事看都正確,Mac/Linux 同事如果加入會看到亂碼)。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: zh-TW-only team. SVN ops with Chinese filenames are routed to .sh siblings automatically by each skill's 執行路由 (Git Bash detection); Big5 bytes in SVN repo.」**不再**寫任何 force_bash 設定(`.turbo-plugin/config.toml` 的 `[svn] force_bash` 與 settings.local.json 的 `TURBO_PLUGIN_SVN_FORCE_BASH` 都不寫)。含中文檔名的 SVN 操作改由各 skill 的**執行路由**(偵測到 Git Bash 時自動走 `.sh`)處理。 |
+  | **(a) 沒有,我跟同事都用中文 Windows** | 同 codepage 團隊,沒有 Mac/Linux 同事 svn checkout。plugin 推 / 拉中文檔名本機已正確處理,**不需任何額外設定、也不用換工具**。代價:SVN repo 裡中文檔名以 Big5 儲存(同 codepage 同事看都正確)。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: same-codepage (zh-TW/CJK) team. push/pull scripts handle non-ASCII filenames natively on BOTH shells (v0.5.2); SVN stores filenames as system DBCS (Big5). No routing/remediation needed.」**不寫**任何 routing / force_bash 設定(那套路由前提已作廢)。 |
   | **(b) 我有 Mac/Linux 同事會 svn checkout(他們會看到亂碼)** | 跨 OS 團隊。為了讓 Mac/Linux 同事 checkout 看到的是正常中文,SVN repo 必須存 UTF-8 編碼,要把你的 PowerShell 升級或改 Windows 編碼設定。 | nested `AskUserQuestion` 二選一:**(b1) 安裝 PowerShell 7+(Recommended,不用重開機)**:跑 `winget install --id Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements`(若 winget 不存在 → 提示從 https://aka.ms/powershell 下載 MSI 手動裝);完成後在 `.claude/settings.local.json` 加 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`;告知 user「裝好了!請關掉這個 Claude Code session,改用 pwsh.exe 啟動 Claude Code(不是 powershell.exe)」。**(b2) 改 Windows 系統編碼設定(要重開機)**:`Start-Process intl.cpl -Verb RunAs`;emit 訊息「會幫你打開 Windows 設定。請點『系統管理』→『變更系統地區設定...』→ 勾『Beta:使用 Unicode UTF-8 提供全球語言支援』→ 確定 → **重新開機**生效。重開後 SVN 中文檔名會以 UTF-8 存。」 |
-  | **(c) 我不會用中文檔名,維持現狀就好** | 你的 SVN 操作不會有中文檔名(或會避免)。plugin 其它功能(build / run / publish 等)不受影響。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: ASCII-only filenames. User declined encoding remediation. SVN ops with non-ASCII filenames will fail.」 |
+  | **(c) 我不會用中文檔名,維持現狀就好** | 你的 SVN 操作不會有中文檔名(或會避免)。plugin 其它功能(build / run / publish 等)不受影響。 | 在 `.turbo-plugin/encoding-status.local.md` 寫:「Profile: ASCII-only filenames. No cross-platform encoding concern.」 |
 
-  **Note for SKILL implementer**:不要在 question/options 文字裡用 CP_ACP / CreateProcessA / DBCS / MSYS2 等術語 — user 看不懂。用「中文 Windows」「Git Bash」「PowerShell 7」「UTF-8 設定」這類具體名詞。
+  **Note for SKILL implementer**:不要在 question/options 文字裡用 CP_ACP / CreateProcessA / DBCS / MSYS2 等術語 — user 看不懂。用「中文 Windows」「Mac/Linux 同事」「PowerShell 7」「UTF-8 設定」這類具體名詞。**也不要再對 user 說「中文操作會自動走 .sh / 會有問題」**——本機操作 plugin 已處理,只談跨平台儲存編碼。
 
-  **完成後**:plugin 印一句確認(例如「OK,已記載你選了選項 (a) — 後續 SVN 中文檔名操作會自動走 .sh」),繼續跑後續 Phase(remediation 不阻塞 setup)。
+  **完成後**:plugin 印一句確認(例如「OK,記下你是同 codepage 團隊 — 中文檔名本機操作 plugin 已處理,SVN 端以 Big5 儲存」),繼續跑後續 Phase(此 step 純資訊性,不阻塞 setup)。
 
 #### 1.3 Case detection
 
