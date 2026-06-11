@@ -12,10 +12,17 @@
 
 - test: 新增中文(非 ASCII)檔名 push-to-svn round-trip 回歸測試(`svn-status-xml-roundtrip.test.sh` + `Svn-StatusXml-Roundtrip.test.ps1`)——含結構守衛(腳本須維持 `svn status --xml` / ANSI `OutputEncoding` 修法,防被 revert)+ 真實 svn 行為測試(建 live svn working copy、放中文檔名、走「擷取路徑 → 回傳 `svn add`/`svn commit`」全程;`.sh` 直接 `sed` 抽出腳本本體的 `svn_status_xml` 函式測真碼);`svn`/`svnadmin` 缺席則 SKIP。補上舊測試「在 UTF-8 CI 跑綠卻漏掉 Big5-specific bug」的缺口
 
+### Changed
+
+- doc(tp-setup): case (a) 不再自動代填 git 提交身分(issue 1)——偵測到 `git config user.name`/`user.email` 缺時,改以 `AskUserQuestion` 請使用者輸入(寫 **repo-local**,不加 `--global`),**絕不**拿 Claude 帳號 email / 本機使用者名稱代填;新增通用 Decision Rule「不自動代填使用者身分或設定,先問再做」。case (b) 建 merge commit 前同樣先確認身分
+- doc(tp-setup): case (a) `.gitignore` 預先寫入 .NET Framework Web 產物區塊(`.vs/` / `bin/` / `obj/` / `*.user` / `packages/`),並新增明確的「初始 commit」步驟——**commit 前先列「將被 commit / 被忽略」兩份清單並 `AskUserQuestion` 確認**,避免把機器產物掃進版控、也不再事後才叫使用者跑 `/tp-suggest-ignore`(issue 2)。skill-tests.md 的 P2-tp-setup-1 期望鏈與觀察錨點同步更新
+
 ### Fixed
 
 - fix: push-to-svn 中文(非 ASCII)檔名不再 mangle——`build-svn-commit.sh` / `submit-svn-commit.sh` 改用 `svn status --xml`(輸出恆 UTF-8)解析路徑,取代舊的「擷取 ANSI codepage 文字 `svn status` → 按欄位 offset 切路徑 → 回傳當 argv」流程(zh-TW Windows 經 Git Bash/MSYS 會把 Big5 bytes 當 UTF-8 重編 → svn「not under version control」)。`.ps1` 端(`Build-SvnCommit.ps1` / `Submit-SvnCommit.ps1`)改為把 `[Console]::OutputEncoding` 暫設系統 ANSI codepage 包住 svn 區段(PS native argv 編碼跟 `OutputEncoding` 走,故 `svn status` 解碼與 `svn add/commit` argv 同為 ANSI、與磁碟檔名一致;git log 的 UTF-8 subject 留在 scope 外)。同時解掉 submit drift-guard 因 snapshot 端與現場端 CRLF 不一致而把全部檔案誤判「新出現」的 bug
 - fix: `svn_status_xml` helper 改用 `grep -oE`(ERE)+ `sed` 取代 `grep -oP`(PCRE)——PCRE 在非 UTF-8 locale 會直接拒跑(`grep: -P supports only unibyte and UTF-8 locales`),而 zh-TW Windows Git Bash 預設正是非 UTF-8 locale,乾淨環境會讓整支 push 炸掉;ERE 為 byte-based、任何 locale 皆可(此為實測加測試後新發現,非原始修法所含)
+- fix(tp-setup): case (a) `git init` 改 `git init -b main`(issue 3)——裸 `git init` 落在 `master`,與 `remote-svn/main` bridge 名稱不符,導致首次 `/tp-push-to-svn` branch mismatch 卡住;明確指定 `-b main` 對齊(Git ≥ 2.31 必支援)
+- fix(tp-setup): case (a) 新增 main ↔ remote-svn/main 的 connect merge(issue 4 root)——orphan `remote-svn/main` 與 main 無共同祖先,首次 push(remote 端 `git merge main`)/ pull(main 端 `git merge remote-svn/main`)會撞 `refusing to merge unrelated histories`;改為在主 worktree 跑 `git merge --allow-unrelated-histories remote-svn/main`(與 case (b) 同機制),連接後首推/首拉不再卡
 
 ## [0.5.1] - 2026-06-07
 

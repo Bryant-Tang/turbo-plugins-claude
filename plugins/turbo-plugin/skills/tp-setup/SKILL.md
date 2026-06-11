@@ -23,7 +23,7 @@ turbo-plugin 唯一設定入口,自動偵測當前狀態並進入對應的 case�
 
 | Case | 觸發條件 | 主要動作 |
 |---|---|---|
-| (a) 新建 | `.git/` 不存在 | `git init` → 寫 ignore（含 `.turbo-plugin/worktrees/`）+ commitlintrc + CLAUDE.md → 建 `.turbo-plugin/` → prompt SVN URL → 建 `remote-svn/main` orphan branch + worktree → svn checkout → apphost bootstrap |
+| (a) 新建 | `.git/` 不存在 | `git init -b main` → 寫 ignore(turbo-plugin + .NET 產物)+ commitlintrc + CLAUDE.md → 建 `.turbo-plugin/` → 確認 git 身分後建初始 commit → prompt SVN URL → 建 `remote-svn/main` orphan branch + worktree → svn checkout → 連接 main↔remote-svn/main 歷史 → apphost bootstrap |
 | (b) init-from-existing | `.git/` 存在 + `.turbo-plugin/` 不存在 + git-svn 設定可能存在 | 警告 git-svn 不相容 → prompt SVN URL → 建 `remote-svn/main` + worktree + svn checkout → `git merge --allow-unrelated-histories` 合 SVN content → 寫 `.turbo-plugin/` + ignore + convention → apphost bootstrap |
 | (c) 主 worktree 補設定 | `.turbo-plugin/` 存在 + 在主 worktree | idempotent 補缺失項目(`dbhub.local.toml`、shared file 缺項補建)→ apphost bootstrap |
 | (d) peer-mode | `.turbo-plugin/` 存在 + 在 peer worktree | 只處理 per-peer non-shared files(複製 `dbhub.local.toml`);**不**做 apphost bootstrap(canonical 在主 worktree,跨 worktree 共享) |
@@ -120,10 +120,11 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
 
 #### 2(a). Case (a) — 新建 git+SVN 專案
 
-**順序敏感,以下 6 個 sub-step 不可重排**(SVN obstruction 避免):
+**順序敏感,以下 sub-step 不可重排**(SVN obstruction 避免 +「先 ignore 再 commit」+ 歷史連接):
 
-1. `git init` 在當前目錄。
-2. 寫入 `.gitignore` 含以下 pattern(若 `.gitignore` 已存在則 idempotent merge,不重複追加)。**此步驟必須先於 sub-step 6 的任何 `git worktree add`** — `.turbo-plugin/worktrees/` 規則要先寫進 `.gitignore`,否則 nested worktree 一建立就會讓主 worktree `git status` 變髒:
+1. `git init -b main` 在當前目錄。**明確指定預設分支 `main`** — 與稍後建立的 `remote-svn/main` bridge 對齊;裸 `git init` 在多數環境落在 `master`,會導致首次 `/tp-push-to-svn` 時 working branch(`master`)與 bridge(`remote-svn/main`)名稱不符而卡住。Git ≥ 2.31 已於 Phase 1.1 pre-check 驗證,必支援 `-b`。
+
+2. 寫入 `.gitignore`(若已存在則 idempotent merge,不重複追加)。**此步驟必須先於 sub-step 5 的初始 commit 與 sub-step 7 的任何 `git worktree add`**:turbo-plugin 容器規則(`.turbo-plugin/worktrees/`)要先寫進去,否則 nested worktree 一建立就弄髒主 worktree `git status`;**.NET Framework Web 產物規則也要先寫進去,否則 sub-step 5 的初始 commit 會把 `.vs/` / `bin/` / `obj/` 等機器產物掃進版控**。兩個區塊都寫:
 
    ```
    # turbo-plugin
@@ -131,7 +132,16 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
    .turbo-plugin/**/*.local.*
    .turbo-plugin/worktrees/
    .svn/
+
+   # .NET Framework Web 產物(Visual Studio)
+   .vs/
+   bin/
+   obj/
+   *.user
+   packages/
    ```
+
+   > .NET 區塊是合理預設,非窮舉;sub-step 5 的初始 commit 確認環節會把「將被 commit / 被忽略」兩份清單列給使用者,使用者可在 commit 前補上漏掉的 pattern(例如 `*.suo`、`TestResults/`)。
 
 3. 建 `.turbo-plugin/` 集中目錄(複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/` 全部 template),複製出來的內容:`config.toml`、`applicationhost.config`、`conventions.md`、`dbhub.example.local.toml`(此四檔進 git,跨同事共用)。
 
@@ -139,30 +149,46 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
    - `.commitlintrc.json`:若**不存在**則直接複製 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/commitlintrc-template.json`;若**已存在**則 JSON parse + merge `rules.type-enum[2]` array(將模板 12 類 union 進去,保留使用者既有 rules,不覆寫整檔)。
    - `CLAUDE.md`:注入的是**精簡指向 snippet**(`${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/claudemd-convention-snippet.md`)——祈使觸發語「執行 DB / commit / `*.cs` / `*.js` 操作前先讀 `.turbo-plugin/conventions.md`」+ R3a 常駐規則(不得提交僅限本機之物),**不再** inline 整份規範。若 `CLAUDE.md` **不存在**則建立含該 snippet 的內容;若**已存在**則用 marker `<!-- turbo-plugin:begin commit-type-convention -->` / `<!-- turbo-plugin:end commit-type-convention -->` 包夾的區段進行 idempotent 替換或追加,不影響其它段落。
 
-5. `AskUserQuestion`(自由文字)收集 **SVN URL**(若 argument 沒帶 `--svn-url`)。空值或格式不對(非 http(s) / svn / file)→ 重問或取消。
+5. **初始 commit(commit 前先確認)**。此時 working tree 含使用者既有檔案 + 剛寫入的 `.gitignore` / `.turbo-plugin/` / `.commitlintrc.json` / `CLAUDE.md`。main 分支需要至少一個 commit,sub-step 7 的 `git worktree add` 才有 HEAD 可依附。**不要直接 `git add -A` 就 commit**:
+   - **先確認 git 提交身分**:跑 `git config user.name` 與 `git config user.email`(讀 local+global 合併後有效值)。任一為空 → **不自動代填**(尤其**不得**用 Claude 帳號 email 或本機使用者名稱);用 `AskUserQuestion` 請使用者輸入姓名 + email(寫 **repo-local**:`git config user.name <v>` / `git config user.email <v>`,**不加 `--global`**,不碰使用者全域設定),或選擇「先自行 `git config` 後重跑」/「取消」。兩者皆有值則略過此項。
+   - **列兩份清單給使用者看**:**將被 commit**(`git add -An` 的輸出,或 `git status --porcelain`)與**被 `.gitignore` 排除**(`git status --ignored --porcelain` 取 `!!` 開頭者)。
+   - 用 `AskUserQuestion`(平實白話)確認:
+     - 「確認,建立初始 commit」→ 進下一步
+     - 「先補 `.gitignore`(清單裡有不該進版控的檔案)」→ free-text 收要追加的 pattern → 加進 `.gitignore`(idempotent)→ 重新列清單再問
+     - 「取消 setup」
+   - 確認後**分開兩步驟**跑(CLAUDE.md 禁 `&&` 串接 state-changing git):先 `git add -A`,觀察成功,再 `git commit -m "chore: initial commit (turbo-plugin setup)"`。
+   - 若 working tree 完全沒有可 commit 的內容(真空專案)→ 用 `git commit --allow-empty`。
 
-6. **建 `remote-svn/main` orphan branch + worktree**(sub-step 順序 6a-6f 不可重排)。**前提**:sub-step 2 已把 `.turbo-plugin/worktrees/` 寫進 `.gitignore`,故下面的 `git worktree add` 不會弄髒主 worktree `git status`:
-   - 6a. `git worktree add --detach --no-checkout ".turbo-plugin/worktrees/remote-svn-main"`(`--no-checkout` 確保 dir 為空,svn checkout 不被 obstruction)
-   - 6b. cd 進新 worktree
-   - 6c. `git checkout --orphan remote-svn/main`
-   - 6d. `git rm -rf --cached .`,然後 `git commit --allow-empty -m "init: remote-svn/main branch"`(初始 empty commit,讓 remote-svn/main 為 proper branch,後續 pull-from-svn merge 不會撞 unrelated histories error;與既有 tgs `init-from-existing.md` line 139-153 一致)
-   - 6e. `svn checkout <url> .`(此時 dir 空 svn 可進)
-   - 6f. 寫入 `svn:ignore` 預設 patterns(同 `.gitignore` 的 turbo-plugin 條目,**含 `.turbo-plugin/worktrees/`**,確保 nested worktree 容器不會被 svn add / push 到 SVN),`svn propset svn:ignore --file <utf8-no-bom-tmp> .`
+6. `AskUserQuestion`(自由文字)收集 **SVN URL**(若 argument 沒帶 `--svn-url`)。空值或格式不對(非 http(s) / svn / file)→ 重問或取消。
 
-   **Step 6 rollback notes** — 若 6e (`svn checkout`) 失敗,手動還原步驟:
+7. **建 `remote-svn/main` orphan branch + worktree**(sub-step 順序 7a-7f 不可重排)。**前提**:sub-step 2 已把 `.turbo-plugin/worktrees/` 寫進 `.gitignore`、sub-step 5 已建立初始 commit,故下面的 `git worktree add` 不會弄髒主 worktree `git status`、也有 HEAD 可依附:
+   - 7a. `git worktree add --detach --no-checkout ".turbo-plugin/worktrees/remote-svn-main"`(`--no-checkout` 確保 dir 為空,svn checkout 不被 obstruction)
+   - 7b. cd 進新 worktree
+   - 7c. `git checkout --orphan remote-svn/main`
+   - 7d. `git rm -rf --cached .`,然後 `git commit --allow-empty -m "init: remote-svn/main branch"`(初始 empty commit,讓 remote-svn/main 為 proper branch;sub-step 8 會把它與 main 連接)
+   - 7e. `svn checkout <url> .`(此時 dir 空 svn 可進)
+   - 7f. 寫入 `svn:ignore` 預設 patterns(同 `.gitignore` 的 turbo-plugin 條目,**含 `.turbo-plugin/worktrees/`**,確保 nested worktree 容器不會被 svn add / push 到 SVN),`svn propset svn:ignore --file <utf8-no-bom-tmp> .`
+
+   **Step 7 rollback notes** — 若 7e (`svn checkout`) 失敗,手動還原步驟:
    1. `git worktree remove --force .turbo-plugin/worktrees/remote-svn-main`
    2. `git branch -D remote-svn/main`
    3. 確認清理完成後重跑 `/tp-setup`
 
-7. **apphost bootstrap**(見下方 §2.apphost-bootstrap)。
+8. **連接 main ↔ remote-svn/main 歷史**。sub-step 7 把 `remote-svn/main` 建成 orphan(獨立 root),與 `main` 無共同祖先;**若不連接**,首次 `/tp-push-to-svn`(在 remote 端 `git merge main`)與首次 `/tp-pull-from-svn`(在 main 端 `git merge remote-svn/main`)都會撞 `fatal: refusing to merge unrelated histories`。在**主 worktree、branch `main`** 上跑(`remote-svn/main` 為空 orphan,合併無內容、不會衝突):
+
+   `git -C <main-worktree> merge --allow-unrelated-histories -m "chore: connect SVN bridge via turbo-plugin" remote-svn/main`
+
+   （與 case (b) 的 connect merge 同機制;差別只在 case (b) 藉此帶入既有 SVN 內容,case (a) 的 SVN 為空、純粹連接歷史。連接後 main 多一個空 merge commit,屬預期。）
+
+9. **apphost bootstrap**(見下方 §2.apphost-bootstrap)。
 
 完成後 fall through to Phase 3。
 
 #### 2(b). Case (b) — 接管既有 git+SVN
 
 1. 檢查 `git config --get svn-remote.svn.url`。非空 → 警告:「偵測到 git-svn 設定(`<url>`)。turbo-plugin 不相容 git-svn,請手動移除設定後再繼續:`git config --unset-all svn-remote.svn.url` + 移除 `.git/svn/`。」`AskUserQuestion` 讓使用者確認:已移除 / 取消 setup。
-2. 跑 case (a) 的 sub-step 2(寫 `.gitignore`)、3(建 `.turbo-plugin/`)、4(寫 `.commitlintrc.json` + `CLAUDE.md`)。
-3. 跑 case (a) 的 sub-step 5-6(SVN URL + remote-svn/main orphan worktree + svn checkout;sub-step 2 已把 `.turbo-plugin/worktrees/` 寫進 `.gitignore`,先於該 worktree add),**外加** `git merge --allow-unrelated-histories -m "chore: connect SVN via turbo-plugin (r<rev>)" remote-svn/main` 把 SVN content 合進當前主 branch(同 tgs `init-from-existing.md` Phase 6)。merge 衝突 → 列出衝突檔,提示使用者手動解,**不自動 abort**。
+2. 跑 case (a) 的 sub-step 2(寫 `.gitignore`,含 .NET 產物區塊)、3(建 `.turbo-plugin/`)、4(寫 `.commitlintrc.json` + `CLAUDE.md`)。**先依 case (a) sub-step 5 的「git 提交身分」檢查**確認 committer 身分(case (b) 接下來會建 merge commit,需要身分;同樣**不自動代填**)。case (b) 的 repo 已有 commit 歷史,**不跑** case (a) sub-step 5 的「初始 commit」。
+3. 跑 case (a) 的 sub-step 6-7(SVN URL + remote-svn/main orphan worktree + svn checkout;sub-step 2 已把 `.turbo-plugin/worktrees/` 寫進 `.gitignore`,先於該 worktree add),**外加**(此即 case (a) sub-step 8「連接歷史」在 case (b) 的對應做法,故 case (b) 不再另跑 sub-step 8)`git merge --allow-unrelated-histories -m "chore: connect SVN via turbo-plugin (r<rev>)" remote-svn/main` 把 SVN content 合進當前主 branch(同 tgs `init-from-existing.md` Phase 6)。merge 衝突 → 列出衝突檔,提示使用者手動解,**不自動 abort**。
 4. **apphost bootstrap**(見下方 §2.apphost-bootstrap)。
 
 完成後 fall through to Phase 3。
@@ -516,7 +542,11 @@ JSON merge 規則同 3.4.B,寫入:
 ## Decision Rules
 
 - **Case 偵測順序固定**(submodule → no .git → not main worktree → no .turbo-plugin → else),不要更改邏輯。
-- **Case (a) 的 sub-step 6 內部順序 6a-6f 不可重排** — 6a `--no-checkout`、6e svn checkout、6d empty commit 都是 SVN obstruction 與後續 merge 的 load-bearing 步驟。
+- **Case (a) 的 sub-step 7 內部順序 7a-7f 不可重排** — 7a `--no-checkout`、7e svn checkout、7d empty commit 都是 SVN obstruction 與後續 merge 的 load-bearing 步驟。
+- **Case (a) `git init` 一律帶 `-b main`** — 預設分支必須與 `remote-svn/main` bridge 對齊,否則首推 branch mismatch。
+- **Case (a) sub-step 8 / case (b) 的 connect merge 不可省** — orphan `remote-svn/main` 與 main 無共同祖先,不連接則首次 push / pull 撞 unrelated histories。
+- **不自動代填使用者身分或設定** — 遇到缺漏的前置設定(git `user.name`/`user.email`、缺工具路徑等)一律**先 `AskUserQuestion` 詢問並提供建議**再執行;**絕不**拿 Claude 帳號 email、本機使用者名稱或任何臆測值代填。寫 git 身分一律 repo-local(不加 `--global`)。
+- **初始 commit 前先列「將被 commit / 被忽略」兩清單並確認** — 避免把 `.vs`/`bin`/`obj` 等機器產物掃進版控;.gitignore 在 commit 前已含 .NET 產物區塊,使用者仍可補漏。
 - **Case (c) 與 case (d) 必須 idempotent**:跑兩次的結果與跑一次相同,不重複追加 `CLAUDE.md` 區段、不覆寫已存在的 shared file。
 - **`dbhub.local.toml` 永不自動建立**(避免使用者誤以為已 ready)。只 prompt 使用者複製 example 後手動編輯。
 - 寫 `.commitlintrc.json` 用 JSON parse + array merge(`rules.type-enum[2]`),不要用 string 替換 — 使用者既有的其他 rules 必須保留。
@@ -536,6 +566,7 @@ JSON merge 規則同 3.4.B,寫入:
 - `.gitignore` 含 `turbo-plugin` 相關 patterns(`.claude/**/*.local.*` / `.turbo-plugin/**/*.local.*` / `.turbo-plugin/worktrees/` / `.svn/`)。
 - `.commitlintrc.json` 含 `rules.type-enum[2]` ⊇ 12 類預設;`CLAUDE.md` 含 turbo-plugin convention 段(由 marker 包夾)。
 - Case (a)/(b):`git branch -a` 含 `remote-svn/main`,`git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-main`,該 worktree 內含 `.svn/`;主 worktree `git status --porcelain` 乾淨(`.turbo-plugin/worktrees/` 已 gitignore)。
+- Case (a):`git rev-parse --abbrev-ref HEAD` = `main`(非 `master`);`git config user.name` 與 `user.email` 皆非空;初始 commit 的 `git show --stat HEAD` **不含** `.vs/` / `bin/` / `obj/`(已被 .gitignore 排除);`git merge-base main remote-svn/main` 非空(歷史已連接,首次 push/pull 不會撞 unrelated histories)。
 - Case (a)/(b)/(c) apphost bootstrap 終態:
   - 走 canonical-already-exists 分支 → `.turbo-plugin/applicationhost.config` 內容未動
   - 走 from-VS 分支 → `.turbo-plugin/applicationhost.config` 存在,且 `physicalPath` 屬性 = `__TURBO_PLUGIN_PHYSICAL_PATH__`(grep 確認)

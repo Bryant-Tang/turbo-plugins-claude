@@ -69,7 +69,7 @@ PASS / FAIL / PARTIAL。
 ```markdown
 | case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
 |---|---|---|---|---|---|---|---|
-| P2-tp-setup-1 | case (a) 新建 happy | fresh-base + .git removed | 在 `<VALIDATION_ROOT>/proj` 空目錄請 agent 跑 /tp-setup | Phase 1 detect → AskUserQuestion 取 SVN URL → orphan remote-svn/main + svn checkout | agent 走 case (a) 6 sub-step + apphost bootstrap 三選一(已選 1) | PASS | chat r1234 / .turbo-plugin/ 目錄齊全 |
+| P2-tp-setup-1 | case (a) 新建 happy | fresh-base + .git removed | 在 `<VALIDATION_ROOT>/proj` 空目錄請 agent 跑 /tp-setup | Phase 1 detect → AskUserQuestion 取 SVN URL → orphan remote-svn/main + svn checkout | agent 走 case (a) 全 sub-step + apphost bootstrap 三選一(已選 1) | PASS | chat r1234 / .turbo-plugin/ 目錄齊全 |
 ```
 
 > **Round-trip text stability**(F-3 plan-time correction):中文 SVN-related case 不
@@ -92,7 +92,7 @@ PASS / FAIL / PARTIAL。
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-setup-1 | case (a) 新建 git+SVN happy | fresh-base 但移除 `.git/` + 移除 `.turbo-plugin/` | Phase 1 detect → case (a) → 6 sub-step + apphost bootstrap 三選一(選 (1) 暫停 — 因 fresh fixture 無 `.vs/`) | `.git/` 重建 / `.gitignore` 含 turbo-plugin pattern(含 `.turbo-plugin/worktrees/`)/ `.turbo-plugin/` 目錄三檔齊 / `remote-svn/main` orphan branch + `.turbo-plugin/worktrees/remote-svn-main` worktree / svn checkout 完成 | AE8, AE9(case-detect happy) |
+| P2-tp-setup-1 | case (a) 新建 git+SVN happy | fresh-base 但移除 `.git/` + 移除 `.turbo-plugin/` | Phase 1 detect → case (a) → `git init -b main` → 寫 ignore(turbo-plugin + .NET 產物)→ (若 git 身分缺)AskUserQuestion 取 name/email → 列「將 commit / 被忽略」清單 + AskUserQuestion 確認 → 初始 commit → AskUserQuestion 取 SVN URL → orphan `remote-svn/main` + svn checkout → connect merge → apphost bootstrap 三選一(選 (1) 暫停 — 因 fresh fixture 無 `.vs/`) | `.git/` 重建且預設分支 = `main`(非 master)/ `.gitignore` 含 turbo-plugin pattern(含 `.turbo-plugin/worktrees/`)+ .NET 產物區塊(`.vs/`/`bin/`/`obj/`)/ 初始 commit 存在且 `git show --stat HEAD` 不含機器產物 / `.turbo-plugin/` 目錄三檔齊 / `remote-svn/main` orphan branch + `.turbo-plugin/worktrees/remote-svn-main` worktree / svn checkout 完成 / `git merge-base main remote-svn/main` 非空(歷史已連接) | AE8, AE9(case-detect happy) |
 | P2-tp-setup-2 | case (c) 主 worktree 補設定(idempotent) | fresh-base 完整(`.turbo-plugin/` 已存在) | Phase 1 detect → case (c) → 6 個 idempotent sub-step 全 skip(已存在不覆寫)→ apphost bootstrap canonical-exists 分支 | 沒有新檔 / 既有 shared file 內容 byte-unchanged / Phase 4 報告「全部已存在,無變動」/ 第二次跑結果完全一致 | AE10(idempotency) |
 | P2-tp-setup-3 | 中文 workspace path | fresh-base 複製到 `<VALIDATION_ROOT>/proj 測試 ™/` | Phase 1 detect → 中文路徑不 crash → case (c) 補設定 → apphost bootstrap → Phase 4 報告路徑 round-trip 正確 | `.turbo-plugin/config.toml` 寫入路徑顯示為中文 / agent chat 中顯示中文路徑無 mojibake / `applicationhost.config` 路徑替換不破壞 | AE9 extended(中文 path) |
 | P2-tp-setup-4 | Phase 3 推薦項目實際安裝 — LSP(C# + TS/JS) | 已跑完 case 1 或 case 2 + dotnet / npm 兩個 CLI 都 ✓ | Phase 3 detect → batch 1 prompt(C# LSP / TS/JS LSP 兩題)→ 使用者選 user-level → `~/.claude/settings.json` 寫入 enabledPlugins + env.ENABLE_LSP_TOOL → `dotnet tool install -g csharp-ls` + `npm install -g typescript-language-server typescript` 兩個外部安裝實際跑 | `dotnet tool list -g` 含 csharp-ls / `npm list -g` 含 typescript-language-server / `~/.claude/settings.json` 含兩個 enabledPlugins / Phase 4 報告「✓ 已安裝」兩條 | AE15(real-install) |
@@ -120,11 +120,15 @@ PASS / FAIL / PARTIAL。
 > **觀察重點**:
 > - agent 是否觸發 tp-setup skill(SessionStart 不應自動跑,要明確 prompt 才觸發)
 > - Phase 1 是否偵測為 case (a)
+> - **預設分支是 `main` 不是 `master`**(`git rev-parse --abbrev-ref HEAD` = main)— 驗 `git init -b main`
+> - **若該 fixture 環境 git 身分(`user.name`/`user.email`)未設,agent 是否以 AskUserQuestion 詢問而非自動代填**(尤其不得用 Claude 帳號 email / 本機使用者名稱);設定後是 repo-local(`git config --local` 有值、`--global` 未被改動)
+> - **初始 commit 前 agent 是否列出「將被 commit / 被忽略」兩份清單並以 AskUserQuestion 確認**;`.gitignore` 含 .NET 產物區塊(`.vs/`/`bin/`/`obj/`/`*.user`/`packages/`),初始 commit 的 `git show --stat HEAD` 不含這些機器產物
 > - apphost bootstrap 三選一是否出現,使用者選 (1) 暫停後 setup 是否乾淨結束
 > - `.turbo-plugin/` 目錄是否含 `config.toml` / `applicationhost.config` / `dbhub.example.local.toml` 三檔
 > - `.gitignore` 在任何 `git worktree add` 之前已含 `.turbo-plugin/worktrees/`(主 worktree `git status --porcelain` 乾淨)
 > - `remote-svn/main` orphan branch + `.turbo-plugin/worktrees/remote-svn-main` worktree 是否建立(`git worktree list` 確認)
 > - 跑完後 `git log --oneline remote-svn/main` 至少 1 個 commit「init: remote-svn/main branch」
+> - **`git merge-base main remote-svn/main` 非空**(connect merge 已把兩條歷史連接,首次 push/pull 不會撞 unrelated histories)
 > - chat 中 agent 沒列出 internal 動作(.gitignore 寫入等),只列「從 SVN 抓取」「設定 SVN ignore 並推送」
 
 > **Setup**(case 2):orchestrator 跑 `Reset-Fixture.ps1` 重置 fixture,fixture base 已含 `.turbo-plugin/` 完整三檔。
@@ -193,7 +197,7 @@ PASS / FAIL / PARTIAL。
 
 | case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
 |---|---|---|---|---|---|---|---|
-| P2-tp-setup-1 | case (a) 新建 happy | fresh-base + .git/.turbo-plugin removed | /tp-setup with --svn-url | Phase 1→case(a)→6 sub-step + apphost bootstrap 三選一 | _(TBD U6→merged here)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-setup-1 | case (a) 新建 happy | fresh-base + .git/.turbo-plugin removed | /tp-setup with --svn-url | Phase 1→case(a)→全 sub-step(`git init -b main` / .NET ignore / 身分確認 / 初始 commit 確認 / connect merge)+ apphost bootstrap 三選一 | _(TBD U6→merged here)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-setup-2 | case (c) 主 worktree 補設定 idempotent | fresh-base 完整 | /tp-setup(無參數) | Phase 1→case(c)→6 idempotent sub-step skip | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-setup-3 | 中文 workspace path | fresh-base 改名為「proj 測試 ™」 | /tp-setup | 中文路徑 round-trip 不破壞 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-setup-4 | Phase 3 LSP 實際安裝 | case 1/2 完成 + dotnet/npm 可用 | /tp-setup 啟用 C# LSP + TS/JS LSP | batch 1 prompt + 兩個外部 install + settings.json 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
