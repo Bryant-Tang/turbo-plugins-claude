@@ -9,11 +9,27 @@ $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
 
+# Pre-initialized so the finally restore is safe even if an early statement (e.g. Probe-GitVersion)
+# throws before the OutputEncoding swap below — referencing an unset var under StrictMode would
+# otherwise throw inside finally and mask the original error.
+$tpPrevConsoleEnc = $null
+
 try {
     Probe-GitVersion
 
     if ([string]::IsNullOrWhiteSpace($Branch)) { throw 'Missing required argument: -Branch <branch>' }
     if ([string]::IsNullOrWhiteSpace($Message)) { throw 'Missing required argument: -Message <commit-message>' }
+
+    # Encoding fix (zh-TW / non-ASCII filenames): plain `svn status` prints filenames in the
+    # system ANSI codepage (CP_ACP, e.g. Big5), and — critically — PowerShell encodes native-
+    # command ARGV using [Console]::OutputEncoding too. So we set OutputEncoding to the system
+    # ANSI codepage for the whole svn-interacting region: `svn status` output decodes correctly
+    # AND paths passed back to `svn add/delete/commit` are argv-encoded as ANSI, matching the
+    # on-disk filenames. (NOTE: do NOT use `svn status --xml` here — its UTF-8 output would need
+    # OutputEncoding=UTF8 to decode, which then mis-encodes the ANSI argv. Submit has no Chinese
+    # git stdout to capture, so a single ANSI scope is safe. Restored in finally.)
+    $tpPrevConsoleEnc = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage)
 
     $mainWorktree = Get-MainWorktree
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
@@ -192,4 +208,7 @@ try {
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1
+}
+finally {
+    if ($null -ne $tpPrevConsoleEnc) { [Console]::OutputEncoding = $tpPrevConsoleEnc }
 }

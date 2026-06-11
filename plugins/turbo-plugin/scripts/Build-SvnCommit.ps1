@@ -8,6 +8,14 @@ $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
 
+# System ANSI codepage (CP_ACP, e.g. 950/Big5 on zh-TW). `svn` reads/writes filenames in this
+# codepage, and PowerShell encodes native-command ARGV using [Console]::OutputEncoding. We scope
+# OutputEncoding=ANSI ONLY around `svn status` (so non-ASCII filenames decode + round-trip
+# correctly), and keep `git log` OUTSIDE that scope (git emits UTF-8 commit subjects, which must
+# NOT be decoded as Big5). Do NOT use `svn status --xml` here: its UTF-8 output would require
+# OutputEncoding=UTF8, which then mis-encodes the ANSI argv on the commit side.
+$tpAnsiEnc = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage)
+
 try {
     Probe-GitVersion
 
@@ -60,6 +68,8 @@ try {
         throw "Remote SVN worktree is not up to date (local r$localRev, head r$headRev). Run '/tp-pull-from-svn --branch $Branch' first."
     }
 
+    # git log subjects may contain non-ASCII (UTF-8) — capture under the default console encoding,
+    # NOT the ANSI scope used for svn below.
     $logOutput = (& git -C $mainWorktree log "$($remote.Branch)..$Branch" --reverse --pretty=format:'%h|%s' | Out-String).Trim()
 
     if ([string]::IsNullOrWhiteSpace($logOutput)) {
@@ -89,46 +99,65 @@ try {
     # F12: also snapshot svn status so push-to-svn-commit can detect files added/removed
     # in the remote worktree after prepare (drift guard in addition to SHA pin).
     # Capture before any svn-add/svn-delete — this is the starting state.
+    # Capture under ANSI OutputEncoding so non-ASCII filenames decode to correct Unicode, then
+    # persist as UTF-8 (matching how submit reads the snapshot back with -Encoding UTF8).
     $svnStatusFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_svn_status'
-    $svnStatusSnap = (& svn status $remote.Path | Out-String)
+    $prevEnc = [Console]::OutputEncoding
+    [Console]::OutputEncoding = $tpAnsiEnc
+    try {
+        $svnStatusSnap = (& svn status $remote.Path | Out-String)
+    } finally {
+        [Console]::OutputEncoding = $prevEnc
+    }
     Write-Utf8NoBom -Path $svnStatusFile -Content $svnStatusSnap
+
+    # Build the FILES section under ANSI OutputEncoding (correct Unicode paths), collect into a
+    # list, then emit after restoring the encoding so all stdout is encoded consistently.
+    $fileLines = @()
+    $prevEnc = [Console]::OutputEncoding
+    [Console]::OutputEncoding = $tpAnsiEnc
+    try {
+        Push-Location $remote.Path
+        try {
+            $statusLines = & svn status
+            foreach ($line in $statusLines) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                if ($line.Length -lt 9) { continue }
+                $statusChar = $line.Substring(0, 1)
+                $filepath   = $line.Substring(8).Trim()
+                if (-not $filepath) { continue }
+                $diffStatus = switch ($statusChar) {
+                    '?' { 'A' }
+                    '!' { 'D' }
+                    'M' { 'M' }
+                    default { $null }
+                }
+                if (-not $diffStatus) { continue }
+
+                $ea2 = $ErrorActionPreference
+                $ErrorActionPreference = 'SilentlyContinue'
+                & git -C $remote.Path check-ignore -q $filepath 2>$null | Out-Null
+                $isIgnored = ($LASTEXITCODE -eq 0)
+                $ErrorActionPreference = $ea2
+
+                if ($isIgnored) {
+                    $fileLines += "$diffStatus|ignored|$filepath"
+                } else {
+                    $fileLines += "$diffStatus|tracked|$filepath"
+                }
+            }
+        } finally {
+            Pop-Location
+        }
+    } finally {
+        [Console]::OutputEncoding = $prevEnc
+    }
 
     Write-Output 'COMMITS'
     Write-Output $logOutput
     Write-Output ''
     Write-Output 'FILES'
-    Push-Location $remote.Path
-    try {
-        $statusLines = & svn status
-        foreach ($line in $statusLines) {
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            if ($line.Length -lt 9) { continue }
-            $statusChar = $line.Substring(0, 1)
-            $filepath   = $line.Substring(8).Trim()
-            if (-not $filepath) { continue }
-            $diffStatus = switch ($statusChar) {
-                '?' { 'A' }
-                '!' { 'D' }
-                'M' { 'M' }
-                default { $null }
-            }
-            if (-not $diffStatus) { continue }
-
-            $ea2 = $ErrorActionPreference
-            $ErrorActionPreference = 'SilentlyContinue'
-            & git -C $remote.Path check-ignore -q $filepath 2>$null | Out-Null
-            $isIgnored = ($LASTEXITCODE -eq 0)
-            $ErrorActionPreference = $ea2
-
-            if ($isIgnored) {
-                Write-Output "$diffStatus|ignored|$filepath"
-            } else {
-                Write-Output "$diffStatus|tracked|$filepath"
-            }
-        }
-    } finally {
-        Pop-Location
-    }
+    foreach ($fl in $fileLines) { Write-Output $fl }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

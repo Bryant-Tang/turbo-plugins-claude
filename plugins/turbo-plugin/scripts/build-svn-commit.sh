@@ -6,6 +6,37 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/common.sh"
 
+# Parse `svn status --xml` and emit "<status_char>\t<relpath>" per changed entry.
+# Rationale: plain `svn status` prints non-ASCII filenames in the console/ANSI codepage
+# (CP_ACP, e.g. Big5 on zh-TW Windows). When those captured bytes are re-passed as argv to
+# svn/git through Git Bash/MSYS (which assumes UTF-8), they are mangled -> "not under version
+# control". `svn status --xml` always emits UTF-8 paths, which round-trip correctly.
+svn_status_xml() {
+  local wc="$1"
+  local xml
+  xml="$(cd "$wc" && svn status --xml | tr '\n' ' ')"
+  local -a _paths _items
+  # Parse with grep -oE (ERE) + sed, NOT grep -oP (PCRE): PCRE refuses to run in non-UTF-8
+  # locales ("grep: -P supports only unibyte and UTF-8 locales"), which is exactly the zh-TW
+  # Windows Git Bash default. ERE is byte-based and locale-agnostic. (item="" is unique to
+  # <wc-status> in plain `svn status --xml`; <target>/<entry> both carry path=, so anchor on
+  # <entry> to skip the target node.)
+  mapfile -t _paths < <(printf '%s' "$xml" | grep -oE '<entry[[:space:]]+path="[^"]*"' | sed 's/^[^"]*"//; s/"$//')
+  mapfile -t _items < <(printf '%s' "$xml" | grep -oE 'item="[^"]*"' | sed 's/^[^"]*"//; s/"$//')
+  local idx sc
+  for idx in "${!_paths[@]}"; do
+    case "${_items[$idx]}" in
+      unversioned) sc='?' ;;
+      missing)     sc='!' ;;
+      modified)    sc='M' ;;
+      added)       sc='A' ;;
+      deleted)     sc='D' ;;
+      *) continue ;;
+    esac
+    printf '%s\t%s\n' "$sc" "${_paths[$idx]}"
+  done
+}
+
 BRANCH=''
 
 while [[ $# -gt 0 ]]; do
@@ -85,16 +116,14 @@ printf '%s' "$BRANCH_HEAD_SHA" > "$SHA_GITDIR/MERGE_HEAD.tp_branch_sha"
 # F12: also snapshot svn status so push-to-svn-commit can detect files added/removed
 # in the remote worktree after prepare (drift guard in addition to SHA pin).
 # Capture before any svn-add/svn-delete — this is the starting state.
-svn status "$REMOTE_PATH" > "$SHA_GITDIR/MERGE_HEAD.tp_svn_status"
+# Use --xml-based capture (UTF-8 paths) so the snapshot is encoding-consistent.
+svn_status_xml "$REMOTE_PATH" > "$SHA_GITDIR/MERGE_HEAD.tp_svn_status"
 
 echo 'COMMITS'
 echo "$LOG_OUTPUT"
 echo ''
 echo 'FILES'
-(cd "$REMOTE_PATH" && svn status) | tr -d '\r' | while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
-  status="${line:0:1}"
-  filepath="${line:8}"
+svn_status_xml "$REMOTE_PATH" | while IFS=$'\t' read -r status filepath; do
   [[ -z "$filepath" ]] && continue
   case "$status" in
     '?') diff_status='A' ;;

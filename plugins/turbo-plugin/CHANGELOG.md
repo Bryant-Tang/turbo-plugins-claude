@@ -4,6 +4,19 @@
 
 格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.5.2] - 2026-06-11
+
+> 真實環境(zh-TW Windows + PowerShell 5.1 + Big5 codepage)手動實測 v0.5.x 抓到的 push-to-svn 與 tp-setup 缺陷修正。
+
+### Added
+
+- test: 新增中文(非 ASCII)檔名 push-to-svn round-trip 回歸測試(`svn-status-xml-roundtrip.test.sh` + `Svn-StatusXml-Roundtrip.test.ps1`)——含結構守衛(腳本須維持 `svn status --xml` / ANSI `OutputEncoding` 修法,防被 revert)+ 真實 svn 行為測試(建 live svn working copy、放中文檔名、走「擷取路徑 → 回傳 `svn add`/`svn commit`」全程;`.sh` 直接 `sed` 抽出腳本本體的 `svn_status_xml` 函式測真碼);`svn`/`svnadmin` 缺席則 SKIP。補上舊測試「在 UTF-8 CI 跑綠卻漏掉 Big5-specific bug」的缺口
+
+### Fixed
+
+- fix: push-to-svn 中文(非 ASCII)檔名不再 mangle——`build-svn-commit.sh` / `submit-svn-commit.sh` 改用 `svn status --xml`(輸出恆 UTF-8)解析路徑,取代舊的「擷取 ANSI codepage 文字 `svn status` → 按欄位 offset 切路徑 → 回傳當 argv」流程(zh-TW Windows 經 Git Bash/MSYS 會把 Big5 bytes 當 UTF-8 重編 → svn「not under version control」)。`.ps1` 端(`Build-SvnCommit.ps1` / `Submit-SvnCommit.ps1`)改為把 `[Console]::OutputEncoding` 暫設系統 ANSI codepage 包住 svn 區段(PS native argv 編碼跟 `OutputEncoding` 走,故 `svn status` 解碼與 `svn add/commit` argv 同為 ANSI、與磁碟檔名一致;git log 的 UTF-8 subject 留在 scope 外)。同時解掉 submit drift-guard 因 snapshot 端與現場端 CRLF 不一致而把全部檔案誤判「新出現」的 bug
+- fix: `svn_status_xml` helper 改用 `grep -oE`(ERE)+ `sed` 取代 `grep -oP`(PCRE)——PCRE 在非 UTF-8 locale 會直接拒跑(`grep: -P supports only unibyte and UTF-8 locales`),而 zh-TW Windows Git Bash 預設正是非 UTF-8 locale,乾淨環境會讓整支 push 炸掉;ERE 為 byte-based、任何 locale 皆可(此為實測加測試後新發現,非原始修法所含)
+
 ## [0.5.1] - 2026-06-07
 
 > v0.5.0 合併前 code review(多 persona)修正。無 P0/P1;trust anchor(KTD-8)經確認未放寬。
