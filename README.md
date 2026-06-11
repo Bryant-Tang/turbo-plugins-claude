@@ -16,7 +16,7 @@ Some claude plugins that handle dev process.
     - 或是手動編輯 `.claude/settings.json`
       ```json
       "extraKnownMarketplaces": {
-        "turbo-plugins-claude-dev": {
+        "turbo-plugins-claude": {
           "source": {
             "source": "git",
             "url": "https://github.com/Bryant-Tang/turbo-plugins-claude.git"
@@ -24,7 +24,7 @@ Some claude plugins that handle dev process.
         }
       },
       "enabledPlugins": {
-        "turbo-plugin@turbo-plugins-claude-dev": true
+        "turbo-plugin@turbo-plugins-claude": true
       }
       ```
 1. 安裝完之後在 claude 聊天視窗使用 `/turbo-plugin:tp-setup` 設定環境變數與必要的設定檔案
@@ -33,7 +33,7 @@ Some claude plugins that handle dev process.
 
 1. 在 claude 聊天視窗使用 `/plugins`
 1. 選擇 `Marketplaces`
-1. 選擇 `turbo-plugins-claude-dev`
+1. 選擇 `turbo-plugins-claude`
 1. 選擇 `Update marketplace`
 1. 選擇 `Installed`
 1. 選擇 `turbo-plugin`
