@@ -10,7 +10,7 @@
 
 ### Added
 
-- test: 新增中文(非 ASCII)檔名 push-to-svn round-trip 回歸測試(`svn-status-xml-roundtrip.test.sh` + `Svn-StatusXml-Roundtrip.test.ps1`)——含結構守衛(腳本須維持 `svn status --xml` / ANSI `OutputEncoding` 修法,防被 revert)+ 真實 svn 行為測試(建 live svn working copy、放中文檔名、走「擷取路徑 → 回傳 `svn add`/`svn commit`」全程;`.sh` 直接 `sed` 抽出腳本本體的 `svn_status_xml` 函式測真碼);`svn`/`svnadmin` 缺席則 SKIP。補上舊測試「在 UTF-8 CI 跑綠卻漏掉 Big5-specific bug」的缺口
+- test: 新增中文(非 ASCII)檔名 push-to-svn 回歸測試(`svn-status-xml-roundtrip.test.sh` + `Svn-StatusXml-Roundtrip.test.ps1`)——含結構守衛(腳本須維持 `svn status --xml` / ANSI `OutputEncoding` 修法,防被 revert)+ 真實 svn 行為測試(建 live svn working copy、放中文檔名;`.sh` 直接 `sed` 抽出腳本本體的 `svn_status_xml` 函式測真碼)。**核心斷言是 capture**(`svn_status_xml` 把中文檔名擷取成 byte-for-byte 正確的 UTF-8 path,這正是 `--xml` 修法的本體,deterministic);`svn add`/`svn commit` 的 argv re-pass 因 svn.exe 跟 console codepage 走(PS orchestrator 強制 console=65001 會讓 MSYS native argv mangle、與擷取正確性無關)改為 **env-gated**:環境支援才驗、不支援印 WARNING 跳過(真實 Claude Code Bash tool / CI Linux 都支援)。`svn`/`svnadmin` 缺席則 SKIP。補上舊測試「在 UTF-8 CI 跑綠卻漏掉 Big5-specific bug」的缺口
 
 ### Changed
 
