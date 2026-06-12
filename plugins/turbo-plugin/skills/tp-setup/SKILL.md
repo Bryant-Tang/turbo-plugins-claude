@@ -151,13 +151,13 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
 
 5. **初始 commit(commit 前先確認)**。此時 working tree 含使用者既有檔案 + 剛寫入的 `.gitignore` / `.turbo-plugin/` / `.commitlintrc.json` / `CLAUDE.md`。main 分支需要至少一個 commit,sub-step 7 的 `git worktree add` 才有 HEAD 可依附。**不要直接 `git add -A` 就 commit**:
    - **先確認 git 提交身分**:跑 `git config user.name` 與 `git config user.email`(讀 local+global 合併後有效值)。任一為空 → **不自動代填**(尤其**不得**用 Claude 帳號 email 或本機使用者名稱);用 `AskUserQuestion` 請使用者輸入姓名 + email(寫 **repo-local**:`git config user.name <v>` / `git config user.email <v>`,**不加 `--global`**,不碰使用者全域設定),或選擇「先自行 `git config` 後重跑」/「取消」。兩者皆有值則略過此項。
-   - **列兩份清單給使用者看**:**將被 commit**(`git add -An` 的輸出,或 `git status --porcelain`)與**被 `.gitignore` 排除**(`git status --ignored --porcelain` 取 `!!` 開頭者)。
+   - **列兩份清單給使用者看**(dry-run,先不真的 stage):**將被 commit** = `git add -An`(即 `git add --dry-run -A`,列出會被加入的檔)的輸出;**被 `.gitignore` 排除** = `git status --ignored --porcelain` 取 `!!` 開頭者。(兩者用途不同,不要混用 `git status --porcelain`——它列的是 untracked `??`,不等於「會被 commit」的清單。)
    - 用 `AskUserQuestion`(平實白話)確認:
      - 「確認,建立初始 commit」→ 進下一步
      - 「先補 `.gitignore`(清單裡有不該進版控的檔案)」→ free-text 收要追加的 pattern → 加進 `.gitignore`(idempotent)→ 重新列清單再問
      - 「取消 setup」
    - 確認後**分開兩步驟**跑(CLAUDE.md 禁 `&&` 串接 state-changing git):先 `git add -A`,觀察成功,再 `git commit -m "chore: initial commit (turbo-plugin setup)"`。
-   - 若 working tree 完全沒有可 commit 的內容(真空專案)→ 用 `git commit --allow-empty`。
+   - 邊界:`git add -A` 後若 index 為空(`git diff --cached --quiet` exit 0——真空專案,或所有檔都被 ignore)→ 改用 `git commit --allow-empty -m "..."`(sub-step 7 的 `git worktree add` 仍需要這個 HEAD commit)。
 
 6. `AskUserQuestion`(自由文字)收集 **SVN URL**(若 argument 沒帶 `--svn-url`)。空值或格式不對(非 http(s) / svn / file)→ 重問或取消。
 
@@ -174,13 +174,15 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
    2. `git branch -D remote-svn/main`
    3. 確認清理完成後重跑 `/tp-setup`
 
-8. **連接 main ↔ remote-svn/main 歷史**。sub-step 7 把 `remote-svn/main` 建成 orphan(獨立 root),與 `main` 無共同祖先;**若不連接**,首次 `/tp-push-to-svn`(在 remote 端 `git merge main`)與首次 `/tp-pull-from-svn`(在 main 端 `git merge remote-svn/main`)都會撞 `fatal: refusing to merge unrelated histories`。在**主 worktree、branch `main`** 上跑(`remote-svn/main` 為空 orphan,合併無內容、不會衝突):
+8. **連接 main ↔ remote-svn/main 歷史**。sub-step 7 把 `remote-svn/main` 建成 orphan(獨立 root),與 `main` 無共同祖先;**若不連接**,首次 `/tp-push-to-svn`(在 remote 端 `git merge main`)與首次 `/tp-pull-from-svn`(在 main 端 `git merge remote-svn/main`)都會撞 `fatal: refusing to merge unrelated histories`。**`<main-worktree>` = sub-step 1 `git init` 所在的專案根目錄**;注意 sub-step 7b 已 `cd` 進 bridge worktree,故**務必用 `git -C <main-worktree>` 明確指定路徑、不要依賴當前 cwd**(`git -C` 會在 main worktree 的 branch `main` 上合併,`remote-svn/main` 為空 orphan,合併無內容、不會衝突):
 
    `git -C <main-worktree> merge --allow-unrelated-histories -m "chore: connect SVN bridge via turbo-plugin" remote-svn/main`
 
    （與 case (b) 的 connect merge 同機制;差別只在 case (b) 藉此帶入既有 SVN 內容,case (a) 的 SVN 為空、純粹連接歷史。連接後 main 多一個空 merge commit,屬預期。）
 
 9. **apphost bootstrap**(見下方 §2.apphost-bootstrap)。
+
+> **Case (a) 中途取消 / 失敗的復原**:sub-step 3 之後 `.turbo-plugin/` 即已建立。若在 sub-step 5(git 身分 / 初始 commit,含「先自行 `git config` 後重跑」選項)或 sub-step 8(連接歷史)取消或失敗後直接重跑 `/tp-setup`,case 偵測會因 `.turbo-plugin/` 已存在而判成 **case (c)**(補設定),**不會**補做 `git init -b main` / 初始 commit / 連接歷史,留下半套狀態。要乾淨重跑 case (a):先移除 `.turbo-plugin/`(及任何已建的 `remote-svn/main` branch 與其 worktree)再重跑。
 
 完成後 fall through to Phase 3。
 

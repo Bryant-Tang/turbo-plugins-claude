@@ -48,6 +48,9 @@ Describe 'Svn non-ASCII filename encoding (v0.5.2)' {
             (Get-Content -LiteralPath $script:BuildScript -Raw) | Should -Match 'ANSICodePage'
         }
         It 'Submit-SvnCommit.ps1 sets OutputEncoding to the ANSI codepage' {
+            # Assert the actual assignment, not just the substring (which also appears in comments).
+            (Get-Content -LiteralPath $script:SubmitScript -Raw) |
+                Should -Match 'OutputEncoding\s*=\s*\[System\.Text\.Encoding\]::GetEncoding'
             (Get-Content -LiteralPath $script:SubmitScript -Raw) | Should -Match 'ANSICodePage'
         }
     }
@@ -63,11 +66,18 @@ Describe 'Svn non-ASCII filename encoding (v0.5.2)' {
             try {
                 $repo = [System.IO.Path]::Combine($sb, 'repo')
                 $wc   = [System.IO.Path]::Combine($sb, 'wc')
-                & svnadmin create $repo
-                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'svnadmin create failed'; return }
-                $uri = 'file:///' + ($repo -replace '\\', '/')
-                & svn checkout $uri $wc 2>$null | Out-Null
-                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'svn checkout failed'; return }
+                # ScriptsCommon sets EAP=Stop; under it a native exe writing stderr throws
+                # NativeCommandError even with 2>$null. Wrap svn setup so an unusable svn yields a
+                # graceful SKIP, not an uncaught failure.
+                try {
+                    & svnadmin create $repo 2>$null | Out-Null
+                    $uri = 'file:///' + ($repo -replace '\\', '/')
+                    & svn checkout $uri $wc 2>$null | Out-Null
+                } catch {
+                    Set-ItResult -Skipped -Because "svn/svnadmin setup failed: $($_.Exception.Message)"
+                    return
+                }
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'svn checkout returned non-zero'; return }
 
                 [System.IO.File]::WriteAllText(
                     [System.IO.Path]::Combine($wc, $script:ZhName), 'hi',
@@ -88,9 +98,9 @@ Describe 'Svn non-ASCII filename encoding (v0.5.2)' {
                     # The captured Unicode path must equal the original (decode round-trip).
                     $captured | Should -Be $script:ZhName
 
-                    & svn add --parents $captured
+                    & svn add --parents -- $captured
                     $LASTEXITCODE | Should -Be 0
-                    & svn commit $captured -m 'add nonascii' --encoding UTF-8
+                    & svn commit --encoding UTF-8 -m 'add nonascii' -- $captured
                     $LASTEXITCODE | Should -Be 0
 
                     # After commit nothing should remain unversioned (re-pass round-trip worked).

@@ -317,6 +317,54 @@ write_utf8_no_bom() {
   LC_ALL=C.UTF-8 printf '%s' "$content" > "$path" 2>/dev/null || printf '%s' "$content" > "$path"
 }
 
+# Parse `svn status --xml` for a working copy and emit one "<status_char>\t<relpath>" line per
+# changed entry. Args: <working_copy_path>.
+#
+# Why --xml (not plain `svn status`): plain output prints non-ASCII filenames in the console/ANSI
+# codepage (Big5 on zh-TW Windows); re-passing those captured bytes as argv through Git Bash/MSYS
+# (which assumes UTF-8) mangles them -> "not under version control". `svn status --xml` always
+# emits UTF-8 paths, and using XML also removes the CRLF/column-offset fragility of text parsing.
+#
+# Contract notes:
+#  - Returns NON-ZERO (propagated) when `svn status --xml` itself fails (e.g. SVN server down), so
+#    callers never treat an empty result as "no changes" (build/submit-svn-commit.sh rely on this).
+#  - Attribute values are XML-entity-decoded (& < > "), so filenames containing those characters
+#    round-trip correctly. (A name with a literal newline/tab is unsupported by this line-based
+#    protocol and is out of scope.)
+#  - Parsing uses `grep -oE` (ERE) + sed, NOT `grep -oP` (PCRE) — PCRE refuses to run in non-UTF-8
+#    locales, which is exactly the zh-TW Git Bash default.
+svn_status_xml() {
+  local wc="$1"
+  local raw
+  raw="$(cd "$wc" && svn status --xml)" || return 1
+  local xml
+  xml="$(printf '%s' "$raw" | tr '\n' ' ')"
+  local -a _paths _items
+  # item="" is unique to <wc-status> in plain `svn status --xml`; <target>/<entry> both carry
+  # path=, so anchor on <entry> to skip the <target path="."> node.
+  mapfile -t _paths < <(printf '%s' "$xml" | grep -oE '<entry[[:space:]]+path="[^"]*"' | sed 's/^[^"]*"//; s/"$//')
+  mapfile -t _items < <(printf '%s' "$xml" | grep -oE 'item="[^"]*"' | sed 's/^[^"]*"//; s/"$//')
+  local idx sc p
+  for idx in "${!_paths[@]}"; do
+    case "${_items[$idx]}" in
+      unversioned) sc='?' ;;
+      missing)     sc='!' ;;
+      modified)    sc='M' ;;
+      added)       sc='A' ;;
+      deleted)     sc='D' ;;
+      *) continue ;;
+    esac
+    # Entity-decode; &amp; LAST so a literal "&lt;" in a name is not double-decoded. The `\&`
+    # escape is required — in bash ${//} replacements an unescaped `&` means "the matched text".
+    p="${_paths[$idx]}"
+    p="${p//&lt;/<}"
+    p="${p//&gt;/>}"
+    p="${p//&quot;/\"}"
+    p="${p//&amp;/\&}"
+    printf '%s\t%s\n' "$sc" "$p"
+  done
+}
+
 # v0.2.7+ F-U3.9 fix: Removed bash get_project_identity_hash() function. It was dead
 # code (no caller in production — all SVN scripts are native bash; all IIS/build scripts
 # are ps1-delegate so hash computation always happens on PS side via Get-ProjectIdentityHash).

@@ -11,12 +11,15 @@
 ### Added
 
 - test: 新增中文(非 ASCII)檔名 push-to-svn 回歸測試(`svn-status-xml-roundtrip.test.sh` + `Svn-StatusXml-Roundtrip.test.ps1`)——含結構守衛(腳本須維持 `svn status --xml` / ANSI `OutputEncoding` 修法,防被 revert)+ 真實 svn 行為測試(建 live svn working copy、放中文檔名;`.sh` 直接 `sed` 抽出腳本本體的 `svn_status_xml` 函式測真碼)。**核心斷言是 capture**(`svn_status_xml` 把中文檔名擷取成 byte-for-byte 正確的 UTF-8 path,這正是 `--xml` 修法的本體,deterministic);`svn add`/`svn commit` 的 argv re-pass 因 svn.exe 跟 console codepage 走(PS orchestrator 強制 console=65001 會讓 MSYS native argv mangle、與擷取正確性無關)改為 **env-gated**:環境支援才驗、不支援印 WARNING 跳過(真實 Claude Code Bash tool / CI Linux 都支援)。`svn`/`svnadmin` 缺席則 SKIP。補上舊測試「在 UTF-8 CI 跑綠卻漏掉 Big5-specific bug」的缺口
+- test: `/ce-code-review` 自審後強化 round-trip 測試——新增 `&` 檔名 entity-decode 回歸 case(擋住上面那個 P1)、capture 等值改為**無條件斷言**(不被 env-gated re-pass 遮蓋,擋住「擷取錯也靜默過」)、結構守衛收緊(任一支腳本還留 `${line:8}` 即 fail;PS Submit 守衛改驗實際 assignment 而非 comment 子字串)、PS svn setup 包 `try/catch`(EAP=Stop 下 native exe 寫 stderr 會 throw,改為 graceful SKIP)
 
 ### Changed
 
 - doc(tp-setup): case (a) 不再自動代填 git 提交身分(issue 1)——偵測到 `git config user.name`/`user.email` 缺時,改以 `AskUserQuestion` 請使用者輸入(寫 **repo-local**,不加 `--global`),**絕不**拿 Claude 帳號 email / 本機使用者名稱代填;新增通用 Decision Rule「不自動代填使用者身分或設定,先問再做」。case (b) 建 merge commit 前同樣先確認身分
 - doc(tp-setup): case (a) `.gitignore` 預先寫入 .NET Framework Web 產物區塊(`.vs/` / `bin/` / `obj/` / `*.user` / `packages/`),並新增明確的「初始 commit」步驟——**commit 前先列「將被 commit / 被忽略」兩份清單並 `AskUserQuestion` 確認**,避免把機器產物掃進版控、也不再事後才叫使用者跑 `/tp-suggest-ignore`(issue 2)。skill-tests.md 的 P2-tp-setup-1 期望鏈與觀察錨點同步更新
 - doc/refactor(encoding): 改寫 `Test-EncodingSupport.ps1` WARNING 與 tp-setup Phase 1.2 的中文檔名前提——v0.5.2 腳本修法後,「PowerShell 端中文 SVN 操作必壞、要自動走 `.sh`」的前提已**作廢**(實測證明該 routing 從未真正解決問題,真正修法在腳本本身)。detector 改述為:本機操作兩個 shell 皆已正確處理,`ARGV_SAFE_FOR_UNICODE=False` 只是**跨平台可攜性**訊號(SVN 端存 UTF-8 vs 系統 DBCS);Phase 1.2 的 `AskUserQuestion` 重框為「是否有 Mac/Linux 同事 checkout」的純資訊性詢問,option (a) 不再寫任何 `.sh` routing。token 契約(`PS_VERSION` / `ANSI_CODEPAGE` / `ARGV_SAFE_FOR_UNICODE` / `RECOMMENDATION`)保留不變,detector 測試全綠
+- refactor: `svn_status_xml` helper 從 `build-svn-commit.sh` / `submit-svn-commit.sh` 的兩份重複定義上移到 `lib/common.sh` 單一定義(兩支腳本本就 source `common.sh`);round-trip 測試改從 `common.sh` 抽取該函式(去重 + 消除「兩份可能 drift」與「測試只測到其中一份」的隱患,`/ce-code-review` 自審 maintainability)
+- doc(tp-setup): connect merge 明示 `<main-worktree>` = sub-step 1 `git init` 的專案根、用 `git -C` 不依賴當前 cwd(sub-step 7b 已 `cd` 進 bridge worktree);新增「case (a) 中途取消 / 失敗的復原」註記(`.turbo-plugin/` 已建後若取消會使重跑誤判成 case (c),須先移除再重跑);初始 commit 的「將被 commit」清單機制統一為 `git add -An`(dry-run),`--allow-empty` 邊界以 `git diff --cached --quiet` 判定(自審 agent-native / reliability)
 
 ### Fixed
 
@@ -24,6 +27,9 @@
 - fix: `svn_status_xml` helper 改用 `grep -oE`(ERE)+ `sed` 取代 `grep -oP`(PCRE)——PCRE 在非 UTF-8 locale 會直接拒跑(`grep: -P supports only unibyte and UTF-8 locales`),而 zh-TW Windows Git Bash 預設正是非 UTF-8 locale,乾淨環境會讓整支 push 炸掉;ERE 為 byte-based、任何 locale 皆可(此為實測加測試後新發現,非原始修法所含)
 - fix(tp-setup): case (a) `git init` 改 `git init -b main`(issue 3)——裸 `git init` 落在 `master`,與 `remote-svn/main` bridge 名稱不符,導致首次 `/tp-push-to-svn` branch mismatch 卡住;明確指定 `-b main` 對齊(Git ≥ 2.31 必支援)
 - fix(tp-setup): case (a) 新增 main ↔ remote-svn/main 的 connect merge(issue 4 root)——orphan `remote-svn/main` 與 main 無共同祖先,首次 push(remote 端 `git merge main`)/ pull(main 端 `git merge remote-svn/main`)會撞 `refusing to merge unrelated histories`;改為在主 worktree 跑 `git merge --allow-unrelated-histories remote-svn/main`(與 case (b) 同機制),連接後首推/首拉不再卡
+- fix: `svn_status_xml` 補 XML entity 解碼(`&` / `<` / `>` / `"`)——`svn status --xml` 會把屬性值 escape(`&`→`&amp;`),上面 `--xml` 修法原本未解碼 → 含這些字元的檔名 re-pass 給 `svn add/commit` 會「not under version control」(`/ce-code-review` 自審 adversarial 實證)。注意 bash `${//}` 替換字串裡的 `&` 代表「整段 match」,須寫 `\&` 才是字面 `&`
+- fix: `svn_status_xml` 在 `svn status --xml` 失敗時 `return 1`,且 `submit-svn-commit.sh` 的 drift-guard 與 commit subshell 改 capture-first(`|| exit 1`)——還原 `--xml` 重構時被移除的「`svn status` 失敗即中止」守衛;否則 SVN server down 時函式回空、被當「無變更」→ git merge commit 已完成但 SVN 未更新、pin 被清掉,造成 git/SVN 永久分歧(自審 reliability 實證)
+- fix: `svn add` / `svn delete` / `svn commit` 補 `--` 終止選項解析(`.sh` + `.ps1`),避免以 `-` 開頭的檔名被當成 svn flag(自審 adversarial)
 
 ## [0.5.1] - 2026-06-07
 

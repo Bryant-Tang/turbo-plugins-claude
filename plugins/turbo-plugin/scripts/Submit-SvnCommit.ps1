@@ -143,14 +143,15 @@ try {
             }
         }
 
+        # `--` terminates option parsing so a filename beginning with '-' is never read as a flag.
         if ($toAdd.Count -gt 0) {
             Write-Output "SVN adding $($toAdd.Count) new file(s)..."
-            & svn add --parents $toAdd
+            & svn add --parents -- $toAdd
             if ($LASTEXITCODE -ne 0) { throw 'svn add failed' }
         }
         if ($toDel.Count -gt 0) {
             Write-Output "SVN deleting $($toDel.Count) removed file(s)..."
-            & svn delete $toDel
+            & svn delete -- $toDel
             if ($LASTEXITCODE -ne 0) { throw 'svn delete failed' }
         }
 
@@ -166,7 +167,7 @@ try {
             $noCommit = $true
         } else {
             Write-Output "Committing to SVN..."
-            $commitLines = & svn commit $commitTargets --file $msgFile --encoding UTF-8
+            $commitLines = & svn commit --file $msgFile --encoding UTF-8 -- $commitTargets
             if ($LASTEXITCODE -ne 0) { throw 'svn commit failed' }
             $commitLines | ForEach-Object { Write-Output $_ }
             $newRevLine = $commitLines | Where-Object { $_ -match 'Committed revision (\d+)\.' } | Select-Object -Last 1

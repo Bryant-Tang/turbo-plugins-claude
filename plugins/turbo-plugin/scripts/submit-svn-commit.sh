@@ -4,39 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/common.sh"
-
-# Parse `svn status --xml` and emit "<status_char>\t<relpath>" per changed entry.
-# Rationale: plain `svn status` prints non-ASCII filenames in the console/ANSI codepage
-# (CP_ACP, e.g. Big5 on zh-TW Windows). When those captured bytes are re-passed as argv to
-# svn/git through Git Bash/MSYS (which assumes UTF-8), they are mangled -> "not under version
-# control". `svn status --xml` always emits UTF-8 paths, which round-trip correctly. Using XML
-# here also removes the CRLF-fragility of the old column-offset text parsing.
-svn_status_xml() {
-  local wc="$1"
-  local xml
-  xml="$(cd "$wc" && svn status --xml | tr '\n' ' ')"
-  local -a _paths _items
-  # Parse with grep -oE (ERE) + sed, NOT grep -oP (PCRE): PCRE refuses to run in non-UTF-8
-  # locales ("grep: -P supports only unibyte and UTF-8 locales"), which is exactly the zh-TW
-  # Windows Git Bash default. ERE is byte-based and locale-agnostic. (item="" is unique to
-  # <wc-status> in plain `svn status --xml`; <target>/<entry> both carry path=, so anchor on
-  # <entry> to skip the target node.)
-  mapfile -t _paths < <(printf '%s' "$xml" | grep -oE '<entry[[:space:]]+path="[^"]*"' | sed 's/^[^"]*"//; s/"$//')
-  mapfile -t _items < <(printf '%s' "$xml" | grep -oE 'item="[^"]*"' | sed 's/^[^"]*"//; s/"$//')
-  local idx sc
-  for idx in "${!_paths[@]}"; do
-    case "${_items[$idx]}" in
-      unversioned) sc='?' ;;
-      missing)     sc='!' ;;
-      modified)    sc='M' ;;
-      added)       sc='A' ;;
-      deleted)     sc='D' ;;
-      *) continue ;;
-    esac
-    printf '%s\t%s\n' "$sc" "${_paths[$idx]}"
-  done
-}
+source "$SCRIPT_DIR/lib/common.sh"   # provides svn_status_xml (UTF-8/entity-safe svn status parser)
 
 BRANCH=''
 MESSAGE=''
@@ -110,13 +78,16 @@ fi
 # build-svn-commit.sh) so the comparison is encoding-clean and free of the previous
 # CRLF/column-offset fragility.
 SNAPSHOT_PATHS="$(cut -f2- "$SVN_STATUS_FILE")"
+# Capture-first so an svn failure propagates (svn_status_xml returns non-zero on `svn status`
+# failure); a process-substitution in the while-redirect would otherwise swallow that exit code.
+CURRENT_XML="$(svn_status_xml "$REMOTE_PATH")" || { echo "Error: svn status failed (drift check). Re-run /tp-push-to-svn." >&2; exit 1; }
 DRIFTED_FILES=''
 while IFS=$'\t' read -r _sc filepath; do
   [[ -z "$filepath" ]] && continue
   if ! printf '%s\n' "$SNAPSHOT_PATHS" | grep -qxF "$filepath" 2>/dev/null; then
     DRIFTED_FILES="${DRIFTED_FILES}${filepath} "
   fi
-done < <(svn_status_xml "$REMOTE_PATH")
+done <<< "$CURRENT_XML"
 if [[ -n "${DRIFTED_FILES// /}" ]]; then
   echo "Error: Remote worktree changed since prepare — file(s) appeared: ${DRIFTED_FILES}. Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to recompute." >&2
   exit 1
@@ -145,6 +116,9 @@ set +e
   MODIFIED_TO_COMMIT=()
 
   # Capture via `svn status --xml` (UTF-8 paths) so non-ASCII filenames re-pass cleanly.
+  # Capture-first (under `set +e`) so an svn failure aborts the push instead of silently looking
+  # like "no changes" — which would clean the pins and leave git ahead of an un-pushed SVN.
+  XML_PASS1="$(svn_status_xml "$REMOTE_PATH")" || { echo "Error: svn status failed; aborting (pins retained for retry)." >&2; exit 1; }
   while IFS=$'\t' read -r status filepath; do
     [[ -z "$filepath" ]] && continue
 
@@ -158,25 +132,27 @@ set +e
       '!') TO_DEL+=("$filepath") ;;
       'M') MODIFIED_TO_COMMIT+=("$filepath") ;;
     esac
-  done < <(svn_status_xml "$REMOTE_PATH")
+  done <<< "$XML_PASS1"
 
+  # `--` terminates option parsing so a filename beginning with '-' is never read as an svn flag.
   if [[ ${#TO_ADD[@]} -gt 0 ]]; then
     echo "SVN adding ${#TO_ADD[@]} new file(s)..."
-    svn add --parents "${TO_ADD[@]}" || exit 1
+    svn add --parents -- "${TO_ADD[@]}" || exit 1
   fi
   if [[ ${#TO_DEL[@]} -gt 0 ]]; then
     echo "SVN deleting ${#TO_DEL[@]} removed file(s)..."
-    svn delete "${TO_DEL[@]}" || exit 1
+    svn delete -- "${TO_DEL[@]}" || exit 1
   fi
 
   COMMIT_TARGETS=()
   # Second pass after add/delete: collect scheduled A/D entries (UTF-8 paths via --xml).
+  XML_PASS2="$(svn_status_xml "$REMOTE_PATH")" || { echo "Error: svn status (second pass) failed; aborting." >&2; exit 1; }
   while IFS=$'\t' read -r status filepath; do
     [[ -z "$filepath" ]] && continue
     if [[ "$status" == 'A' || "$status" == 'D' ]]; then
       COMMIT_TARGETS+=("$filepath")
     fi
-  done < <(svn_status_xml "$REMOTE_PATH")
+  done <<< "$XML_PASS2"
   if [[ ${#MODIFIED_TO_COMMIT[@]} -gt 0 ]]; then
     COMMIT_TARGETS+=("${MODIFIED_TO_COMMIT[@]}")
   fi
@@ -188,7 +164,7 @@ set +e
   fi
 
   echo "Committing to SVN..."
-  COMMIT_OUT="$(svn commit "${COMMIT_TARGETS[@]}" --file "$MSG_FILE" --encoding UTF-8)" || exit 1
+  COMMIT_OUT="$(svn commit --file "$MSG_FILE" --encoding UTF-8 -- "${COMMIT_TARGETS[@]}")" || exit 1
   printf '%s\n' "$COMMIT_OUT"
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'
