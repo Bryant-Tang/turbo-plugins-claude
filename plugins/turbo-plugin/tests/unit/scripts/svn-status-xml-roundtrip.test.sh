@@ -29,6 +29,7 @@ PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 COMMON="$PLUGIN_ROOT/scripts/lib/common.sh"
 SUBMIT="$PLUGIN_ROOT/scripts/submit-svn-commit.sh"
 BUILD="$PLUGIN_ROOT/scripts/build-svn-commit.sh"
+PS_SUBMIT="$PLUGIN_ROOT/scripts/Submit-SvnCommit.ps1"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
 svn_available() { command -v svn >/dev/null 2>&1 && command -v svnadmin >/dev/null 2>&1; }
@@ -91,6 +92,30 @@ test_scripts_drop_column_offset_parse() {
     fi
 }
 
+# Guard the `--` option terminator on svn add/delete/commit in BOTH submit scripts. Without `--`,
+# a leading-dash filename is parsed as svn flags. The behavioral leading-dash test below exercises
+# this only via the env-gated re-pass (skipped under a hostile console codepage / on Windows CI),
+# so this always-running structural guard is the real cross-platform regression net.
+test_submit_scripts_keep_option_terminator() {
+    # .sh submit: add/delete/commit must each keep `-- ` before the array expansion.
+    grep -q 'svn add .*-- "${TO_ADD' "$SUBMIT"
+    assertTrue 'submit-svn-commit.sh: svn add keeps -- before "${TO_ADD[@]}"' $?
+    grep -q 'svn delete .*-- "${TO_DEL' "$SUBMIT"
+    assertTrue 'submit-svn-commit.sh: svn delete keeps -- before "${TO_DEL[@]}"' $?
+    grep -q 'svn commit .*-- "${COMMIT_TARGETS' "$SUBMIT"
+    assertTrue 'submit-svn-commit.sh: svn commit keeps -- before "${COMMIT_TARGETS[@]}"' $?
+
+    # .ps1 submit: same `--` before the argv variables (grep is language-agnostic; runs on any OS).
+    if [ -f "$PS_SUBMIT" ]; then
+        grep -q 'svn add .*-- \$toAdd' "$PS_SUBMIT"
+        assertTrue 'Submit-SvnCommit.ps1: svn add keeps -- before $toAdd' $?
+        grep -q 'svn delete .*-- \$toDel' "$PS_SUBMIT"
+        assertTrue 'Submit-SvnCommit.ps1: svn delete keeps -- before $toDel' $?
+        grep -q 'svn commit .*-- \$commitTargets' "$PS_SUBMIT"
+        assertTrue 'Submit-SvnCommit.ps1: svn commit keeps -- before $commitTargets' $?
+    fi
+}
+
 # ── Capture (the actual fix): exact decoded paths for CJK and XML-special names ──
 test_svn_status_xml_captures_nonascii_and_special_paths() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
@@ -118,7 +143,9 @@ test_svn_status_xml_captures_nonascii_and_special_paths() {
 # plain non-WC directory, so a missing path is the reliable failure trigger.)
 test_svn_status_xml_returns_nonzero_on_unusable_path() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
-    _load_svn_status_xml
+    # Guard the load: if sed-extraction of svn_status_xml ever fails, calling an undefined function
+    # returns 127 and assertNotEquals would vacuously pass (false green). Fail explicitly instead.
+    _load_svn_status_xml || { fail 'svn_status_xml failed to load from common.sh'; return 0; }
     local rc
     svn_status_xml "$SB/does-not-exist" >/dev/null 2>&1
     rc=$?

@@ -34,6 +34,8 @@ BeforeAll {
 
     # Chinese filename built from explicit code points so THIS source file stays pure ASCII
     # (no BOM dependency): the .txt name is U+6E2C U+8A66 U+4E2D U+6587 U+6A94 U+540D
+    # DO NOT replace these code points with literal CJK characters: this file has no BOM and must
+    # stay pure ASCII, or PS 5.1 on a CP950 console will mojibake and fail to parse the test.
     $script:ZhName = -join @(
         [char]0x6E2C, [char]0x8A66, [char]0x4E2D, [char]0x6587, [char]0x6A94, [char]0x540D
     ) + '.txt'
