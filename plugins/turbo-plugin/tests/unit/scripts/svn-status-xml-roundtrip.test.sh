@@ -110,6 +110,67 @@ test_svn_status_xml_captures_nonascii_and_special_paths() {
     assertEquals 'entity-decodes & in path (expect a&b.txt, not a&amp;b.txt)' 'a&b.txt' "$cap_amp"
 }
 
+# ── Failure propagation: svn_status_xml must return non-zero when it cannot get status ──
+# Guards the round-1 fix (`raw="$(cd "$wc" && svn status --xml)" || return 1`): a failure must NOT
+# be swallowed and read as "no changes" (which would let git advance while SVN stays put ->
+# permanent divergence). An unusable working-copy path makes the inner `cd` fail, so the `||
+# return 1` must fire. (Deterministic and svn-version-independent: some svn builds exit 0 on a
+# plain non-WC directory, so a missing path is the reliable failure trigger.)
+test_svn_status_xml_returns_nonzero_on_unusable_path() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    _load_svn_status_xml
+    local rc
+    svn_status_xml "$SB/does-not-exist" >/dev/null 2>&1
+    rc=$?
+    assertNotEquals 'svn_status_xml returns non-zero when the working-copy path is unusable' 0 "$rc"
+}
+
+# ── Entity decode for the other XML-special chars (< > "), beyond the & case above ──
+# `svn status --xml` escapes &<>" in attribute values; the & case is covered above. < > " are
+# ILLEGAL in Windows (NTFS) filenames, so this case runs only where they are legal (Linux CI).
+test_svn_status_xml_entity_decodes_lt_gt_quote() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*) startSkipping; return 0 ;;   # < > " illegal in Windows filenames
+    esac
+    local wc out
+    wc="$(_make_wc)" || { startSkipping; return 0; }
+    _load_svn_status_xml
+    printf 'x' > "$wc/a<b.txt"
+    printf 'x' > "$wc/a>b.txt"
+    printf 'x' > "$wc/a\"b.txt"
+    out="$(svn_status_xml "$wc")"
+    assertEquals 'decodes < (expect a<b.txt)' 'a<b.txt' "$(printf '%s\n' "$out" | grep -F 'a<b.txt' | head -1 | cut -f2-)"
+    assertEquals 'decodes > (expect a>b.txt)' 'a>b.txt' "$(printf '%s\n' "$out" | grep -F 'a>b.txt' | head -1 | cut -f2-)"
+    assertEquals 'decodes " (expect a"b.txt)' 'a"b.txt' "$(printf '%s\n' "$out" | grep -F 'a"b.txt' | head -1 | cut -f2-)"
+}
+
+# ── Leading-dash filename: exercises the `--` option terminator on svn add/commit ──
+# Without `--`, svn parses `-x.txt` as options and fails. Capture is asserted unconditionally;
+# the native re-pass (svn add/commit -- ...) is env-gated like the non-ASCII re-pass below.
+test_leading_dash_filename_captures_and_repasses_with_terminator() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local wc fn out captured
+    wc="$(_make_wc)" || { startSkipping; return 0; }
+    _load_svn_status_xml
+    fn='-x.txt'
+    printf 'hello\n' > "$wc/$fn"
+    out="$(svn_status_xml "$wc")"
+    captured="$(printf '%s\n' "$out" | grep -F -- "$fn" | head -1 | cut -f2-)"
+    assertEquals 'captures leading-dash filename' "$fn" "$captured"
+
+    if ( cd "$wc" && svn add -- "$captured" >/dev/null 2>&1 && svn commit -m 'add dash' -- "$captured" >/dev/null 2>&1 ); then
+        if printf '%s\n' "$(svn_status_xml "$wc")" | grep -qF -- "$fn"; then
+            fail "leading-dash file still unversioned after commit -- terminator round-trip broken"
+        else
+            assertTrue 'leading-dash file committed via -- terminator' 0
+        fi
+    else
+        echo "WARNING: leading-dash re-pass unavailable in this shell env (console codepage / svn); capture verified above." >&2
+        assertTrue 'leading-dash re-pass env-gated (capture verified above)' 0
+    fi
+}
+
 # ── Re-pass round-trip: capture asserted always; native argv re-pass env-gated ──
 test_nonascii_path_repasses_to_svn_when_console_allows() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi

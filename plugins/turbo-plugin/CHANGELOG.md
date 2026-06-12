@@ -12,6 +12,7 @@
 
 - test: 新增中文(非 ASCII)檔名 push-to-svn 回歸測試(`svn-status-xml-roundtrip.test.sh` + `Svn-StatusXml-Roundtrip.test.ps1`)——含結構守衛(腳本須維持 `svn status --xml` / ANSI `OutputEncoding` 修法,防被 revert)+ 真實 svn 行為測試(建 live svn working copy、放中文檔名;`.sh` 直接 `sed` 抽出腳本本體的 `svn_status_xml` 函式測真碼)。**核心斷言是 capture**(`svn_status_xml` 把中文檔名擷取成 byte-for-byte 正確的 UTF-8 path,這正是 `--xml` 修法的本體,deterministic);`svn add`/`svn commit` 的 argv re-pass 因 svn.exe 跟 console codepage 走(PS orchestrator 強制 console=65001 會讓 MSYS native argv mangle、與擷取正確性無關)改為 **env-gated**:環境支援才驗、不支援印 WARNING 跳過(真實 Claude Code Bash tool / CI Linux 都支援)。`svn`/`svnadmin` 缺席則 SKIP。補上舊測試「在 UTF-8 CI 跑綠卻漏掉 Big5-specific bug」的缺口
 - test: `/ce-code-review` 自審後強化 round-trip 測試——新增 `&` 檔名 entity-decode 回歸 case(擋住上面那個 P1)、capture 等值改為**無條件斷言**(不被 env-gated re-pass 遮蓋,擋住「擷取錯也靜默過」)、結構守衛收緊(任一支腳本還留 `${line:8}` 即 fail;PS Submit 守衛改驗實際 assignment 而非 comment 子字串)、PS svn setup 包 `try/catch`(EAP=Stop 下 native exe 寫 stderr 會 throw,改為 graceful SKIP)
+- test: `/ce-code-review` 第二輪後再補 round-trip 覆蓋——失敗傳播(`svn_status_xml` 路徑不可用時須 `return 1`、不可被當「無變更」吞掉,守住 git/SVN 不分歧)、leading-dash 檔名(驗 `--` terminator,capture 無條件斷言、re-pass env-gated)、`<` / `>` / `"` 三個 XML 特殊字元的 entity decode(這些字元在 Windows 檔名非法,故該 case 只在 Linux CI 跑、Windows 自我 SKIP)
 
 ### Changed
 
@@ -30,6 +31,8 @@
 - fix: `svn_status_xml` 補 XML entity 解碼(`&` / `<` / `>` / `"`)——`svn status --xml` 會把屬性值 escape(`&`→`&amp;`),上面 `--xml` 修法原本未解碼 → 含這些字元的檔名 re-pass 給 `svn add/commit` 會「not under version control」(`/ce-code-review` 自審 adversarial 實證)。注意 bash `${//}` 替換字串裡的 `&` 代表「整段 match」,須寫 `\&` 才是字面 `&`
 - fix: `svn_status_xml` 在 `svn status --xml` 失敗時 `return 1`,且 `submit-svn-commit.sh` 的 drift-guard 與 commit subshell 改 capture-first(`|| exit 1`)——還原 `--xml` 重構時被移除的「`svn status` 失敗即中止」守衛;否則 SVN server down 時函式回空、被當「無變更」→ git merge commit 已完成但 SVN 未更新、pin 被清掉,造成 git/SVN 永久分歧(自審 reliability 實證)
 - fix: `svn add` / `svn delete` / `svn commit` 補 `--` 終止選項解析(`.sh` + `.ps1`),避免以 `-` 開頭的檔名被當成 svn flag(自審 adversarial)
+- fix(test): `Svn-StatusXml-Roundtrip.test.ps1` 的註解含字面中文卻無 BOM——違反「含非 ASCII 的 `.ps1` 須存 UTF-8 with BOM」,在 zh-TW PS 5.1(CP950)會 mojibake → parser fail、使該回歸測試自身載不進來;改把人類可讀的中文 gloss 換成對應 code point(`U+6E2C …`),全檔回到純 ASCII、無需 BOM、與 `.sh` 手足一致(第二輪 `/ce-code-review` 自審 project-standards)
+- fix(doc): `Test-EncodingSupport.ps1` header 的 `RECOMMENDATION` token 註解寫成 `<UPGRADE_PS7|ENABLE_WIN10_UTF8|OK>`(像三個分開的值),但實際 emit 是單一合併 token `UPGRADE_PS7_OR_ENABLE_WIN10_UTF8`;更正註解避免 consumer 照子字串 match 落空(第二輪自審 api-contract)
 
 ## [0.5.1] - 2026-06-07
 

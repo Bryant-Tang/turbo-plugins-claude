@@ -26,7 +26,7 @@ try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 #   ANSI_CODEPAGE=<CP_ACP webname e.g. "windows-1252" or "utf-8">
 #   OEM_CODEPAGE=<CP_OEM webname>
 #   ARGV_SAFE_FOR_UNICODE=<True|False>
-#   RECOMMENDATION=<UPGRADE_PS7|ENABLE_WIN10_UTF8|OK>
+#   RECOMMENDATION=<OK|UPGRADE_PS7_OR_ENABLE_WIN10_UTF8>
 
 $psVersion = $PSVersionTable.PSVersion
 $psMajor = $psVersion.Major
