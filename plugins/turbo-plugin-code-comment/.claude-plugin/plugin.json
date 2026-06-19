@@ -1,0 +1,9 @@
+{
+  "name": "turbo-plugin-code-comment",
+  "description": "C# 與 JavaScript / TypeScript 的註解撰寫慣例 skill 集(tp-csharp-comment / tp-js-comment)。純 skill,無 script、不碰 .turbo-plugin/ 狀態、無需 setup。自單體 turbo-plugin v0.6.0 拆出。",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "Bryant Tang"
+  }
+}
