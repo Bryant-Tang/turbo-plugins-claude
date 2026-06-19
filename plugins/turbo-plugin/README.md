@@ -35,7 +35,7 @@
 | `/tp-run-dotnet-framework-web` | 啟動 IIS Express 跑專案,內含 listening 健康檢查 + 跨 worktree self-heal |
 | `/tp-stop-dotnet-framework-web` | 停止對應 project identity 的 IIS Express instance(跨 worktree 識別) |
 | `/tp-publish-dotnet-framework-web` | MSBuild publish + pack-content 整套發佈 |
-| `/tp-suggest-ignore` | 偵測 untracked 檔案,建議加入 `.gitignore` + `svn:ignore` |
+| `/tp-suggest-ignore` | 偵測 untracked 檔案建議加入 `.gitignore`,並可把已不該追蹤的檔從 SVN un-track |
 | `/tp-csharp-comment` | 對 C# 程式碼套用本專案註解 convention |
 | `/tp-js-comment` | 對 JS / TS(含 `.vue` / `.cshtml` `<script>`)套用本專案註解 convention |
 | `/tp-commit-msg` | 撰寫 / 檢查 commit message 語意(type 依 commitlint;禁 SHA / 本地識別碼) |

@@ -4,6 +4,23 @@
 
 格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.6.0] - 2026-06-20
+
+> svn:ignore 縮減為 bridge 內部固定 `.git`,移除全部使用者層 svn:ignore 管理。`.git` 之所以不進 SVN,靠的是這個固定 `svn:ignore=.git`(`svn status` 會隱藏它,故進不了 push 的 add-set);其餘該排除的檔一律由 `.gitignore` + push 腳本的 `git check-ignore` 決定,讓 remote-svn 用起來更接近 remote git。
+
+### Removed
+
+- `Set-SvnIgnore.ps1` / `set-svn-ignore.sh`(純 svn:ignore CRUD 腳本)連同其專屬測試 `Set-SvnIgnore.test.ps1` / `set-svn-ignore.test.sh`。
+- `tp-suggest-ignore` 的 `--add-svn` / `--remove-svn` direct-mode、`--path` 參數、analysis mode 的「SVN Ignore」分類,以及 Inconsistency / Un-track 執行流程尾端多餘的 svn:ignore 寫入。
+
+### Changed
+
+- `New-RemoteBridge` 建 bridge 時的 svn:ignore 由「繼承 remote-svn-main / 預設 `.git`+`.gitignore`」改為**固定 `.git`**——這同時修正了「繼承值可能不含 `.git` → `.git` 外漏」的潛在問題;`svn rm --keep-local .git`、bootstrap commit、main `.gitignore` 複製均保留。
+- `tp-setup` case (a) 的 svn:ignore 子步驟(7f)由多 pattern 簡化為固定 `.git`,並補上一個明確的 `svn commit`(7g)把它固化——原程序在 propset 後並無 commit。
+- `tp-suggest-ignore` 改為只管 `.gitignore` 與 SVN un-track(`svn delete`);使用者層 svn:ignore 管理整個移除。
+- `tp-push-to-svn` 文件:空 svn commit 的成因敘述由「檔案全被 `svn:ignore`」更正為「檔案全被 `.gitignore`(git check-ignore)過濾」。
+- 測試與測試文件對齊:`New-RemoteBridge` 測試新增「svn:ignore = 固定 .git」斷言;`tp-suggest-ignore` skill-tests 整段重塑。
+
 ## [0.5.2] - 2026-06-11
 
 > 真實環境(zh-TW Windows + PowerShell 5.1 + Big5 codepage)手動實測 v0.5.x 抓到的 push-to-svn 與 tp-setup 缺陷修正。

@@ -190,7 +190,7 @@ Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 gi
 **Trigger rule(KTD7 / R29 — 判準是「有無產出 git merge commit」,不是「svn commit 有無內容」)**:
 
 - 只要 Step 2 的 prepare 階段找到 **≥1 個新 commit** 可 merge(即 `git log <remote-svn-ref>..<branch>` 非空、prepare 沒有印 `Nothing to push`,而是實際 stage 了一個 git merge commit)→ **詢問 release tag**。
-- 這代表:即使 Step 6 回 `No changes to commit to SVN`(所有變更檔案都被 `svn:ignore`,svn commit 為空),**只要 git 那側仍產出了 merge commit,就照樣詢問** release tag。tag 指向的是 `remote-svn/<branch>` 這條 git 分支的 tip,與 svn 是否有內容無關。
+- 這代表:即使 Step 6 回 `No changes to commit to SVN`(所有變更檔案都被 `.gitignore` / push 腳本的 git check-ignore 過濾,svn commit 為空),**只要 git 那側仍產出了 merge commit,就照樣詢問** release tag。tag 指向的是 `remote-svn/<branch>` 這條 git 分支的 tip,與 svn 是否有內容無關。
 - 反之,若 prepare 階段就 `Nothing to push`(git、svn 皆無變更、根本沒有 merge commit 產出)→ **直接跳過 Step 7**,不詢問。
 
 當觸發條件成立時,用 `AskUserQuestion`:
@@ -223,7 +223,7 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
 - **UTF-8 no-BOM commit message**:Step 6 script 已正確處理,**不要**改成 `svn commit -m "..."`(Windows CP_ACP 會 mangle 中文)。
 - **不安裝 husky / commitlint hook**:本 skill 是篩選 source-of-truth,不需要 git hook enforce。
 - **Pull-from-svn 是 prerequisite**:remote SVN HEAD 不 up-to-date 直接拒跑,讓使用者先 `/tp-pull-from-svn`。
-- **Release tag 判準 = 有無 git merge commit**(Step 7):prepare 階段只要產出 merge commit 就詢問 tag,**即使 svn commit 為空**(檔案全被 `svn:ignore`)也照問;唯有 `Nothing to push`(根本無 merge commit)時才跳過。tag ref 用新命名 `remote-svn/<branch>`,不是舊的 `remote/<branch>`。
+- **Release tag 判準 = 有無 git merge commit**(Step 7):prepare 階段只要產出 merge commit 就詢問 tag,**即使 svn commit 為空**(檔案全被 `.gitignore` / git check-ignore 過濾)也照問;唯有 `Nothing to push`(根本無 merge commit)時才跳過。tag ref 用新命名 `remote-svn/<branch>`,不是舊的 `remote/<branch>`。
 
 ## Completion Checks
 
