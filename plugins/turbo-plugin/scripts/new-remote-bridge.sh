@@ -128,11 +128,10 @@ if [[ -e "$REMOTE_PATH/.git" ]]; then
   (cd "$REMOTE_PATH" && svn rm --keep-local '.git' 2>/dev/null || true)
 fi
 
-IGNORE_TO_APPLY=$'.git\n.gitignore'
-if [[ -d "$REMOTE_MAIN_PATH" ]]; then
-  INHERITED="$(svn propget svn:ignore "$REMOTE_MAIN_PATH" 2>/dev/null || true)"
-  if [[ -n "$INHERITED" ]]; then IGNORE_TO_APPLY="$INHERITED"; fi
-fi
+# svn:ignore is fixed to exactly `.git` (see New-RemoteBridge.ps1 for rationale): it is the
+# only must-exclude path the push scripts' git check-ignore filter cannot catch. No
+# inheritance from remote-svn-main -- a fixed value avoids inheriting a stale set that omits `.git`.
+IGNORE_TO_APPLY='.git'
 
 # Sync main's current .gitignore into the bridge BEFORE svn commit (prevents first-push
 # add/add conflict). Independent of any .svn handling; retained.
@@ -144,7 +143,7 @@ fi
 (
   cd "$REMOTE_PATH"
   svn propset svn:ignore "$IGNORE_TO_APPLY" '.'
-  svn commit -m 'svn:ignore: copy from remote-svn-main; sync .gitignore from main'
+  svn commit -m 'svn:ignore=.git; sync .gitignore from main; drop .git from svn'
 )
 
 # All SVN steps succeeded; disable the rollback trap.

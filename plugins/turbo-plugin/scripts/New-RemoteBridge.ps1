@@ -128,21 +128,13 @@ try {
             Pop-Location
         }
 
-        $ignoreToApply = '.git' + [System.Environment]::NewLine + '.gitignore'
-        if (Test-Path -LiteralPath $remotemainPath -PathType Container) {
-            # `2>$null` alone does not stop PS 5.1 + StrictMode + EAP=Stop from treating
-            # svn's W200017 warning as a terminating NativeCommandError; wrap in try/catch
-            # so "Property 'svn:ignore' not found" is swallowed at the call site.
-            $inherited = ''
-            try {
-                $inherited = (& svn propget svn:ignore $remotemainPath 2>$null | Out-String).Trim()
-            } catch {
-                $inherited = ''
-            }
-            if (-not [string]::IsNullOrWhiteSpace($inherited)) {
-                $ignoreToApply = $inherited
-            }
-        }
+        # svn:ignore is fixed to exactly `.git` -- the one must-exclude path that the push
+        # scripts' git check-ignore filter cannot catch (`.git` is not git-ignored yet shows
+        # as `?` in `svn status`). Everything else the bridge should exclude
+        # (bin/obj/.turbo-plugin/worktrees/ ...) lives in .gitignore and is filtered by
+        # git check-ignore. No inheritance from remote-svn-main: a single fixed value avoids
+        # inheriting a stale set that may omit `.git`.
+        $ignoreToApply = '.git'
         # Sync main's current .gitignore into the bridge BEFORE svn commit so the bridge's
         # .gitignore matches main git HEAD (prevents a first-push add/add conflict). This
         # .gitignore content sync is independent of any .svn handling and is retained.
@@ -157,7 +149,7 @@ try {
         try {
             & svn propset svn:ignore $ignoreToApply '.'
             if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
-            & svn commit -m 'svn:ignore: copy from remote-svn-main; sync .gitignore from main'
+            & svn commit -m 'svn:ignore=.git; sync .gitignore from main; drop .git from svn'
             if ($LASTEXITCODE -ne 0) { throw 'svn commit svn:ignore failed' }
         } finally {
             Pop-Location
