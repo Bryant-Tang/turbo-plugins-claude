@@ -32,7 +32,9 @@ LIB_DIR="$TESTS_DIR/lib"
 UNIT_DIR="$TESTS_DIR/unit"
 FIXTURES_DIR="$TESTS_DIR/fixtures"
 REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd)"
-SCRIPTS_DIR="$REPO_ROOT/plugins/turbo-plugin/scripts"
+# SCRIPTS_DIR is THIS plugin's own scripts/ (sibling of tests/), not a hardcoded plugin
+# name — so a copied/renamed orchestrator auto-targets its own plugin (U2-U5).
+SCRIPTS_DIR="$(cd "$TESTS_DIR/.." && pwd)/scripts"
 LINT_PS1="$REPO_ROOT/tools/lint-ps-compat.ps1"
 RESET_SH="$FIXTURES_DIR/reset/reset-fixture.sh"
 SHUNIT2="$LIB_DIR/shunit2"
@@ -52,7 +54,14 @@ echo "invoke-script-tests: TESTS_DIR = $TESTS_DIR"
 echo ""
 
 # ─── Step 1: Lint pre-flight (skippable; PS-only concern) ────────────────────
-if [[ "$SKIP_PREFLIGHT" -eq 0 ]]; then
+if [[ "$SKIP_PREFLIGHT" -ne 0 ]]; then
+    echo "Pre-flight lint: SKIPPED (SKIP_PREFLIGHT=1)"
+    echo ""
+elif [[ ! -d "$SCRIPTS_DIR" ]]; then
+    # No scripts/ dir (pure-skill plugin, e.g. code-comment): nothing to lint (U5).
+    echo "Pre-flight lint: SKIPPED (no scripts/ dir at $SCRIPTS_DIR — pure-skill plugin)"
+    echo ""
+else
     echo "─── Pre-flight lint ─────────────────────────────────────────────────"
     if [[ -z "$POWERSHELL" ]]; then
         echo "Pre-flight: no PowerShell interpreter; skipping lint (PS 5.1/Windows concern, covered by the Windows job)."
@@ -65,9 +74,6 @@ if [[ "$SKIP_PREFLIGHT" -eq 0 ]]; then
         fi
         echo "Pre-flight: PASS"
     fi
-    echo ""
-else
-    echo "Pre-flight lint: SKIPPED (SKIP_PREFLIGHT=1)"
     echo ""
 fi
 

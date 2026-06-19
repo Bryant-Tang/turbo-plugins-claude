@@ -54,7 +54,9 @@ $unitDir     = [System.IO.Path]::Combine($scriptDir, 'unit')
 $fixturesDir = [System.IO.Path]::Combine($scriptDir, 'fixtures')
 $resetPs1    = [System.IO.Path]::Combine($fixturesDir, 'reset', 'Reset-Fixture.ps1')
 $lintPs1     = [System.IO.Path]::Combine($RepoRoot, 'tools', 'lint-ps-compat.ps1')
-$scriptsDir  = [System.IO.Path]::Combine($RepoRoot, 'plugins', 'turbo-plugin', 'scripts')
+# scriptsDir is THIS plugin's own scripts/ (sibling of tests/), not a hardcoded plugin
+# name — so a copied/renamed orchestrator auto-targets its own plugin (U2-U5).
+$scriptsDir  = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '..', 'scripts'))
 
 Write-Output "Invoke-ScriptTests: RepoRoot = $RepoRoot"
 Write-Output "Invoke-ScriptTests: unitDir  = $unitDir"
@@ -64,8 +66,27 @@ Write-Output ''
 $sandboxBase = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '.sandbox', 'sandboxes'))
 $null = New-Item -ItemType Directory -Path $sandboxBase -Force
 
-# ─── Step 1: Lint pre-flight (skippable) ─────────────────────────────────────
-if (-not $SkipPreflight) {
+# ─── No-scripts plugin detection (U5) ────────────────────────────────────────
+# A pure-skill plugin (e.g. code-comment) has no scripts/ dir and no *.test.ps1. It
+# must still go green: skip the lint pre-flight (nothing to lint) and skip the Pester
+# framework gate (no Pester run to gate, so a Pester-less runner must not be forced red).
+$hasScriptsDir = [System.IO.Directory]::Exists($scriptsDir)
+$hasPs1Tests = $false
+foreach ($base in @($unitDir, $fixturesDir)) {
+    if ([System.IO.Directory]::Exists($base) -and
+        @(Get-ChildItem -Path $base -Recurse -Filter '*.test.ps1' -ErrorAction SilentlyContinue).Count -gt 0) {
+        $hasPs1Tests = $true; break
+    }
+}
+
+# ─── Step 1: Lint pre-flight (skippable; also skipped when there is no scripts/) ──
+if ($SkipPreflight) {
+    Write-Output 'Pre-flight lint: SKIPPED (-SkipPreflight)'
+    Write-Output ''
+} elseif (-not $hasScriptsDir) {
+    Write-Output "Pre-flight lint: SKIPPED (no scripts/ dir at $scriptsDir — pure-skill plugin)"
+    Write-Output ''
+} else {
     Write-Output '─── Pre-flight lint ─────────────────────────────────────────────────'
     if (-not [System.IO.File]::Exists($lintPs1)) {
         throw "Pre-flight: lint-ps-compat.ps1 not found at $lintPs1"
@@ -77,24 +98,27 @@ if (-not $SkipPreflight) {
     }
     Write-Output 'Pre-flight: PASS'
     Write-Output ''
-} else {
-    Write-Output 'Pre-flight lint: SKIPPED (-SkipPreflight)'
-    Write-Output ''
 }
 
-# ─── Step 2: Framework gate (ALWAYS — not gated by -SkipPreflight, R3-3) ──────
-Write-Output '─── Framework gate (Pester >= 5.0) ──────────────────────────────────'
-try {
-    Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
-    $pesterVer = (Get-Module Pester | Select-Object -First 1).Version
-    Write-Output "Pester $pesterVer present."
+# ─── Step 2: Framework gate (ALWAYS when .ps1 tests exist — not gated by ──────
+# -SkipPreflight, R3-3). Skipped only when there are zero *.test.ps1 (pure-skill plugin).
+if ($hasPs1Tests) {
+    Write-Output '─── Framework gate (Pester >= 5.0) ──────────────────────────────────'
+    try {
+        Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
+        $pesterVer = (Get-Module Pester | Select-Object -First 1).Version
+        Write-Output "Pester $pesterVer present."
+        Write-Output ''
+    } catch {
+        Write-Output 'Framework gate FAILED: Pester 5.0+ is not available.'
+        Write-Output '  Windows PowerShell 5.1 ships Pester 3.4; install side-by-side with:'
+        Write-Output '    Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck'
+        Write-Output "  (Import-Module Pester -MinimumVersion 5.0 error: $($_.Exception.Message))"
+        exit 1
+    }
+} else {
+    Write-Output 'Framework gate (Pester): SKIPPED (no *.test.ps1 — pure-skill plugin)'
     Write-Output ''
-} catch {
-    Write-Output 'Framework gate FAILED: Pester 5.0+ is not available.'
-    Write-Output '  Windows PowerShell 5.1 ships Pester 3.4; install side-by-side with:'
-    Write-Output '    Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck'
-    Write-Output "  (Import-Module Pester -MinimumVersion 5.0 error: $($_.Exception.Message))"
-    exit 1
 }
 
 # ─── Step 3: Resolve BashPath (Windows only; non-Windows does NOT resolve) ────
