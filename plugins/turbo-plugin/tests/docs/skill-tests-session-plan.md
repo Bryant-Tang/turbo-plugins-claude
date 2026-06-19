@@ -73,16 +73,16 @@ fail-then-fix re-run = 13 個 session slot)。
 - **session 結束 state**:已跑過 setup case (a) 的 fixture
 - **session 結束 setup（供 session 4 用）**:orchestrator 在主 worktree 先 `git checkout -b test-1` 再呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`，`.sh` 用 `new-remote-bridge.sh`）建 test-1 bridge，建完 `git checkout main`，使 session 4 有 remote-test-1 worktree（helper 不建工作分支，故須先 `git checkout -b test-1`）
 
-### Session 4 — tp-suggest-ignore(cross-worktree + rollback)
+### Session 4 — tp-suggest-ignore(.gitignore 管理 + un-track)
 
 - **預估時間**:20-30 分鐘
 - **fixture pre-state**:session 3 結束狀態
 - **cases**:
-  - P2-tp-suggest-ignore-1(analysis mode happy)
-  - P2-tp-suggest-ignore-2(direct --add-svn cross-worktree)
-  - P2-tp-suggest-ignore-3(rollback when remote-test-1 propset 失敗)
-  - P2-tp-suggest-ignore-4(中文 svn:ignore pattern)
-- **session 結束 state**:remote-main + remote-test-1 worktree svn:ignore 含測試 patterns(case 3 rollback 後不含 obj/,case 1+2+4 後含 `.env` / `.claude/` / `obj/` / `中文資料夾/`)
+  - P2-tp-suggest-ignore-1(analysis mode happy — Git Ignore)
+  - P2-tp-suggest-ignore-2(direct --add-git)
+  - P2-tp-suggest-ignore-3(Un-track Option A 無 svn:ignore 寫入)
+  - P2-tp-suggest-ignore-4(--add-svn 已移除 → 回報 unknown flag)
+- **session 結束 state**:`.gitignore` 含測試 patterns(`.env`、`*.log`);case 3 已從 SVN un-track 一個 git/SVN 雙追蹤檔(remote-svn worktree 有一筆 svn delete commit);全程無任何 svn:ignore 寫入
 
 ### Session 5 — tp-build + tp-run + tp-stop(同 IIS 環境連續)
 
@@ -170,7 +170,7 @@ flowchart LR
 
 - **session 2 → session 3 之間** 推薦做 `Reset-Fixture.ps1` 但**不**動 `~/.claude/settings.json`(LSP / CE / agent teams / TUI 留著到 Skill tests 結束)
 - **session 4 → session 5** 不必 reset(同 fixture 連續測)
-- **session 6 → session 7** 推薦 `Reset-Fixture.ps1` 重置 SVN history(避免 session 4 的 svn-ignore commits 影響 push test 結果)
+- **session 6 → session 7** 推薦 `Reset-Fixture.ps1` 重置 SVN history(避免 session 4 的 svn delete commit 影響 push test 結果)
 - **session 7 → session 8 → session 9 → session 10** 各自獨立 fixture(都需要 reset)
 
 ---

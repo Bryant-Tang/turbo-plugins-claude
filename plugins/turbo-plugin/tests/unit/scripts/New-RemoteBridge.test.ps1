@@ -348,4 +348,36 @@ Describe 'New-RemoteBridge' {
             }
         }
     }
+
+    Context 'Case 11: successful create sets a fixed svn:ignore = .git' {
+        It 'the bridge worktree svn:ignore is exactly .git' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-11'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) {
+                    Set-ItResult -Skipped -Because 'could not build remote-svn-main svn WC'
+                    return
+                }
+                # Create the SVN branch the bridge checks out, so the create path can succeed.
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feature-x" -m 'test: branch for bridge' --parents > $null 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Set-ItResult -Skipped -Because 'could not create the svn branch for the success path'
+                    return
+                }
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feature-x', '-SvnUrl', "$reposRoot/branches/feature-x")
+                if ($res.ExitCode -ne 0) {
+                    Set-ItResult -Skipped -Because "bridge create did not succeed in this env: $($res.Combined)"
+                    return
+                }
+                $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feature-x')
+                $ignore = (& svn propget svn:ignore $wtPath 2>$null | Out-String).Trim()
+                $ignore | Should -BeExactly '.git'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
 }

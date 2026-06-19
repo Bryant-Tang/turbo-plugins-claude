@@ -297,7 +297,7 @@ PASS / FAIL / PARTIAL。
 | P2-tp-push-to-svn-2 | 中文 commit push | 接 case 1 + main 多 1 commit subject 「fix: 處理 SVN 中文檔名相容性」(字典 3.4) | /tp-push-to-svn --branch main → SVN body 含中文 → svn commit --file UTF-8 no-BOM | SVN r22 寫入 / `svn log -r 22` text-equal「fix: 處理 SVN 中文檔名相容性」(text-equal not byte-equal — Windows propvalue codepage 限制) | AE7 + R18 中文 |
 | P2-tp-push-to-svn-3 | docs/chore 全篩除(empty body) | 接 case 2 + main 多 2 commit(`docs: 更新 README` + `chore: bump version`) | /tp-push-to-svn → 兩 commit 都被 silent 篩除 → Step 4 body 寫「本次推送沒有程式碼層級的異動」 | Step 5 confirm 顯示 kept = 0 / removed = 2 / SVN body 含 fallback 字串 / r23 寫入 | (Step 3.4 silent-filter behavior) |
 | P2-tp-push-to-svn-4 | Unknown type prompt 取消 | 接 case 3 + main 多 1 commit subject `update parser logic`(無 conventional prefix) | /tp-push-to-svn → prepare → unknown type 偵測 → AskUserQuestion(保留 / 篩除 / 取消)→ 使用者選「取消」→ `git merge --abort` cleanup | AskUserQuestion 出現 / 使用者選取消 / remote-svn-main worktree `git status` 為空(merge 已 abort)/ SVN 沒新 revision | (Step 3.5 cancel path) |
-| P2-tp-push-to-svn-5 | Step 7 release tag — 檔案全 svn:ignore 仍產出 merge commit | 接 case 1 後重置 push 環境 + main 多 1 commit,該 commit 只新增一個已被 `svn:ignore` 的檔(如 `obj/junk.tmp`,先用 tp-suggest-ignore 把 `obj/` 加進 svn:ignore)| /tp-push-to-svn --branch main → prepare 產出 git merge commit(`git log remote-svn/main..main` 非空)→ Step 6 svn commit 為空(`No changes to commit to SVN`)→ **Step 7 仍詢問** release tag → 使用者選 Yes → Tag-Release 建 `main-release-<date>-NNN` | prepare stage 了 merge commit / Step 6 stdout 含 `No changes to commit to SVN` / Step 7 AskUserQuestion 出現(Yes/No)/ 選 Yes 後 `git tag -l "main-release-*"` 出現新 tag / `git rev-parse <tag>` == `git rev-parse remote-svn/main` | AE1(merge commit → 仍問 tag) |
+| P2-tp-push-to-svn-5 | Step 7 release tag — 檔案全被 .gitignore 過濾仍產出 merge commit | 接 case 1 後重置 push 環境 + main 多 1 commit,該 commit 只新增一個已被 `.gitignore` 忽略的檔(如 `obj/junk.tmp`;`obj/` 由 tp-setup 寫入 `.gitignore`,push 腳本 git check-ignore 會過濾)| /tp-push-to-svn --branch main → prepare 產出 git merge commit(`git log remote-svn/main..main` 非空)→ Step 6 svn commit 為空(`No changes to commit to SVN`)→ **Step 7 仍詢問** release tag → 使用者選 Yes → Tag-Release 建 `main-release-<date>-NNN` | prepare stage 了 merge commit / Step 6 stdout 含 `No changes to commit to SVN` / Step 7 AskUserQuestion 出現(Yes/No)/ 選 Yes 後 `git tag -l "main-release-*"` 出現新 tag / `git rev-parse <tag>` == `git rev-parse remote-svn/main` | AE1(merge commit → 仍問 tag) |
 | P2-tp-push-to-svn-6 | Step 7 nothing-to-push → 不問 tag | 接 case 5 後不再多任何 commit(main 與 remote-svn/main 已對齊) | /tp-push-to-svn --branch main → prepare 印 `Nothing to push`(無 merge commit 產出)→ **直接跳過 Step 7**,不詢問 release tag | prepare stdout 含 `Nothing to push` / **沒有** Step 7 AskUserQuestion / `git tag -l "main-release-*"` 數量與 case 5 後相同(無新增) | AE2(無新 commit → 不問 tag) |
 
 ### 失敗常見 patterns
@@ -307,7 +307,7 @@ PASS / FAIL / PARTIAL。
 - **`.commitlintrc.json` 不在時靜默全篩光**:SKILL.md 明文「fallback 用 default 12 類 + stderr notice,不靜默失敗」。若 fixture 中 `.commitlintrc.json` 刪掉測 happy case agent 把所有 commit 篩光 → FAIL。
 - **中文 commit msg mangle**:case 2 SVN r22 msg 變「fix: 處理 SVN ?? 檔名 ???」→ FAIL(可能 script 沒用 `--file <utf8-no-bom-tmp> --encoding UTF-8`,改成 `-m "..."`,中文被 CP_ACP mangle)。
 - **race condition guard 失效**:SHA pin guard 沒做 → 在 Step 5 Accept 前手動 `git commit` 新 commit → Step 6 commit 沒 throw `Branch ... has new commits since prepare` → FAIL(這個 test 在 Test Scenarios manual case,P2 不必硬編但可順便驗)。
-- **Step 7 判準用「svn commit 有無內容」而非「有無 merge commit」**:case 5 檔案全 `svn:ignore`、svn commit 為空,但 prepare 仍產出 git merge commit → 若 agent 因 `No changes to commit to SVN` 就**不問** release tag → FAIL(KTD7 / R29 判準是「有無產出 git merge commit」)。
+- **Step 7 判準用「svn commit 有無內容」而非「有無 merge commit」**:case 5 檔案全被 `.gitignore`(git check-ignore)過濾、svn commit 為空,但 prepare 仍產出 git merge commit → 若 agent 因 `No changes to commit to SVN` 就**不問** release tag → FAIL(KTD7 / R29 判準是「有無產出 git merge commit」)。
 - **nothing-to-push 仍問 tag**:case 6 prepare 印 `Nothing to push`(根本無 merge commit)→ 若 agent 仍跳出 Step 7 release tag prompt → FAIL。
 - **tag ref 用舊命名**:Step 7 建的 tag 指向 `remote/main`(舊命名)而非 `remote-svn/main` → FAIL。
 
@@ -383,9 +383,11 @@ PASS / FAIL / PARTIAL。
 > - remote-svn-main worktree `git status --porcelain` 為空(merge 已 abort)
 > - SVN log 仍只有 r23(沒 r24)
 
-> **Setup**(case 5):接 case 4 後重置 push 環境(orchestrator 跑 `Reset-Fixture.ps1` + setup case (a),SVN HEAD = r20)。先用 `/tp-suggest-ignore --add-svn "obj/"` 把 `obj/` 加進 remote-svn-main 的 svn:ignore。然後在 main 多 1 commit,內容只新增一個被忽略的檔:
+> **Setup**(case 5):接 case 4 後重置 push 環境(orchestrator 跑 `Reset-Fixture.ps1` + setup case (a),SVN HEAD = r20)。`obj/` 已由 tp-setup 寫入 `.gitignore`(無需另設 svn:ignore)。在 main 多 1 commit,內容只含一個被 `.gitignore` 忽略的檔——需 force-add 才進得了 git:
 > ```
-> # 新增 obj/junk.tmp(會被 svn:ignore obj/ 忽略),git add . ; git commit -m "chore: 暫存產物"
+> # 新增 obj/junk.tmp;force-add 繞過 .gitignore 讓它進 git commit:
+> # git add -f obj/junk.tmp ; git commit -m "chore: 暫存產物"
+> # (push 時 obj/junk.tmp 仍被 git check-ignore 過濾 → svn commit 空,但 git merge commit 仍產出)
 > ```
 > 確認 main worktree clean。
 >
@@ -396,7 +398,7 @@ PASS / FAIL / PARTIAL。
 >
 > **觀察重點**:
 > - prepare 階段產出 git merge commit(`git log remote-svn/main..main` 非空)
-> - Step 6 svn commit stdout 含 `No changes to commit to SVN`(檔案全被 `svn:ignore`)
+> - Step 6 svn commit stdout 含 `No changes to commit to SVN`(檔案全被 `.gitignore` / git check-ignore 過濾)
 > - **Step 7 仍詢問** release tag(AskUserQuestion Yes/No)— 判準是「有 merge commit」非「svn 有內容」
 > - 使用者選 Yes
 > - Tag-Release 印 `Created tag: main-release-<yyyy-MM-dd>-NNN`
@@ -423,7 +425,7 @@ PASS / FAIL / PARTIAL。
 | P2-tp-push-to-svn-2 | 中文 commit push | 接 1 + 中文 fix commit | /tp-push-to-svn --branch main | r22 中文 msg text-equal | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-push-to-svn-3 | docs/chore 全篩除 | 接 2 + 2 commit (docs/chore) | /tp-push-to-svn --branch main | body 是 fallback 字串 / r23 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-push-to-svn-4 | Unknown type 取消 | 接 3 + 1 commit (`update parser`) | /tp-push-to-svn --branch main | AskUserQuestion 取消 / merge --abort | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-push-to-svn-5 | Step 7 tag — svn:ignore 仍有 merge commit | reset+setup + obj/ svn:ignore + 1 commit 只加忽略檔 | /tp-push-to-svn --branch main | svn 空但仍問 tag → 建 main-release-* on remote-svn/main | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-5 | Step 7 tag — .gitignore 過濾後仍有 merge commit | reset+setup + obj/ 已在 .gitignore + 1 commit force-add 忽略檔 | /tp-push-to-svn --branch main | svn 空但仍問 tag → 建 main-release-* on remote-svn/main | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 | P2-tp-push-to-svn-6 | Step 7 nothing-to-push 不問 tag | 接 5,無新 commit | /tp-push-to-svn --branch main | `Nothing to push` → 跳過 Step 7,無新 tag | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
@@ -863,28 +865,28 @@ PASS / FAIL / PARTIAL。
 
 ## tp-suggest-ignore
 
+> **變更(0.6.0)**:svn:ignore 使用者層管理已移除——`--add-svn`/`--remove-svn`、analysis mode 的「SVN Ignore」分類、`Set-SvnIgnore` 腳本均不復存在。skill 現只管 `.gitignore` 與 SVN un-track(`svn delete`)。下列 case 已對應重塑。
+
 ### Cases
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-suggest-ignore-1 | Analysis mode happy(Git Ignore + SVN Ignore) | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge + 主 worktree 多新檔 `.env`(untracked) + 主 worktree git-tracked `.claude/settings.json` | /tp-suggest-ignore(無參數)→ analysis mode → Step 2-3 classify → Git Ignore 列 `.env` / SVN Ignore 列 `.claude/` → Step 4 prompt(option A apply all / B per-item / C skip) → 使用者 apply all → Step 5 寫 .gitignore + commit + svn-ignore.ps1 -Add `.claude/` 全 remote worktree | `.gitignore` 末尾含 `.env` 與 `.claude/` / `git log --oneline` 含 `chore: update .gitignore` commit / `svn propget svn:ignore .` 在 remote-svn-main + remote-svn-test-1 都含 `.claude/` / 2 個 SVN commit(r21 + r22)| AE13(2-worktree propset) |
-| P2-tp-suggest-ignore-2 | Direct mode --add-svn cross-worktree | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge | /tp-suggest-ignore --add-svn "obj/" → Direct mode → script svn-ignore.ps1 -Add "obj/" → 對 remote-svn-main + remote-svn-test-1 兩個 worktree propset + 各 commit | `svn propget svn:ignore` 在 remote-svn-main + remote-svn-test-1 都含 `obj/` / 2 個 SVN commit(r21 + r22)/ 每 commit msg 各對應一個 worktree | AE13(2-worktree propset) |
-| P2-tp-suggest-ignore-3 | Rollback when remote-svn-test-1 propset 失敗 | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge + 手動 corrupt remote-svn-test-1 的 `.svn/wc.db`(讓 propset 失敗) | /tp-suggest-ignore --add-svn "obj/" → svn-ignore.ps1 對 remote-svn-main propset OK(r21)→ 對 remote-svn-test-1 propset 失敗 → rollback remote-svn-main r21 | `svn propget svn:ignore` 在 remote-svn-main **不**含 `obj/`(rollback 成功)/ 在 remote-svn-test-1 也不含 / SVN log 最後 revision 是 baseline(無 r21 / r22) | AE13(rollback) |
-| P2-tp-suggest-ignore-4 | 中文 svn:ignore pattern | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge | /tp-suggest-ignore --add-svn "中文資料夾/" → script propset → 兩 worktree commit | `svn propget svn:ignore` 兩 worktree 都含 `中文資料夾/`(text-equal,中文 svn property 透過 svn cli round-trip 後在 console codepage decode 後正確)/ SVN commit msg(若含中文)同樣 round-trip 正確 | AE13 + R18 中文 |
+| P2-tp-suggest-ignore-1 | Analysis mode happy(Git Ignore) | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge + 主 worktree 多新檔 `.env`(untracked) | /tp-suggest-ignore(無參數)→ analysis mode → Step 2-3 classify → Git Ignore 列 `.env`(**不**出現「SVN Ignore」分類)→ Step 4 prompt(A apply all / B per-item / C skip)→ apply all → Step 5 寫 .gitignore + commit | `.gitignore` 末尾含 `.env` / `git log --oneline` 含 `chore: update .gitignore` commit / **無**任何 `svn propset svn:ignore` / SVN log 無新 revision | — |
+| P2-tp-suggest-ignore-2 | Direct mode --add-git | fresh-base + setup(a) | /tp-suggest-ignore --add-git "*.log" → Direct mode → 直接編 `.gitignore` + commit(無 svn 操作) | `.gitignore` 末尾含 `*.log` / main 新 commit 只動 .gitignore / 全程無 svn 操作 | — |
+| P2-tp-suggest-ignore-3 | Un-track Option A 無 svn:ignore 寫入 | fresh-base + setup(a) + 用 `New-RemoteBridge` 建 test-1 bridge + 一個**同被 git 與 SVN 追蹤**、符合常見 ignore pattern 的檔(如 commit 進 git 且存於 SVN 的 `bin/app.dll`) | /tp-suggest-ignore → analysis → Un-track 分類列該檔 → 逐檔 confirm → 選 Option A(full cleanup)→ `git rm --cached` + `.gitignore` + 在 remote worktree `svn delete` + svn commit | 該檔 `git ls-files` 不再列 / `.gitignore` 含其 pattern / remote worktree `svn list` 不再含該檔(有刪除 commit)/ **流程無任何 svn:ignore 寫入** | — |
+| P2-tp-suggest-ignore-4 | 已移除的 --add-svn / --remove-svn | fresh-base + setup(a) | /tp-suggest-ignore --add-svn "obj/" | skill 回報 unknown/unsupported flag(該 direct-mode 已於 0.6.0 移除)→ **不執行任何 svn 操作**、SVN log 無新 revision | — |
 
 ### 失敗常見 patterns
 
 - **`&&` chain 過 git 指令**:SKILL.md 開頭 NOTE 明文「treat as two separate steps — run `git add` first, observe success, then run `git commit`」。若 fixture / agent 用 `&&` chain → FAIL(CLAUDE.md prohibition)。
 - **`.gitignore` 不存在沒先建**:SKILL.md Decision Rule「If `.gitignore` does not exist, create it before editing」。若 fixture 刪 `.gitignore` 後 agent crash → FAIL。
-- **rollback 不完全**:case 3 應 rollback remote-svn-main(undo r21)。若只是「propset 失敗訊息報出來」但 remote-svn-main r21 仍存在 → FAIL。
-- **2-worktree propset 變 3-worktree(含 main)**:SKILL.md 明文 svn:ignore 只動 remote-svn worktrees,main 不是 SVN-tracked。若 agent 對 main 跑 propset → FAIL。
-- **Inconsistency / Un-track 沒個別 confirm**:SKILL.md Decision Rule「An Inconsistency or Un-track file must be confirmed individually — no "apply all" option」。若 agent 提供「apply all」option for Inconsistency → FAIL。
+- **誤把 svn:ignore 當還在管**:若 agent 對 `--add-svn`/`--remove-svn` 仍嘗試 propset,或 analysis mode 仍冒出「SVN Ignore」分類 → FAIL(該半邊已於 0.6.0 移除)。
+- **Un-track / Inconsistency 流程仍寫 svn:ignore**:Option A / Option B 執行尾端若仍出現 `svn propset svn:ignore` → FAIL(已移除;檔案進 .gitignore 後 push 腳本 git check-ignore 已防重推)。
+- **Inconsistency / Un-track 沒個別 confirm**:SKILL.md Decision Rule「An Inconsistency or Un-track file must be confirmed individually — no "apply all" option」。若 agent 提供「apply all」option for Inconsistency / Un-track → FAIL。
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a),然後在主 worktree 先 `git checkout -b test-1` 再呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1 -Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`(`.sh`:`new-remote-bridge.sh --branch test-1 --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`(helper 不建工作分支,故須先 `git checkout -b test-1`)。在主 worktree 預製:
-> - untracked: 建 `.env` 檔(內容 `SECRET=foo`)
-> - git-tracked: `.claude/settings.json`(stage + commit)
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + setup case (a),然後主 worktree `git checkout -b test-1` 再呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1 -Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`(`.sh`:`new-remote-bridge.sh --branch test-1 --svn-url file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`(helper 不建工作分支,故須先 `git checkout -b test-1`)。主 worktree 預製 untracked `.env`(內容 `SECRET=foo`)。
 >
 > **Prompt**:
 > ```
@@ -892,23 +894,44 @@ PASS / FAIL / PARTIAL。
 > ```
 >
 > **觀察重點**:
-> - agent 觸發 tp-suggest-ignore analysis mode
-> - Step 2 read-only 資料收集
-> - Step 3 classify:Git Ignore 候選含 `.env`;SVN Ignore 候選含 `.claude/`
-> - Step 4 出兩個 AskUserQuestion:
->   1. Git Ignore:option A / B / C
->   2. SVN Ignore:同上,description 含 per-directory limitation note
-> - 使用者兩個都選 option A(apply all)
-> - Step 5:
->   - `.gitignore` 末尾追加 `.env`
->   - `git -C <main> commit -m "chore: update .gitignore"`(commit on main)
->   - 對 remote-svn-main + remote-svn-test-1 各跑 propset + commit `.claude/`
+> - agent 觸發 analysis mode、Step 2 read-only 資料收集
+> - Step 3 classify:Git Ignore 候選含 `.env`;**不**出現「SVN Ignore」分類
+> - Step 4 只出 Git Ignore 一個 AskUserQuestion(A / B / C)
+> - 使用者選 A(apply all)
+> - Step 5:`.gitignore` 追加 `.env` + `git -C <main> commit -m "chore: update .gitignore"`(commit on main)
 > - 跑完:
 >   - `git log --oneline main` 含新 commit
->   - `svn propget svn:ignore .` 在 remote-svn-main + remote-svn-test-1 都列 `.claude/`
->   - SVN log r21 (remote-svn-main) + r22 (remote-svn-test-1) 兩 commits
+>   - **無**任何 `svn propset svn:ignore`;SVN log 無新 revision
 
-> **Setup**(case 2):orchestrator 跑 reset + setup,然後在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`。主 worktree clean,沒新檔。
+> **Setup**(case 2):orchestrator 跑 reset + setup case (a)。主 worktree clean。
+>
+> **Prompt**:
+> ```
+> /tp-suggest-ignore --add-git "*.log"
+> ```
+>
+> **觀察重點**:
+> - Direct mode --add-git,不跑 analysis
+> - `.gitignore` 末尾追加 `*.log`
+> - `git -C <main> commit -m "chore: update .gitignore"`(commit on main,只動 .gitignore)
+> - 全程無任何 svn 操作
+
+> **Setup**(case 3):orchestrator 跑 reset + setup case (a),主 worktree `git checkout -b test-1` 後建 test-1 bridge、`git checkout main`。預製一個**同被 git 與 SVN 追蹤**、符合常見 ignore pattern 的檔(例:在 main commit 一個 `bin/app.dll`,且該檔也存在於 SVN side)。
+>
+> **Prompt**:
+> ```
+> /tp-suggest-ignore
+> ```
+>
+> **觀察重點**:
+> - analysis mode → Un-track 分類列該檔(git + SVN 都追蹤)
+> - 逐檔 confirm(無 apply-all)→ 選 Option A(full cleanup)
+> - main:`git rm --cached <檔>` + 編 `.gitignore` + commit
+> - remote worktree:`svn delete <檔>` + `svn commit`
+> - 跑完:`git ls-files` 不含該檔;`.gitignore` 含其 pattern;remote worktree `svn list` 不含該檔
+> - **全程無任何 `svn propset svn:ignore`**
+
+> **Setup**(case 4):orchestrator 跑 reset + setup case (a)。
 >
 > **Prompt**:
 > ```
@@ -916,50 +939,17 @@ PASS / FAIL / PARTIAL。
 > ```
 >
 > **觀察重點**:
-> - agent 觸發 Direct mode --add-svn
-> - 沒跑 analysis(沒 prompts about Git Ignore / SVN Ignore)
-> - script svn-ignore.ps1 -Add "obj/" 一次 invocation
-> - 對 remote-svn-main + remote-svn-test-1 兩 worktree propset + commit
-> - 2 個 SVN commit(r21 + r22),msg 各對應一個 worktree
-> - `svn propget svn:ignore` 兩 worktree 都含 `obj/`
-
-> **Setup**(case 3):orchestrator 跑 reset + setup,然後在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`。然後手動 corrupt remote-svn-test-1 的 SVN working copy:刪除 `<VALIDATION_ROOT>/proj/.turbo-plugin/worktrees/remote-svn-test-1/.svn/wc.db`(`Remove-Item`)讓 svn propset 失敗。
->
-> **Prompt**:
-> ```
-> /tp-suggest-ignore --add-svn "obj/"
-> ```
->
-> **觀察重點**:
-> - script 對 remote-svn-main propset OK,commit r21
-> - 對 remote-svn-test-1 propset 失敗(`.svn/wc.db` missing)
-> - 觸發 rollback:把 remote-svn-main 剛 commit 的 r21 也回退(svn revert / 重新 propset 不含 obj/ 等 mechanism)
-> - 跑完:
->   - `svn propget svn:ignore .` 在 remote-svn-main **不**含 `obj/`
->   - SVN log 最高 revision 仍是 baseline(無 r21 / r22)
-> - agent 回報「rollback 成功,SVN 狀態回到操作前」
-
-> **Setup**(case 4):orchestrator 跑 reset + setup,然後在主 worktree `git checkout -b test-1` 後呼叫 `New-RemoteBridge`(`-Branch test-1 -SvnUrl file:///<VALIDATION_ROOT>/svn-repo/branches/test-1`)建 test-1 bridge,建完 `git checkout main`。主 worktree clean。
->
-> **Prompt**:
-> ```
-> /tp-suggest-ignore --add-svn "中文資料夾/"
-> ```
->
-> **觀察重點**:
-> - script propset 中文 pattern
-> - `svn propget svn:ignore .` 兩 worktree decode 後顯示「中文資料夾/」**text-equal**(不 byte-equal — Windows propvalue 內部 codepage 限制)
-> - 沒 mojibake
-> - 2 個 SVN commit(commit msg 可能含中文也可能不含,看 script 實作 — 但若含中文應 round-trip 正確)
+> - skill 回報 unknown/unsupported flag(`--add-svn` 已於 0.6.0 移除)
+> - 不跑任何 svn 操作、不 propset、SVN log 無新 revision
 
 ### Row table
 
 | case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
 |---|---|---|---|---|---|---|---|
-| P2-tp-suggest-ignore-1 | Analysis mode happy | fresh-base+setup+test-1 + .env untracked + .claude tracked | /tp-suggest-ignore | analysis → Git Ignore + SVN Ignore apply all | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-suggest-ignore-2 | Direct --add-svn cross-worktree | fresh-base+setup+test-1 | /tp-suggest-ignore --add-svn "obj/" | 2-worktree propset + 2 commits | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-suggest-ignore-3 | Rollback when test-1 fail | fresh-base+setup+test-1 + corrupt .svn/wc.db | /tp-suggest-ignore --add-svn "obj/" | remote-svn-main r21 rollback | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-suggest-ignore-4 | 中文 svn:ignore | fresh-base+setup+test-1 | /tp-suggest-ignore --add-svn "中文資料夾/" | text-equal round-trip | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-suggest-ignore-1 | Analysis mode happy(Git Ignore) | fresh-base+setup+test-1 + .env untracked | /tp-suggest-ignore | analysis → Git Ignore apply、無 SVN Ignore 分類、無 svn 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-suggest-ignore-2 | Direct --add-git | fresh-base+setup | /tp-suggest-ignore --add-git "*.log" | .gitignore + commit、無 svn 操作 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-suggest-ignore-3 | Un-track Option A 無 svn:ignore | fresh-base+setup+test-1 + git&SVN 雙追蹤檔 | /tp-suggest-ignore | Un-track A:git rm --cached + svn delete,無 svn:ignore 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-suggest-ignore-4 | --add-svn 已移除 | fresh-base+setup | /tp-suggest-ignore --add-svn "obj/" | 回報 unknown flag、無 svn 操作 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
 

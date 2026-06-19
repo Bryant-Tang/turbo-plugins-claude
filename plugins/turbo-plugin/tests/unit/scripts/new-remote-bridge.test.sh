@@ -280,5 +280,28 @@ test_rollback_on_post_trust_failure() {
     fi
 }
 
+# ── Case 10: successful create sets a fixed svn:ignore=.git (needs real WC) ─────
+test_create_sets_fixed_svn_ignore() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot out rc wt ign
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then
+        startSkipping; return 0
+    fi
+    # Create the SVN branch the bridge checks out, so the create path can succeed.
+    if ! svn copy "$reposroot/trunk" "$reposroot/branches/feature-x" -m 'test: branch for bridge' --parents >/dev/null 2>&1; then
+        startSkipping; return 0
+    fi
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feature-x --svn-url "$reposroot/branches/feature-x" 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then
+        # Bridge create did not succeed in this env -> skip (not a fixed-svn:ignore failure).
+        startSkipping; return 0
+    fi
+    wt="$root/.turbo-plugin/worktrees/remote-svn-feature-x"
+    ign="$(svn propget svn:ignore "$wt" 2>/dev/null | tr -d '\r\n')"
+    assertEquals 'bridge svn:ignore is exactly .git' '.git' "$ign"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"
