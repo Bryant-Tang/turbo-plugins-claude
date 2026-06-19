@@ -87,7 +87,7 @@ else:
 
 - ✅ **要列**:
   - case (a)/(b):從 SVN 伺服器抓取專案內容到本機(`svn checkout <url>`)
-  - case (a):設定 SVN 預設忽略規則並推送到 SVN 伺服器(`svn propset svn:ignore` + `svn commit`)
+  - case (a):設定固定 `svn:ignore=.git` 並 commit 到 SVN 伺服器(`svn propset svn:ignore '.git'` + `svn commit`)
   - case (b):將 SVN 內容合進當前 git branch(`git merge --allow-unrelated-histories`,merge commit 留在本地,**不**自動 push)
 - ❌ **不要列**(internal repo-only 動作,屬 transparency 範圍外):
   - `.gitignore` / `.commitlintrc.json` / `CLAUDE.md` 寫入
@@ -161,13 +161,14 @@ Phase summary 顯示後用 `AskUserQuestion` 給使用者選擇:
 
 6. `AskUserQuestion`(自由文字)收集 **SVN URL**(若 argument 沒帶 `--svn-url`)。空值或格式不對(非 http(s) / svn / file)→ 重問或取消。
 
-7. **建 `remote-svn/main` orphan branch + worktree**(sub-step 順序 7a-7f 不可重排)。**前提**:sub-step 2 已把 `.turbo-plugin/worktrees/` 寫進 `.gitignore`、sub-step 5 已建立初始 commit,故下面的 `git worktree add` 不會弄髒主 worktree `git status`、也有 HEAD 可依附:
+7. **建 `remote-svn/main` orphan branch + worktree**(sub-step 順序 7a-7g 不可重排)。**前提**:sub-step 2 已把 `.turbo-plugin/worktrees/` 寫進 `.gitignore`、sub-step 5 已建立初始 commit,故下面的 `git worktree add` 不會弄髒主 worktree `git status`、也有 HEAD 可依附:
    - 7a. `git worktree add --detach --no-checkout ".turbo-plugin/worktrees/remote-svn-main"`(`--no-checkout` 確保 dir 為空,svn checkout 不被 obstruction)
    - 7b. cd 進新 worktree
    - 7c. `git checkout --orphan remote-svn/main`
    - 7d. `git rm -rf --cached .`,然後 `git commit --allow-empty -m "init: remote-svn/main branch"`(初始 empty commit,讓 remote-svn/main 為 proper branch;sub-step 8 會把它與 main 連接)
    - 7e. `svn checkout <url> .`(此時 dir 空 svn 可進)
-   - 7f. 寫入 `svn:ignore` 預設 patterns(同 `.gitignore` 的 turbo-plugin 條目,**含 `.turbo-plugin/worktrees/`**,確保 nested worktree 容器不會被 svn add / push 到 SVN),`svn propset svn:ignore --file <utf8-no-bom-tmp> .`
+   - 7f. 設定**固定** `svn:ignore=.git`:`svn propset svn:ignore '.git' .`(`.git` 是唯一無法靠 push 腳本 `git check-ignore` 過濾的 must-exclude 路徑——它非 git-ignored 卻會在 `svn status` 顯示為 `?`;其餘排除項如 `.turbo-plugin/worktrees/`、`bin`/`obj` 由 `.gitignore` + git check-ignore 涵蓋,**無需**寫進 svn:ignore)。單一 ASCII 字面值用直接 argv,不需 temp 檔。
+   - 7g. **commit 該 svn:ignore 屬性**(`svn commit -m "svn:ignore=.git (turbo-plugin bridge)"`)。此為 case (a) **唯一**且**新增**的 svn commit(現行程序在 7f propset 後並無 commit),作用是讓 `svn status` 穩定隱藏 `.git`。CLAUDE.md 禁 `&&` 串接 state-changing 指令,故 7f propset 與 7g commit 分兩步;與 7d 的 git empty-commit 互不干涉(不同 VCS)。
 
    **Step 7 rollback notes** — 若 7e (`svn checkout`) 失敗,手動還原步驟:
    1. `git worktree remove --force .turbo-plugin/worktrees/remote-svn-main`
@@ -544,7 +545,7 @@ JSON merge 規則同 3.4.B,寫入:
 ## Decision Rules
 
 - **Case 偵測順序固定**(submodule → no .git → not main worktree → no .turbo-plugin → else),不要更改邏輯。
-- **Case (a) 的 sub-step 7 內部順序 7a-7f 不可重排** — 7a `--no-checkout`、7e svn checkout、7d empty commit 都是 SVN obstruction 與後續 merge 的 load-bearing 步驟。
+- **Case (a) 的 sub-step 7 內部順序 7a-7g 不可重排** — 7a `--no-checkout`、7e svn checkout、7d empty commit 都是 SVN obstruction 與後續 merge 的 load-bearing 步驟;7f `svn propset svn:ignore '.git'` + 7g `svn commit` 把固定 svn:ignore 固化(讓 svn status 穩定隱藏 `.git`),必在 7e checkout 之後。
 - **Case (a) `git init` 一律帶 `-b main`** — 預設分支必須與 `remote-svn/main` bridge 對齊,否則首推 branch mismatch。
 - **Case (a) sub-step 8 / case (b) 的 connect merge 不可省** — orphan `remote-svn/main` 與 main 無共同祖先,不連接則首次 push / pull 撞 unrelated histories。
 - **不自動代填使用者身分或設定** — 遇到缺漏的前置設定(git `user.name`/`user.email`、缺工具路徑等)一律**先 `AskUserQuestion` 詢問並提供建議**再執行;**絕不**拿 Claude 帳號 email、本機使用者名稱或任何臆測值代填。寫 git 身分一律 repo-local(不加 `--global`)。
