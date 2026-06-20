@@ -293,45 +293,49 @@ PASS / FAIL / PARTIAL。
 
 | Case ID | 描述 | Fixture pre-state | Expected agent invocation chain | Observation anchors | AE coverage |
 |---|---|---|---|---|---|
-| P2-tp-push-to-svn-1 | Happy push 含 feat / fix / refactor commits | fresh-base 已 setup + main 多 3 commit(feat / fix / refactor 各一)+ SVN HEAD = r20 | /tp-push-to-svn --branch main → prepare → parse 3 commits → 全部 kept-subset → Step 5 confirm Accept → commit → SVN r21 | prepare stdout 含 `COMMITS\n<hash>\|feat:...\n<hash>\|fix:...\n<hash>\|refactor:...` / Step 4 SVN body 含三條 bullet / SVN r21 寫入 / `svn log -r 21` msg 完整 | AE7 |
-| P2-tp-push-to-svn-2 | 中文 commit push | 接 case 1 + main 多 1 commit subject 「fix: 處理 SVN 中文檔名相容性」(字典 3.4) | /tp-push-to-svn --branch main → SVN body 含中文 → svn commit --file UTF-8 no-BOM | SVN r22 寫入 / `svn log -r 22` text-equal「fix: 處理 SVN 中文檔名相容性」(text-equal not byte-equal — Windows propvalue codepage 限制) | AE7 + R18 中文 |
-| P2-tp-push-to-svn-3 | docs/chore 全篩除(empty body) | 接 case 2 + main 多 2 commit(`docs: 更新 README` + `chore: bump version`) | /tp-push-to-svn → 兩 commit 都被 silent 篩除 → Step 4 body 寫「本次推送沒有程式碼層級的異動」 | Step 5 confirm 顯示 kept = 0 / removed = 2 / SVN body 含 fallback 字串 / r23 寫入 | (Step 3.4 silent-filter behavior) |
-| P2-tp-push-to-svn-4 | Unknown type prompt 取消 | 接 case 3 + main 多 1 commit subject `update parser logic`(無 conventional prefix) | /tp-push-to-svn → prepare → unknown type 偵測 → AskUserQuestion(保留 / 篩除 / 取消)→ 使用者選「取消」→ `git merge --abort` cleanup | AskUserQuestion 出現 / 使用者選取消 / remote-svn-main worktree `git status` 為空(merge 已 abort)/ SVN 沒新 revision | (Step 3.5 cancel path) |
-| P2-tp-push-to-svn-5 | Step 7 release tag — 檔案全被 .gitignore 過濾仍產出 merge commit | 接 case 1 後重置 push 環境 + main 多 1 commit,該 commit 只新增一個已被 `.gitignore` 忽略的檔(如 `obj/junk.tmp`;`obj/` 由 tp-setup 寫入 `.gitignore`,push 腳本 git check-ignore 會過濾)| /tp-push-to-svn --branch main → prepare 產出 git merge commit(`git log remote-svn/main..main` 非空)→ Step 6 svn commit 為空(`No changes to commit to SVN`)→ **Step 7 仍詢問** release tag → 使用者選 Yes → Tag-Release 建 `main-release-<date>-NNN` | prepare stage 了 merge commit / Step 6 stdout 含 `No changes to commit to SVN` / Step 7 AskUserQuestion 出現(Yes/No)/ 選 Yes 後 `git tag -l "main-release-*"` 出現新 tag / `git rev-parse <tag>` == `git rev-parse remote-svn/main` | AE1(merge commit → 仍問 tag) |
-| P2-tp-push-to-svn-6 | Step 7 nothing-to-push → 不問 tag | 接 case 5 後不再多任何 commit(main 與 remote-svn/main 已對齊) | /tp-push-to-svn --branch main → prepare 印 `Nothing to push`(無 merge commit 產出)→ **直接跳過 Step 7**,不詢問 release tag | prepare stdout 含 `Nothing to push` / **沒有** Step 7 AskUserQuestion / `git tag -l "main-release-*"` 數量與 case 5 後相同(無新增) | AE2(無新 commit → 不問 tag) |
+| P2-tp-push-to-svn-1 | Happy push 含 feat / fix / refactor + 一個 auto-merge | fresh-base 已 setup + main 多 3 非-merge commit(feat / fix / refactor 各一)+ 一個 `git merge --no-ff` 自動 merge commit + SVN HEAD = r20 | /tp-push-to-svn --branch main → prepare → BODY 列 3 非-merge subject(merge 被 `--no-merges` 排除)→ agent 寫 title → Step 4 三選「確認送出」→ commit → SVN r21 | prepare stdout 含 `BODY\n- feat:...\n- fix:...\n- refactor:...`(無 merge 行、無 hash)/ Step 4 預覽 = title + 空行 + 3 bullet / SVN r21 寫入 / `svn log -r 21` msg 首行 = title、body 3 bullet | AE1 |
+| P2-tp-push-to-svn-2 | 中文 commit push | 接 case 1 + main 多 1 commit subject 「fix: 處理 SVN 中文檔名相容性」 | /tp-push-to-svn --branch main → BODY 含中文 → agent 寫 title → svn commit --file UTF-8 no-BOM | SVN r22 寫入 / `svn log -r 22` body bullet text-equal「- fix: 處理 SVN 中文檔名相容性」(text-equal not byte-equal — Windows propvalue codepage 限制) | R18 中文 |
+| P2-tp-push-to-svn-3 | docs/test/chore 全入 body(無 type 過濾) | 接 case 2 + main 多 2 commit(`docs: 更新 README` + `chore: bump version`) | /tp-push-to-svn → BODY **照樣列** docs / chore 兩條(不再篩除)→ agent 寫 title → 送出 → r23 | prepare stdout `BODY` 含 `- docs: 更新 README` + `- chore: bump version` / SVN r23 寫入、body 兩 bullet 都在 | AE2 |
+| P2-tp-push-to-svn-4 | 特殊字元 subject 原樣 + 改標題 path | 接 case 3 + main 多 1 commit subject 含特殊字元:`` fix: 處理 `code` 與 $var 與 "引號" `` | /tp-push-to-svn → BODY bullet 原樣含 `` ` `` / `$` / 引號(不被 shell 內插)→ agent 寫 title → Step 4 選「改標題」→ 輸入新 title → 重渲染(body 不變)→ 送出 → r24 | prepare `BODY` bullet 與 subject 逐字相同 / 改標題後預覽 body 區段未變、只有 title 換 / `svn log -r 24` body bullet 含原樣特殊字元 | (special-char + 改標題迴圈) |
+| P2-tp-push-to-svn-5 | 區間只有 merge commit → 硬停 | 接 case 4 後重置 + main 僅多一個 auto-merge commit(其被 merge 的 commit 都已在 remote-svn/main)| /tp-push-to-svn --branch main → prepare `--no-merges` 後 body 空 → **fail loudly「only merge commit(s) in range ...」** | prepare exit≠0 + stderr 含 `only merge commit(s)` / remote-svn-main worktree **未** stage merge(`git status` 無 pending merge)/ **沒有** Step 6 release tag 詢問 / SVN 無新 revision | (only-merge 硬停) |
+| P2-tp-push-to-svn-6 | release tag — 檔案全被 .gitignore 過濾仍產出 merge commit | 重置 push 環境 + main 多 1 非-merge commit,內容只新增一個被 `.gitignore` 忽略的檔(如 `obj/junk.tmp`,force-add 進 git)| /tp-push-to-svn --branch main → prepare 產出 git merge commit + body 非空(該 commit subject)→ Step 5 svn commit 為空(`No changes to commit to SVN`)→ **Step 6 仍詢問** release tag → Yes → Tag-Release 建 `main-release-<date>-NNN` | prepare stage 了 merge commit / Step 5 stdout 含 `No changes to commit to SVN` / Step 6 AskUserQuestion 出現(Yes/No)/ 選 Yes 後 `git tag -l "main-release-*"` 出現新 tag / `git rev-parse <tag>` == `git rev-parse remote-svn/main` | (merge commit → 仍問 tag) |
+| P2-tp-push-to-svn-7 | nothing-to-push → 不問 tag | 接 case 6 後不再多任何 commit(main 與 remote-svn/main 已對齊) | /tp-push-to-svn --branch main → prepare 印 `Nothing to push`(無 merge commit 產出)→ **直接跳過 Step 6**,不詢問 release tag | prepare stdout 含 `Nothing to push` / **沒有** Step 6 AskUserQuestion / `git tag -l "main-release-*"` 數量與 case 6 後相同(無新增) | (無新 commit → 不問 tag) |
 
 ### 失敗常見 patterns
 
-- **agent 自動猜 unknown type**:SKILL.md Decision Rule「Unknown type 必須 prompt,不能猜」。若 case 4 agent 自動「reasoning: 看起來像 refactor,保留」未 ask → FAIL。
-- **沒 cleanup merge state**:case 4 取消後 remote-svn-main worktree 仍 stage merge → FAIL。
-- **`.commitlintrc.json` 不在時靜默全篩光**:SKILL.md 明文「fallback 用 default 12 類 + stderr notice,不靜默失敗」。若 fixture 中 `.commitlintrc.json` 刪掉測 happy case agent 把所有 commit 篩光 → FAIL。
+- **body 做了 type 過濾**:U9 後 body 收**所有非-merge subject**,不再篩 docs / test / chore。若 case 3 的 docs / chore commit 沒出現在 body → FAIL。
+- **merge commit 進了 body**:body 以 `--no-merges`(parent 數)排除 merge,不靠 `Merge ` 前綴。若 case 1 的 auto-merge commit 出現在 body → FAIL。
+- **agent 改了 body / 傳自由 message**:body 由腳本鎖定、經 temp 檔交付;commit 腳本只收 `--title`。若 agent 自行組 message 或試圖編輯 body bullet → FAIL。
+- **特殊字元被破壞**:case 4 的 `` ` `` / `$` / 引號在 body 或 SVN log 被 shell 內插 / 改寫 → FAIL(應經 temp 檔原樣保留)。
+- **only-merge 沒硬停**:case 5 區間只有 merge commit,prepare 應 fail loudly「only merge commit(s)」且**不** stage merge、**不**問 tag。若它照樣 stage 或印空 body 送出 → FAIL。
 - **中文 commit msg mangle**:case 2 SVN r22 msg 變「fix: 處理 SVN ?? 檔名 ???」→ FAIL(可能 script 沒用 `--file <utf8-no-bom-tmp> --encoding UTF-8`,改成 `-m "..."`,中文被 CP_ACP mangle)。
-- **race condition guard 失效**:SHA pin guard 沒做 → 在 Step 5 Accept 前手動 `git commit` 新 commit → Step 6 commit 沒 throw `Branch ... has new commits since prepare` → FAIL(這個 test 在 Test Scenarios manual case,P2 不必硬編但可順便驗)。
-- **Step 7 判準用「svn commit 有無內容」而非「有無 merge commit」**:case 5 檔案全被 `.gitignore`(git check-ignore)過濾、svn commit 為空,但 prepare 仍產出 git merge commit → 若 agent 因 `No changes to commit to SVN` 就**不問** release tag → FAIL(KTD7 / R29 判準是「有無產出 git merge commit」)。
-- **nothing-to-push 仍問 tag**:case 6 prepare 印 `Nothing to push`(根本無 merge commit)→ 若 agent 仍跳出 Step 7 release tag prompt → FAIL。
-- **tag ref 用舊命名**:Step 7 建的 tag 指向 `remote/main`(舊命名)而非 `remote-svn/main` → FAIL。
+- **race condition guard 失效**:SHA pin guard 沒做 → 在 Step 4 送出前手動 `git commit` 新 commit → Step 5 commit 沒 throw `Branch ... has new commits since prepare` → FAIL(這個 test 在 Test Scenarios manual case,P2 不必硬編但可順便驗)。
+- **release tag 判準用「svn commit 有無內容」而非「有無 merge commit」**:case 6 檔案全被 `.gitignore`(git check-ignore)過濾、svn commit 為空,但 prepare 仍產出 git merge commit → 若 agent 因 `No changes to commit to SVN` 就**不問** release tag → FAIL(KTD7 / R29 判準是「有無產出 git merge commit」)。
+- **nothing-to-push 仍問 tag**:case 7 prepare 印 `Nothing to push`(根本無 merge commit)→ 若 agent 仍跳出 Step 6 release tag prompt → FAIL。
+- **tag ref 用舊命名**:Step 6 建的 tag 指向 `remote/main`(舊命名)而非 `remote-svn/main` → FAIL。
 
 ### Prompt 範本
 
-> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a),然後在 main worktree 預製 3 個 git commit:
+> **Setup**(case 1):orchestrator 跑 `Reset-Fixture.ps1` + 跑 setup case (a),然後在 main worktree 預製 3 個非-merge commit + 一個 auto-merge commit:
 > ```
 > # 1. echo "feat code 1" > new1.cs; git add .; git commit -m "feat: 新增 feature 1"
 > # 2. echo "fix bug 1" > new2.cs; git add .; git commit -m "fix: 修正 bug 1"
 > # 3. echo "refactor" > new3.cs; git add .; git commit -m "refactor: 整理結構"
+> # 4. 另開 side 分支加一 commit 再 git merge --no-ff side(產生一個 merge commit)
 > ```
 > 確認 main worktree clean、SVN HEAD = r20(reset 後 base seed)。
 >
 > **Prompt**:
 > ```
-> 我有 3 個新 commit 想推到 SVN,幫我跑 /tp-push-to-svn --branch main
+> 我有幾個新 commit 想推到 SVN,幫我跑 /tp-push-to-svn --branch main
 > ```
 >
 > **觀察重點**:
-> - prepare 列 3 個 COMMITS 行
-> - Step 4 SVN body 含 3 條 bullet「feat: 新增 feature 1」「fix: 修正 bug 1」「refactor: 整理結構」
-> - Step 5 confirm 出現
-> - 使用者 Accept 後 SVN r21 寫入
-> - 跑完 `svn log -r 21` msg 完整
+> - prepare 印 `BODY` 段,**只有** 3 個非-merge bullet「- feat: 新增 feature 1」「- fix: 修正 bug 1」「- refactor: 整理結構」(無 hash);auto-merge commit **不在** body
+> - agent propose 一行 title;Step 4 預覽 = title + 空行 + 3 bullet
+> - Step 4 三選「確認送出」
+> - 送出後 SVN r21 寫入
+> - `svn log -r 21` msg 首行 = title、其下 3 bullet
 
 > **Setup**(case 2):接 case 1 完成。在 main 多 1 commit:
 > ```
@@ -345,7 +349,7 @@ PASS / FAIL / PARTIAL。
 >
 > **觀察重點**:
 > - SVN r22 寫入
-> - `svn log -r 22` 顯示「fix: 處理 SVN 中文檔名相容性」**text-equal**(可能 console codepage decode 後正確,SVN propvalue 內部 byte format 不檢驗)
+> - `svn log -r 22` body bullet「- fix: 處理 SVN 中文檔名相容性」**text-equal**(可能 console codepage decode 後正確,SVN propvalue 內部 byte format 不檢驗)
 > - 沒亂碼
 
 > **Setup**(case 3):接 case 2。在 main 多 2 commit:
@@ -360,14 +364,12 @@ PASS / FAIL / PARTIAL。
 > ```
 >
 > **觀察重點**:
-> - prepare 列 2 個 COMMITS 行
-> - Step 4 body 寫「本次推送沒有程式碼層級的異動(僅文件 / 測試 / 設定 / 雜務)。」
-> - Step 5 confirm 顯示 kept = 0 / removed = 2
-> - SVN r23 仍寫入(body 是 fallback 字串,但 still push)
+> - prepare 的 `BODY` 段**照樣列**「- docs: 更新 README」「- chore: bump version」兩條(U9 後**無** type 過濾,docs / chore 不再被篩除)
+> - agent 寫 title → 送出 → SVN r23 寫入,body 兩 bullet 都在
 
-> **Setup**(case 4):接 case 3。在 main 多 1 commit subject 無 conventional prefix:
+> **Setup**(case 4):接 case 3。在 main 多 1 commit,subject 故意含特殊字元:
 > ```
-> git commit --allow-empty -m "update parser logic"
+> git commit --allow-empty -m 'fix: 處理 `code` 與 $var 與 "引號"'
 > ```
 >
 > **Prompt**:
@@ -376,18 +378,29 @@ PASS / FAIL / PARTIAL。
 > ```
 >
 > **觀察重點**:
-> - AskUserQuestion 出現「Commit `<hash>` 的 subject「update parser logic」沒有可辨識的 conventional commit type」
-> - 三選一:保留 / 篩除 / 取消
-> - 使用者選「取消」
-> - agent 跑 `git merge --abort` cleanup
-> - remote-svn-main worktree `git status --porcelain` 為空(merge 已 abort)
-> - SVN log 仍只有 r23(沒 r24)
+> - prepare 的 `BODY` bullet 與 subject **逐字相同**(`` ` `` / `$` / 引號原樣,未被 shell 內插)
+> - Step 4 選「改標題」→ 輸入新 title → 重新渲染:body 區段**完全沒變**,只有 title 換掉
+> - 再選「確認送出」→ SVN r24 寫入
+> - `svn log -r 24` body bullet 仍含原樣特殊字元
 
-> **Setup**(case 5):接 case 4 後重置 push 環境(orchestrator 跑 `Reset-Fixture.ps1` + setup case (a),SVN HEAD = r20)。`obj/` 已由 tp-setup 寫入 `.gitignore`(無需另設 svn:ignore)。在 main 多 1 commit,內容只含一個被 `.gitignore` 忽略的檔——需 force-add 才進得了 git:
+> **Setup**(case 5):接 case 4 後重置 push 環境(orchestrator 跑 `Reset-Fixture.ps1` + setup case (a),SVN HEAD = r20)。在 main 製造一個**只有 merge commit** 的區間:先建 side 分支加 1 commit、把它推上 remote-svn/main(讓該 commit 已在 SVN 端),再回 main 對 side 做 `git merge --no-ff`,使 `remote-svn/main..main` 只剩那個 merge commit。
+>
+> **Prompt**:
+> ```
+> /tp-push-to-svn --branch main
+> ```
+>
+> **觀察重點**:
+> - prepare `--no-merges` 過濾後 body 為空 → **fail loudly**,stderr 含「only merge commit(s) in range ...」
+> - remote-svn-main worktree **未** stage merge(`git status --porcelain` 無 pending merge state)
+> - **沒有** Step 6 release tag 詢問
+> - SVN log 無新 revision
+
+> **Setup**(case 6):重置 push 環境(`Reset-Fixture.ps1` + setup case (a),SVN HEAD = r20)。`obj/` 已由 tp-setup 寫入 `.gitignore`。在 main 多 1 非-merge commit,內容只含一個被 `.gitignore` 忽略的檔——需 force-add 才進得了 git:
 > ```
 > # 新增 obj/junk.tmp;force-add 繞過 .gitignore 讓它進 git commit:
 > # git add -f obj/junk.tmp ; git commit -m "chore: 暫存產物"
-> # (push 時 obj/junk.tmp 仍被 git check-ignore 過濾 → svn commit 空,但 git merge commit 仍產出)
+> # (push 時 obj/junk.tmp 仍被 git check-ignore 過濾 → svn commit 空,但 git merge commit + 非空 body 仍產出)
 > ```
 > 確認 main worktree clean。
 >
@@ -397,15 +410,15 @@ PASS / FAIL / PARTIAL。
 > ```
 >
 > **觀察重點**:
-> - prepare 階段產出 git merge commit(`git log remote-svn/main..main` 非空)
-> - Step 6 svn commit stdout 含 `No changes to commit to SVN`(檔案全被 `.gitignore` / git check-ignore 過濾)
-> - **Step 7 仍詢問** release tag(AskUserQuestion Yes/No)— 判準是「有 merge commit」非「svn 有內容」
+> - prepare 階段產出 git merge commit(`git log remote-svn/main..main` 非空)、body 含該 commit subject
+> - Step 5 svn commit stdout 含 `No changes to commit to SVN`(檔案全被 `.gitignore` / git check-ignore 過濾)
+> - **Step 6 仍詢問** release tag(AskUserQuestion Yes/No)— 判準是「有 merge commit」非「svn 有內容」
 > - 使用者選 Yes
 > - Tag-Release 印 `Created tag: main-release-<yyyy-MM-dd>-NNN`
 > - `git tag -l "main-release-*"` 出現新 tag
 > - `git rev-parse <tag>` == `git rev-parse remote-svn/main`(tag 指向 remote-svn/main tip,新命名)
 
-> **Setup**(case 6):接 case 5 直接續(main 與 remote-svn/main 已對齊,**不**再多任何 commit)。
+> **Setup**(case 7):接 case 6 直接續(main 與 remote-svn/main 已對齊,**不**再多任何 commit)。
 >
 > **Prompt**:
 > ```
@@ -414,19 +427,20 @@ PASS / FAIL / PARTIAL。
 >
 > **觀察重點**:
 > - prepare stdout 含 `Nothing to push`(沒有任何新 commit、沒有 merge commit 產出)
-> - skill **直接結束**,**沒有** Step 7 release tag 詢問
-> - `git tag -l "main-release-*"` 數量與 case 5 跑完後相同(無新 tag)
+> - skill **直接結束**,**沒有** Step 6 release tag 詢問
+> - `git tag -l "main-release-*"` 數量與 case 6 跑完後相同(無新 tag)
 
 ### Row table
 
 | case ID | desc | fixture | prompt summary | expected | observation | result | evidence |
 |---|---|---|---|---|---|---|---|
-| P2-tp-push-to-svn-1 | Happy 3-commit push | fresh-base+setup + 3 commit(feat/fix/refactor) | /tp-push-to-svn --branch main | prepare 3 commit + body 3 bullet + r21 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-push-to-svn-2 | 中文 commit push | 接 1 + 中文 fix commit | /tp-push-to-svn --branch main | r22 中文 msg text-equal | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-push-to-svn-3 | docs/chore 全篩除 | 接 2 + 2 commit (docs/chore) | /tp-push-to-svn --branch main | body 是 fallback 字串 / r23 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-push-to-svn-4 | Unknown type 取消 | 接 3 + 1 commit (`update parser`) | /tp-push-to-svn --branch main | AskUserQuestion 取消 / merge --abort | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-push-to-svn-5 | Step 7 tag — .gitignore 過濾後仍有 merge commit | reset+setup + obj/ 已在 .gitignore + 1 commit force-add 忽略檔 | /tp-push-to-svn --branch main | svn 空但仍問 tag → 建 main-release-* on remote-svn/main | _(TBD)_ | _(TBD)_ | _(TBD)_ |
-| P2-tp-push-to-svn-6 | Step 7 nothing-to-push 不問 tag | 接 5,無新 commit | /tp-push-to-svn --branch main | `Nothing to push` → 跳過 Step 7,無新 tag | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-1 | Happy push + auto-merge 排除 | fresh-base+setup + 3 非-merge(feat/fix/refactor)+ 1 auto-merge | /tp-push-to-svn --branch main | BODY 3 bullet(merge 排除)+ title + r21 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-2 | 中文 commit push | 接 1 + 中文 fix commit | /tp-push-to-svn --branch main | r22 中文 body bullet text-equal | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-3 | docs/chore 全入 body(無過濾) | 接 2 + 2 commit (docs/chore) | /tp-push-to-svn --branch main | BODY 含 docs+chore 兩 bullet / r23 寫入 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-4 | 特殊字元 subject + 改標題 | 接 3 + 1 commit (`` `code` $var "引號" ``) | /tp-push-to-svn --branch main | body bullet 原樣 / 改標題只換 title / r24 | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-5 | 只有 merge commit → 硬停 | reset + main 僅 1 auto-merge(被 merge commit 已在 SVN) | /tp-push-to-svn --branch main | fail loudly only-merge / 不 stage / 不問 tag / 無新 rev | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-6 | tag — .gitignore 過濾後仍有 merge commit | reset+setup + obj/ 已在 .gitignore + 1 commit force-add 忽略檔 | /tp-push-to-svn --branch main | svn 空但仍問 tag → 建 main-release-* on remote-svn/main | _(TBD)_ | _(TBD)_ | _(TBD)_ |
+| P2-tp-push-to-svn-7 | nothing-to-push 不問 tag | 接 6,無新 commit | /tp-push-to-svn --branch main | `Nothing to push` → 跳過 Step 6,無新 tag | _(TBD)_ | _(TBD)_ | _(TBD)_ |
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: tp-push-to-svn
-description: '把本地工作分支推上 SVN(透過 remote-<branch> worktree),自 parse 每個 commit subject 篩 SVN history。**SVN 寫操作影響永久 history,必須由使用者明確要求才執行;agent 偵測到「使用者完成一輪改動準備 push」時可建議,但需明確確認**。'
+description: '把本地工作分支推上 SVN(透過 remote-svn/<branch> worktree)。SVN message body 由 prepare 腳本鎖定為這次範圍內所有非-merge commit subject 的條列(`- ` 開頭、無 hash、無 commit-type 過濾),agent 只負責寫一行 title。**SVN 寫操作影響永久 history,必須由使用者明確要求才執行;agent 偵測到「使用者完成一輪改動準備 push」時可建議,但需明確確認**。'
 argument-hint: '--branch <branch> [--svn-url <url>]'
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
@@ -10,9 +10,9 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 
 ## Purpose
 
-把本地 git working branch 的新 commits push 上 SVN。為了讓 SVN history 保留可讀的程式碼變更紀錄,本 skill **自 parse 每個 commit subject**,依 commit type 篩選哪些進入 SVN message body。
+把本地 git working branch 的新 commits push 上 SVN。SVN message body 由 prepare 腳本**確定性鎖定**為這次推送範圍內**所有非-merge commit 的 subject 條列**(`- ` 開頭、無 hash、無 commit-type 過濾);agent 只負責寫一行 **title**。body 經 temp 檔交付給 commit 腳本自行組合(title + 鎖定 body),agent 無法竄改 body。
 
-**設計理念**:`.commitlintrc.json` 是純諮詢的 commit type 來源(無 husky / 無 commitlint hook 強制),enforce 由本 skill 在 push 時完成。
+**設計理念**:SVN history 的可讀性來自「完整保留每個 code-level subject」,不再做 type 篩選或逐筆未知 type 詢問。要改 body 內容,請對對應 commit `git rebase` / amend subject 後重跑本 skill。commit 格式的語意檢查由獨立的 `tp-commit-msg` 對使用者的 `.commitlintrc.json` 負責,與本 skill 無關。
 
 ## Procedure
 
@@ -64,10 +64,12 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
 - check 是否有 pending merge state(見下方 PENDING_MERGE_DETECTED 處理)
 - 跑 `git merge --no-ff --no-commit` stage merge
 - 把 source branch HEAD SHA 寫入 `<remote-path>/.git/MERGE_HEAD.tp_branch_sha`(供 commit 步驟驗證)
-- 印出 `COMMITS\n<hash>|<subject>\n...\n\nFILES\n<diff_status>|<git_status>|<path>\n...`
+- 把**鎖定 body**(這次範圍內所有非-merge commit subject、`- ` 條列)寫入 `<remote-path>/.git/MERGE_HEAD.tp_svn_body`(供 commit 步驟讀回自組)
+- 印出 `BODY\n- <subject>\n...\n\nFILES\n<diff_status>|<git_status>|<path>\n...`
 
 **Script 已自動處理失敗情境**:
-- `Nothing to push` → 直接結束
+- `Nothing to push`(範圍零 commit)→ 直接結束
+- **only merge commit(s) in range ...**(範圍有 commit,但 `--no-merges` 過濾後 body 空,即區間只有 merge commit)→ fail loudly、**不 stage merge、不詢問 tag**(與 release-tag 規則一致:沒有 code-level 內容就不推、也不 tag)。提示使用者 amend / rebase 出非-merge commit 後重跑
 - remote SVN 不 up-to-date → fail loudly 提示先 `/tp-pull-from-svn`
 - merge 衝突 → 列出衝突檔,**不自動 abort**(由使用者解或手動 `git merge --abort`)
 - `PENDING_MERGE_DETECTED <remote-path>` → Script 輸出此 token 並 exit 0;SKILL 進入下方三選一 prompt
@@ -82,116 +84,47 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
 2. **No, cancel**:跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill
 
 **PENDING_MERGE_DETECTED 處理** — 當 prepare 輸出以 `PENDING_MERGE_DETECTED` 開頭時,`AskUserQuestion` 提示三選一:
-1. **Abort + re-prepare**:跑 `git -C <remote-path> merge --abort`,再次跑 push-to-svn-prepare(返回本 Step)
-2. **Continue to commit**:略過 prepare,直接進 Step 3(使用既有 staged merge)
+1. **Abort + re-prepare**:跑 `git -C <remote-path> merge --abort`,再次跑 prepare(返回本 Step,得到新的 `BODY` / `FILES` 輸出)
+2. **Continue to commit**:略過 prepare,直接進 Step 3(使用既有 staged merge)。**注意**:此路徑沒有新的 prepare 輸出可顯示 `BODY` / `FILES`;直接請 agent propose title 進 Step 4。commit 腳本會讀既有 prepare 寫下的 `MERGE_HEAD.tp_svn_body`;若該 pin 不存在會 fail-closed,要求 abort + 重 prepare
 3. **Cancel**:結束 skill,不做任何清理
 
-### Step 3 — Parse subjects & 篩選
+### Step 3 — Review 鎖定 body 並由 agent 寫 title
 
-對 prepare 輸出的 `COMMITS` 區段每一行(格式 `<hash>|<subject>`):
+prepare 輸出含 `BODY` 與 `FILES` 兩段:
 
-#### 3.1 Subject 解析範圍
+- 把 `BODY` 段(`- <subject>` 條列)**原樣**呈現給使用者,並說明:這段 body 是腳本鎖定的「本次範圍內所有非-merge commit subject」,**無 type 過濾、無法在此編輯**;要改 body 內容請對對應 commit `git rebase` / amend 後重跑 prepare。
+- 把 `FILES` 段呈現給使用者(svn status:`?`→新增、`!`→刪除、`M`→修改;標 `ignored` 者被 git check-ignore 過濾,本次不會進 SVN)。
+- 由 **agent propose 一行 title**(摘要本次推送的高層意圖)。title 會在 commit 腳本端被 collapse 成單行(內嵌換行會被移除),所以 agent**無法**藉 title 的換行把額外內容塞進 body。
 
-- **只看 subject 第一行**(`git log --format=%s` 已只給第一行)。
-- regex 取 leading type:`^(?<type>[a-z]+)(\(.+\))?!?:` 從開頭抓 `<type>`(optional scope `(...)` + optional breaking `!` + `:`)。
-- `revert: feat: ...` 等 nested type:**只看外層 `revert:`**,不解內層。
+### Step 4 — 確認(固定模板)
 
-#### 3.2 載入 valid types(runtime,可動態同步使用者 `.commitlintrc.json`)
+`AskUserQuestion` 顯示完整 SVN message 預覽(**title 那行 + 空行 + 鎖定 body**),三選一:
 
-1. 找 `<repo-root>/.commitlintrc.json`(repo-root = `git rev-parse --show-toplevel`)。
-2. 若**檔案存在 + JSON parse 成功 + `.rules['type-enum']` 是 `[level, applicable, [<types>]]` 形式 + `[2]` 是 array of strings**:用這個 array 為 `validTypes`。
-3. 否則(檔不在 / parse 失敗 / 結構不對 / extends-only 寫法如 `{"extends":["@commitlint/config-conventional"]}` 不顯式 rules)→ **fallback 用 hard-coded default 12 類**(conventional commits 11 + `db`):
-   ```
-   feat, fix, refactor, perf, revert, docs, test, chore, style, build, ci, db
-   ```
-   並印 **stderr one-line notice**:
-   ```
-   tp-push-to-svn: using built-in default 12-type list; customize by adding `rules.type-enum` to `.commitlintrc.json`
-   ```
-4. **不靜默失敗**(沒檔不抓全空)、**不 fail 拒跑**(對 commitlint 標準 extends-only 寫法相容)。
+1. **確認送出** → 進 Step 5。
+2. **改標題** → 請使用者輸入新 title(自由文字,單行)→ 以「新 title + 鎖定 body」重新渲染預覽 → 回本 Step 4。**只有 title 可改,body 永遠是鎖定那一份。**
+3. **取消** → 跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill。
 
-#### 3.3 Kept-subset(turbo-plugin 篩選 source-of-truth — hard-coded,不從 `.commitlintrc.json` 讀)
+> 注意:送出前若你又 commit 新內容進 working branch,Step 5 的 commit 腳本會偵測 git HEAD SHA 不符並 abort,提示重跑 prepare。請在送出前確認不會再 commit 新內容。
 
-```
-feat, fix, refactor, perf, revert
-```
+### Step 5 — Commit to SVN
 
-這 5 類是「進得了 SVN message body 的 commit type」。固定在本 skill,**不**從 `.commitlintrc.json` 同步。
-
-#### 3.4 篩選邏輯
-
-對每個 commit:
-- `Merge ` 開頭(無 conventional prefix)→ **篩除(silent)**:這是 git merge auto commit,SVN body 不需要。
-- parse 出 `type`:
-  - 若 `type` ∈ `keptSubset` → **保留**(進 SVN body)
-  - 若 `type` ∈ `validTypes` 但 ∉ `keptSubset`(如 `docs` / `test` / `chore` / `style` / `build` / `ci` / `db`)→ **篩除(silent)**:SVN body 不需要這類紀錄
-  - 若 `type` ∉ `validTypes`,或 parse 不出 leading type(如 `update parser logic`)→ **unknown type**,進 3.5
-- 注:`git-svn-id:` trailer 不會在 subject 出現,本 skill 不處理。
-
-#### 3.5 Unknown type prompt
-
-對每個 unknown type commit,**逐筆** `AskUserQuestion`:
-
-> Commit `<hash>` 的 subject「`<subject>`」沒有可辨識的 conventional commit type。應如何處理?
-
-選項:
-1. **保留進 SVN body**(本次 push 收這筆)
-2. **篩除**(本次 push 略過)
-3. **取消 push** — 讓使用者先 `git rebase -i` amend commit subject,然後重新跑 `/tp-push-to-svn`
-
-選 3 → 立即跑 `git -C <remote-path> merge --abort` 清掉 prepare 階段 stage 的 merge,**結束 skill**。
-
-### Step 4 — 組裝 SVN message body
-
-```
-<本次推送的高層 subject>(由使用者 propose 或 agent 從保留 commits 摘要)
-
-本次送交內容:
-- <subject1>
-- <subject2>
-...
-```
-
-若保留 commits 為 0(全被篩除):
-```
-<本次推送的高層 subject>
-
-本次推送沒有程式碼層級的異動(僅文件 / 測試 / 設定 / 雜務)。
-```
-
-### Step 5 — 確認
-
-`AskUserQuestion` 單頁確認,顯示:
-- 保留的 commits(進 SVN body)
-- 被篩除的 commits(僅留本地 git history)
-- FILES section(prepare 階段的 svn status)
-- 完整 SVN message(標題 + body)
-
-選項:
-- **Accept**:跑 Step 6
-- **Edit message**:互動修改標題 / body 後回 Step 5
-- **Cancel**:`git -C <remote-path> merge --abort`,結束 skill
-
-> 注意:若此刻 confirm 前你新 commit 進 working branch,SKILL 會在 Step 6 偵測 git HEAD SHA 不符並 abort,提示重跑 prepare。請在 accept 前確認不會再 commit 新內容。
-
-### Step 6 — Commit to SVN
-
-跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Submit-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/submit-svn-commit.sh`)帶 `--branch <name> --message "<完整 SVN message>"`。Script 會:
-- 再次 re-validate SVN HEAD(防止 race condition)
+跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Submit-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/submit-svn-commit.sh`)帶 `--branch <name> --title "<那一行 title>"`(**只傳 title,不傳 body / message**)。Script 會:
+- 再次 re-validate SVN HEAD + SHA pin + svn-status drift(防止 race condition)
+- 讀 `MERGE_HEAD.tp_svn_body`(鎖定 body;缺檔則 fail-closed 要求重 prepare),把 title collapse 成單行,自組 `title` + 空行 + `body` 寫入 UTF-8 no-BOM temp 檔
 - `git commit --no-edit` 完成 stage merge
 - 處理 `?` `!` `M` 的 svn add / delete
-- 用 UTF-8 no-BOM temp file + `svn commit --file <tmp> --encoding UTF-8` push(避免中文 Big5 mangle)
+- `svn commit --file <tmp> --encoding UTF-8` push(避免中文 Big5 mangle)
 - `svn update` 同步 working copy revision
 
 Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 git-ignore 篩掉)。
 
-### Step 7 — Optional release tag
+### Step 6 — Optional release tag
 
 **Trigger rule(KTD7 / R29 — 判準是「有無產出 git merge commit」,不是「svn commit 有無內容」)**:
 
-- 只要 Step 2 的 prepare 階段找到 **≥1 個新 commit** 可 merge(即 `git log <remote-svn-ref>..<branch>` 非空、prepare 沒有印 `Nothing to push`,而是實際 stage 了一個 git merge commit)→ **詢問 release tag**。
-- 這代表:即使 Step 6 回 `No changes to commit to SVN`(所有變更檔案都被 `.gitignore` / push 腳本的 git check-ignore 過濾,svn commit 為空),**只要 git 那側仍產出了 merge commit,就照樣詢問** release tag。tag 指向的是 `remote-svn/<branch>` 這條 git 分支的 tip,與 svn 是否有內容無關。
-- 反之,若 prepare 階段就 `Nothing to push`(git、svn 皆無變更、根本沒有 merge commit 產出)→ **直接跳過 Step 7**,不詢問。
+- 只要 Step 2 的 prepare 階段找到 **≥1 個新 commit** 可 merge(即 prepare 沒有印 `Nothing to push` 也沒有 only-merge 硬停,而是實際 stage 了一個 git merge commit)→ **詢問 release tag**。
+- 這代表:即使 Step 5 回 `No changes to commit to SVN`(所有變更檔案都被 `.gitignore` / push 腳本的 git check-ignore 過濾,svn commit 為空),**只要 git 那側仍產出了 merge commit,就照樣詢問** release tag。tag 指向的是 `remote-svn/<branch>` 這條 git 分支的 tip,與 svn 是否有內容無關。
+- 反之,若 prepare 階段就 `Nothing to push`(根本沒有 merge commit 產出),或 only-merge 硬停(沒 stage merge)→ **直接跳過 Step 6**,不詢問。
 
 當觸發條件成立時,用 `AskUserQuestion`:
 
@@ -216,32 +149,31 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
-- **Valid type 動態讀取 + 安全 fallback**:每次跑都重讀 `.commitlintrc.json`,使用者改該檔加 / 移除 type 後本 skill 自動同步。fallback 用 default 12 類 + stderr notice,**不靜默失敗也不 fail 拒跑**。
-- **Kept-subset hard-code 在本 skill,不從 `.commitlintrc.json` 讀**:`.commitlintrc.json` 定義「什麼是有效 commit type」(諮詢),turbo-plugin 定義「哪些 type 該進 SVN body」(篩選決策)。兩者刻意分離。
-- **Unknown type 必須 prompt,不能猜**:SVN history 是永久紀錄,猜錯比明確問代價高。
+- **Body 由腳本鎖定,agent 只寫 title**:body = prepare 階段 `git log --no-merges` 取出的**所有非-merge commit subject**(`- ` 條列、無 hash、無 type 過濾),經 `MERGE_HEAD.tp_svn_body` temp 檔交付。commit 腳本只收 `--title`,自行組合 `title + 空行 + 鎖定 body`;**agent 不可傳自由 message / body**。要改 body 內容請 amend / rebase 對應 commit 後重跑 prepare。
 - **Merge state 必須乾淨**:Step 2 開頭 check `MERGE_HEAD` 不存在;cancel 一律呼叫 `git merge --abort` 確保不留 stale state。
-- **UTF-8 no-BOM commit message**:Step 6 script 已正確處理,**不要**改成 `svn commit -m "..."`(Windows CP_ACP 會 mangle 中文)。
-- **不安裝 husky / commitlint hook**:本 skill 是篩選 source-of-truth,不需要 git hook enforce。
+- **UTF-8 no-BOM commit message**:Step 5 script 已正確處理,**不要**改成 `svn commit -m "..."`(Windows CP_ACP 會 mangle 中文)。
 - **Pull-from-svn 是 prerequisite**:remote SVN HEAD 不 up-to-date 直接拒跑,讓使用者先 `/tp-pull-from-svn`。
-- **Release tag 判準 = 有無 git merge commit**(Step 7):prepare 階段只要產出 merge commit 就詢問 tag,**即使 svn commit 為空**(檔案全被 `.gitignore` / git check-ignore 過濾)也照問;唯有 `Nothing to push`(根本無 merge commit)時才跳過。tag ref 用新命名 `remote-svn/<branch>`,不是舊的 `remote/<branch>`。
+- **Release tag 判準 = 有無 git merge commit**(Step 6):prepare 階段只要產出 merge commit 就詢問 tag,**即使 svn commit 為空**(檔案全被 `.gitignore` / git check-ignore 過濾)也照問;`Nothing to push` 或 only-merge 硬停時才跳過。tag ref 用 `remote-svn/<branch>`。
 
 ## Completion Checks
 
-- 保留 commits 進 SVN body,被篩除的 commits 留本地 git history 但不在 SVN message。
+- SVN message body = 本次範圍內**所有非-merge commit subject** 的 `- ` 條列(無 type 過濾);merge commit 不在 body;message 第一行為 agent 寫的 title。
 - SVN log 顯示新 revision 含繁體中文正確編碼(no mangle)。
 - 本地 `git log --oneline remote-svn/<branch>` 含 `Merge branch '<branch>' into remote-svn/<branch>` 自動 merge commit。
 - Remote worktree 內 `git status --porcelain` 為空,`svn status` 為空(或只有 git-ignored 的本地檔案)。
-- Unknown type commit 已透過 prompt 處理(保留 / 篩除 / 取消 push)。
-- (Step 7,可選)若使用者選擇建立 release tag:`git tag -l "<branch>-release-*"` 出現新 tag,且 `git rev-parse <tag>` 等於 `git rev-parse remote-svn/<branch>`;若 prepare 為 `Nothing to push` 則不應出現詢問也不應有新 tag。
+- (Step 6,可選)若使用者選擇建立 release tag:`git tag -l "<branch>-release-*"` 出現新 tag,且 `git rev-parse <tag>` 等於 `git rev-parse remote-svn/<branch>`;若 prepare 為 `Nothing to push` / only-merge 硬停則不應出現詢問也不應有新 tag。
 
 ## Test Scenarios
 
-- Manual: 設 `.commitlintrc.json` = `{"extends": ["@commitlint/config-conventional"]}` 不顯式 rules.type-enum → /tp-push-to-svn 應印 stderr notice 並用 default 12 類繼續 push,**不**靜默用空 type list 把所有 commit 篩光。
-- **SHA pin guard (race protection)**: 跑 `/tp-push-to-svn --branch test-1` 進到 Step 5 Accept 前,在另一個 terminal `git commit` 新 commit 到 working branch。回 SKILL 按 Accept,push-to-svn-commit 應 throw `Branch '...' has new commits since prepare (pinned: ..., current: ...). Abort the merge...`。執行該指示,remote worktree `git status` clean。重跑 `/tp-push-to-svn` 應正常進。**.ps1 + .sh 兩條都要跑。**
-- **SHA pin cleanup**: 成功 push 後,`<main>/.git/worktrees/<remote-name>/MERGE_HEAD.tp_branch_sha` 不應存在(`Test-Path` / `[[ -f ]]` 皆 false)。
-- **PENDING_MERGE Continue path**: prepare 偵到既有 staged merge → SKILL 三選一選 Continue(option 2)→ 略過 prepare 直接進 Step 3,既有 staged content 推上 SVN,push 成功。
+- Manual: 推送含 docs / test / chore commit → 它們**全部**出現在 SVN body(確認**無** type 過濾,不再篩掉非程式碼 type)。
+- Manual: 推送含一個自動 merge commit + 數個非-merge commit → SVN body **只列非-merge subject**,merge commit 不在 body(`--no-merges` 以 parent 數判定,不靠 `Merge ` 前綴)。
+- Manual: 區間只有 merge commit(`--no-merges` 後 body 空)→ prepare fail loudly「only merge commit(s) in range ...」,**不 stage merge、不詢問 release tag**。
+- Manual: subject 含 `` ` `` / `$` / 引號 / 前導 `- ` → 經 temp 檔原樣進 SVN message,不被 shell 內插破壞。
+- **SHA pin guard (race protection)**: 跑 `/tp-push-to-svn --branch test-1` 進到 Step 4 確認前,在另一個 terminal `git commit` 新 commit 到 working branch。回 SKILL 按確認送出,commit 腳本應 throw `Branch '...' has new commits since prepare (pinned: ..., current: ...). Abort the merge...`。執行該指示,remote worktree `git status` clean。重跑 `/tp-push-to-svn` 應正常進。**.ps1 + .sh 兩條都要跑。**
+- **SHA pin cleanup**: 成功 push 後,`<main>/.git/worktrees/<remote-name>/MERGE_HEAD.tp_branch_sha`、`.tp_svn_status`、`.tp_svn_body` 皆不應存在(`Test-Path` / `[[ -f ]]` 皆 false)。
+- **PENDING_MERGE Continue path**: prepare 偵到既有 staged merge → SKILL 三選一選 Continue(option 2)→ 略過 prepare,agent propose title 後送出,既有 staged content + 既有鎖定 body 推上 SVN,push 成功。
 - **PENDING_MERGE Cancel path**: prepare 偵到既有 staged merge → SKILL 三選一選 Cancel(option 3)→ SKILL 結束,remote worktree `git status` 仍顯示 unstaged merge state(刻意不清,讓使用者手動處理)。
 
 ## Tool Preference
 
-檔案 read / write 用 Read / Edit / Write;呼叫 `.commitlintrc.json` 用 JSON parse 解析(不要用 regex scan)。shell 操作限 `git` / `svn` / 跑 plugin scripts。
+檔案 read / write 用 Read / Edit / Write。shell 操作限 `git` / `svn` / 跑 plugin scripts。

@@ -200,3 +200,33 @@ function Assert-TrustedSvnUrl {
     return $normBase
 }
 
+# Build the LOCKED SVN commit body for a push range. The body is a deterministic, '- '-prefixed
+# list of EVERY non-merge commit subject (oldest first), one per line — git itself applies the
+# '- ' prefix and the ordering, so the same commit set always yields a byte-identical body.
+#
+# Merge commits are excluded by parent count (--no-merges), NOT by a 'Merge ' subject-prefix
+# match (KTD6/R11). There is NO commit-type filtering: docs/test/chore subjects all go in (R11).
+# Subjects come straight from git's --pretty formatter, so backticks, '$', quotes, and a leading
+# '- ' in a subject survive without any PowerShell interpolation.
+#
+# Capture happens OUTSIDE the ANSI OutputEncoding scope used for svn — commit subjects are UTF-8
+# (KTD6); callers must invoke this while the console encoding is still the default (UTF-8 capable).
+# Returns the body string ('' when the range has no non-merge commit).
+function Get-SvnPushBody {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][string]$Range
+    )
+    # git may warn on stderr; under EAP=Stop that throws NativeCommandError, so soften locally.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $lines = & git -C $RepoDir log $Range --no-merges --reverse --pretty=format:'- %s' 2>$null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($null -eq $lines) { return '' }
+    # Force array so a single-commit result still joins as a line (PS unwraps scalars).
+    return (@($lines) -join "`n")
+}
+

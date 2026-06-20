@@ -5,8 +5,9 @@
 # Bash entry coverage:
 #   1. file exists
 #   2. missing --branch -> exit non-zero + stderr mentions branch required
-#   3. --branch supplied, missing --message -> exit non-zero + stderr mentions message
-# Full happy / 中文 / drift cases are in push-to-svn-commit.Tests.ps1 (PS) and Phase 2.
+#   3. --branch supplied, missing --title -> exit non-zero + stderr mentions title (U9: the agent
+#      supplies only --title; the body comes from the locked pin written by build-svn-commit.sh)
+# Full happy / 中文 / drift cases are in the manual skill-test suite (tests/docs/skill-tests.md).
 #
 # U7/U8 note: any branch is now legal and there is no bridge gate, so an unresolvable
 # remote worktree surfaces as "not found" (the old "Unsupported branch" message is gone).
@@ -49,14 +50,25 @@ test_missing_branch() {
     esac
 }
 
-# Case 3: --branch main but no --message -> non-zero + stderr mentions message
-test_missing_message() {
+# Case 3: --branch main but no --title -> non-zero + stderr mentions title
+test_missing_title() {
     local out rc
     out="$(cd "$TMPDIR_CASE" && bash "$SCRIPT" --branch main 2>&1)"; rc=$?
-    assertNotEquals 'missing --message exits non-zero' 0 "$rc"
+    assertNotEquals 'missing --title exits non-zero' 0 "$rc"
     case "$out" in
-        *--message*|*required*) assertTrue 'missing --message stderr mentions message' 0 ;;
-        *) fail "missing --message stderr unexpected: $out" ;;
+        *--title*|*required*) assertTrue 'missing --title stderr mentions title' 0 ;;
+        *) fail "missing --title stderr unexpected: $out" ;;
+    esac
+}
+
+# Case 4: legacy --message is now an unknown argument (agent cannot pass a free message; U9)
+test_legacy_message_rejected() {
+    local out rc
+    out="$(cd "$TMPDIR_CASE" && bash "$SCRIPT" --branch main --message 'free body' 2>&1)"; rc=$?
+    assertNotEquals 'legacy --message exits non-zero' 0 "$rc"
+    case "$out" in
+        *"Unknown argument"*) assertTrue 'legacy --message reported as unknown argument' 0 ;;
+        *) fail "expected 'Unknown argument' for --message, got: $out" ;;
     esac
 }
 

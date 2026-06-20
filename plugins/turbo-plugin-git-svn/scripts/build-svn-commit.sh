@@ -63,10 +63,24 @@ if [[ "$LOCAL_REV" != "$HEAD_REV" ]]; then
   exit 1
 fi
 
-LOG_OUTPUT="$(git -C "$MAIN_WORKTREE" log "$REMOTE_BRANCH..$BRANCH" --reverse --pretty=format:'%h|%s')"
-if [[ -z "$LOG_OUTPUT" ]]; then
+RANGE="$REMOTE_BRANCH..$BRANCH"
+
+# Empty range (no new commits at all, merges included) → nothing to push (existing short-circuit).
+RANGE_COUNT="$(git -C "$MAIN_WORKTREE" rev-list --count "$RANGE")"
+if [[ -z "$RANGE_COUNT" || "$RANGE_COUNT" == "0" ]]; then
   echo 'Nothing to push'
   exit 0
+fi
+
+# Locked SVN body = every non-merge subject (no commit-type filtering; merges excluded by parent
+# count). Persisted to a pin file below so submit-svn-commit.sh combines it with the agent-supplied
+# title — the agent cannot alter the body.
+SVN_BODY="$(get_svn_push_body "$MAIN_WORKTREE" "$RANGE")"
+if [[ -z "$SVN_BODY" ]]; then
+  # Range has commits, but ALL are merges → no code-level subjects. Hard-stop BEFORE staging a
+  # merge, keeping the SVN body and release-tag rule consistent (no merge commit is produced here).
+  echo "Error: only merge commit(s) in range '$RANGE': nothing to record in the SVN body. Add a non-merge commit (or rebase), then retry." >&2
+  exit 1
 fi
 
 if ! git -C "$REMOTE_PATH" merge --no-ff --no-commit -m "Merge branch '$BRANCH' into $REMOTE_BRANCH" "$BRANCH" >/dev/null 2>&1; then
@@ -88,8 +102,12 @@ printf '%s' "$BRANCH_HEAD_SHA" > "$SHA_GITDIR/MERGE_HEAD.tp_branch_sha"
 # Use --xml-based capture (UTF-8 paths) so the snapshot is encoding-consistent.
 svn_status_xml "$REMOTE_PATH" > "$SHA_GITDIR/MERGE_HEAD.tp_svn_status"
 
-echo 'COMMITS'
-echo "$LOG_OUTPUT"
+# Persist the LOCKED body alongside the other prepare-time pins (read back by submit-svn-commit.sh).
+write_utf8_no_bom "$SHA_GITDIR/MERGE_HEAD.tp_svn_body" "$SVN_BODY"
+
+# Emit the locked body (for the SKILL to display) + the file list. Same string as the pin file.
+echo 'BODY'
+printf '%s\n' "$SVN_BODY"
 echo ''
 echo 'FILES'
 svn_status_xml "$REMOTE_PATH" | while IFS=$'\t' read -r status filepath; do

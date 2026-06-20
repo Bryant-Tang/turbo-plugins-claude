@@ -230,3 +230,20 @@ svn_status_xml() {
   done
 }
 
+# Build the LOCKED SVN commit body for a push range. The body is a deterministic, '- '-prefixed
+# list of EVERY non-merge commit subject (oldest first), one per line — git itself applies the
+# '- ' prefix and the ordering, so the same commit set always yields byte-identical output.
+#
+# Merge commits are excluded by parent count (--no-merges), NOT by a 'Merge ' subject-prefix
+# match (KTD6/R11). There is NO commit-type filtering: docs/test/chore subjects all go in (R11).
+# Subjects are emitted verbatim via git's own --pretty formatter, so backticks, '$', quotes, and
+# a leading '- ' in a subject survive without any shell interpolation.
+#
+# Args: <repo_dir> <range>   (range e.g. "remote-svn/main..feat/x")
+# Prints the body to stdout (empty output when the range has no non-merge commit). Returns the
+# git exit code, so a genuine git failure propagates under `set -e`.
+get_svn_push_body() {
+  local repo_dir="$1" range="$2"
+  git -C "$repo_dir" log "$range" --no-merges --reverse --pretty=format:'- %s'
+}
+

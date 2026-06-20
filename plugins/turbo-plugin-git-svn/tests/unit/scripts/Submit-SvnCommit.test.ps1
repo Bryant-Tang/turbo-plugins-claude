@@ -2,12 +2,13 @@
 #
 # Tests for plugins/turbo-plugin/scripts/Submit-SvnCommit.ps1.
 #
-# Scope (U4 plan):
+# Scope (U9: --Message renamed to --Title; agent supplies only the title, body comes from the
+# locked pin written by Build-SvnCommit):
 #   - missing -Branch → required-arg error
-#   - missing -Message → required-arg error
-#   - unsupported branch name → "Unsupported branch"
-#   - no prepared merge (no MERGE_HEAD) → "No pending merge ..." (中文 commit msg input — verify the
-#     script handles 中文 -Message arg without parser/encoding crash before hitting the
+#   - missing -Title → required-arg error
+#   - valid branch name, no bridge → "Remote worktree ... not found"
+#   - no prepared merge (no MERGE_HEAD) → "No pending merge ..." (中文 title input — verify the
+#     script handles a 中文 -Title arg without parser/encoding crash before hitting the
 #     precondition fail)
 
 BeforeAll {
@@ -45,7 +46,7 @@ Describe 'Submit-SvnCommit' {
         It 'stderr mentions -Branch required' { $script:res1.Combined | Should -Match '-Branch' }
     }
 
-    Context 'Case 2: -Branch supplied but missing -Message → required-arg error' {
+    Context 'Case 2: -Branch supplied but missing -Title → required-arg error' {
         BeforeAll {
             $sb = New-Sandbox -Tag 'ptsc-2'
             try {
@@ -58,7 +59,23 @@ Describe 'Submit-SvnCommit' {
         }
 
         It 'exit != 0' { ($script:res2.ExitCode -ne 0) | Should -BeTrue }
-        It 'stderr mentions -Message required' { $script:res2.Combined | Should -Match '-Message' }
+        It 'stderr mentions -Title required' { $script:res2.Combined | Should -Match '-Title' }
+    }
+
+    Context 'Case 2b: legacy -Message is now an unknown parameter (agent cannot pass a free message)' {
+        BeforeAll {
+            $sb = New-Sandbox -Tag 'ptsc-2b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $script:res2b = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'main', '-Message', 'free body')
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+
+        # CmdletBinding rejects the undeclared -Message parameter with a binding error (non-zero).
+        It 'exit != 0 (param binding rejects -Message)' { ($script:res2b.ExitCode -ne 0) | Should -BeTrue }
     }
 
     Context 'Case 3: -Branch develop (valid name, no bridge) → "Remote worktree ... not found"' {
@@ -67,7 +84,7 @@ Describe 'Submit-SvnCommit' {
             try {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-GitMainRepo -Root $root -CreateWorktreesDir
-                $script:res3 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'develop', '-Message', 'irrelevant')
+                $script:res3 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'develop', '-Title', 'irrelevant')
             } finally {
                 Remove-Sandbox -Dir $sb
             }
@@ -80,14 +97,14 @@ Describe 'Submit-SvnCommit' {
         It 'stderr mentions the missing remote worktree' { $script:res3.Combined | Should -Match 'not found' }
     }
 
-    Context 'Case 4: -Branch main with remote-svn-main but no MERGE_HEAD → "No pending merge" (中文 -Message)' {
+    Context 'Case 4: -Branch main with remote-svn-main but no MERGE_HEAD → "No pending merge" (中文 -Title)' {
         BeforeAll {
             $sb = New-Sandbox -Tag 'ptsc-4'
             try {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-GitMainRepo -Root $root -CreateWorktreesDir -CreateRemoteMain
-                $zhMsg = '修正中文 bug — push-commit precondition case'
-                $script:res4 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'main', '-Message', $zhMsg)
+                $zhTitle = '修正中文 bug — push-commit precondition case'
+                $script:res4 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'main', '-Title', $zhTitle)
             } finally {
                 Remove-Sandbox -Dir $sb
             }

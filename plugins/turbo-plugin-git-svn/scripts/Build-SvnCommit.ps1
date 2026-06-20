@@ -68,13 +68,29 @@ try {
         throw "Remote SVN worktree is not up to date (local r$localRev, head r$headRev). Run '/tp-pull-from-svn --branch $Branch' first."
     }
 
-    # git log subjects may contain non-ASCII (UTF-8) — capture under the default console encoding,
-    # NOT the ANSI scope used for svn below.
-    $logOutput = (& git -C $mainWorktree log "$($remote.Branch)..$Branch" --reverse --pretty=format:'%h|%s' | Out-String).Trim()
+    $range = "$($remote.Branch)..$Branch"
 
-    if ([string]::IsNullOrWhiteSpace($logOutput)) {
+    # Empty range (no new commits at all, merges included) → nothing to push (existing short-circuit).
+    $eaCount = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $rangeCount = (& git -C $mainWorktree rev-list --count $range 2>$null | Out-String).Trim()
+    $ErrorActionPreference = $eaCount
+    if ([string]::IsNullOrWhiteSpace($rangeCount) -or $rangeCount -eq '0') {
         Write-Output 'Nothing to push'
         exit 0
+    }
+
+    # Locked SVN body = every NON-merge subject (no commit-type filtering; merges excluded by
+    # parent count). git subjects are UTF-8, so this MUST run OUTSIDE the ANSI OutputEncoding scope
+    # used for svn below (KTD6). The body is later persisted to a pin file so push-to-svn-commit
+    # combines it with the agent-supplied title — the agent cannot alter the body.
+    $svnBody = Get-SvnPushBody -RepoDir $mainWorktree -Range $range
+
+    if ([string]::IsNullOrWhiteSpace($svnBody)) {
+        # Range has commits, but ALL of them are merges → no code-level subjects for the body.
+        # Hard-stop BEFORE staging a merge: this keeps the SVN body and the release-tag rule
+        # consistent (a tag fires only when a real merge commit is produced — none is here).
+        throw "Only merge commit(s) in range '$range': nothing to record in the SVN body. Add a non-merge commit (or rebase), then retry."
     }
 
     $mergeMsg = "Merge branch '$Branch' into $($remote.Branch)"
@@ -110,6 +126,12 @@ try {
         [Console]::OutputEncoding = $prevEnc
     }
     Write-Utf8NoBom -Path $svnStatusFile -Content $svnStatusSnap
+
+    # Persist the LOCKED body alongside the other prepare-time pins. push-to-svn-commit reads this
+    # back (body-from-file) and combines it with the agent's title; the agent never sees a free
+    # --message, so the body cannot be tampered with after prepare. Cleaned up on commit success.
+    $bodyFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_svn_body'
+    Write-Utf8NoBom -Path $bodyFile -Content $svnBody
 
     # Build the FILES section under ANSI OutputEncoding (correct Unicode paths), collect into a
     # list, then emit after restoring the encoding so all stdout is encoded consistently.
@@ -153,8 +175,10 @@ try {
         [Console]::OutputEncoding = $prevEnc
     }
 
-    Write-Output 'COMMITS'
-    Write-Output $logOutput
+    # Emit the locked body (for the SKILL to display) + the file list. The body shown here is the
+    # SAME string written to the pin file, so what the user confirms is what gets committed.
+    Write-Output 'BODY'
+    Write-Output $svnBody
     Write-Output ''
     Write-Output 'FILES'
     foreach ($fl in $fileLines) { Write-Output $fl }

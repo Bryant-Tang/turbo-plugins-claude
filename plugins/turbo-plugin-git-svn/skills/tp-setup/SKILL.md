@@ -228,7 +228,7 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 - **標記區塊只動自己 concern 的** — config.toml 用 concern 標記、CLAUDE.md 用單一 `base` 區塊;git-svn 只寫
   config.toml 的 `git-svn`(及 CLAUDE.md 的 `base`,若 base 段未先建)區塊,不碰 dotnet 區塊或標記外內容。
 - 寫 `.commitlintrc.json` 用 JSON parse + array merge(`rules.type-enum[2]`),不用 string 替換。
-- **不裝** husky / commit-msg hook、**不執行** npm 工具鏈。`.commitlintrc.json` 純諮詢,enforce 由 `tp-push-to-svn` 自 parse。
+- **不裝** husky / commit-msg hook、**不執行** npm 工具鏈。`.commitlintrc.json` 純諮詢(無 hook 強制);commit type 的語意檢查由 `tp-commit-msg` 對該檔負責,`tp-push-to-svn` **不再**做 type 過濾(push body 收所有非-merge subject)。
 - Git Bash 路徑(`/c/Users/...`)若使用者輸入,寫進設定檔前轉成 Windows 格式(`C:/Users/...`)。
 - **Phase summary transparency**:只列「會動到外部」的 unconditional 動作;repo-only 本地寫入 / git 本地 op /
   template copy 不列。措辭平實白話 + 具體項目名稱,不用 raw shell 指令。

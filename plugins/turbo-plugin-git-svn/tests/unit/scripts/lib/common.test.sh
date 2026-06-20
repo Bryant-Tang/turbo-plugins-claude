@@ -499,5 +499,125 @@ test_read_config_tolerates_markers() {
     assertEquals 'unknown section tolerated'          'v'                        "$unknown"
 }
 
+# ─── get_svn_push_body (U9) ──────────────────────────────────────────────────
+# Builds a repo with a 'svnbase' marker at the base commit, feat/fix on main, refactor on a
+# side branch, then a --no-ff merge of side into main. The range svnbase..main therefore holds
+# 3 non-merge subjects + 1 merge commit. Echoes the repo dir.
+_build_push_body_repo() {
+    local repo
+    repo="$(mktemp -d -t turbo-common-pushbody-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: add A' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'fix: fix B' >/dev/null 2>&1
+    git -C "$repo" checkout -q -b side >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'refactor: tidy C' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m 'Merge branch side into main' side >/dev/null 2>&1
+    printf '%s' "$repo"
+}
+
+test_get_svn_push_body_excludes_merge_and_prefixes() {
+    local repo body line_count
+    repo="$(_build_push_body_repo)"
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    line_count="$(printf '%s\n' "$body" | grep -c '^- ')"
+    assertEquals 'body has exactly 3 "- " bullet lines (merge excluded)' '3' "$line_count"
+    case "$body" in
+        *"- feat: add A"*) assertTrue 'feat subject present' 0 ;;
+        *) fail "feat missing: $body" ;;
+    esac
+    case "$body" in
+        *"- fix: fix B"*) assertTrue 'fix subject present' 0 ;;
+        *) fail "fix missing: $body" ;;
+    esac
+    case "$body" in
+        *"- refactor: tidy C"*) assertTrue 'refactor subject present' 0 ;;
+        *) fail "refactor missing: $body" ;;
+    esac
+    case "$body" in
+        *"Merge branch"*) fail "merge commit leaked into body: $body" ;;
+        *) assertTrue 'merge commit excluded' 0 ;;
+    esac
+}
+
+# AE2: no commit-type filtering — docs/test/chore subjects all appear in the body.
+test_get_svn_push_body_no_type_filter() {
+    local repo body
+    repo="$(mktemp -d -t turbo-common-notype-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'docs: update README' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'chore: bump version' >/dev/null 2>&1
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    case "$body" in
+        *"- docs: update README"*) assertTrue 'docs in body (no type filter)' 0 ;;
+        *) fail "docs filtered out: $body" ;;
+    esac
+    case "$body" in
+        *"- chore: bump version"*) assertTrue 'chore in body (no type filter)' 0 ;;
+        *) fail "chore filtered out: $body" ;;
+    esac
+}
+
+# Same commit set → byte-identical body (Execution note: determinism guard).
+test_get_svn_push_body_deterministic() {
+    local repo b1 b2 h1 h2
+    repo="$(_build_push_body_repo)"
+    b1="$(get_svn_push_body "$repo" 'svnbase..main')"
+    b2="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    h1="$(printf '%s' "$b1" | od -An -tx1 | tr -d ' \n')"
+    h2="$(printf '%s' "$b2" | od -An -tx1 | tr -d ' \n')"
+    assertEquals 'two runs on the same commit set are byte-identical' "$h1" "$h2"
+}
+
+# Special characters in a subject survive verbatim (delivered via git formatter + temp file,
+# never shell-interpolated). Leading '- ' + backtick + $ + quotes in one subject.
+test_get_svn_push_body_special_chars() {
+    local repo body special
+    repo="$(mktemp -d -t turbo-common-special-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    special='- fix: weird `code` $x "q"'
+    git -C "$repo" commit -q --allow-empty -m "$special" >/dev/null 2>&1
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    assertEquals 'special-char subject preserved verbatim under "- " prefix' "- $special" "$body"
+}
+
+# Range with ONLY a merge commit → empty body (Build hard-stops on this; helper just yields '').
+test_get_svn_push_body_only_merge_empty() {
+    local repo y_sha body
+    repo="$(mktemp -d -t turbo-common-onlymerge-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" checkout -q -b feature >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: X' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: Y' >/dev/null 2>&1
+    y_sha="$(git -C "$repo" rev-parse HEAD 2>/dev/null)"
+    git -C "$repo" merge -q --no-ff -m 'Merge feature (main)' feature >/dev/null 2>&1
+    # startref = independent merge of the same two parents → contains X and Y but not main's merge.
+    git -C "$repo" checkout -q -b startref "$y_sha" >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m 'Merge feature (startref)' feature >/dev/null 2>&1
+    body="$(get_svn_push_body "$repo" 'startref..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    assertEquals 'only-merge range yields empty body' '' "$body"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

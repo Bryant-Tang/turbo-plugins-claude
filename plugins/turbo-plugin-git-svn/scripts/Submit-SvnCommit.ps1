@@ -1,7 +1,9 @@
 ﻿[CmdletBinding()]
 param(
     [string]$Branch = '',
-    [string]$Message = ''
+    # U9: the agent supplies ONLY the title. The body is read from the pin file written by
+    # Build-SvnCommit (body-from-file) and combined here — the agent cannot pass a free message.
+    [string]$Title = ''
 )
 
 Set-StrictMode -Version Latest
@@ -18,7 +20,7 @@ try {
     Probe-GitVersion
 
     if ([string]::IsNullOrWhiteSpace($Branch)) { throw 'Missing required argument: -Branch <branch>' }
-    if ([string]::IsNullOrWhiteSpace($Message)) { throw 'Missing required argument: -Message <commit-message>' }
+    if ([string]::IsNullOrWhiteSpace($Title)) { throw 'Missing required argument: -Title <title>' }
 
     # Encoding fix (zh-TW / non-ASCII filenames): plain `svn status` prints filenames in the
     # system ANSI codepage (CP_ACP, e.g. Big5), and — critically — PowerShell encodes native-
@@ -101,6 +103,21 @@ try {
         throw "Remote worktree changed since prepare — file(s) appeared: $driftList. Abort the merge with 'git -C $($remote.Path) merge --abort' and rerun /tp-push-to-svn to recompute."
     }
 
+    # U9: assemble the final SVN message = agent title + LOCKED body-from-file. Read the body
+    # pin (UTF-8, no BOM) written by Build-SvnCommit; fail closed if missing (same posture as the
+    # SHA / svn-status pins — a missing body pin means prepare wasn't run with current locking).
+    $bodyFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_svn_body'
+    if (-not (Test-Path -LiteralPath $bodyFile -PathType Leaf)) {
+        throw "SVN body pin file missing while merge state exists. Abort the merge with 'git -C $($remote.Path) merge --abort' and rerun /tp-push-to-svn to (re-)stage."
+    }
+    # ReadAllText(UTF8) — Get-Content can mis-decode UTF-8 as Big5 on zh-TW (CLAUDE.md).
+    $svnBody = [System.IO.File]::ReadAllText($bodyFile, [System.Text.Encoding]::UTF8)
+    # Collapse the title to a single line so the agent cannot smuggle extra body content via
+    # embedded newlines ('\n' would otherwise bypass the body lock).
+    $titleLine = ($Title -replace '[\r\n]+', ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($titleLine)) { throw 'Title is empty after removing line breaks.' }
+    $fullMessage = "$titleLine`n`n$svnBody"
+
     Write-Output "Finalising merge commit..."
     & git -C $remote.Path commit --no-edit
     if ($LASTEXITCODE -ne 0) {
@@ -113,7 +130,7 @@ try {
     $msgFile = [System.IO.Path]::GetTempFileName()
     Push-Location $remote.Path
     try {
-        Write-Utf8NoBom -Path $msgFile -Content $Message
+        Write-Utf8NoBom -Path $msgFile -Content $fullMessage
 
         $svnStatusLines = & svn status
         $toAdd = @()
@@ -198,6 +215,10 @@ try {
         $svnStatusFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_svn_status'
         if (Test-Path -LiteralPath $svnStatusFile) {
             Remove-Item -LiteralPath $svnStatusFile -Force -ErrorAction SilentlyContinue
+        }
+        $bodyFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_svn_body'
+        if (Test-Path -LiteralPath $bodyFile) {
+            Remove-Item -LiteralPath $bodyFile -Force -ErrorAction SilentlyContinue
         }
     } catch {
         # Best-effort cleanup; don't fail the script on cleanup error.

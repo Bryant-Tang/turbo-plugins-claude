@@ -75,6 +75,39 @@ BeforeAll {
         return @{ Threw = $threw; Result = $result; Message = $msg }
     }
 
+    # git wrapper: PS 5.1 + EAP=Stop (set by Common.ps1) throws on harmless git stderr; soften.
+    # NOTE: ValueFromRemainingArguments — a [Parameter()] attribute makes this an ADVANCED
+    # function, which disables the automatic $args; remaining tokens must be bound explicitly.
+    function Invoke-GitSilent {
+        param(
+            [Parameter(Mandatory = $true, Position = 0)][string]$RepoDir,
+            [Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs
+        )
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & git -C $RepoDir @GitArgs 2>$null | Out-Null } catch { } finally { $ErrorActionPreference = $old }
+    }
+
+    # Builds a repo with a 'svnbase' marker at the base commit, feat/fix on main, refactor on a
+    # side branch, then a --no-ff merge of side into main — so range svnbase..main holds 3
+    # non-merge subjects + 1 merge commit. Returns the repo dir.
+    function New-PushBodyRepo {
+        param([string]$Tag = 'pushbody')
+        $dir = New-IsolatedRepoRoot $Tag
+        Invoke-GitSilent $dir init -q -b main
+        Invoke-GitSilent $dir config user.email 'test@turbo-plugin'
+        Invoke-GitSilent $dir config user.name 'turbo-plugin-test'
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'base'
+        Invoke-GitSilent $dir branch svnbase
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'feat: add A'
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'fix: fix B'
+        Invoke-GitSilent $dir checkout -q -b side
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'refactor: tidy C'
+        Invoke-GitSilent $dir checkout -q main
+        Invoke-GitSilent $dir merge -q --no-ff -m 'Merge branch side into main' side
+        return $dir
+    }
+
 }
 
 # =============================================================================
@@ -448,6 +481,108 @@ Describe 'Write-Utf8NoBom' {
             for ($i = 0; $i -lt $canonical.Length; $i++) {
                 $bytes[$i] | Should -Be $canonical[$i]
             }
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+}
+
+# =============================================================================
+# Get-SvnPushBody (U9) - locked SVN body = '- '-prefixed non-merge subjects
+# =============================================================================
+
+Describe 'Get-SvnPushBody' {
+
+    It 'lists every non-merge subject (- prefixed, no hash) and excludes the merge commit' {
+        $repo = New-PushBodyRepo 'pb-nomerge'
+        try {
+            $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
+            # Measure-Object — .Count on a raw collection is unreliable under Set-StrictMode Latest.
+            $allLines = @($body -split "`n")
+            ($allLines | Measure-Object).Count | Should -Be 3
+            $bullets = @($allLines | Where-Object { $_ -match '^- ' })
+            ($bullets | Measure-Object).Count | Should -Be 3
+            $body | Should -Match '(?m)^- feat: add A$'
+            $body | Should -Match '(?m)^- fix: fix B$'
+            $body | Should -Match '(?m)^- refactor: tidy C$'
+            $body | Should -Not -Match 'Merge branch'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'applies NO commit-type filtering — docs/chore subjects appear in the body (AE2)' {
+        $repo = New-IsolatedRepoRoot 'pb-notype'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Invoke-GitSilent $repo config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $repo config user.name 'turbo-plugin-test'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'base'
+            Invoke-GitSilent $repo branch svnbase
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'docs: update README'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'chore: bump version'
+            $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
+            $body | Should -Match '(?m)^- docs: update README$'
+            $body | Should -Match '(?m)^- chore: bump version$'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'is byte-identical across two runs on the same commit set (determinism)' {
+        $repo = New-PushBodyRepo 'pb-determ'
+        try {
+            $b1 = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
+            $b2 = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
+            [System.String]::Equals($b1, $b2, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            $h1 = [System.BitConverter]::ToString($enc.GetBytes($b1))
+            $h2 = [System.BitConverter]::ToString($enc.GetBytes($b2))
+            $h1 | Should -Be $h2
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'preserves special characters in a subject verbatim (leading dash, backtick, $)' {
+        $repo = New-IsolatedRepoRoot 'pb-special'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Invoke-GitSilent $repo config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $repo config user.name 'turbo-plugin-test'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'base'
+            Invoke-GitSilent $repo branch svnbase
+            # No embedded double-quote here: PS 5.1's native-arg quoting mangles '"' when
+            # invoking git.exe (a fixture limitation, not a helper bug). The bash sibling test
+            # covers double-quote preservation; this asserts the helper never interpolates a
+            # leading '- ', backtick, or '$' in the subject.
+            $special = '- fix: weird `code` and $x end'
+            Invoke-GitSilent $repo commit -q --allow-empty -m $special
+            $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
+            $body | Should -Be ('- ' + $special)
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'returns empty when the range contains only merge commit(s)' {
+        $repo = New-IsolatedRepoRoot 'pb-onlymerge'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Invoke-GitSilent $repo config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $repo config user.name 'turbo-plugin-test'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'base'
+            Invoke-GitSilent $repo checkout -q -b feature
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'feat: X'
+            Invoke-GitSilent $repo checkout -q main
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'feat: Y'
+            $ySha = (& git -C $repo rev-parse HEAD 2>$null | Out-String).Trim()
+            Invoke-GitSilent $repo merge -q --no-ff -m 'Merge feature (main)' feature
+            # startref = independent merge of the same two parents → contains X and Y but not main's merge
+            Invoke-GitSilent $repo checkout -q -b startref $ySha
+            Invoke-GitSilent $repo merge -q --no-ff -m 'Merge feature (startref)' feature
+            $body = Get-SvnPushBody -RepoDir $repo -Range 'startref..main'
+            [string]::IsNullOrEmpty($body) | Should -BeTrue
         } finally {
             Remove-IsolatedRepoRoot -Dir $repo
         }

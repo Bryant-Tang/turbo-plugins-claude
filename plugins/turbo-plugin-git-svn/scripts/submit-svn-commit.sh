@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Usage: submit-svn-commit.sh --branch <branch> --message "commit message"
+# Usage: submit-svn-commit.sh --branch <branch> --title "one-line title"
+# The body is read from the locked pin (MERGE_HEAD.tp_svn_body) written by build-svn-commit.sh
+# and combined with the title here; the agent supplies ONLY the title (U9).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,12 +9,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"   # provides svn_status_xml (UTF-8/entity-safe svn status parser)
 
 BRANCH=''
-MESSAGE=''
+# U9: the agent supplies ONLY the title. The body is read from the pin file written by
+# build-svn-commit.sh (body-from-file) and combined here — the agent cannot pass a free message.
+TITLE=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch)   [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
-    --message)  [[ $# -ge 2 ]] || { echo "Error: --message requires a value" >&2; exit 1; }; MESSAGE="$2"; shift 2 ;;
+    --title)    [[ $# -ge 2 ]] || { echo "Error: --title requires a value" >&2; exit 1; }; TITLE="$2"; shift 2 ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -20,7 +24,7 @@ done
 probe_git_version
 
 if [[ -z "$BRANCH" ]]; then echo "Error: --branch is required" >&2; exit 1; fi
-if [[ -z "$MESSAGE" ]]; then echo "Error: --message is required" >&2; exit 1; fi
+if [[ -z "$TITLE" ]]; then echo "Error: --title is required" >&2; exit 1; fi
 
 MAIN_WORKTREE="$(get_main_worktree)"
 WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
@@ -93,6 +97,21 @@ if [[ -n "${DRIFTED_FILES// /}" ]]; then
   exit 1
 fi
 
+# U9: assemble the final SVN message = agent title + LOCKED body-from-file. Read the body pin
+# written by build-svn-commit.sh; fail closed if missing (same posture as the SHA / svn-status
+# pins). The body comes from a FILE (not argv), so non-ASCII subjects re-pass cleanly.
+BODY_FILE="$SHA_GITDIR/MERGE_HEAD.tp_svn_body"
+if [[ ! -f "$BODY_FILE" ]]; then
+  echo "Error: SVN body pin file missing while merge state exists. Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to (re-)stage." >&2
+  exit 1
+fi
+SVN_BODY="$(cat "$BODY_FILE")"
+# Collapse the title to a single line so the agent cannot smuggle extra body content via embedded
+# newlines (a '\n' in the title would otherwise bypass the body lock).
+TITLE_LINE="$(printf '%s' "$TITLE" | tr '\r\n' '  ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+if [[ -z "$TITLE_LINE" ]]; then echo "Error: title is empty after removing line breaks." >&2; exit 1; fi
+FULL_MESSAGE="$(printf '%s\n\n%s' "$TITLE_LINE" "$SVN_BODY")"
+
 echo "Finalising merge commit..."
 if ! git -C "$REMOTE_PATH" commit --no-edit; then
   echo "Error: git commit failed when finalising the prepared merge." >&2
@@ -103,7 +122,7 @@ MSG_FILE="$(mktemp)"
 # Cleanup the temp message file unconditionally; SHA_FILE only on success
 # (a failed commit retains the pin for retry — pin staleness is rechecked at top).
 trap 'rm -f "$MSG_FILE"' EXIT
-write_utf8_no_bom "$MSG_FILE" "$MESSAGE"
+write_utf8_no_bom "$MSG_FILE" "$FULL_MESSAGE"
 
 # Run the commit work in a subshell so a failure inside doesn't kill our cleanup logic.
 # Capture its exit status so we can gate the SHA pin removal on success.
@@ -175,9 +194,10 @@ svn_commit_status=$?
 set -e
 
 if [[ $svn_commit_status -eq 0 ]]; then
-  # SHA pin + svn-status pin cleanup runs only on success — a failed commit retains the pins for retry.
+  # SHA pin + svn-status pin + body pin cleanup runs only on success — a failed commit retains the pins for retry.
   rm -f "$SHA_FILE" 2>/dev/null || true
   rm -f "$SVN_STATUS_FILE" 2>/dev/null || true
+  rm -f "$BODY_FILE" 2>/dev/null || true
 else
   exit $svn_commit_status
 fi
