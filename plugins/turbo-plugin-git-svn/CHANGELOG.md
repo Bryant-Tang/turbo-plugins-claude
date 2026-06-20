@@ -15,6 +15,7 @@
 - `SessionStart` advisory hook(marker 缺失時提示 `/tp-setup`;dbhub / IIS 分支已移至 sibling plugin)。
 - `default-files/.turbo-plugin/`:`config.toml` + `conventions.md` 範本,引入 marker scaffolding(config.toml 用 `# >>> turbo-plugin:<concern> >>>` TOML 註解標記、conventions.md 用 `<!-- turbo-plugin:begin <concern> -->` 標記),讓各 plugin 的 setup 只寫自己的標記區塊、彼此不覆蓋(已驗證 `Read-TurboPluginConfig` 略過 `#` marker 行)。
 - `tp-setup` 改為 **standalone 架構**:共用 `assets/setup-base.md`(concern-neutral 骨架,各 plugin 引用)+ git-svn concern(bridge bootstrap / `[svn]` / `.commitlintrc.json` / git-svn 標記區塊)。**移除 IIS apphost(→ dotnet plugin)、dbhub(→ db plugin)、Phase 3 Claude Code 功能詢問**。
+- `conventions.md` base 與 `CLAUDE.md` 注入精簡:`conventions.md` 只保留 `git-svn`(commit-msg)標記區塊——`*.cs`/`*.js`(code-comment)與 db-management 的指向**移出 conventions**,改由各自 skill 的 `description` 主動觸發;`CLAUDE.md` base snippet 改為通用「先讀 conventions.md」(不再逐項列舉操作類型)。
 - 兩層測試套件入口 + 各 SVN 腳本 / lib helper / hook 行為測試(`Common.test.ps1` / `common.test.sh` 自單體拆出、只保留 SVN concern + Core 覆蓋;新增 config reader 容忍 `#` marker 行 + 未知 section 的回歸測試)。
 
 ### 遷移說明

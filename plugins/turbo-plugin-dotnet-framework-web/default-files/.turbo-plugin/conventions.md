@@ -6,10 +6,3 @@
 
 <!-- turbo-plugin:begin git-svn -->
 <!-- turbo-plugin:end git-svn -->
-
-<!-- turbo-plugin:begin db -->
-<!-- turbo-plugin:end db -->
-
-<!-- 以下程式碼註解慣例由 turbo-plugin-code-comment 提供(純 skill、無 setup,故為靜態內容) -->
-- **修改 `*.cs`(C#)** → 遵守 `/tp-csharp-comment`(XML doc + 解釋註解,寫給未來不在現場的新進工程師)。
-- **修改 `*.js` / `*.ts`(含 `.vue` / `.cshtml` 的 `<script>` 區塊)** → 遵守 `/tp-js-comment`(JSDoc + 解釋註解)。

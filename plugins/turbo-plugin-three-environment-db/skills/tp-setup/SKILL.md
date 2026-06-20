@@ -1,6 +1,6 @@
 ---
 name: tp-setup
-description: '設定 turbo-plugin-three-environment-db 環境(dbhub / 三環境 DB)。使用者明確要求 setup 時執行;**不要自動觸發**。先跑共用 base 段(建 .turbo-plugin/ + concern-neutral 共用檔),再做 db concern:dbhub.example.local.toml 範本、提示填 dbhub.local.toml、conventions.md 的 db 區塊。需要 git repo 而不存在時 fail-loud(不自行 git init)。'
+description: '設定 turbo-plugin-three-environment-db 環境(dbhub / 三環境 DB)。使用者明確要求 setup 時執行;**不要自動觸發**。先跑共用 base 段(建 .turbo-plugin/ + concern-neutral 共用檔),再做 db concern:dbhub.example.local.toml 範本、提示填 dbhub.local.toml。需要 git repo 而不存在時 fail-loud(不自行 git init)。'
 argument-hint: ''
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
@@ -15,7 +15,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 1. **共用 base 段**(concern-neutral):pre-check + case 偵測 + 建 `.turbo-plugin/` 與共用檔骨架。見
    `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/setup-base.md`,**先讀並執行該檔**。
 2. **db concern 段**(本檔):`dbhub.example.local.toml` 範本(進 git)、提示使用者複製填 `dbhub.local.toml`
-   (gitignored,含 credentials)、`conventions.md` 的 `db` 標記區塊(db-management 指向)。
+   (gitignored,含 credentials)。`tp-db-management` **不**寫進 `conventions.md`,改靠 skill 自身 description 讓 agent 主動觸發。
 
 > 本 plugin **不**處理 git↔SVN bridge(屬 `turbo-plugin-git-svn`)、IIS apphost(屬
 > `turbo-plugin-dotnet-framework-web`)。三個 plugin 共用同一份 base 段、各寫自己的標記區塊,彼此不覆蓋。
@@ -52,15 +52,12 @@ db 的動作都是 repo-only,無「動到外部」副作用。
 2. **`.turbo-plugin/dbhub.local.toml`** — **永不自動建立**(避免使用者誤以為已 ready)。不存在則提醒:
    「dbhub 需要你自填 credentials:`cp .turbo-plugin/dbhub.example.local.toml .turbo-plugin/dbhub.local.toml`
    後編輯填入連線資訊」(`.gitignore` base 已排除 `*.local.*`,不會進 git)。
-3. **`.turbo-plugin/conventions.md` 的 `db` 標記區塊**(用 base 段「更新自己區塊」程序,只動
-   `<!-- turbo-plugin:begin db -->` 區塊):寫入
-   ```
-   - **資料庫 / SQL 操作** → 遵守 `/tp-db-management`(dbhub MCP 唯讀檢視 + SQL 標準化到 `.turbo-plugin/sql/`)。
-   ```
-4. **docker probe**(僅提示,不阻塞):`docker --version`。失敗 → Phase 4 記「dbhub MCP server 需要 docker;
+3. **docker probe**(僅提示,不阻塞):`docker --version`。失敗 → Phase 4 記「dbhub MCP server 需要 docker;
    未偵測到,請確認 docker 已安裝並在跑」。
 
-> db 在 `config.toml` 無設定;`CLAUDE.md` 由 base 段注入「先讀 conventions.md」指向,db 不另加。
+> db 在 `config.toml` 與 `conventions.md` 都**不寫入**——`tp-db-management` 改靠 skill 自身 description 讓 agent
+> 主動觸發,不放 conventions(這樣才能乾淨觀察「光靠 description 是否就會自動使用」,不被 conventions 混淆)。
+> `CLAUDE.md` 由 base 段注入通用「先讀 conventions.md」指向,db 不另加。
 
 #### Case (d) peer-mode（per-peer dbhub.local.toml）
 
@@ -79,7 +76,7 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 ### Phase 4 — 完成報告
 
 - **偵測結果**:case + 子流程。
-- **寫入位置**:base 骨架 + db 項目(`dbhub.example.local.toml`、`conventions.md` db 區塊)各標「新建 / 已存在 / 補設定」。
+- **寫入位置**:base 骨架 + db 項目(`dbhub.example.local.toml`)各標「新建 / 已存在 / 補設定」。
 - **使用者仍須手動處理**:
   - `dbhub.local.toml` credentials(複製 example 後填)。
   - docker 未偵測到時的安裝提示。
@@ -92,14 +89,14 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 - **db 不碰 config.toml** — base 段對 db 跳過 config.toml 那一項。
 - **無 `.git/` 時 fail-loud,不自行 `git init`** — 建 git repo 屬 `turbo-plugin-git-svn`。
 - **`dbhub.local.toml` 永不自動建立** — 只 prompt 使用者複製 example 後手動編輯(避免誤以為已 ready)。
-- **標記區塊只動自己 concern 的**(conventions.md 的 `db` 區塊);不碰 git-svn 區塊或標記外內容。
+- **db 不寫 `conventions.md` / `config.toml` 的任何標記區塊** — base 段建立的共用檔維持原樣,db 只管自己的 dbhub 檔(db-management 靠 skill description 觸發)。
 - **Case (b)/(c) idempotent**;**Case (d)** 只處理 per-peer `dbhub.local.toml`,不碰 git-versioned shared file。
 - **不自動代填使用者設定 / credentials** — 缺漏一律先 `AskUserQuestion`。
 - **Phase summary transparency**:db 動作皆 repo-only,summary 無外部副作用可列。
 
 ## Completion Checks
 
-- `.turbo-plugin/` 存在,`conventions.md` 的 `db` 標記區塊含 db-management 指向。
+- `.turbo-plugin/` 存在;db 未在 `conventions.md` / `config.toml` 寫入任何內容。
 - `.turbo-plugin/dbhub.example.local.toml` 存在(進 git);`dbhub.local.toml` **未**被自動建立(只提示)。
 - Case (a)(無 `.git/`):setup fail-loud 停止,**未** `git init`、**未**建任何檔。
 - Case (b)/(c):跑兩次結果同跑一次(idempotent)。
@@ -109,7 +106,7 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 
 - **無 git fail-loud**:在無 `.git/` 的空目錄跑 `/tp-setup`,確認停止並提示,且**未** `git init`、**未**建 `.turbo-plugin/`。
 - **dbhub.local.toml 不自動建**:乾淨 sandbox 跑 case (c),確認只建 `dbhub.example.local.toml`、提示複製,但**未**自動建 `dbhub.local.toml`。
-- **標記區塊不互蓋**:在已有 `git-svn` 標記區塊的 `conventions.md` 上跑 db setup,只更新 `db` 區塊,`git-svn` 區塊與標記外內容不變。
+- **db 不動 conventions**:跑 db setup 後,`conventions.md` 不含任何 db / db-management 內容(db-management 改靠 skill description 觸發)。
 
 ## Tool Preference
 

@@ -1,6 +1,6 @@
 ---
 name: tp-csharp-comment
-description: '對 C# 程式碼套用本專案註解 convention(XML doc + 單行 / 多行解釋註解),讓新進工程師能讀懂程式意圖。使用者明確要求註解 / 補文件時執行;agent 修完一段 C# 程式碼也可建議跑(註解可逆,改錯可重寫)。'
+description: '撰寫或修改 C# 程式碼(`.cs`,含 `.cshtml` 內 C#)時主動套用:新增 / 改動 class / record / struct / interface / enum / method / property 後,依本專案 convention 補上 XML doc 與解釋註解(寫給未來不在現場的新進工程師,說明意圖與 why)。只要這次工作有動到 C# 就適用,不需使用者另外明講「加註解」。'
 argument-hint: 'Optional: target C# file, symbol, or comment scope'
 user-invocable: true
 allowed-tools: Read, Edit, Glob, Grep

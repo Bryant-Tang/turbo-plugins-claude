@@ -23,8 +23,8 @@
 | 檔案 | 標記語法 | concern 值 |
 |---|---|---|
 | `.turbo-plugin/config.toml` | `# >>> turbo-plugin:<concern> >>>` … `# <<< turbo-plugin:<concern> <<<`(TOML 註解,reader 會略過) | `git-svn` / `dotnet` |
-| `.turbo-plugin/conventions.md` | `<!-- turbo-plugin:begin <concern> -->` … `<!-- turbo-plugin:end <concern> -->` | `git-svn` / `db` |
-| 專案根 `CLAUDE.md` | `<!-- turbo-plugin:begin <concern> -->` … `<!-- turbo-plugin:end <concern> -->` | `git-svn` / `dotnet` / `db` |
+| `.turbo-plugin/conventions.md` | `<!-- turbo-plugin:begin <concern> -->` … `<!-- turbo-plugin:end <concern> -->` | `git-svn` |
+| 專案根 `CLAUDE.md` | `<!-- turbo-plugin:begin base -->` … `<!-- turbo-plugin:end base -->`(只有單一 base 區塊) | `base` |
 
 **更新自己區塊的通用程序**(idempotent):讀檔 → 若找到自己 concern 的 begin/end 標記 → 用新內容
 **取代**該對標記之間的內容(標記本身保留);若找不到 → 在檔尾**追加**一組自己的 begin/end 標記
@@ -44,7 +44,7 @@
    (concern 段稍後只更新自己的標記區塊)。
    - db plugin **不碰** config.toml(db 在 config.toml 沒有設定);db 的 base 段跳過此項。
 3. **`.turbo-plugin/conventions.md`** — 不存在則複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/conventions.md`
-   (base:intro + 空的 `git-svn` / `db` 標記區塊 + 靜態的 `*.cs` / `*.js` 註解指向);**已存在則不覆寫整檔**。
+   (base:intro + 空的 `git-svn` 標記區塊);**已存在則不覆寫整檔**。
 4. **專案根 `.gitignore`** — 確保含 base 區塊(idempotent,缺則追加,不重複):
    ```
    # turbo-plugin
