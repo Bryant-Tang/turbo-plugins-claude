@@ -155,3 +155,23 @@ jobs:
           else
             echo "No bash orchestrator output captured."
           fi
+
+  # ── verify-core-identical (cross-plugin consistency, U8 / KTD3) ──────────────
+  # Repo-level invariant the per-plugin orchestrators cannot check: files copied
+  # byte-identical into multiple plugins (universal Core.{ps1,sh} + shared tp-setup
+  # base assets) must not drift, and marketplace.json must stay installable. Runs the
+  # locale-safe bash tool (the .ps1 sibling is for local Windows use). Independent of
+  # plugin discovery — always runs. This is the ONE workflow job that adding a plugin
+  # may need to be aware of (R21 exception); the tool auto-discovers copies, so no edit
+  # is needed per plugin.
+  verify-core-identical:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify cross-plugin shared-copy consistency + marketplace installability
+        shell: bash
+        run: bash tools/verify-core-identical.sh
