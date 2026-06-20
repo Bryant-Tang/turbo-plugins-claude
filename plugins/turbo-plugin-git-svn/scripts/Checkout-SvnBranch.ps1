@@ -206,6 +206,9 @@ try {
             & git -C $mainWorktree branch -D $Branch 2>$null | Out-Null
         }
         & git -C $mainWorktree worktree remove --force $remoteWorktreePath 2>$null | Out-Null
+        # Prune the registration in case `worktree remove` could not fully delete the dir (e.g. a held
+        # .svn handle) -- a surviving registration would wedge a re-run into a false "already imported".
+        & git -C $mainWorktree worktree prune 2>$null | Out-Null
         & git -C $mainWorktree branch -D $remoteBranch 2>$null | Out-Null
         throw
     }

@@ -140,6 +140,9 @@ _rollback() {
       git -C "$MAIN_WORKTREE" branch -D "$BRANCH" 2>/dev/null || true
     fi
     git -C "$MAIN_WORKTREE" worktree remove --force "$REMOTE_PATH" 2>/dev/null || true
+    # Prune the registration in case `worktree remove` could not fully delete the dir (e.g. a held
+    # .svn handle) -- a surviving registration would wedge a re-run into a false "already imported".
+    git -C "$MAIN_WORKTREE" worktree prune 2>/dev/null || true
     git -C "$MAIN_WORKTREE" branch -D "$REMOTE_BRANCH" 2>/dev/null || true
     exit "$ec"
 }

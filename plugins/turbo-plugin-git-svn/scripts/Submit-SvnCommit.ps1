@@ -192,8 +192,17 @@ try {
                 $newRev = $Matches[1]
             }
         }
-        & svn update | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        # svn update is a post-commit resync; the SVN commit already succeeded above. Soften EAP so a
+        # native-exe stderr write does NOT throw NativeCommandError under Set-StrictMode/EAP=Stop --
+        # that throw would skip the pin cleanup below and falsely report the successful commit as
+        # failed (exit 1), stranding the merge pins and wedging the next push on PENDING_MERGE.
+        # Matches submit-svn-commit.sh, which runs `svn update` with `|| warn` outside `set -e`.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & svn update 2>$null | Out-Null
+        $svnUpdateExit = $LASTEXITCODE
+        $ErrorActionPreference = $prevEAP
+        if ($svnUpdateExit -ne 0) {
             [Console]::Error.WriteLine('Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.')
         }
     } finally {
