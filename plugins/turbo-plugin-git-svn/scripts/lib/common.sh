@@ -5,6 +5,18 @@
 # first; this concern lib must NOT weaken those (KTD2a).
 source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
 
+# Echo the worktree container directory: <main_worktree>/.turbo-plugin/worktrees.
+# git-svn concern (the SVN remote worktree container) -- the SVN scripts call this instead
+# of each hardcoding a sibling path. Optional arg $1: a pre-resolved main worktree path;
+# if omitted it is computed via get_main_worktree (defined in core.sh, sourced above).
+get_worktrees_dir() {
+  local main_worktree="${1:-}"
+  if [[ -z "$main_worktree" ]]; then
+    main_worktree="$(get_main_worktree)" || return 1
+  fi
+  echo "$main_worktree/.turbo-plugin/worktrees"
+}
+
 # Validate a branch name for remote-svn worktree mapping (v0.5.0 U7 allowlist).
 # Returns 0 if OK, else prints the reason to stderr and returns 1. 'main' is the
 # canonical trust anchor and always passes; other casings of 'main' are rejected so

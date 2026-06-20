@@ -11,5 +11,6 @@ plugins/*/tests/fixtures/seed/*.dump binary
 # fresh `git checkout` (CRLF) differ from a hand-copied (LF) working tree.
 plugins/*/scripts/lib/Core.ps1                            text eol=lf
 plugins/*/scripts/lib/core.sh                             text eol=lf
+plugins/*/scripts/lib/ps1-delegate.sh                     text eol=lf
 plugins/*/skills/tp-setup/assets/setup-base.md            text eol=lf
 plugins/*/skills/tp-setup/assets/claudemd-base-snippet.md text eol=lf

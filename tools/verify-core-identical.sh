@@ -28,32 +28,32 @@ fail=0
 err() { echo "FAIL: $*" >&2; fail=1; }
 
 # ── 1. byte-identical shared copies ──────────────────────────────────────────
-# Each relpath is compared across every plugin that contains it; canonical = the
-# turbo-plugin-git-svn copy when present, else the first one found.
-shared_relpaths=(
-  "scripts/lib/Core.ps1"
-  "scripts/lib/core.sh"
-  "skills/tp-setup/assets/setup-base.md"
-  "skills/tp-setup/assets/claudemd-base-snippet.md"
+# Each spec pins the EXPECTED plugin set carrying the file. Pinning (vs a plain
+# ">=2 copies present" check) catches a copy DELETED from all-but-one plugin --
+# otherwise the lone survivor would silently pass. canonical = turbo-plugin-git-svn.
+# Adding a plugin that should carry a shared file means adding it to the spec.
+shared_specs=(
+  "scripts/lib/Core.ps1|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web turbo-plugin-three-environment-db"
+  "scripts/lib/core.sh|turbo-plugin-git-svn turbo-plugin-three-environment-db"
+  "scripts/lib/ps1-delegate.sh|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web"
+  "skills/tp-setup/assets/setup-base.md|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web turbo-plugin-three-environment-db"
+  "skills/tp-setup/assets/claudemd-base-snippet.md|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web turbo-plugin-three-environment-db"
 )
 
-for rel in "${shared_relpaths[@]}"; do
-  copies=()
-  for d in plugins/*/; do
-    [ -f "${d}${rel}" ] && copies+=("${d}${rel}")
-  done
-  if [ "${#copies[@]}" -lt 2 ]; then
-    echo "skip (fewer than 2 copies): $rel"
+for spec in "${shared_specs[@]}"; do
+  rel="${spec%%|*}"
+  expected="${spec#*|}"
+  canon="plugins/turbo-plugin-git-svn/${rel}"
+  if [ ! -f "$canon" ]; then
+    err "canonical shared copy missing: '$canon'"
     continue
   fi
-  canon=""
-  for c in "${copies[@]}"; do
-    case "$c" in
-      plugins/turbo-plugin-git-svn/*) canon="$c" ;;
-    esac
-  done
-  [ -z "$canon" ] && canon="${copies[0]}"
-  for c in "${copies[@]}"; do
+  for plug in $expected; do
+    c="plugins/${plug}/${rel}"
+    if [ ! -f "$c" ]; then
+      err "expected shared copy missing: '$c' (pinned in shared_specs)"
+      continue
+    fi
     [ "$c" = "$canon" ] && continue
     if cmp -s "$canon" "$c"; then
       echo "OK identical: $c == $canon"

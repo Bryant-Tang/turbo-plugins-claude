@@ -70,19 +70,6 @@ function Get-MainWorktree {
     return Get-NormalizedAbsolutePath -Path $parent
 }
 
-# Return the worktree container directory: <mainWorktree>/.turbo-plugin/worktrees.
-# Single source of truth for the SVN remote worktree container — the 7 SVN script
-# pairs call this instead of each hardcoding a sibling "<projName>.worktrees" path.
-# If -MainWorktree is supplied it is used as-is; otherwise it is computed via
-# Get-MainWorktree (which locates the main worktree from any linked worktree).
-function Get-WorktreesDir {
-    param([string]$MainWorktree = '')
-    if ([string]::IsNullOrWhiteSpace($MainWorktree)) {
-        $MainWorktree = Get-MainWorktree
-    }
-    return [System.IO.Path]::Combine($MainWorktree, '.turbo-plugin', 'worktrees')
-}
-
 function Test-IsMainWorktree {
     $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
     $topLevel = (& git rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()

@@ -5,6 +5,19 @@
 . ([System.IO.Path]::Combine($PSScriptRoot, 'Core.ps1'))
 
 
+# Return the worktree container directory: <mainWorktree>/.turbo-plugin/worktrees.
+# git-svn concern (the SVN remote worktree container) -- the SVN script pairs call this
+# instead of each hardcoding a sibling path. If -MainWorktree is supplied it is used as-is;
+# otherwise it is computed via Get-MainWorktree (defined in Core.ps1, sourced above).
+function Get-WorktreesDir {
+    param([string]$MainWorktree = '')
+    if ([string]::IsNullOrWhiteSpace($MainWorktree)) {
+        $MainWorktree = Get-MainWorktree
+    }
+    return [System.IO.Path]::Combine($MainWorktree, '.turbo-plugin', 'worktrees')
+}
+
+
 # Validate a branch name for remote-svn worktree mapping (v0.5.0 U7 allowlist).
 # Throws with a sanitization message on rejection. 'main' is the canonical trust
 # anchor and always passes; other casings of 'main' are rejected so they cannot

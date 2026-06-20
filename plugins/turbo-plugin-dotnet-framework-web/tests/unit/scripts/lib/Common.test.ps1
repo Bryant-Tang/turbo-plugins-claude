@@ -485,18 +485,6 @@ Describe 'Get-NormalizedAbsolutePath' {
     }
 }
 
-Describe 'Get-WorktreesDir' {
-
-    It 'explicit MainWorktree returns the nested .turbo-plugin worktrees container' {
-        $main = 'C:\proj\main'
-        $expected = [System.IO.Path]::Combine($main, '.turbo-plugin', 'worktrees')
-        $actual = Get-WorktreesDir -MainWorktree $main
-        $actual | Should -Be $expected
-        $actual.StartsWith($main, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
-        $actual | Should -Match '\.turbo-plugin[\\/]worktrees$'
-    }
-}
-
 Describe 'Format-IisExpressSiteName' {
 
     It 'ASCII csproj stem produces HelloApp-deadbeef' {

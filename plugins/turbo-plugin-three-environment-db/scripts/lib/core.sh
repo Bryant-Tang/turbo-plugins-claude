@@ -75,19 +75,6 @@ get_main_worktree() {
   get_normalized_absolute_path "$(dirname "$common_dir")"
 }
 
-# Echo the worktree container directory: <main_worktree>/.turbo-plugin/worktrees.
-# Single source of truth for the SVN remote worktree container — the 7 SVN scripts
-# call this instead of each hardcoding "$ROOT_DIR/$PROJ_NAME.worktrees".
-# Optional arg $1: a pre-resolved main worktree path; if omitted it is computed via
-# get_main_worktree (which locates the main worktree from any linked worktree).
-get_worktrees_dir() {
-  local main_worktree="${1:-}"
-  if [[ -z "$main_worktree" ]]; then
-    main_worktree="$(get_main_worktree)" || return 1
-  fi
-  echo "$main_worktree/.turbo-plugin/worktrees"
-}
-
 test_is_main_worktree() {
   local common_dir top_level parent top
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"

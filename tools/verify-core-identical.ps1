@@ -35,37 +35,37 @@ function Test-FilesIdentical {
 }
 
 # --- 1. byte-identical shared copies -----------------------------------------
-$sharedRelpaths = @(
-    'scripts/lib/Core.ps1',
-    'scripts/lib/core.sh',
-    'skills/tp-setup/assets/setup-base.md',
-    'skills/tp-setup/assets/claudemd-base-snippet.md'
+# Each spec pins the EXPECTED plugin set carrying the file. Pinning (vs a plain
+# ">=2 copies present" check) catches a copy DELETED from all-but-one plugin --
+# otherwise the lone survivor would silently pass. Canonical = turbo-plugin-git-svn.
+# Adding a plugin that should carry a shared file means adding it here.
+$sharedSpecs = @(
+    @{ Rel = 'scripts/lib/Core.ps1';                            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework-web', 'turbo-plugin-three-environment-db') },
+    @{ Rel = 'scripts/lib/core.sh';                             Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
+    @{ Rel = 'scripts/lib/ps1-delegate.sh';                     Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework-web') },
+    @{ Rel = 'skills/tp-setup/assets/setup-base.md';            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework-web', 'turbo-plugin-three-environment-db') },
+    @{ Rel = 'skills/tp-setup/assets/claudemd-base-snippet.md'; Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework-web', 'turbo-plugin-three-environment-db') }
 )
 
-$pluginDirs = @(Get-ChildItem -LiteralPath 'plugins' -Directory)
-
-foreach ($rel in $sharedRelpaths) {
+foreach ($spec in $sharedSpecs) {
+    $rel = $spec.Rel
     $relNative = $rel -replace '/', [System.IO.Path]::DirectorySeparatorChar
-    $copies = @($pluginDirs | ForEach-Object {
-        $p = [System.IO.Path]::Combine($_.FullName, $relNative)
-        if (Test-Path -LiteralPath $p -PathType Leaf) { $p }
-    })
-    if ($copies.Count -lt 2) {
-        Write-Output "skip (fewer than 2 copies): $rel"
+    $canonPath = [System.IO.Path]::Combine($repoRoot, 'plugins', 'turbo-plugin-git-svn', $relNative)
+    if (-not (Test-Path -LiteralPath $canonPath -PathType Leaf)) {
+        $failures.Add("canonical shared copy missing: 'plugins/turbo-plugin-git-svn/$rel'")
         continue
     }
-    $canon = @($copies | Where-Object { $_ -match 'turbo-plugin-git-svn' } | Select-Object -First 1)
-    if ($canon.Count -gt 0 -and -not [string]::IsNullOrEmpty($canon[0])) {
-        $canonPath = $canon[0]
-    } else {
-        $canonPath = $copies[0]
-    }
-    foreach ($c in $copies) {
-        if ($c -eq $canonPath) { continue }
-        if (Test-FilesIdentical -A $canonPath -B $c) {
-            Write-Output "OK identical: $c == $canonPath"
+    foreach ($plug in $spec.Plugins) {
+        $p = [System.IO.Path]::Combine($repoRoot, 'plugins', $plug, $relNative)
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+            $failures.Add("expected shared copy missing: 'plugins/$plug/$rel' (pinned in sharedSpecs)")
+            continue
+        }
+        if ($p -eq $canonPath) { continue }
+        if (Test-FilesIdentical -A $canonPath -B $p) {
+            Write-Output "OK identical: plugins/$plug/$rel == plugins/turbo-plugin-git-svn/$rel"
         } else {
-            $failures.Add("shared copy drifted: '$c' differs from canonical '$canonPath' (byte-for-byte incl BOM/newlines). Fix: overwrite with the canonical copy (Copy-Item '$canonPath' '$c'), or if intentional, sync ALL copies.")
+            $failures.Add("shared copy drifted: 'plugins/$plug/$rel' differs from canonical 'plugins/turbo-plugin-git-svn/$rel' (byte-for-byte incl BOM/newlines). Fix: overwrite with the canonical copy, or if intentional, sync ALL copies.")
         }
     }
 }
