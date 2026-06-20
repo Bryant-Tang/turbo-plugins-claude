@@ -6,6 +6,9 @@
 >
 > base 段**只**處理 concern-neutral 的共用檔骨架,**不**碰任何單一 concern 的設定
 > (git bridge / IIS apphost / dbhub 等一律由各 plugin 的 concern 段處理)。
+>
+> 註:`conventions.md` 的「先讀慣例」機制**已退役**——各 skill 改靠自身 `description` 讓 agent 主動觸發,
+> base 不再建立 `conventions.md`,setup 也不寫它。
 
 ## Pre-check（任一失敗就停下回報,不繼續）
 
@@ -23,7 +26,6 @@
 | 檔案 | 標記語法 | concern 值 |
 |---|---|---|
 | `.turbo-plugin/config.toml` | `# >>> turbo-plugin:<concern> >>>` … `# <<< turbo-plugin:<concern> <<<`(TOML 註解,reader 會略過) | `git-svn` / `dotnet` |
-| `.turbo-plugin/conventions.md` | `<!-- turbo-plugin:begin <concern> -->` … `<!-- turbo-plugin:end <concern> -->` | `git-svn` |
 | 專案根 `CLAUDE.md` | `<!-- turbo-plugin:begin base -->` … `<!-- turbo-plugin:end base -->`(只有單一 base 區塊) | `base` |
 
 **更新自己區塊的通用程序**(idempotent):讀檔 → 若找到自己 concern 的 begin/end 標記 → 用新內容
@@ -43,9 +45,7 @@
    (concern-neutral 殼:header 註解 + 空的 `git-svn` / `dotnet` 標記區塊);**已存在則不覆寫整檔**
    (concern 段稍後只更新自己的標記區塊)。
    - db plugin **不碰** config.toml(db 在 config.toml 沒有設定);db 的 base 段跳過此項。
-3. **`.turbo-plugin/conventions.md`** — 不存在則複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/conventions.md`
-   (base:intro + 空的 `git-svn` 標記區塊);**已存在則不覆寫整檔**。
-4. **專案根 `.gitignore`** — 確保含 base 區塊(idempotent,缺則追加,不重複):
+3. **專案根 `.gitignore`** — 確保含 base 區塊(idempotent,缺則追加,不重複):
    ```
    # turbo-plugin
    .claude/**/*.local.*
@@ -53,7 +53,7 @@
    ```
    - git bridge 與 .NET 產物等 concern-specific 的 ignore 規則(`.turbo-plugin/worktrees/`、`.svn/`、
      `.vs/`、`bin/`、`obj/` 等)由各 plugin 的 concern 段追加,不在 base。
-5. **專案根 `CLAUDE.md`** — 確保含「先讀 conventions.md」的指向區塊。注入內容(複製
+4. **專案根 `CLAUDE.md`** — 確保含 turbo-plugin base 區塊(目前內容:「不得提交僅限本機之物」硬規則)。注入內容(複製
    `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/claudemd-base-snippet.md`)用 `<!-- turbo-plugin:begin base -->`
    / `<!-- turbo-plugin:end base -->` 標記包夾:不存在則建立含該 snippet 的檔;已存在則用標記
    idempotent 取代/追加,不影響其它段落。

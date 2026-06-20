@@ -20,7 +20,7 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 ## 設定
 
 - 需 git + SVN client(`svn` / `svnadmin` 在 PATH)。
-- `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml` + `conventions.md` 範本;machine-specific 偏好寫進 gitignored `config.local.toml`。
+- `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml`(+ `.commitlintrc.json`、`CLAUDE.md` base 區塊);machine-specific 偏好寫進 gitignored `config.local.toml`。
 
 ## 安裝
 

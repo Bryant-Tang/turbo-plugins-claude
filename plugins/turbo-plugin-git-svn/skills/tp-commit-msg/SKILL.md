@@ -1,6 +1,6 @@
 ---
 name: tp-commit-msg
-description: '為本專案撰寫 / 檢查 git commit message 的語意規範(只規範語意,**不**規範 commit type——type 一律依 `.commitlintrc.json`)。使用者要求寫 commit message、或 agent 準備提交一段改動時建議執行(可逆,改錯可重寫)。'
+description: '撰寫或檢查 git commit message 時主動使用:依本專案語意規範產出 / 檢查訊息(祈使句、what + why、語言一致;不得引用 git SHA 或僅本地識別碼;commit type 一律依 `.commitlintrc.json`,本 skill 不列舉 type)。準備 commit 一段改動時就套用,不需使用者另外明講「幫我寫 commit message」。'
 argument-hint: 'Optional: draft commit message or the change to summarize'
 user-invocable: true
 allowed-tools: Read, Bash, Grep, Glob

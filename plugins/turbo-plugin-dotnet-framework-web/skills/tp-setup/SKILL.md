@@ -47,8 +47,8 @@ unconditional 「動到外部」動作**幾乎沒有**(apphost bootstrap、confi
 
 ### Phase 2 — base 骨架 + dotnet concern
 
-先依 base 段建立 concern-neutral 共用檔骨架(`.turbo-plugin/` 目錄、`config.toml` 殼、`conventions.md` base、
-`.gitignore` base、`CLAUDE.md` base)。再做 dotnet concern(case (b)/(c) 都做;case (d) 見下;case (a) 已 fail-loud):
+先依 base 段建立 concern-neutral 共用檔骨架(`.turbo-plugin/` 目錄、`config.toml` 殼、`.gitignore` base、
+`CLAUDE.md` base)。再做 dotnet concern(case (b)/(c) 都做;case (d) 見下;case (a) 已 fail-loud):
 
 1. **`config.toml` 的 `dotnet` 標記區塊**(用 base 段「更新自己區塊」程序,只動
    `# >>> turbo-plugin:dotnet >>>` 區塊):
@@ -89,8 +89,8 @@ unconditional 「動到外部」動作**幾乎沒有**(apphost bootstrap、confi
 
 3. **applicationhost.config bootstrap**(見下方 §apphost-bootstrap)。**case (d) peer-mode 不執行**。
 
-> dotnet 在 `conventions.md` / `CLAUDE.md` 無 concern-specific 內容要追加(build/run 不是「改某類檔前要遵守的
-> 慣例」);base 段已注入 `CLAUDE.md` 的「先讀 conventions.md」指向,dotnet 不另加。
+> dotnet 在 `CLAUDE.md` 無 concern-specific 內容要追加(build/run 不是「改某類檔前要遵守的慣例」);
+> `conventions.md` 機制已退役,dotnet 不碰。base 段注入的 `CLAUDE.md` base 區塊(「不得提交僅限本機之物」)即足夠。
 
 #### Case 差異
 

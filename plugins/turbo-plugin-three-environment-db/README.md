@@ -4,7 +4,7 @@
 
 ## 內容
 
-- **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.local.toml` 範本、提示複製填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時 fail-loud。`tp-db-management` **不**寫進 `conventions.md`，改靠 skill 自身 description 讓 agent 主動觸發。
+- **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.local.toml` 範本、提示複製填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時 fail-loud。`tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發（`conventions.md` 機制已退役）。
 - **`tp-db-management`** skill — DB 相關開發雜務（SQL 腳本撰寫等），附 `assets/sql-script-template.sql`。
 - **`tp-dbhub`** MCP server（`.mcp.json`）— 經 [DBHub](https://github.com/bytebase/dbhub) 容器連 SQL Server，讓 agent 能查詢 / 操作資料庫。讀取 `${CLAUDE_PROJECT_DIR}/.turbo-plugin/dbhub.local.toml` 的連線設定。
 - **SessionStart advisory hook** — 於 peer worktree 缺 `dbhub.local.toml` 時提示（MCP 將無法啟動）；advisory（不 block session），專案未使用 db 時 no-op。
