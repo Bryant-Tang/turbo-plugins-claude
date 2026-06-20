@@ -1,9 +1,0 @@
-{
-  "name": "turbo-plugin",
-  "description": ".NET Framework Web + git+SVN bridged 環境的本機開發雜務工具集（16 個 skill,涵蓋 setup / SVN bridge / build / run / publish / ignore / comment)。env-free 設計,集中設定於 .turbo-plugin/。取代既有 tdp / tnf / tgs / tpi 四 plugin。",
-  "version": "0.6.0",
-  "license": "MIT",
-  "author": {
-    "name": "Bryant Tang"
-  }
-}

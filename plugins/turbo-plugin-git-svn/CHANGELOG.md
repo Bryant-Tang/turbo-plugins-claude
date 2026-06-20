@@ -1,0 +1,21 @@
+# Changelog
+
+本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
+
+## [Unreleased]
+
+## [0.1.0] - 2026-06-20
+
+### Added
+
+- 自單體 `turbo-plugin` v0.6.0 拆出,成為獨立可安裝 plugin;承接 git↔SVN bridge 與 setup 職責(以 `git mv` 保留 git lineage,完整歷史見 `git log --follow`)。
+- 8 支 skill(保 `tp-*` 前綴):`tp-setup`、`tp-pull-from-svn`、`tp-push-to-svn`、`tp-svn-log`、`tp-reset-branch-to-main`、`tp-merge-main-into-branches`、`tp-suggest-ignore`、`tp-commit-msg`。
+- SVN bridge 腳本對(`.ps1` + `.sh`):Build-SvnCommit / Submit-SvnCommit / Sync-FromSvn / Get-SvnLog / Get-PushPreflight / New-RemoteBridge / Merge-MainIntoBranches / Reset-BranchToMain / Tag-Release / Test-EncodingSupport。
+- `lib`:`Core.{ps1,sh}` 複本 + SVN concern `Common.ps1` / `common.sh`(branch 名消毒、remote worktree 解析、SVN URL trust 邊界檢查、`svn status --xml` 解析,自單體抽出、去除 dotnet concern)+ `ps1-delegate.sh`。
+- `SessionStart` advisory hook(marker 缺失時提示 `/tp-setup`;dbhub / IIS 分支已移至 sibling plugin)。
+- `default-files/.turbo-plugin/`:`config.toml` + `conventions.md` 範本。
+- 兩層測試套件入口 + 各 SVN 腳本 / lib helper / hook 行為測試(`Common.test.ps1` / `common.test.sh` 自單體拆出、只保留 SVN concern + Core 覆蓋)。
+
+### 遷移說明
+
+- 舊安裝 `turbo-plugin@turbo-plugins-claude` 已由四個獨立 plugin 取代。git↔SVN bridge 與 setup 流程改裝 `turbo-plugin-git-svn@turbo-plugins-claude`;.NET Framework Web / 三環境 DB / 程式碼註解功能分別改裝 `turbo-plugin-dotnet-framework-web` / `turbo-plugin-three-environment-db` / `turbo-plugin-code-comment`。

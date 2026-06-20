@@ -1,0 +1,9 @@
+{
+  "name": "turbo-plugin-git-svn",
+  "description": "git↔SVN bridge 本機開發工具集（8 個 skill:setup / pull / push / svn-log / reset / merge / suggest-ignore / commit-msg）。env-free 設計,集中設定於 .turbo-plugin/。是單體 turbo-plugin(v0.6.0)四拆出、承接 git↔SVN bridge 與 setup 職責的 plugin。",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "Bryant Tang"
+  }
+}

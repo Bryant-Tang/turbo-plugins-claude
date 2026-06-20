@@ -5,9 +5,24 @@
   },
   "plugins": [
     {
-      "name": "turbo-plugin",
-      "description": ".NET Framework Web + git+SVN bridged 環境的本機開發雜務工具集（16 個 skill）。env-free，集中設定於 .turbo-plugin/。",
-      "source": "./plugins/turbo-plugin"
+      "name": "turbo-plugin-git-svn",
+      "description": "git↔SVN bridge 本機開發工具集（8 個 skill:setup / pull / push / svn-log / reset / merge / suggest-ignore / commit-msg）。env-free，集中設定於 .turbo-plugin/。",
+      "source": "./plugins/turbo-plugin-git-svn"
+    },
+    {
+      "name": "turbo-plugin-dotnet-framework-web",
+      "description": ".NET Framework Web 本機開發雜務:build / run / stop / publish / cleanup-orphan-iis（IIS Express + MSBuild）。env-free，集中設定於 .turbo-plugin/。",
+      "source": "./plugins/turbo-plugin-dotnet-framework-web"
+    },
+    {
+      "name": "turbo-plugin-three-environment-db",
+      "description": "三環境 DB 開發輔助:tp-db-management skill + tp-dbhub MCP server（經 DBHub 容器連 SQL Server）。",
+      "source": "./plugins/turbo-plugin-three-environment-db"
+    },
+    {
+      "name": "turbo-plugin-code-comment",
+      "description": "C# 與 JavaScript / TypeScript 的註解撰寫慣例 skill 集（tp-csharp-comment / tp-js-comment）。純 skill，無需 setup。",
+      "source": "./plugins/turbo-plugin-code-comment"
     }
   ]
 }
