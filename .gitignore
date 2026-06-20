@@ -1,8 +1,9 @@
 .claude/**/*.local.*
 .claude/worktrees/
 
-# turbo-plugin test sandbox work root (repo-relative, never committed — U4)
-plugins/turbo-plugin/tests/.sandbox/
+# Per-plugin test sandbox work roots (repo-relative, never committed). Glob covers
+# every plugin's tests/.sandbox/ so the four-split plugins are ignored without per-name edits.
+plugins/*/tests/.sandbox/
 
 # OS
 .DS_Store

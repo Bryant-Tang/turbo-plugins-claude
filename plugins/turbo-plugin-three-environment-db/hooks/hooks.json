@@ -1,0 +1,17 @@
+{
+  "description": "turbo-plugin-three-environment-db: SessionStart advisory hook — 當 peer worktree 缺少 .turbo-plugin/dbhub.local.toml(tp-dbhub MCP server 將無法啟動)時提示。僅 advisory(不會 block session);專案未使用 db 時 no-op。",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/invoke-sessionstart.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
