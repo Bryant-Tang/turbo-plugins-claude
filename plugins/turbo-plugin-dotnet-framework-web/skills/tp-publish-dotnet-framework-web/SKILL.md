@@ -35,7 +35,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
    - 跑 `Compress-Content.ps1`(若 `[frontend]` 設定齊備)
    - 跑 `msbuild /p:DeployOnBuild=true /p:PublishProfile=<name> /p:PublishProfileRootFolder=<dir> /p:Configuration=<cfg> /p:Platform=<plat>`
    - 後處理:parse `.pubxml` 取 `<PublishUrl>` + `<WebPublishMethod>`,回報實際產出位置(`FileSystem` 落地路徑 / FTP URL 等)
-2. 解讀輸出,把 `Published to: <path>` / `PUBLISH_OUTPUT_PATH=<path>` 直接呈現給使用者。
+2. 解讀輸出:腳本成功後印一行 `PUBLISH_OUTPUT (...)` marker,**緊接其後的兩行**即產出位置——第一行 raw Windows 絕對路徑、第二行 `file:///` URL(非 FileSystem 發佈方式則 marker 後只有一行 URL)。把那兩行(或一行)**逐字**呈現給使用者:**各自單獨成行、前後不接任何散文或標點**(不要包成「產出在:…」、也不要在行尾加句號),讓終端機能把路徑算成可點擊連結。**只轉述那兩行,不要轉述 marker 行本身。**
 
 ## Decision Rules
 
@@ -64,5 +64,5 @@ shell 操作限 `msbuild` / 跑 plugin script;檔案讀寫用 Read / Edit / Writ
 
 - **No .pubxml found**: 在無 .pubxml 的 csproj 跑 /tp-publish → fail loudly 訊息含「No .pubxml found in .Properties\PublishProfiles\」並建議使用 VS 先建 publish profile。
 - **Multiple .pubxml**: 有多個 .pubxml → fail loudly 列出所有 .pubxml path,要求加 `--profile <name>`。
-- **PUBLISH_OUTPUT_PATH stdout token**: publish 成功後 stdout 含 `PUBLISH_OUTPUT_PATH=<absolute-path-to-output>` 一行供 agent parse。
+- **發佈位置兩行模板 (U10 / AE4)**: publish 成功後 stdout 含 `PUBLISH_OUTPUT (...)` marker,緊接兩行——raw Windows 路徑 + `file:///` URL,**兩行皆無結尾標點**。agent 須**逐字、各自成行**轉述那兩行,前後不接散文/句號(不轉述 marker 行)。含空白的路徑仍須完整保留在單行。
 - **TURBO_PLUGIN_MSBUILD_PATH invalid**: env 設不存在路徑 → fail loudly 訊息含該路徑。

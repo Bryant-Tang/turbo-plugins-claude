@@ -568,3 +568,48 @@ Describe 'Write-Utf8NoBom' {
         }
     }
 }
+
+# =============================================================================
+# Get-PublishOutputLines (U10) - raw path + file:/// URL, no trailing punctuation
+# =============================================================================
+
+Describe 'Get-PublishOutputLines' {
+
+    It 'FileSystem absolute path: trims trailing backslash + builds a forward-slash file:/// URL' {
+        $out = Get-PublishOutputLines -PublishUrlRaw 'C:\builds\out\' -Method 'FileSystem' -ProjectDir 'C:\proj'
+        $out.IsFileSystem | Should -BeTrue
+        $out.Resolved | Should -Be 'C:\builds\out'
+        $out.DisplayPath | Should -Be 'file:///C:/builds/out'
+        $out.DisplayPath | Should -Not -Match '\\'            # URL must not contain backslashes
+    }
+
+    It 'FileSystem relative path: resolves against the project directory' {
+        $out = Get-PublishOutputLines -PublishUrlRaw 'bin\Publish' -Method 'FileSystem' -ProjectDir 'C:\proj\src'
+        $out.Resolved | Should -Be 'C:\proj\src\bin\Publish'
+        $out.DisplayPath | Should -Be 'file:///C:/proj/src/bin/Publish'
+    }
+
+    It 'defaults to FileSystem when -Method is omitted' {
+        $out = Get-PublishOutputLines -PublishUrlRaw 'C:\out' -ProjectDir 'C:\proj'
+        $out.IsFileSystem | Should -BeTrue
+        $out.DisplayPath | Should -Be 'file:///C:/out'
+    }
+
+    It 'preserves spaces in the path on a single line, with no trailing punctuation' {
+        $out = Get-PublishOutputLines -PublishUrlRaw 'C:\my builds\web out\' -Method 'FileSystem' -ProjectDir 'C:\proj'
+        $out.Resolved | Should -Be 'C:\my builds\web out'
+        $out.DisplayPath | Should -Be 'file:///C:/my builds/web out'
+        # single line + no trailing punctuation / whitespace (R15: agent relays verbatim, clickable)
+        $out.Resolved | Should -Not -Match "`n"
+        $out.DisplayPath | Should -Not -Match "`n"
+        $out.Resolved | Should -Not -Match '[.\s]$'
+        $out.DisplayPath | Should -Not -Match '[.\s]$'
+    }
+
+    It 'non-FileSystem method passes the URL through unchanged for both lines' {
+        $out = Get-PublishOutputLines -PublishUrlRaw 'https://ftp.example.com/site' -Method 'AzurePublish'
+        $out.IsFileSystem | Should -BeFalse
+        $out.Resolved | Should -Be 'https://ftp.example.com/site'
+        $out.DisplayPath | Should -Be 'https://ftp.example.com/site'
+    }
+}

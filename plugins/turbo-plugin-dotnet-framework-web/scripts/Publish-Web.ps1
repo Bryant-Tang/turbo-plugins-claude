@@ -107,22 +107,21 @@ try {
         return
     }
 
-    if ($method -eq 'FileSystem') {
-        if ([System.IO.Path]::IsPathRooted($publishUrlRaw)) {
-            $resolved = [System.IO.Path]::GetFullPath($publishUrlRaw)
-        } else {
-            $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
-            $resolved = [System.IO.Path]::GetFullPath((Join-Path $projectDir $publishUrlRaw))
-        }
-        $resolved = $resolved.TrimEnd('\')
-        $displayPath = 'file:///' + ($resolved -replace '\\', '/')
-    } else {
-        $resolved = $publishUrlRaw
-        $displayPath = $resolved
-    }
+    $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
+    $out = Get-PublishOutputLines -PublishUrlRaw $publishUrlRaw -Method $method -ProjectDir $projectDir
 
-    Write-Output "Published to: $displayPath"
-    Write-Output "PUBLISH_OUTPUT_PATH=$resolved"
+    # U10 / KTD8 / R15: emit the publish location as BARE line(s) the agent relays VERBATIM — the
+    # raw Windows path then the file:/// URL (FileSystem), each on its own line with NO trailing
+    # punctuation, after a marker line so the SKILL can locate them. The agent must NOT wrap them in
+    # prose or append a period, so the terminal keeps the paths clickable.
+    if ($out.IsFileSystem) {
+        Write-Output 'PUBLISH_OUTPUT (relay the next two lines verbatim, each on its own line, no surrounding prose or punctuation):'
+        Write-Output $out.Resolved
+        Write-Output $out.DisplayPath
+    } else {
+        Write-Output 'PUBLISH_OUTPUT (relay the next line verbatim, on its own line, no surrounding prose or punctuation):'
+        Write-Output $out.Resolved
+    }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

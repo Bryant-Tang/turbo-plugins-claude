@@ -17,6 +17,7 @@
 - PostToolUse EnterWorktree advisory hook(Windows-only,目前 no-op)。
 - `default-files/.turbo-plugin/applicationhost.config` 範本。
 - 兩層測試套件入口 + 各腳本 / lib helper / hook 行為測試(`Common.test.ps1` 自單體拆出、只保留 dotnet concern + Core 覆蓋)。
+- **`tp-publish` 發佈路徑改固定兩行模板(U10 / R15 / KTD8)**:`Publish-Web.ps1` 成功後改印一行 `PUBLISH_OUTPUT (...)` marker + 緊接兩行——raw Windows 絕對路徑、`file:///` URL,各自成行、**結尾無標點**(非 FileSystem 發佈方式則 marker 後只有一行 URL),取代舊「`Published to:` 散文 + `PUBLISH_OUTPUT_PATH=` token」。SKILL 改要求 agent **逐字、各自成行**轉述那兩行、前後不接散文/句號(維持終端可點擊),不轉述 marker 行。路徑解析抽成 lib helper `Get-PublishOutputLines`(FileSystem rooted/relative 解析 + trailing backslash 去除 + 反斜線轉正斜線;非 FileSystem passthrough),新增單元測試(絕對/相對、含空白單行、結尾無標點、`file:///` 無反斜線、非 FileSystem passthrough)讓兩行格式不需 MSBuild 即可驗。
 
 ### 遷移說明
 

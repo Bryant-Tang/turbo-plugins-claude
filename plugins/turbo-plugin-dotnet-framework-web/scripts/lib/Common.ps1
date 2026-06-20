@@ -129,3 +129,34 @@ function Find-SingleCsproj {
     return $projectFile
 }
 
+# Resolve a pubxml <PublishUrl> into the two display lines tp-publish prints (U10 / KTD8 / R15):
+# the raw absolute path and a file:/// URL. For a FileSystem publish a relative PublishUrl is
+# resolved against the project directory, the trailing backslash is trimmed, and the file:/// URL
+# is the same path with backslashes flipped to forward slashes. For non-FileSystem methods (FTP,
+# etc.) there is no local path, so both values are the URL as-is. Neither value carries trailing
+# punctuation — the caller emits them verbatim for the agent to relay (no prose, no period), so the
+# terminal renders them as clickable. Factored out of Publish-Web.ps1 so the two-line format is
+# unit-testable without running MSBuild.
+# Returns @{ Resolved = <raw path/url>; DisplayPath = <file:/// or url>; IsFileSystem = <bool> }.
+function Get-PublishOutputLines {
+    param(
+        [Parameter(Mandatory = $true)][string]$PublishUrlRaw,
+        [string]$Method = 'FileSystem',
+        [string]$ProjectDir = ''
+    )
+    $isFileSystem = ($Method -eq 'FileSystem')
+    if ($isFileSystem) {
+        if ([System.IO.Path]::IsPathRooted($PublishUrlRaw)) {
+            $resolved = [System.IO.Path]::GetFullPath($PublishUrlRaw)
+        } else {
+            $resolved = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($ProjectDir, $PublishUrlRaw))
+        }
+        $resolved = $resolved.TrimEnd('\')
+        $displayPath = 'file:///' + ($resolved -replace '\\', '/')
+    } else {
+        $resolved = $PublishUrlRaw
+        $displayPath = $PublishUrlRaw
+    }
+    return @{ Resolved = $resolved; DisplayPath = $displayPath; IsFileSystem = $isFileSystem }
+}
+
