@@ -10,7 +10,8 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 |---|---|
 | `/tp-setup` | 設定入口(四 case:新建 / 接管現有 git+SVN / 主 worktree 補設定 / peer-mode) |
 | `/tp-pull-from-svn` | 從 SVN 拉更新到 `remote-svn/main` 並 merge 進工作分支 |
-| `/tp-push-to-svn` | 將工作分支推送上 SVN(首推自動建 bridge;自 parse subject 篩選 conventional commit type) |
+| `/tp-push-to-svn` | 將工作分支推送上 SVN(首推自動建 bridge;body 由腳本鎖定為範圍內所有非-merge commit subject、agent 只寫 title) |
+| `/tp-checkout-svn-branch` | 把**既有** SVN 分支**唯讀**匯入成 bridge + 已填內容工作分支(對 SVN 端零寫入;日後走 `/tp-pull-from-svn` 同步) |
 | `/tp-svn-log` | 在 `remote-svn-*` worktree 跑 SVN log(中文安全 + 互動分頁) |
 | `/tp-reset-branch-to-main` | 把指定分支 `git reset --hard` 成 main 內容 |
 | `/tp-merge-main-into-branches` | 把最新 main merge 進指定(預設全部非 remote-svn)本地分支 |
