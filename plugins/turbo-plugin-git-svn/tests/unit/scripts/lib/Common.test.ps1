@@ -309,7 +309,7 @@ Describe 'Assert-TrustedSvnUrl' {
             $loadOk = $false
             if ($createOk) {
                 $loadCmd = "svnadmin load `"$svnRepo`" < `"$dumpPath`""
-                & cmd.exe /c $loadCmd > $null 2>&1
+                & cmd.exe /c $loadCmd > $null 2>$null
                 $loadOk = ($LASTEXITCODE -eq 0)
             }
 
@@ -319,7 +319,7 @@ Describe 'Assert-TrustedSvnUrl' {
             }
 
             $repoUri = 'file:///' + ($svnRepo -replace '\\', '/')
-            & svn checkout "$repoUri/trunk" $wc > $null 2>&1
+            & svn checkout "$repoUri/trunk" $wc > $null 2>$null
             $coOk = ($LASTEXITCODE -eq 0)
             $reposRoot = (& svn info --show-item repos-root-url $wc 2>$null | Out-String).Trim()
 

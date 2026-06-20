@@ -57,12 +57,12 @@ BeforeAll {
         if ($LASTEXITCODE -ne 0) { return $null }
 
         $loadCmd = "svnadmin load `"$svnRepo`" < `"$($script:DumpPath)`""
-        & cmd.exe /c $loadCmd > $null 2>&1
+        & cmd.exe /c $loadCmd > $null 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
 
         $repoUri = 'file:///' + ($svnRepo -replace '\\', '/')
         $remoteMain = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-main')
-        & svn checkout "$repoUri/trunk" $remoteMain > $null 2>&1
+        & svn checkout "$repoUri/trunk" $remoteMain > $null 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
 
         $reposRoot = (& svn info --show-item repos-root-url $remoteMain 2>$null | Out-String).Trim()
@@ -361,7 +361,7 @@ Describe 'New-RemoteBridge' {
                     return
                 }
                 # Create the SVN branch the bridge checks out, so the create path can succeed.
-                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feature-x" -m 'test: branch for bridge' --parents > $null 2>&1
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feature-x" -m 'test: branch for bridge' --parents > $null 2>$null
                 if ($LASTEXITCODE -ne 0) {
                     Set-ItResult -Skipped -Because 'could not create the svn branch for the success path'
                     return

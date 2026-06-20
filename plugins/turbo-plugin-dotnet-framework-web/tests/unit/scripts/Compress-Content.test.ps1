@@ -25,17 +25,14 @@ BeforeAll {
     $script:ResetScript = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'reset', 'Reset-Fixture.ps1'))
 
     function Mirror-Base-To {
-        # Run Reset-Fixture with -SkipSvn to mirror base/ into TestRoot.
+        # Run Reset-Fixture to mirror base/ into TestRoot (this plugin has no SVN concern).
         param([string]$TestRoot)
         $stamp = [Guid]::NewGuid().ToString('N').Substring(0, 10)
         $outFile = [System.IO.Path]::Combine([System.IO.Path]::Combine($script:PluginRoot, 'tests', '.sandbox', 'sandboxes'), "turbo-plugin-reset-out-$stamp.txt")
         try {
-            # `2>&1` 在 cmd.exe shell context 內,**不是** PS-level — cmd.exe 做 shell
-            # 重導向,PS 看到的是 single stream,不會 trigger NativeCommandError。
-            # -SvnRepo is required by Reset-Fixture's signature but unused under -SkipSvn; pass a
-            # sandbox-relative throwaway path so no machine-local literal leaks into the tree.
-            $unusedSvn = [System.IO.Path]::Combine($script:PluginRoot, 'tests', '.sandbox', 'unused-svn')
-            $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$script:ResetScript`" -TestRoot `"$TestRoot`" -SvnRepo `"$unusedSvn`" -SkipSvn > `"$outFile`" 2>&1"
+            # `2>&1` here is the cmd.exe shell string's own redirection (NOT a PS-level `&`
+            # redirection), so it does not trigger NativeCommandError.
+            $cmdStr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$script:ResetScript`" -TestRoot `"$TestRoot`" > `"$outFile`" 2>&1"
             & cmd.exe /c $cmdStr
             return $LASTEXITCODE
         } finally {

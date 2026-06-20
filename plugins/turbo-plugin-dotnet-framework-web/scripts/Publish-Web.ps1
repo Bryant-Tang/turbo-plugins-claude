@@ -103,7 +103,11 @@ try {
 
     if ($publishUrlRaw -match '\$\(') {
         [Console]::Error.WriteLine('Warning: <PublishUrl> contains MSBuild properties; cannot resolve statically.')
-        Write-Output "Published to: $publishUrlRaw"
+        # Emit via the SAME PUBLISH_OUTPUT marker as the resolved path so the SKILL's single
+        # marker-based parsing covers this branch too. The value is the unresolved raw PublishUrl
+        # (no real path is computable here); the agent relays it verbatim like any other.
+        Write-Output 'PUBLISH_OUTPUT (relay the next line verbatim, on its own line, no surrounding prose or punctuation):'
+        Write-Output $publishUrlRaw
         return
     }
 
