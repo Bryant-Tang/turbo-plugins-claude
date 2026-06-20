@@ -19,7 +19,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 
 ## DBHub MCP server（read-only）
 
-- MCP server 名稱：`tp-dbhub`（宣告於 `plugins/turbo-plugin/.mcp.json`，docker 跑 `bytebase/dbhub`，config 來自 `.turbo-plugin/dbhub.local.toml`）。
+- MCP server 名稱：`tp-dbhub`（宣告於 `plugins/turbo-plugin-three-environment-db/.mcp.json`，docker 跑 `bytebase/dbhub`，config 來自 `.turbo-plugin/dbhub.local.toml`）。
 - 用 `tp-dbhub` 暴露的 **唯讀** MCP tool 查詢：執行查詢的 tool（execute / run SQL）、物件搜尋的 tool（search objects / list tables / get table schema 等）。實際 tool 名稱後綴可能依 DBHub 版本不同，先確認當前 session 暴露的 `tp-dbhub` tool 集再呼叫。
 - **DBHub 在本 repo 連的是 local 資料庫**，不直接連 test / production。test / main 的物件定義差異要靠使用者在目標環境跑你提供的最小唯讀查詢來確認（見下方 Fixed Constraints）。
 

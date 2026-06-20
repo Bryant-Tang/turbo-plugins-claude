@@ -173,12 +173,7 @@ function Read-TurboPluginConfig {
     )
     $result = @{}
     # Normalize input to array of paths so callers can pass a single string or an array.
-    $paths = @()
-    if ($ConfigPath -is [System.Array]) {
-        $paths = @($ConfigPath)
-    } else {
-        $paths = @($ConfigPath)
-    }
+    $paths = @($ConfigPath)
 
     foreach ($pathItem in $paths) {
         if ([string]::IsNullOrWhiteSpace($pathItem)) { continue }

@@ -10,7 +10,7 @@
 
 - 自單體 `turbo-plugin` v0.6.0 拆出,成為獨立可安裝 plugin。
 - `tp-db-management` skill(含 `assets/sql-script-template.sql`)。
-- `tp-setup` skill(standalone:共用 `assets/setup-base.md` concern-neutral 骨架 + db concern〔`dbhub.example.local.toml` 範本、提示填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`〕;`default-files/.turbo-plugin/conventions.md` base 範本;無 git repo 時 fail-loud,不自行 git init)。
+- `tp-setup` skill(standalone:共用 `assets/setup-base.md` concern-neutral 骨架 + db concern〔`dbhub.example.local.toml` 範本、提示填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`〕;無 git repo 時 fail-loud,不自行 git init)。
 - `tp-db-management` 的 `description` 強化為**主動觸發**式(「做任何資料庫 / SQL 工作時主動使用、不要繞過直接手寫 SQL」),改靠 description 讓 agent 自動採用;`conventions.md`「先讀慣例」機制已整套退役,db setup 不再寫它。
 - `tp-dbhub` MCP server 宣告(`.mcp.json`,經 DBHub 容器連 SQL Server,讀 `${CLAUDE_PROJECT_DIR}/.turbo-plugin/dbhub.local.toml`)。
 - SessionStart advisory hook:當專案使用 db(`.turbo-plugin/dbhub.example.local.toml` 存在)、於 peer worktree 啟動且缺 `dbhub.local.toml` 時,提示 tp-dbhub MCP 將無法啟動。advisory(不 block session);專案未用 db 時 no-op(concern-marker gate)。
