@@ -11,12 +11,12 @@
     },
     {
       "name": "turbo-plugin-dotnet-framework-web",
-      "description": ".NET Framework Web 本機開發雜務:build / run / stop / publish / cleanup-orphan-iis（IIS Express + MSBuild）。env-free，集中設定於 .turbo-plugin/。",
+      "description": ".NET Framework Web 本機開發雜務:setup / build / run / stop / publish / cleanup-orphan-iis（IIS Express + MSBuild）。env-free，集中設定於 .turbo-plugin/。",
       "source": "./plugins/turbo-plugin-dotnet-framework-web"
     },
     {
       "name": "turbo-plugin-three-environment-db",
-      "description": "三環境 DB 開發輔助:tp-db-management skill + tp-dbhub MCP server（經 DBHub 容器連 SQL Server）。",
+      "description": "三環境 DB 開發輔助:tp-setup + tp-db-management skill + tp-dbhub MCP server（經 DBHub 容器連 SQL Server）。",
       "source": "./plugins/turbo-plugin-three-environment-db"
     },
     {

@@ -117,6 +117,39 @@ msbuild_path = "C:/MSBuild.exe"
         }
     }
 
+    Context 'U6 marker scaffolding - reader tolerates # marker comment lines + unknown section' {
+        It 'skips "# >>> turbo-plugin:* >>>" markers and parses bracketed sections (incl. unknown) normally' {
+            $repo = New-IsolatedRepoRoot 'marker'
+            try {
+                $cfgToml = Join-Path $repo '.turbo-plugin\config.toml'
+                Write-Toml -Path $cfgToml -Content @"
+# turbo-plugin config.toml
+# >>> turbo-plugin:git-svn >>>
+[svn]
+url = "https://svn.example/repo"
+# <<< turbo-plugin:git-svn <<<
+# >>> turbo-plugin:dotnet >>>
+[iis]
+enabled = true
+# <<< turbo-plugin:dotnet <<<
+[future-unknown-concern]
+key = "v"
+"@
+                $svnUrl  = Resolve-ConfigValue -RepoRoot $repo -Section 'svn' -Key 'url'     -CliValue $null -Default $null
+                $iis     = Resolve-ConfigValue -RepoRoot $repo -Section 'iis' -Key 'enabled' -CliValue $null -Default $null
+                $unknown = Resolve-ConfigValue -RepoRoot $repo -Section 'future-unknown-concern' -Key 'key' -CliValue $null -Default $null
+
+                # Markers (# lines) are skipped; bracketed sections parse; an unknown/foreign section
+                # is tolerated (reader is section-agnostic) and does not throw.
+                $svnUrl | Should -Be 'https://svn.example/repo'
+                $iis | Should -BeTrue
+                $unknown | Should -Be 'v'
+            } finally {
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+    }
+
     Context 'override - same section.key in both files, config.local.toml wins' {
         It 'returns the local override value for [iis] enabled' {
             $repo = New-IsolatedRepoRoot 'merge'

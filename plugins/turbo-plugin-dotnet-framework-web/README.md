@@ -6,6 +6,7 @@ env-free 設計，集中設定於專案根的 `.turbo-plugin/`（與其它 turbo
 
 ## Skills
 
+- **`tp-setup`** — 設定入口:先跑共用 base 段(建 `.turbo-plugin/` + concern-neutral 共用檔),再做 dotnet concern(`config.toml` 的 `[iis]`/`[build]`/`[publish]` 標記區塊、`applicationhost.config` bootstrap、`.gitignore` 的 .NET 產物區塊)。無 git repo 時 fail-loud。
 - **`tp-build-dotnet-framework-web`** — 用 MSBuild 建置 .NET Framework Web 專案。
 - **`tp-run-dotnet-framework-web`** — 以 IIS Express 啟動站台。
 - **`tp-stop-dotnet-framework-web`** — 停止 IIS Express 站台。
@@ -15,7 +16,8 @@ env-free 設計，集中設定於專案根的 `.turbo-plugin/`（與其它 turbo
 ## 設定
 
 - 需 Windows + IIS Express + MSBuild（VS 2017/2019/2022 任一）。
-- MSBuild / IIS Express 路徑寫在 `.turbo-plugin/config.local.toml` 的 `[tools]`（gitignored、機器專屬）；找不到時 `/tp-*` skill 會引導跑 setup 偵測。
+- 跑 `/tp-setup` 部署 `.turbo-plugin/config.toml` 的 dotnet 區塊（`[iis]` 等）與 `applicationhost.config`。`tp-setup` 用共用 base 段建立 concern-neutral 共用檔（標記區塊),只寫自己的 dotnet 區塊,不覆蓋其它 plugin。
+- MSBuild / IIS Express 路徑寫在 `.turbo-plugin/config.local.toml` 的 `[tools]`（gitignored、機器專屬）；**不在 setup 詢問**——`/tp-*` skill 會自動探測標準 VS 安裝,找不到時 throw 引導你手動填入。
 
 ## 安裝
 

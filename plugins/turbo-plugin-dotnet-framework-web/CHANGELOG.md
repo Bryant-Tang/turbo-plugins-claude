@@ -9,7 +9,8 @@
 ### Added
 
 - 自單體 `turbo-plugin` v0.6.0 拆出,成為獨立可安裝 plugin。
-- 5 支 skill:`tp-build-dotnet-framework-web`、`tp-run-dotnet-framework-web`、`tp-stop-dotnet-framework-web`、`tp-publish-dotnet-framework-web`、`tp-cleanup-orphan-iis`(保 `tp-*` 前綴)。
+- 6 支 skill:`tp-setup`、`tp-build-dotnet-framework-web`、`tp-run-dotnet-framework-web`、`tp-stop-dotnet-framework-web`、`tp-publish-dotnet-framework-web`、`tp-cleanup-orphan-iis`(保 `tp-*` 前綴)。
+- `tp-setup` skill(standalone:共用 `assets/setup-base.md` concern-neutral 骨架 + dotnet concern〔`config.toml` 的 `[iis]`/`[build]`/`[publish]` 標記區塊、`applicationhost.config` bootstrap、`.gitignore` 的 .NET 產物區塊〕;`default-files/.turbo-plugin/{config.toml,conventions.md}` base 範本;無 git repo 時 fail-loud,不自行 git init)。
 - 對應腳本對(`.ps1` + `.sh` delegate):Build-Web / Publish-Web / Start-Iis / Stop-Iis / Test-IisListening / Remove-OrphanIis / Compress-Content / Get-ProjectIdentity / Get-TargetUrl。
 - `lib`:`Core.{ps1}` 複本 + dotnet concern `Common.ps1`(`Find-MSBuild` / `Find-SingleCsproj` / `Get-ProjectIdentityHash` / `Format-IisExpressSiteName`,自單體 `Common.ps1` 抽出、去除 SVN concern)+ `IisHelpers.ps1` / `ApplicationHostHelpers.ps1` + `ps1-delegate.sh`。
 - PostToolUse EnterWorktree advisory hook(Windows-only,目前 no-op)。

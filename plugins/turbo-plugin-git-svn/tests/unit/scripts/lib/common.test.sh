@@ -468,5 +468,36 @@ test_resolve_config_value_canonical_fallback() {
     assertEquals 'falls back to config.toml when no local override' 'false' "$out"
 }
 
+# ─── U6 marker scaffolding: reader tolerates # marker lines + unknown section ──
+test_read_config_tolerates_markers() {
+    local tmp rr svn iis unknown
+    tmp="$(mktemp -d -t turbo-common-mark-XXXXXX)"
+    rr="$tmp/repo"
+    mkdir -p "$rr/.turbo-plugin"
+    {
+        echo '# turbo-plugin config.toml'
+        echo '# >>> turbo-plugin:git-svn >>>'
+        echo '[svn]'
+        echo 'url = "https://svn.example/repo"'
+        echo '# <<< turbo-plugin:git-svn <<<'
+        echo '# >>> turbo-plugin:dotnet >>>'
+        echo '[iis]'
+        echo 'enabled = true'
+        echo '# <<< turbo-plugin:dotnet <<<'
+        echo '[future-unknown-concern]'
+        echo 'key = "v"'
+    } > "$rr/.turbo-plugin/config.toml"
+
+    svn="$(resolve_config_value "$rr" 'svn' 'url' '' '' 2>/dev/null || true)"
+    iis="$(resolve_config_value "$rr" 'iis' 'enabled' '' '' 2>/dev/null || true)"
+    unknown="$(resolve_config_value "$rr" 'future-unknown-concern' 'key' '' '' 2>/dev/null || true)"
+    rm -rf "$tmp" 2>/dev/null || true
+
+    # '#' marker lines skipped; bracketed sections parse; unknown/foreign section tolerated (no throw).
+    assertEquals 'svn.url parsed past markers'        'https://svn.example/repo' "$svn"
+    assertEquals 'iis.enabled parsed past markers'    'true'                     "$iis"
+    assertEquals 'unknown section tolerated'          'v'                        "$unknown"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"
