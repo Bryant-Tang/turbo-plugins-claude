@@ -3,7 +3,7 @@
 turbo-plugin v1.0+ PR-readiness Skill tests 手動測試的 **schema + 16 skill case spec +
 prompt 範本 + 失敗 patterns**。本檔為持久、可重複、path-free 的 schema reference;
 per-release 的實際執行結果寫在
-`plugins/turbo-plugin/tests/runs/<release>/skill-tests-results.md`(使用者跑每個
+`plugins/turbo-plugin-git-svn/tests/runs/<release>/skill-tests-results.md`(使用者跑每個
 session 後手動 append rows)。
 
 > 本檔下方各 skill section 的 `### Row table` 保留為空 template,不會被填;

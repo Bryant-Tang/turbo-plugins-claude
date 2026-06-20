@@ -25,14 +25,14 @@ escalate (R32)。
 
 ## Root-cause 流程
 
-1. 讀 case 對應的 script(`plugins/turbo-plugin/scripts/<name>.ps1` / `.sh`)或 SKILL.md
-   (`plugins/turbo-plugin/skills/<skill>/SKILL.md`),找出測 case 期待的行為 vs. 實際輸出
+1. 讀 case 對應的 script(`plugins/turbo-plugin-git-svn/scripts/<name>.ps1` / `.sh`)或 SKILL.md
+   (`plugins/turbo-plugin-git-svn/skills/<skill>/SKILL.md`),找出測 case 期待的行為 vs. 實際輸出
    差異。
-2. 讀 case 對應的 test driver(Script tests:`plugins/turbo-plugin/tests/unit/scripts/<script>.Tests.ps1` 或
+2. 讀 case 對應的 test driver(Script tests:`plugins/turbo-plugin-git-svn/tests/unit/scripts/<script>.Tests.ps1` 或
    `<script>.sh.test.sh`(hook script 在 `unit/scripts/hooks/` 子目錄);Skill tests:U5 產生的 `prompts/<skill>-case-<N>.md`),確認測試
    本身沒有 bug。
 3. 在 fresh fixture 上 manual 重現 FAIL:
-   - Script tests:`plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` 重置 →
+   - Script tests:`plugins/turbo-plugin-git-svn/tests/fixtures/reset/Reset-Fixture.ps1` 重置 →
      直接跑該 script + 相同 args(test driver 第一段 `arrange` block 已記錄)。
    - Skill tests:照 prompt 重跑 skill(注意 fixture 延續策略,見 Trade-off 1 resolution)。
 4. 鎖定 bug 範圍:
@@ -40,7 +40,7 @@ escalate (R32)。
    - `scripts/lib/common.ps1` / `common.sh` shared helper(影響面大,見下文 Suspension trigger)
    - `skills/<skill>/SKILL.md` 流程描述
    - env-var contract(SKILL ↔ script 之間欄位名 / 預設值不一致)
-   - 真實的 fixture 缺漏(回去補 `plugins/turbo-plugin/tests/fixtures/base/`)
+   - 真實的 fixture 缺漏(回去補 `plugins/turbo-plugin-git-svn/tests/fixtures/base/`)
 5. 若懷疑 root cause 在 fixture 污染(Trade-off 1 escalation 路徑):強制
    fresh-fixture re-run 該 case;PASS 則升級為 fixture isolation 不夠的真實
    bug,寫進 known issue 而非 fix script。
@@ -57,7 +57,7 @@ escalate (R32)。
   fix(turbo-plugin): svn-log codepage 950 中文輸出
   ```
 - **CHANGELOG convention**(PL-4 plan correction):
-  - 寫進 `plugins/turbo-plugin/CHANGELOG.md` 的 **`[Unreleased]` section** 的 `Fixed:` 子分類。
+  - 寫進 `plugins/turbo-plugin-git-svn/CHANGELOG.md` 的 **`[Unreleased]` section** 的 `Fixed:` 子分類。
   - **不**寫進 `[1.0.0]` section。`[1.0.0]` 是 immutable release record。
   - squash-merge v1.0.0 PR 時把 `[Unreleased]` 整段內容 move 進 `[1.0.0]`(per
     [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 慣例)。
@@ -65,7 +65,7 @@ escalate (R32)。
     現確認改採 `[Unreleased]` 路徑,因為 `[1.0.0]` 應為 immutable release record。
 - **Version bump**:fail-then-fix 過程中**不**對 `plugin.json` `version` 重複 bump
   (尚未發布)。1.0.0 整段在 squash-merge 才 finalize。
-- **不**修改:`plugins/turbo-plugin/tests/` 內 test driver、`plugins/turbo-plugin/tests/docs/` 內 tracking doc
+- **不**修改:`plugins/turbo-plugin-git-svn/tests/` 內 test driver、`plugins/turbo-plugin-git-svn/tests/docs/` 內 tracking doc
   schema —— 修改這些屬於 test plan 變更,要回上層 plan doc 處理。
   - 例外:tracking doc 內 `actual` / `result` / `evidence` 欄位是 append-only
     執行紀錄,fail-then-fix 期間正常更新。
@@ -85,7 +85,7 @@ escalate (R32)。
 | `scripts/lib/applicationhost-helpers.ps1` | 所有 IIS lifecycle scripts(`start-iis` / `stop-iis` / `cleanup-orphan-iis` / `resolve-iis-settings` / `check-iis-listening`)的 prior PASS case | helper 專屬 IIS scripts |
 | `skills/<skill>/SKILL.md` 流程描述 | 該 skill 所有 Skill tests prior PASS case | skill flow 改變 |
 | env-var contract(SKILL ↔ script 欄位名 / 預設值) | **跨 unit** 所有 prior PASS case(Script tests + Skill tests 都要 re-run) | contract 改動跨整個 plugin |
-| `plugins/turbo-plugin/tests/fixtures/base/` 內容(真實補檔案) | 已跑過所有 Script tests case + Skill tests 已跑過 skill case | fixture 變更影響全部後續 case |
+| `plugins/turbo-plugin-git-svn/tests/fixtures/base/` 內容(真實補檔案) | 已跑過所有 Script tests case + Skill tests 已跑過 skill case | fixture 變更影響全部後續 case |
 | 單一 case 的 test driver(`.Tests.ps1` / `.sh.test.sh`) | 該 case only | test logic only |
 | Tracking doc / process doc | 不 re-run(純 doc) | 無 runtime impact |
 

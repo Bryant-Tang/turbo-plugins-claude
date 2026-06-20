@@ -1,6 +1,6 @@
 ﻿# Remove-OrphanIis.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Remove-OrphanIis.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Remove-OrphanIis.ps1
 # Behavior: 找與 current site name 不同 hash 的 stale iisexpress 進程 + 沒人在用的 temp apphost 檔。
 #   無 orphan → exit 0 + echo「No orphan...」。
 #

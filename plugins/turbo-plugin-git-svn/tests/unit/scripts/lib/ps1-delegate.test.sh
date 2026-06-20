@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ps1-delegate.test.sh (shUnit2)
 #
-# Unit tests for plugins/turbo-plugin/scripts/lib/ps1-delegate.sh.
+# Unit tests for plugins/turbo-plugin-git-svn/scripts/lib/ps1-delegate.sh.
 # ps1-delegate dispatches `bash <script>` to `powershell -File <SCRIPTS_DIR>/<script>.ps1 <args...>`.
 #
 # Cases:

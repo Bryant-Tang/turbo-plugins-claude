@@ -3,7 +3,7 @@
 # Per-case fixture reset entry for turbo-plugin v1.0 Phase 1 tests.
 #
 # 做三件事:
-#   1. robocopy /MIR  plugins/turbo-plugin/tests/fixtures/base  ->  $TestRoot
+#   1. robocopy /MIR  plugins/turbo-plugin-git-svn/tests/fixtures/base  ->  $TestRoot
 #      (default = repo-relative, gitignored tests/.sandbox/test-turbo-plugin)
 #      (F-4 fix: robocopy exit 0-7 都是 success;只 ≥ 8 才 throw,且每次跑完 reset $LASTEXITCODE = 0)
 #   2. svnadmin create $SvnRepo; svnadmin load < seed.dump  (via cmd /c redirect, F-2 一致)
@@ -54,7 +54,7 @@ function Remove-DirTree {
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
 $scriptDir = $PSScriptRoot
-# Reset-Fixture.ps1 lives at: <repo>/plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1
+# Reset-Fixture.ps1 lives at: <repo>/plugins/turbo-plugin-git-svn/tests/fixtures/reset/Reset-Fixture.ps1
 # base/   ->  ../base
 # seed/   ->  ../seed
 # tests/  ->  ../..
@@ -88,7 +88,7 @@ if (-not [System.IO.Directory]::Exists($BaseDir)) {
 if (-not $SkipSvn -and -not (Test-Path -LiteralPath $DumpPath -PathType Leaf)) {
     throw @"
 SVN seed dump does not exist: $DumpPath
-Run plugins/turbo-plugin/tests/fixtures/seed/build-seed-repo.ps1 first (or pass -SkipSvn to reset only the workspace mirror).
+Run plugins/turbo-plugin-git-svn/tests/fixtures/seed/build-seed-repo.ps1 first (or pass -SkipSvn to reset only the workspace mirror).
 "@
 }
 

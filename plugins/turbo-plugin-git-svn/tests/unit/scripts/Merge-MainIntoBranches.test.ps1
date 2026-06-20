@@ -1,6 +1,6 @@
 # Merge-MainIntoBranches.test.ps1 (Pester 5)
 #
-# Script under test: plugins/turbo-plugin/scripts/Merge-MainIntoBranches.ps1
+# Script under test: plugins/turbo-plugin-git-svn/scripts/Merge-MainIntoBranches.ps1
 #
 # New contract (v0.5.0): [-Branch <name>] is [string[]].
 #   - No -Branch  -> target = EVERY local branch except 'main' and 'remote-svn/*'.

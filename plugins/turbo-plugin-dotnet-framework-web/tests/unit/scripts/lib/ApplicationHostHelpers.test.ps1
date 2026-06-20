@@ -1,6 +1,6 @@
 ﻿# ApplicationHostHelpers.test.ps1 (Pester 5)
 #
-# Library: plugins/turbo-plugin/scripts/lib/ApplicationHostHelpers.ps1
+# Library: plugins/turbo-plugin-dotnet-framework-web/scripts/lib/ApplicationHostHelpers.ps1
 # Behavior: 此 file 主要是 library (dot-source) — 純函式 (Find-ApplicationhostSite /
 #   Update-ApplicationhostConfig / Remove-ApplicationhostSite / Invoke-ApplicationhostRefresh)。
 #

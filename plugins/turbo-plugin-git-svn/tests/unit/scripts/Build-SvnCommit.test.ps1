@@ -1,6 +1,6 @@
 ﻿# Build-SvnCommit.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Build-SvnCommit.ps1
+# Script: plugins/turbo-plugin-git-svn/scripts/Build-SvnCommit.ps1
 # Behavior: 從 main worktree (cwd) 與 remote-<branch> worktree 對比;準備 push 的 git→svn
 #   bridge (merge git branch into remote-* worktree)。Read-mostly,但會跑 svn-side commands。
 #

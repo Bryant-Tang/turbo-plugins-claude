@@ -2,7 +2,7 @@
 
 turbo-plugin v1.0+ PR-readiness Script tests 自動測試的 **schema + 中文字典 + per-script
 section template**。本檔為持久 schema reference;per-release 的實際執行結果寫在
-`plugins/turbo-plugin/tests/runs/<release>/script-tests-results.md`(由
+`plugins/turbo-plugin-git-svn/tests/runs/<release>/script-tests-results.md`(由
 `Invoke-ScriptTests.ps1` append rows)。
 
 > 本檔 **不會被 orchestrator append rows**;若看到 row 出現代表 -TargetDoc 設錯。
@@ -190,7 +190,7 @@ KD-13 規定 `Build-SeedRepo.ps1` 是 frozen-output builder,不寫 runtime smoke
 
 | Field | Value |
 |---|---|
-| Dump file | `plugins/turbo-plugin/tests/fixtures/seed/svn-repo-r1-r20.dump` |
+| Dump file | `plugins/turbo-plugin-git-svn/tests/fixtures/seed/svn-repo-r1-r20.dump` |
 | Dump size | 10196 bytes |
 | Dump SHA-256 | `45D9795A2AEADAC6CCD8BA9097FA77292EEAECB81DCB8461C653D91CAF32F132` |
 | Audited at commit | `4f1be95`(branch `feat/turbo-plugin-v1.0`)|

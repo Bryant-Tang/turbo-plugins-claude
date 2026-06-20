@@ -1,4 +1,4 @@
-# plugins/turbo-plugin/tests/fixtures/seed/
+# plugins/turbo-plugin-git-svn/tests/fixtures/seed/
 
 turbo-plugin v1.0 PR-readiness Script tests 測試的 **SVN seed dump source**。
 
@@ -40,7 +40,7 @@ seed/
 ## 25 條中文字典 mapping
 
 Build-SeedRepo.ps1 取 `$zhDict.commit_messages` 前 3 條給 r5 / r10 / r15。完整 25 條字典
-inline 在 `plugins/turbo-plugin/tests/docs/script-tests-schema.md` 開頭 — 那是 single
+inline 在 `plugins/turbo-plugin-git-svn/tests/docs/script-tests-schema.md` 開頭 — 那是 single
 source of truth。seed script 的 `$zhDict` 內容必須與 script-tests-schema.md 一致;
 如果改一邊請同步另一邊。
 

@@ -181,7 +181,7 @@ orchestrator 在 session 1 開始前確認:
 
 - [ ] `<VALIDATION_ROOT>/proj`(`<VALIDATION_ROOT>` 慣例見 `skill-tests.md` 開頭)已存在或可建立
 - [ ] `<VALIDATION_ROOT>/svn-repo` SVN repo 已 seed(r1-r20 含中文 commit msg)
-- [ ] `plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.ps1` 可正常跑(Script tests 已驗證 idempotency)
+- [ ] `plugins/turbo-plugin-git-svn/tests/fixtures/reset/Reset-Fixture.ps1` 可正常跑(Script tests 已驗證 idempotency)
 - [ ] 使用者主機已裝:VS / IIS Express / .NET Framework SDK / Git for Windows / svn cli
 - [ ] 使用者主機**尚未**裝 `csharp-ls`(`dotnet tool list -g` 不含)
 - [ ] 使用者主機**尚未**裝 `typescript-language-server`(`npm list -g --depth=0` 不含)

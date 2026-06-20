@@ -1,6 +1,6 @@
 ﻿# Stop-Iis.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Stop-Iis.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Stop-Iis.ps1
 # Behavior: 跑 [iis] enabled gate;若 enabled,從 CIM 找 iisexpress.exe 並用 /site:<name> match 殺。
 #   無 instance → echo 提示 + exit 0;temp apphost 也順便清掉。
 #

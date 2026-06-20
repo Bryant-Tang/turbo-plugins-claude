@@ -2,34 +2,34 @@
 #
 # Rules (per docs/brainstorms/2026-05-28-turbo-plugin-naming-conventions-requirements.md
 # KD-1 and docs/plans/2026-05-28-001-... R13):
-#   1. Path whitelist — .ps1 files under any '/lib/' directory are noun-only
+#   1. Path whitelist -- .ps1 files under any '/lib/' directory are noun-only
 #      libraries (e.g., Common.ps1, AssertHelpers.ps1) and are skipped.
-#   2. Verb-Noun single hyphen only — outside lib/, .ps1 basename must contain
+#   2. Verb-Noun single hyphen only -- outside lib/, .ps1 basename must contain
 #      exactly one '-' (Get-SvnLog OK; Get-Svn-Log violates).
-#   3. Case-sensitive PascalCase verb — first char of verb (before '-') must
+#   3. Case-sensitive PascalCase verb -- first char of verb (before '-') must
 #      be uppercase. 'build-web.ps1' (lowercase) FAILS even though 'Build' is
-#      approved — catches case-insensitive NTFS hiding incomplete renames.
-#   4. Approved verb — verb portion must appear in `(Get-Verb).Verb` list
+#      approved -- catches case-insensitive NTFS hiding incomplete renames.
+#   4. Approved verb -- verb portion must appear in `(Get-Verb).Verb` list
 #      (case-sensitive comparison).
 #
-# Test file mirror — `<Source>.test.ps1` is allowed to mirror its source name.
+# Test file mirror -- `<Source>.test.ps1` is allowed to mirror its source name.
 # Strip `.test` suffix before applying rules. So `Build-Web.test.ps1` ->
 # `Build-Web` -> verify against rules.
 #
-# Self-skip — this script itself lives at tools/verify-approved-verbs.ps1
+# Self-skip -- this script itself lives at tools/verify-approved-verbs.ps1
 # which is multi-hyphen kebab; skip when scanning encounters it.
 #
-# Tools whitelist — the entire `tools/` directory is a kebab-named tooling
+# Tools whitelist -- the entire `tools/` directory is a kebab-named tooling
 # area outside the plugin scope; the user runs the verifier with `-Path`
-# pointed at `plugins/turbo-plugin/`, but if `-Path` is broader and includes
+# pointed at `plugins/turbo-plugin-git-svn/`, but if `-Path` is broader and includes
 # tools/, the verifier skips tools/.
 #
 # Exit code 0 = clean, 1 = violations found. No external module needed
 # (`Get-Verb` is built-in to PS 5.1+).
 #
 # Usage:
-#   pwsh tools/verify-approved-verbs.ps1 -Path plugins/turbo-plugin/scripts
-#   pwsh tools/verify-approved-verbs.ps1 -Path plugins/turbo-plugin/tests
+#   pwsh tools/verify-approved-verbs.ps1 -Path plugins/turbo-plugin-git-svn/scripts
+#   pwsh tools/verify-approved-verbs.ps1 -Path plugins/turbo-plugin-git-svn/tests
 
 [CmdletBinding()]
 param(
@@ -60,11 +60,11 @@ if (-not (Test-Path -LiteralPath $Path)) {
 # Policy extension: 'Build' is in PS 7.3+ Get-Verb but NOT in PS 5.1's. We
 # approve it by policy because:
 #   - Plan KD-2 / KD-3 chose `Build-Web.ps1` / `Build-SvnCommit.ps1` for
-#     semantic precision (msbuild artifact / sync git→svn commit candidate).
+#     semantic precision (msbuild artifact / sync git->svn commit candidate).
 #   - PSScriptAnalyzer's PSUseApprovedVerbs rule (when run with the PS 7.3+
 #     module installed) accepts these too.
 #   - Renaming to PS 5.1 alternatives (New-Web / New-SvnCommit) was considered
-#     and rejected in ce-work U2 — Build is more semantically precise.
+#     and rejected in ce-work U2 -- Build is more semantically precise.
 # 'Deploy' (also PS 7.3+) is included for parity; no current script uses it.
 $policyApprovedExtras = @('Build', 'Deploy')
 $approvedVerbs = @((Get-Verb).Verb) + $policyApprovedExtras
@@ -94,7 +94,7 @@ Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue
     $hyphenCount = ($basename.ToCharArray() | Where-Object { $_ -eq '-' } | Measure-Object).Count
 
     if ($hyphenCount -eq 0) {
-        # No hyphen — must be in lib/ (noun-only library)
+        # No hyphen -- must be in lib/ (noun-only library)
         if ($isInLibDir) {
             return  # OK, noun-only library
         }
@@ -115,7 +115,7 @@ Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue
         return
     }
 
-    # Single hyphen — split into verb / noun
+    # Single hyphen -- split into verb / noun
     $dashIndex = $basename.IndexOf('-')
     $verb = $basename.Substring(0, $dashIndex)
     $noun = $basename.Substring($dashIndex + 1)
@@ -172,7 +172,7 @@ Write-Output "Verify approved verbs -- scanned: $Path"
 Write-Output '---------------------------------------------------------------------'
 
 if ($violations.Count -eq 0) {
-    Write-Output '  Result: 0 violations — all verbs approved + PascalCase + single hyphen.'
+    Write-Output '  Result: 0 violations -- all verbs approved + PascalCase + single hyphen.'
     Write-Output ''
     exit 0
 }

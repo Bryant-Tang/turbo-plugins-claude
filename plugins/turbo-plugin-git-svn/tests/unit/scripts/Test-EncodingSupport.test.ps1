@@ -1,6 +1,6 @@
 # Test-EncodingSupport.test.ps1 (Pester 5)
 #
-# Script under test: plugins/turbo-plugin/scripts/Test-EncodingSupport.ps1
+# Script under test: plugins/turbo-plugin-git-svn/scripts/Test-EncodingSupport.ps1
 # Behavior: emits PS_VERSION / ANSI_CODEPAGE / OEM_CODEPAGE / ARGV_SAFE_FOR_UNICODE /
 #   RECOMMENDATION tokens; non-UTF-8 ANSI also prints a WARNING + (a)(b)(c) guidance.
 

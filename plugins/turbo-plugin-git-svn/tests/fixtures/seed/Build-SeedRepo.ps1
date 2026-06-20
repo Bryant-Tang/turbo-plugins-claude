@@ -3,7 +3,7 @@
 # Idempotent seed builder for turbo-plugin v1.0 script tests SVN fixture.
 #
 # 產出:
-#   plugins/turbo-plugin/tests/fixtures/seed/svn-repo-r1-r20.dump
+#   plugins/turbo-plugin-git-svn/tests/fixtures/seed/svn-repo-r1-r20.dump
 #
 # 流程:
 #   1. work root = repo-relative, gitignored tests/.sandbox/seed-build/ (long-form)
@@ -50,7 +50,7 @@ $workRoot  = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($testsDir, 
 $repoPath  = [System.IO.Path]::Combine($workRoot, 'repo')
 $wcPath    = [System.IO.Path]::Combine($workRoot, 'wc')
 
-# ─── 25 條中文字典 — keep in sync with plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md ──
+# ─── 25 條中文字典 — keep in sync with plugins/turbo-plugin-git-svn/tests/docs/phase1-scripts-schema.md ──
 #
 # 5 路徑 / 5 檔名 / 5 commit msg / 5 source 註解 / 5 source string literal
 # r5 / r10 / r15 各 pull 1 條 commit msg (見下方 $Revisions table)
@@ -117,7 +117,7 @@ $zhDict = @{
 # r20 svn copy trunk@HEAD branches/test-1   (provides remote-test-1 source)
 #
 # 中文 commit msgs at r5/r10/r15 pulled from $zhDict.commit_messages[0/1/2].
-# 這個 mapping 由 plugins/turbo-plugin/tests/docs/phase1-scripts-schema.md 開頭 inline 表參照。
+# 這個 mapping 由 plugins/turbo-plugin-git-svn/tests/docs/phase1-scripts-schema.md 開頭 inline 表參照。
 
 $Revisions = @(
     @{ N=1;  Op='mkdirs';   Msg='r1: initial trunk + branches + tags'                       }

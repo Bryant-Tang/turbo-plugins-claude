@@ -1,6 +1,6 @@
 ﻿# Publish-Web.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Publish-Web.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Publish-Web.ps1
 # Behavior: 找 csproj → 找 MSBuild → 找 .pubxml → pack-content → msbuild /p:DeployOnBuild=true
 #
 # 同 build-web,script **沒有** [iis] enabled gate。SKILL.md 是 gatekeeper。

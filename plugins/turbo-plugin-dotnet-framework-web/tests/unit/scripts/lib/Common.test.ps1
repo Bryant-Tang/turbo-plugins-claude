@@ -1,6 +1,6 @@
 ﻿# Common.test.ps1 (Pester 5)
 #
-# Unit tests for plugins/turbo-plugin/scripts/lib/Common.ps1 (+ IisHelpers.ps1 helpers
+# Unit tests for plugins/turbo-plugin-dotnet-framework-web/scripts/lib/Common.ps1 (+ IisHelpers.ps1 helpers
 # Find-MSBuild / Find-IisExpressPath which dot-source Common.ps1).
 #
 # Migrated from the self-rolled Assert-* harness to Pester 5 (KTD-7 re-key):

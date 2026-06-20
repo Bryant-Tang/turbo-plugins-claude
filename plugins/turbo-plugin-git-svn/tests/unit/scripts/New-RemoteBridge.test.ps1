@@ -1,6 +1,6 @@
 # New-RemoteBridge.test.ps1 (Pester 5)
 #
-# Script under test: plugins/turbo-plugin/scripts/New-RemoteBridge.ps1
+# Script under test: plugins/turbo-plugin-git-svn/scripts/New-RemoteBridge.ps1
 #
 # New contract (v0.5.0 U9): -Branch <name> -SvnUrl <url> (no -N / test-<n>). Creates the
 # remote-svn/<branch> BRIDGE branch (rooted at the repo init commit) + a linked worktree +

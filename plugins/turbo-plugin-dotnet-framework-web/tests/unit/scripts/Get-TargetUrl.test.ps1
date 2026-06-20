@@ -1,6 +1,6 @@
 ﻿# Get-TargetUrl.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Get-TargetUrl.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Get-TargetUrl.ps1
 # Behavior: 從 csproj 的 <IISUrl> 解析 URL,Resolve-IisSettings 提供
 #   IisUrl;script 直接 echo「IIS URL: <url>」。
 #

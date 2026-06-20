@@ -1,6 +1,6 @@
 # Get-PushPreflight.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Get-PushPreflight.ps1
+# Script: plugins/turbo-plugin-git-svn/scripts/Get-PushPreflight.ps1
 # Token contract (v0.5.0 U9): emits exactly ONE terminal token prefixed 'TP_TOKEN:'.
 # Precedence: DETACHED_HEAD > BRANCH_MISMATCH_WARNING > BRIDGE_ABSENT > BRIDGE_PRESENT.
 # These tests build their own minimal git sandboxes (no svn / no .turbo-plugin worktrees

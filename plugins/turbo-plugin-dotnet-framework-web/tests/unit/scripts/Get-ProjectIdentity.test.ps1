@@ -1,6 +1,6 @@
 ﻿# Get-ProjectIdentity.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Get-ProjectIdentity.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Get-ProjectIdentity.ps1
 #
 # Cases:
 #   1. Happy: 標準 .csproj + git common-dir 下,output 含 PROJECT/IDENTITY_HASH/SITE_NAME，

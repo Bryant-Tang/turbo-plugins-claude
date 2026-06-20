@@ -22,7 +22,7 @@ BeforeAll {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     $OutputEncoding = [System.Text.Encoding]::UTF8
 
-    # <repo>/plugins/turbo-plugin/tests/fixtures/reset/Reset-Fixture.test.ps1
+    # <repo>/plugins/turbo-plugin-git-svn/tests/fixtures/reset/Reset-Fixture.test.ps1
     #   -> ./Reset-Fixture.ps1            (system under test)
     #   -> ../base                        (base fixture dir)
     #   -> ../seed/svn-repo-r1-r20.dump   (seed dump)

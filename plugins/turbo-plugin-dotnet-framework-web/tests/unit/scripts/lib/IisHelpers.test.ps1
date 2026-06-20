@@ -1,6 +1,6 @@
 ﻿# IisHelpers.test.ps1 (Pester 5)
 #
-# Library: plugins/turbo-plugin/scripts/lib/IisHelpers.ps1
+# Library: plugins/turbo-plugin-dotnet-framework-web/scripts/lib/IisHelpers.ps1
 # Behavior: 此 file 主要是 library (dot-source) — 它本身不直接被執行。本測試在 child
 #   powershell 中 dot-source 它並直接 call Resolve-IisSettings，verify 該 function 行為。
 #

@@ -1,6 +1,6 @@
 ﻿# Sync-FromSvn.test.ps1 (Pester 5)
 #
-# Tests for plugins/turbo-plugin/scripts/Sync-FromSvn.ps1.
+# Tests for plugins/turbo-plugin-git-svn/scripts/Sync-FromSvn.ps1.
 #
 # Scope (U4 plan):
 #   - missing -Branch arg → fail-loudly

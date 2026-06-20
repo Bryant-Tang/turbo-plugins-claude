@@ -52,7 +52,7 @@ if [[ ! -d "$BASE_DIR" ]]; then
 fi
 if [[ $SKIP_SVN -eq 0 ]] && [[ ! -f "$DUMP_PATH" ]]; then
     echo "SVN seed dump does not exist: $DUMP_PATH" >&2
-    echo "Run plugins/turbo-plugin/tests/fixtures/seed/build-seed-repo.sh first (or pass --skip-svn)." >&2
+    echo "Run plugins/turbo-plugin-git-svn/tests/fixtures/seed/build-seed-repo.sh first (or pass --skip-svn)." >&2
     exit 1
 fi
 

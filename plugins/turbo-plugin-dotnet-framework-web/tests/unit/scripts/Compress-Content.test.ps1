@@ -1,6 +1,6 @@
 ﻿# Compress-Content.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Compress-Content.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Compress-Content.ps1
 #
 # Scope (U4 plan):
 #   - no [frontend] section in config.toml → skip + exit 0

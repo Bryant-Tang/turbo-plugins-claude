@@ -1,6 +1,6 @@
 ﻿# Get-SvnLog.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Get-SvnLog.ps1
+# Script: plugins/turbo-plugin-git-svn/scripts/Get-SvnLog.ps1
 # Behavior: 走 main worktree → `<proj>.worktrees/remote-<branch>` → 跑 `svn log --xml`,parse XML
 #   後 emit「rN | author | date | msg」+ trailer `# LAST_SHOWN_REV=<minRev>`。
 #

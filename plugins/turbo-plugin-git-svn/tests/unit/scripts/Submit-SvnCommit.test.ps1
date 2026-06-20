@@ -1,6 +1,6 @@
 ﻿# Submit-SvnCommit.test.ps1 (Pester 5)
 #
-# Tests for plugins/turbo-plugin/scripts/Submit-SvnCommit.ps1.
+# Tests for plugins/turbo-plugin-git-svn/scripts/Submit-SvnCommit.ps1.
 #
 # Scope (U9: --Message renamed to --Title; agent supplies only the title, body comes from the
 # locked pin written by Build-SvnCommit):

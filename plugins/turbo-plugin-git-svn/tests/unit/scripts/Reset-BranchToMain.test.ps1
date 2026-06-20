@@ -1,6 +1,6 @@
 # Reset-BranchToMain.test.ps1 (Pester 5)
 #
-# Script under test: plugins/turbo-plugin/scripts/Reset-BranchToMain.ps1
+# Script under test: plugins/turbo-plugin-git-svn/scripts/Reset-BranchToMain.ps1
 #
 # New contract (v0.5.0): -Branch <name> [-DiffOnly] (no -N / test-<n>). Resets ANY local
 # branch to main's tip. Emits LOSE / GAIN / FILES_LOST_AFTER_PUSH preview tokens; with

@@ -1,6 +1,6 @@
 ﻿# Tag-Release.test.ps1 (Pester 5)
 #
-# Tests for plugins/turbo-plugin/scripts/Tag-Release.ps1.
+# Tests for plugins/turbo-plugin-git-svn/scripts/Tag-Release.ps1.
 #
 # Scope (U9 plan):
 #   - happy:           on a fixture repo with a remote-svn/test-1 branch, --branch test-1

@@ -1,6 +1,6 @@
 ﻿# Start-Iis.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Start-Iis.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Start-Iis.ps1
 # Behavior:
 #   - Defensive layer:.turbo-plugin/config.toml [iis] enabled = false → throw with bilingual msg
 #   - Else:resolve IIS settings → render temp apphost.config (placeholder substitution) → launch

@@ -1,6 +1,6 @@
 ﻿# Test-IisListening.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Test-IisListening.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Test-IisListening.ps1
 # Behavior: 由 Resolve-IisSettings 取 port,然後 netstat -ano 篩出 ":<port>" + LISTENING 行;
 #   無 listening 則 exit 1 + 寫對應訊息 stdout。
 #

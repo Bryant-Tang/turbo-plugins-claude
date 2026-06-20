@@ -1,6 +1,6 @@
 ﻿# Build-Web.test.ps1 (Pester 5)
 #
-# Script: plugins/turbo-plugin/scripts/Build-Web.ps1
+# Script: plugins/turbo-plugin-dotnet-framework-web/scripts/Build-Web.ps1
 # Behavior: 找 csproj → 找 MSBuild → 跑 msbuild /restore /t:Build → 跑 pack-content.ps1
 #
 # 注意:此 script **沒有** 自己的 [iis] enabled gate(by design;見 commit 84e944a)。
