@@ -1,6 +1,6 @@
 # plugins/turbo-plugin-git-svn/tests/fixtures/base/
 
-turbo-plugin v1.0 PR-readiness Script tests 測試的 **fixture base mirror source**。
+turbo-plugin-git-svn Script tests 的 **fixture base mirror source**。
 
 ## 用途
 
@@ -8,34 +8,32 @@ turbo-plugin v1.0 PR-readiness Script tests 測試的 **fixture base mirror sour
 orchestrator 會把這個目錄完整 mirror 到 repo 內 gitignored 的 `<tests>/.sandbox/test-turbo-plugin/`,讓每 case 在
 完全乾淨的 fixture 上跑。
 
+git↔SVN bridge 是**內容無關**的(決定 push 哪些檔靠 git,不看檔案類型),所以這裡放什麼當工作樹內容都可以。
+目前沿用一個小型 sample 專案當 version-control payload。**IIS / .NET 建置 / 發佈等 concern 已隨四拆移至
+`turbo-plugin-dotnet-framework-web`**,所以此 fixture 不再帶 `applicationhost.config` 或
+`[iis]/[build]/[publish]/[run]` 設定 — `.turbo-plugin/config.toml` 只留 git-svn 自己的 `[svn]` 區段。
+
 ## 內容
 
 ```
 base/
-├── HelloApp.sln                    # VS solution wrapping HelloApp.csproj
-├── HelloApp.csproj                 # .NET Framework 4.7.2 Web Application
-├── Controllers/HelloController.cs  # 最小 MVC controller + 中文 string literal
-├── Scripts/site.js                 # 最小 JS + 中文 comment / string
-├── Views/Home/Index.cshtml         # 最小 MVC view + 中文 markup
-├── Web.config                      # .NET Framework Web App 設定
+├── HelloApp.sln                    # sample VS solution(SVN payload,內容無關)
+├── HelloApp.csproj                 # sample 專案檔(SVN payload)
+├── Controllers/HelloController.cs  # sample 源檔 + 中文 string literal
+├── Scripts/site.js                 # sample JS + 中文 comment / string
+├── Views/Home/Index.cshtml         # sample view + 中文 markup
+├── Web.config                      # sample 設定檔(SVN payload)
 ├── .turbo-plugin/
-│   ├── applicationhost.config      # IIS Express config (含 __TURBO_PLUGIN_PHYSICAL_PATH__)
-│   └── config.toml                 # [iis] enabled = true 等
+│   └── config.toml                 # 只含 [svn] 區段
 └── README.md                       # 你正在讀這個
 ```
 
 ## **不要直接編輯運行中的 fixture(`<tests>/.sandbox/test-turbo-plugin/`)**
 
 那個 workspace 由 `Reset-Fixture.ps1` 隨時可能被砍掉重建。任何永久性改動請改這個
-`base/` 目錄,並重跑:
-
-```powershell
-.\tests\v1.0\fixtures\reset\Reset-Fixture.ps1
-```
+`base/` 目錄,並重跑 `Reset-Fixture.ps1`(`.ps1`)或 `reset-fixture.sh`(`.sh`)。
 
 ## 變更時注意
 
-1. 改 `.csproj` 後請確認 MSBuild 仍可 build(在當前 fixture 上手動跑 MSBuild 測一次)。
-2. 改 `applicationhost.config` 不要動掉 `__TURBO_PLUGIN_PHYSICAL_PATH__` placeholder 字面值
-   — tp-run-dotnet-framework-web 與 start-iis 等 script 都會檢查這個字串。
-3. 加新檔請列入此 README 的「內容」section。
+1. 這些 sample 檔只是 bridge 的 version-control payload(bridge 不在意檔案類型);改動後沿用既有測試重跑即可。
+2. 加新檔請列入此 README 的「內容」section。
