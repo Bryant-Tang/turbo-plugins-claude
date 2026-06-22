@@ -5,7 +5,9 @@
 #   2. `[System.IO.Path]::GetRelativePath` (.NET Core / .NET 5+ only)
 #   3. .ps1 with non-ASCII bytes but no UTF-8 BOM
 #   4. `2>&1` on native exe (NativeCommandError pollutes $LASTEXITCODE under EAP=Stop)
-#   5. `(... | ...).Count` without @() wrap (single-element pipeline reads wrong .Count)
+#   5. `(... | ...).Count` without @() wrap (single-element pipeline reads wrong .Count).
+#      EXEMPT: `(... | Measure-Object).Count` -- Measure-Object always returns one
+#      GroupInfo whose .Count is the real tally, so it is the recommended idiom, not a bug.
 #
 # Exit code 0 = clean, 1 = found violations. Suitable for pre-commit hook or
 # manual `pwsh tools/lint-ps-compat.ps1` from repo root.
@@ -112,8 +114,11 @@ Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue
             }
         }
 
-        # Check 5: pipeline .Count without @() wrap (skip comment-only lines)
-        if (-not $trimmed.StartsWith('#') -and $patPipeCount.IsMatch($ln)) {
+        # Check 5: pipeline .Count without @() wrap (skip comment-only lines).
+        # Exempt `(... | Measure-Object).Count`: Measure-Object returns a single GroupInfo
+        # whose .Count is the real tally, so it is the recommended idiom, not the bug pattern.
+        if (-not $trimmed.StartsWith('#') -and $patPipeCount.IsMatch($ln) -and
+            $ln -notmatch 'Measure-Object[^()]*\)\.Count') {
             $violations += [pscustomobject]@{
                 File   = $file
                 Rule   = '5-pipe-count'

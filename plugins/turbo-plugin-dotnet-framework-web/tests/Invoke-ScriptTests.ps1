@@ -1,4 +1,4 @@
-# Invoke-ScriptTests.ps1
+﻿# Invoke-ScriptTests.ps1
 #
 # turbo-plugin script-tests orchestrator (v0.5.0 U16 — Pester 5 rewrite).
 #
