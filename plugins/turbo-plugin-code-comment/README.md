@@ -26,7 +26,7 @@ C# 與 JavaScript / TypeScript 的**註解撰寫慣例** skill 集。是單體 `
 
 ## 測試
 
-兩層測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
+自動化測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
 
 - `tests/Invoke-ScriptTests.ps1`（Windows PowerShell 5.1）/ `tests/invoke-script-tests.sh`（bash）。
 - 本 plugin 無 script，故無 script 行為測試；orchestrator 在無 `scripts/` 時跳過 lint pre-flight 與 Pester framework gate，於 windows 與 ubuntu 皆回 exit 0（綠）。

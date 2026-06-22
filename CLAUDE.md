@@ -42,7 +42,7 @@ plugins/<plugin-name>/
 ├── scripts/<name>.ps1           # 可選 — PowerShell 實作（Windows）
 ├── scripts/<name>.sh            # 可選 — Bash 實作（Linux / macOS / Git Bash）
 ├── default-files/               # 可選 — `setup` 類 skill 會複製這些範本到 workspace
-└── tests/                       # 必要 — 兩層測試套件（見「測試標準」）
+└── tests/                       # 必要 — 自動化測試套件（見「測試標準」）
 ```
 
 ### Skill ↔ Command ↔ Script 三層分工
@@ -84,16 +84,15 @@ plugins/<plugin-name>/
 
 ## 測試標準（每個 plugin 必須遵守）
 
-**每個 plugin 都必須附帶完整測試 + CI 自動化**，遵循同一套兩層規格，全部擺在慣例路徑 `plugins/<name>/tests/`，讓 repo 的 CI（`.github/workflows/tests.yml`）能慣例自動探索——新增遵循此佈局的 plugin **零改 `.yml`** 即被納入。
+**每個 plugin 都必須附帶完整的自動化測試 + CI**，全部擺在慣例路徑 `plugins/<name>/tests/`，讓 repo 的 CI（`.github/workflows/tests.yml`）能慣例自動探索——新增遵循此佈局的 plugin **零改 `.yml`** 即被納入。
 
-兩層測試：
+**Script 測試（自動化）**：驗證 `scripts/*.ps1` / `*.sh` 的實際行為。`.ps1` 走 Windows PowerShell 5.1、`.sh` 走 bash，行為一致。由 plugin 的標準入口 orchestrator 跑：`plugins/<name>/tests/Invoke-ScriptTests.ps1`（PowerShell）與 `plugins/<name>/tests/invoke-script-tests.sh`（bash）。CI 依此入口探索並執行。
 
-1. **Script 測試（自動化）**：驗證 `scripts/*.ps1` / `*.sh` 的實際行為。`.ps1` 走 Windows PowerShell 5.1、`.sh` 走 bash，行為一致。由 plugin 的標準入口 orchestrator 跑：`plugins/<name>/tests/Invoke-ScriptTests.ps1`（PowerShell）與 `plugins/<name>/tests/invoke-script-tests.sh`（bash）。CI 依此入口探索並執行。
-2. **Skill 測試（人工、可重複）**：給人照著重跑的常駐套件（非一次性草稿），驗證 skill 層的 agent 行為。case 結構統一為「建 fixture → 給操作指示 → 使用者跑 → 記錄結果」，**必須 path-free**（用 placeholder，不寫任何機器專屬絕對路徑），任何人在任何機器都能照著重跑。
+> 先前的「Skill 測試（人工、可重複）」層已退役——改以自動化測試為唯一常駐驗證標準（搭配「在實際 Claude Code session 中安裝並執行 plugin 的 skill / command」做臨機驗證，見開頭 Repository Type）。不再維護 `tests/docs/` 手動測試流程文件（schema / session 計畫 / budget / rollback / fail-then-fix）。
 
 共通原則：
 
-- **Path-free**：所有測試（含 fixture、sandbox、結果模板）一律不得寫死機器專屬絕對路徑；工作根用 repo 相對的 gitignored sandbox。
+- **Path-free**：所有測試（含 fixture、sandbox）一律不得寫死機器專屬絕對路徑；工作根用 repo 相對的 gitignored sandbox。
 - **「能跑的就跑」**：CI 在多 OS 上跑——windows runner 跑全部（`.ps1` + `.sh`）；ubuntu runner 跑可移植的 `.sh`，缺工具（如 .NET / IIS / 特定 native exe）的測試 **自我 SKIP（非 FAIL）**。orchestrator 要能區分 PASS / SKIP / FAIL，CI 把 SKIP 當綠。
 - **零污染**：跑完測試不得在 sandbox 以外留下產物，也不得改動使用者 / runner 的全域狀態（例如 svn 全域設定用 sandbox-local config 隔離）。
 
@@ -113,7 +112,7 @@ plugins/<plugin-name>/
 
 `.claude-plugin/marketplace.json` 列出全部 plugin 與其相對路徑。新增 plugin 時要：
 
-1. 在 `plugins/` 下建立完整目錄結構（含 `.claude-plugin/plugin.json` 起 version `0.1.0`，以及 `tests/` 兩層測試套件）。
+1. 在 `plugins/` 下建立完整目錄結構（含 `.claude-plugin/plugin.json` 起 version `0.1.0`，以及 `tests/` 自動化測試套件）。
 2. 在 `marketplace.json` 的 `plugins` 陣列加一筆 `{ name, description, source: "./plugins/<dir>" }`。
 3. repo 根 README.md 安裝章節同步更新（新增該 plugin 的搜尋 / 安裝步驟）。
 

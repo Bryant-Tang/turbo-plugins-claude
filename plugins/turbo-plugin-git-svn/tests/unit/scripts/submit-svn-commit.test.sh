@@ -7,7 +7,8 @@
 #   2. missing --branch -> exit non-zero + stderr mentions branch required
 #   3. --branch supplied, missing --title -> exit non-zero + stderr mentions title (U9: the agent
 #      supplies only --title; the body comes from the locked pin written by build-svn-commit.sh)
-# Full happy / 中文 / drift cases are in the manual skill-test suite (tests/docs/skill-tests.md).
+# Full happy / 中文 / drift behaviour is covered by the automated Pester/shUnit2 suites for
+# build-svn-commit + submit-svn-commit (and Sync-FromSvn / Get-SvnLog for the 中文 round-trip axis).
 #
 # U7/U8 note: any branch is now legal and there is no bridge gate, so an unresolvable
 # remote worktree surfaces as "not found" (the old "Unsupported branch" message is gone).

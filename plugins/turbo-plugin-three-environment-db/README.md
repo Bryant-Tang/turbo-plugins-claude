@@ -29,7 +29,7 @@
 
 ## 測試
 
-兩層測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
+自動化測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
 
 - `tests/Invoke-ScriptTests.ps1`（Windows PowerShell 5.1）/ `tests/invoke-script-tests.sh`（bash）。
 - SessionStart hook 行為測試：`tests/unit/scripts/hooks/`（non-git / dbhub 警示 / no-marker 靜默 / 未用 db 的 gate no-op 各情境）。

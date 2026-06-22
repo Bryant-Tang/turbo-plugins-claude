@@ -72,7 +72,7 @@ hook 是 advisory 不會 block session。
 
 ## 測試
 
-兩層測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
+自動化測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
 
 - `tests/Invoke-ScriptTests.ps1`（Windows PowerShell 5.1）/ `tests/invoke-script-tests.sh`（bash）。
 - 各 SVN 腳本、`lib` helper（Common 的 SVN concern + Core）、SessionStart hook 的行為測試；缺 `svn` / `svnadmin` 的 runner 上對應測試自我 SKIP（CI 視為綠）。

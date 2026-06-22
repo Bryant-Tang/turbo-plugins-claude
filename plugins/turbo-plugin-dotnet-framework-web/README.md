@@ -32,7 +32,7 @@ env-free 設計，集中設定於專案根的 `.turbo-plugin/`（與其它 turbo
 
 ## 測試
 
-兩層測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
+自動化測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
 
 - `tests/Invoke-ScriptTests.ps1`（Windows PowerShell 5.1）/ `tests/invoke-script-tests.sh`（bash）。
 - 各腳本、`lib` helper（IisHelpers / ApplicationHostHelpers / Common 的 dotnet concern）、EnterWorktree hook 的行為測試；缺 MSBuild / IIS 的 runner 上對應測試自我 SKIP（CI 視為綠）。
