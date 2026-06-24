@@ -58,22 +58,28 @@ unconditional 「動到外部」動作**幾乎沒有**(apphost bootstrap、confi
    # tp-run / tp-stop / tp-build / tp-publish / tp-cleanup-orphan-iis 會 fail-loudly 跳過。
    enabled = true
 
-   # [build]                              # tp-build 用,欄位都有 default
-   # configuration = "Debug"
-   # platform      = "Any CPU"
-   # project       = "src/Web/Web.csproj" # 相對 worktree root;省略則自動偵測單一 .csproj
+   # [build] / [run] / [publish] 的 section header 先 seed(啟用但空),讓 tp-build/run/publish 執行後的
+   # 記憶存回(save-back)直接在既有 section 下填 key,不必冷合成 header。欄位一律註解(不預填值)。
 
-   # [publish]                            # tp-publish 用
-   # configuration  = "Release"
+   [build]                                 # tp-build 用
+   # project       = "src/Web/Web.csproj"  # 明確 target(csproj 或 .sln,相對 worktree root);
+   #                                       # 不設則由 agent 每次判斷 / 詢問,不自動偵測
+   # configuration = "Debug"               # 省略 → 交 MSBuild / .sln / Directory.Build.props 決定(對齊 VS)
+   # platform      = "Any CPU"             # 同上,省略即不帶 /p:Platform
+
+   [publish]                               # tp-publish 用
+   # project        = "src/Web/Web.csproj" # publish 目標 csproj(不可為 .sln)
    # default_pubxml = "src/Web/Properties/PublishProfiles/Production.pubxml"
+   # configuration  = "Release"            # 省略 → 由 pubxml 內嵌 <Configuration> 決定
 
-   # [frontend]                           # 整段省略則發佈不跑前端 build
+   [run]                                   # tp-run / tp-stop 用
+   # project                   = "src/Web/Web.csproj"  # run/stop 目標 csproj;不設則 fallback [build].project
+   # listening_timeout_seconds = 30                    # 冷啟 + first-request JIT 可調高至 90
+
+   # [frontend]                            # 整段省略則 build/publish 不跑前端 build
    # dir             = "src/Web/ClientApp"
    # install_command = "yarn install"
    # build_command   = "yarn dev-build"
-
-   # [run]                                # tp-run 用
-   # listening_timeout_seconds = 30       # 冷啟 + first-request JIT 可調高至 90
    ```
 
 2. **`.gitignore` 的 .NET 產物追加**(idempotent,缺則加,用 base 的標記/區塊原則或直接 append 一個帶註解的區塊):
