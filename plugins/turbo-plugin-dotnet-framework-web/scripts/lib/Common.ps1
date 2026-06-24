@@ -186,3 +186,53 @@ function Get-PublishOutputLines {
     return @{ Resolved = $resolved; DisplayPath = $displayPath; IsFileSystem = $isFileSystem }
 }
 
+# ─── per-operation result-template family (KTD5) ────────────────────────────────
+# Each Format-*ResultLines helper returns the ORDERED display lines the executor prints under
+# its result marker. The agent relays the block as the fixed per-operation result template:
+# the inputs the agent chose + the target the executor actually RESOLVED (the 糾錯閘, so the
+# user sees which project was acted on) + the produced artifacts (URL / publish path / site).
+# Helpers compute/format lines only; the executor owns the marker line + Write-Output and the
+# success/fail line (mirrors the existing Get-PublishOutputLines / PUBLISH_OUTPUT split). The
+# template reports AGENT-SUPPLIED values, never MSBuild-evaluated effective values — a config
+# the agent left unspecified is shown as MSBuild/solution-decided, not fabricated as Debug.
+
+# Note for a configuration/platform the agent left unspecified (executor omits /p:, VS-aligned).
+function Get-UnspecifiedConfigNote {
+    return '未指定 (由 MSBuild / solution / Directory.Build.props 決定)'
+}
+
+function Format-BuildResultLines {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedTarget,
+        [string]$Configuration = '',
+        [string]$Platform = '',
+        [switch]$IsSolution
+    )
+    $note = Get-UnspecifiedConfigNote
+    $lines = @()
+    $lines += if ($IsSolution) { "Target: $ResolvedTarget (整個 solution)" } else { "Target: $ResolvedTarget" }
+    $lines += if ([string]::IsNullOrWhiteSpace($Configuration)) { "Configuration: $note" } else { "Configuration: $Configuration" }
+    $lines += if ([string]::IsNullOrWhiteSpace($Platform)) { "Platform: $note" } else { "Platform: $Platform" }
+    return $lines
+}
+
+function Format-RunResultLines {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedTarget,
+        [Parameter(Mandatory = $true)][string]$WebUrl
+    )
+    # URL stays bare at end of line so the terminal keeps it clickable (no trailing punctuation).
+    return @("Target: $ResolvedTarget", "URL: $WebUrl")
+}
+
+function Format-StopResultLines {
+    param(
+        [Parameter(Mandatory = $true)][string]$Site,
+        [string]$ResolvedTarget = ''
+    )
+    $lines = @()
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedTarget)) { $lines += "Target: $ResolvedTarget" }
+    $lines += "Stopped site: $Site"
+    return $lines
+}
+

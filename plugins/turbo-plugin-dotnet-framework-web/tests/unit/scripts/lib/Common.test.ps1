@@ -623,6 +623,59 @@ Describe 'Resolve-ProjectTarget' {
     }
 }
 
+Describe 'Result-template family (KTD5)' {
+
+    Context 'Format-BuildResultLines' {
+        It 'includes the resolved target line' {
+            $lines = Format-BuildResultLines -ResolvedTarget 'C:\proj\Web.csproj'
+            ($lines -join "`n") | Should -Match 'Target: C:\\proj\\Web\.csproj'
+        }
+        It 'lists configuration/platform when specified' {
+            $lines = Format-BuildResultLines -ResolvedTarget 'Web.csproj' -Configuration 'Release' -Platform 'x64'
+            ($lines -join "`n") | Should -Match 'Configuration: Release'
+            ($lines -join "`n") | Should -Match 'Platform: x64'
+        }
+        It 'marks configuration/platform as MSBuild-decided when unspecified' {
+            $lines = Format-BuildResultLines -ResolvedTarget 'Web.csproj'
+            $joined = $lines -join "`n"
+            $joined | Should -Match 'Configuration:.*MSBuild'
+            $joined | Should -Match 'Platform:.*MSBuild'
+            # Must NOT fabricate a concrete value the executor did not pass.
+            $joined | Should -Not -Match 'Configuration: Debug'
+        }
+        It 'flags a solution target' {
+            $lines = Format-BuildResultLines -ResolvedTarget 'App.sln' -IsSolution
+            ($lines -join "`n") | Should -Match 'App\.sln.*solution'
+        }
+    }
+
+    Context 'Format-RunResultLines' {
+        It 'includes target and web URL, no configuration line' {
+            $lines = Format-RunResultLines -ResolvedTarget 'Web.csproj' -WebUrl 'http://localhost:5000/'
+            $joined = $lines -join "`n"
+            $joined | Should -Match 'Target: Web\.csproj'
+            $joined | Should -Match 'http://localhost:5000/'
+            $joined | Should -Not -Match 'Configuration'
+        }
+        It 'keeps the URL bare at end of line (clickable, no trailing punctuation)' {
+            $lines = Format-RunResultLines -ResolvedTarget 'Web.csproj' -WebUrl 'http://localhost:5000/'
+            $urlLine = $lines | Where-Object { $_ -match 'localhost:5000' }
+            $urlLine | Should -Match 'http://localhost:5000/$'
+        }
+    }
+
+    Context 'Format-StopResultLines' {
+        It 'reports the stopped site name' {
+            $lines = Format-StopResultLines -Site 'HelloApp-deadbeef'
+            ($lines -join "`n") | Should -Match 'HelloApp-deadbeef'
+        }
+        It 'includes the target line when provided' {
+            $lines = Format-StopResultLines -Site 'HelloApp-deadbeef' -ResolvedTarget 'Web.csproj'
+            ($lines -join "`n") | Should -Match 'Target: Web\.csproj'
+        }
+    }
+}
+
 Describe 'Write-Utf8NoBom' {
 
     It 'writes CJK content without a BOM and byte-identical to canonical UTF-8 (R6)' {
