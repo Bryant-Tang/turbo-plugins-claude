@@ -50,6 +50,10 @@ write_csproj() {
   </ProjectExtensions>
 </Project>
 EOF
+    # Explicit target via config (no auto-detect): test-iis-listening → Resolve-IisSettings reads
+    # [run].project, falling back to [build].project. Script is invoked with no -Project.
+    mkdir -p "$1/.turbo-plugin"
+    printf '[build]\nproject = "HelloApp.csproj"\n' > "$1/.turbo-plugin/config.toml"
 }
 init_git() {
     (cd "$1" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1

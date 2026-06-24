@@ -64,7 +64,9 @@ test_missing_pubxml() {
     write_csproj "$sb"
     (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
     cd "$sb"
-    combined="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    # Explicit -Project (no auto-detect): reaches the pubxml-finding step so the missing-pubxml
+    # error fires (the point of this case), not a "no target" error.
+    combined="$(bash "$SCRIPT_UNDER_TEST" -Project HelloApp.csproj 2>&1)"; e=$?
     cd "$PLUGIN_ROOT"
     rm_sb "$sb"
     assertNotEquals 'case2: missing pubxml exit != 0' 0 "$e"
@@ -79,7 +81,7 @@ test_skill_reinvoke() {
     write_csproj "$sb"
     (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
     cd "$sb"
-    bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1; e=$?
+    bash "$SCRIPT_UNDER_TEST" -Project HelloApp.csproj >/dev/null 2>&1; e=$?
     cd "$PLUGIN_ROOT"
     rm_sb "$sb"
     assertNotEquals 'case3: SKILL re-invoke exit != 0' 0 "$e"

@@ -14,8 +14,10 @@ try {
 
     $repoRoot = (Get-Location).Path
 
-    # Project: CLI arg → config.toml [build].project → auto-detect single .csproj
-    $projectFile = Find-SingleCsproj -RepoRoot $repoRoot -CliProjectValue $Project
+    # Target: explicit CLI arg → config.toml [build].project (no auto-detect). build accepts a
+    # .sln (whole-solution) or a .csproj; the agent (SKILL) decides which and passes it explicitly.
+    $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'build' -CliProjectValue $Project -AllowSolution
+    $projectFile = $target.Path
 
     # MSBuild path: config.local.toml [tools] msbuild_path → standard VS install locations
     # (v1.0+ U2: strict cut, no env var fallback — throws with /tp-setup guidance if missing)

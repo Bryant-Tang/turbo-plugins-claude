@@ -83,6 +83,14 @@ BeforeAll {
             [System.IO.Path]::Combine($Dir, 'HelloApp.csproj'),
             $script:MinimalCsproj,
             (New-Object System.Text.UTF8Encoding($false)))
+        # Explicit target via config (no auto-detect): Get-TargetUrl → Resolve-IisSettings reads
+        # [run].project, falling back to [build].project. Script is invoked with no -Project.
+        $tpDir = [System.IO.Path]::Combine($Dir, '.turbo-plugin')
+        $null = New-Item -ItemType Directory -Path $tpDir -Force
+        [System.IO.File]::WriteAllText(
+            [System.IO.Path]::Combine($tpDir, 'config.toml'),
+            "[build]`r`nproject = `"HelloApp.csproj`"`r`n",
+            (New-Object System.Text.UTF8Encoding($false)))
         Push-Location -LiteralPath $Dir
         try {
             Invoke-GitSilent init -q

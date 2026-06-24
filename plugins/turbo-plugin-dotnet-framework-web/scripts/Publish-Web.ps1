@@ -15,8 +15,10 @@ try {
 
     $repoRoot = (Get-Location).Path
 
-    # Project: CLI arg → config.toml [build].project → auto-detect single .csproj
-    $projectFile = Find-SingleCsproj -RepoRoot $repoRoot -CliProjectValue $Project
+    # Target: explicit CLI arg → config.toml [publish].project (no auto-detect). publish needs a
+    # .csproj (reads PublishProfiles / publishes one project); a .sln is rejected (no -AllowSolution).
+    $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'publish' -CliProjectValue $Project
+    $projectFile = $target.Path
 
     # MSBuild path: config.local.toml [tools] msbuild_path → standard VS install locations
     # (v1.0+ U2: strict cut, no env var fallback — throws with /tp-setup guidance if missing)

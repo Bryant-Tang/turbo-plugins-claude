@@ -108,15 +108,23 @@ BeforeAll {
     # Why a child process and not dot-source: the script is library-only; we dot-source it inline
     # AND call Resolve-IisSettings inline, with cwd = the fixture workspace.
     function Invoke-ResolveAsChild {
-        param([string]$WorkDir)
+        # ProjectArg: explicit target passed to Resolve-IisSettings (no auto-detect anymore).
+        # Default 'HelloApp.csproj' matches the single-csproj fixtures; pass '' to exercise the
+        # no-target error path, or a .sln name to exercise the .sln-rejection path.
+        param([string]$WorkDir, [string]$ProjectArg = 'HelloApp.csproj')
         $oldLoc = Get-Location
         try {
             Set-Location -LiteralPath $WorkDir
+            $resolveCall = if ([string]::IsNullOrWhiteSpace($ProjectArg)) {
+                'Resolve-IisSettings'
+            } else {
+                "Resolve-IisSettings -Project '$ProjectArg'"
+            }
             $cmd = @"
 . '$($script:CommonPs1)'
 . '$($script:ScriptUnderTest)'
 try {
-    `$s = Resolve-IisSettings
+    `$s = $resolveCall
     Write-Output "IisUrl=`$(`$s.IisUrl)"
     Write-Output "IisPort=`$(`$s.IisPort)"
     Write-Output "IisExpressPath=`$(`$s.IisExpressPath)"
@@ -186,5 +194,31 @@ Describe 'IisHelpers Resolve-IisSettings' {
 
         It '中文 path exits 0' { $script:r3.Exit | Should -Be 0 }
         It '中文 path IisUrl 解析正確' { $script:r3.Stdout | Should -Match 'IisUrl=http://localhost:5000/' }
+    }
+
+    Context 'Case 4: .sln target is rejected (run/stop need a csproj)' {
+        BeforeAll {
+            $script:sb4 = New-Sandbox 'ris-sln'
+            New-Fixture -Dir $script:sb4 -WithApphost
+            # Add a .sln next to the csproj; passing it as the target must be rejected.
+            [System.IO.File]::WriteAllText(
+                [System.IO.Path]::Combine($script:sb4, 'HelloApp.sln'),
+                '', (New-Object System.Text.UTF8Encoding($false)))
+            $script:r4 = Invoke-ResolveAsChild -WorkDir $script:sb4 -ProjectArg 'HelloApp.sln'
+        }
+        AfterAll { Remove-Sandbox $script:sb4 }
+
+        It '.sln target exits != 0' { ($script:r4.Exit -ne 0) | Should -BeTrue }
+    }
+
+    Context 'Case 5: no target resolvable (no -Project, no config) errors' {
+        BeforeAll {
+            $script:sb5 = New-Sandbox 'ris-notarget'
+            New-Fixture -Dir $script:sb5 -WithApphost
+            $script:r5 = Invoke-ResolveAsChild -WorkDir $script:sb5 -ProjectArg ''
+        }
+        AfterAll { Remove-Sandbox $script:sb5 }
+
+        It 'no-target exits != 0 (no auto-detect)' { ($script:r5.Exit -ne 0) | Should -BeTrue }
     }
 }

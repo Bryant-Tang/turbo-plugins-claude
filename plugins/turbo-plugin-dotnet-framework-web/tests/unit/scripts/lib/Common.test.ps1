@@ -498,35 +498,125 @@ Describe 'Format-IisExpressSiteName' {
     }
 }
 
-Describe 'Find-SingleCsproj' {
+Describe 'Resolve-ProjectTarget' {
 
-    It 'returns the single .csproj when exactly one is present' {
-        $repo = New-IsolatedRepoRoot 'csproj-single'
+    It 'returns an explicit -Project .csproj with type csproj' {
+        $repo = New-IsolatedRepoRoot 'rpt-cli-csproj'
         try {
-            $onlyCsproj = Join-Path $repo 'OnlyOne.csproj'
-            Set-Content -LiteralPath $onlyCsproj -Value '<Project/>' -Encoding ASCII
-            $found = Find-SingleCsproj -RepoRoot $repo -CliProjectValue ''
-            [System.IO.Path]::GetFullPath($found) | Should -Be ([System.IO.Path]::GetFullPath($onlyCsproj))
+            $csproj = Join-Path $repo 'App.csproj'
+            Set-Content -LiteralPath $csproj -Value '<Project/>' -Encoding ASCII
+            $t = Resolve-ProjectTarget -RepoRoot $repo -Section 'build' -CliProjectValue $csproj
+            $t.Type | Should -Be 'csproj'
+            [System.IO.Path]::GetFullPath($t.Path) | Should -Be ([System.IO.Path]::GetFullPath($csproj))
         } finally {
             Remove-IsolatedRepoRoot -Dir $repo
         }
     }
 
-    It 'throws when zero .csproj are present' {
-        $repo = New-IsolatedRepoRoot 'csproj-zero'
+    It 'returns an explicit -Project .sln with type sln for build (-AllowSolution)' {
+        $repo = New-IsolatedRepoRoot 'rpt-cli-sln'
         try {
-            { Find-SingleCsproj -RepoRoot $repo -CliProjectValue '' } | Should -Throw -ExpectedMessage '*No .csproj found*'
+            $sln = Join-Path $repo 'App.sln'
+            Set-Content -LiteralPath $sln -Value '' -Encoding ASCII
+            $t = Resolve-ProjectTarget -RepoRoot $repo -Section 'build' -CliProjectValue $sln -AllowSolution
+            $t.Type | Should -Be 'sln'
+            [System.IO.Path]::GetFullPath($t.Path) | Should -Be ([System.IO.Path]::GetFullPath($sln))
         } finally {
             Remove-IsolatedRepoRoot -Dir $repo
         }
     }
 
-    It 'throws when multiple .csproj are present' {
-        $repo = New-IsolatedRepoRoot 'csproj-multi'
+    It 'rejects a .sln target when -AllowSolution is not set (run/publish)' {
+        $repo = New-IsolatedRepoRoot 'rpt-sln-reject'
+        try {
+            $sln = Join-Path $repo 'App.sln'
+            Set-Content -LiteralPath $sln -Value '' -Encoding ASCII
+            { Resolve-ProjectTarget -RepoRoot $repo -Section 'run' -CliProjectValue $sln } |
+                Should -Throw -ExpectedMessage '*.sln target is only valid for build*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'build resolves from [build].project when no CLI value' {
+        $repo = New-IsolatedRepoRoot 'rpt-build-cfg'
+        try {
+            $csproj = Join-Path $repo 'Web.csproj'
+            Set-Content -LiteralPath $csproj -Value '<Project/>' -Encoding ASCII
+            Write-Toml -Path (Join-Path $repo '.turbo-plugin\config.toml') -Content "[build]`r`nproject = `"Web.csproj`"`r`n"
+            $t = Resolve-ProjectTarget -RepoRoot $repo -Section 'build' -CliProjectValue ''
+            [System.IO.Path]::GetFullPath($t.Path) | Should -Be ([System.IO.Path]::GetFullPath($csproj))
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'run falls back to [build].project when [run].project is unset (back-compat)' {
+        $repo = New-IsolatedRepoRoot 'rpt-run-fallback'
+        try {
+            $csproj = Join-Path $repo 'Web.csproj'
+            Set-Content -LiteralPath $csproj -Value '<Project/>' -Encoding ASCII
+            Write-Toml -Path (Join-Path $repo '.turbo-plugin\config.toml') -Content "[build]`r`nproject = `"Web.csproj`"`r`n"
+            $t = Resolve-ProjectTarget -RepoRoot $repo -Section 'run' -CliProjectValue ''
+            [System.IO.Path]::GetFullPath($t.Path) | Should -Be ([System.IO.Path]::GetFullPath($csproj))
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'run prefers [run].project over [build].project' {
+        $repo = New-IsolatedRepoRoot 'rpt-run-pref'
+        try {
+            Set-Content -LiteralPath (Join-Path $repo 'Build.csproj') -Value '<Project/>' -Encoding ASCII
+            $runCsproj = Join-Path $repo 'Run.csproj'
+            Set-Content -LiteralPath $runCsproj -Value '<Project/>' -Encoding ASCII
+            Write-Toml -Path (Join-Path $repo '.turbo-plugin\config.toml') -Content "[build]`r`nproject = `"Build.csproj`"`r`n[run]`r`nproject = `"Run.csproj`"`r`n"
+            $t = Resolve-ProjectTarget -RepoRoot $repo -Section 'run' -CliProjectValue ''
+            [System.IO.Path]::GetFullPath($t.Path) | Should -Be ([System.IO.Path]::GetFullPath($runCsproj))
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'throws a clear error when no CLI and no config key (incl. fallback) resolves' {
+        $repo = New-IsolatedRepoRoot 'rpt-none'
+        try {
+            { Resolve-ProjectTarget -RepoRoot $repo -Section 'build' -CliProjectValue '' } |
+                Should -Throw -ExpectedMessage '*No build target resolved*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'does NOT auto-detect and does NOT throw "Multiple" when several .csproj exist unspecified' {
+        $repo = New-IsolatedRepoRoot 'rpt-multi'
         try {
             Set-Content -LiteralPath (Join-Path $repo 'A.csproj') -Value '<Project/>' -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $repo 'B.csproj') -Value '<Project/>' -Encoding ASCII
-            { Find-SingleCsproj -RepoRoot $repo -CliProjectValue '' } | Should -Throw -ExpectedMessage '*Multiple .csproj*'
+            # No auto-detect: with no explicit target it errors generically, never "Multiple .csproj".
+            { Resolve-ProjectTarget -RepoRoot $repo -Section 'build' -CliProjectValue '' } |
+                Should -Throw -ExpectedMessage '*No build target resolved*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'AllowMissing returns $null instead of throwing when nothing resolves' {
+        $repo = New-IsolatedRepoRoot 'rpt-allowmissing'
+        try {
+            $t = Resolve-ProjectTarget -RepoRoot $repo -Section 'run' -CliProjectValue '' -AllowMissing
+            $t | Should -BeNullOrEmpty
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'throws when the configured project file does not exist' {
+        $repo = New-IsolatedRepoRoot 'rpt-missing-file'
+        try {
+            Write-Toml -Path (Join-Path $repo '.turbo-plugin\config.toml') -Content "[build]`r`nproject = `"Nope.csproj`"`r`n"
+            { Resolve-ProjectTarget -RepoRoot $repo -Section 'build' -CliProjectValue '' } |
+                Should -Throw -ExpectedMessage '*does not exist*'
         } finally {
             Remove-IsolatedRepoRoot -Dir $repo
         }

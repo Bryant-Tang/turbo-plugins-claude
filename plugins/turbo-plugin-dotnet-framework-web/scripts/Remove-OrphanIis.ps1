@@ -14,14 +14,31 @@ $ErrorActionPreference = 'Stop'
 try {
     Probe-GitVersion
 
-    # Use Resolve-IisSettings to get the canonical (current) site name, identity hash,
-    # and csproj stem consistently with the rest of the plugin.
-    $settings = Resolve-IisSettings -Project $Project
-    $currentSiteName = $settings.IisConfigSiteName
-    $csprojStem      = [System.IO.Path]::GetFileNameWithoutExtension($settings.ProjectFile)
+    # KTD8: branch on whether a project is resolvable (CLI -Project or config memory).
+    #   * WITH a project  → behavior UNCHANGED: scope to that project's stem-hash family and
+    #     exclude its live site (Resolve-IisSettings gives the current site name + csproj stem).
+    #   * NO project (truly no current project, after auto-detect removal) → fall back to the
+    #     GENERIC turbo-plugin site pattern, and refuse blanket -RemoveAll so we never kill a
+    #     live site we cannot identify (the agent is told to pass -Project when one exists).
+    $repoRoot = (Get-Location).Path
+    $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'run' -CliProjectValue $Project -AllowMissing
+    if ($null -ne $target) {
+        $settings = Resolve-IisSettings -Project $Project
+        $currentSiteName = $settings.IisConfigSiteName
+        $csprojStem      = [System.IO.Path]::GetFileNameWithoutExtension($settings.ProjectFile)
+        $scoped = $true
+    } else {
+        $currentSiteName = $null
+        $csprojStem      = $null
+        $scoped = $false
+        if ($RemoveAll) {
+            throw "Refusing -RemoveAll without a project: cannot distinguish a live site from an orphan when no current project is set. Re-run with -Project to scope to one project's orphans, or use -RemoveSite <name> to remove a specific enumerated site."
+        }
+    }
 
-    # 1. Collect orphan processes: iisexpress.exe whose /site:<name> matches the stem-hash
-    #    format but has a different hash than current.
+    # 1. Collect orphan processes: iisexpress.exe whose /site:<name> looks like a turbo-plugin
+    #    site. Scoped mode matches this project's stem (different hash than current); no-project
+    #    mode matches the generic <stem>-<8hex> family (no live site is known to exclude).
     # v1.0 (U3) — canonical applicationhost.config is shared across worktrees and never mutated
     # at runtime; XML orphan site scan is therefore obsolete (canonical only contains current
     # project's site entries managed by VS / tp-setup, not stale per-worktree entries).
@@ -31,7 +48,12 @@ try {
         if ([string]::IsNullOrWhiteSpace($p.CommandLine)) { continue }
         if ($p.CommandLine -notmatch '/site:([^\s"]+)') { continue }
         $candidateSite = $Matches[1]
-        if ((Test-OrphanSiteNameMatch -CsprojStem $csprojStem -SiteName $candidateSite) -and $candidateSite -ne $currentSiteName) {
+        if ($scoped) {
+            $isOrphan = (Test-OrphanSiteNameMatch -CsprojStem $csprojStem -SiteName $candidateSite) -and ($candidateSite -ne $currentSiteName)
+        } else {
+            $isOrphan = Test-TurboPluginSiteName -SiteName $candidateSite
+        }
+        if ($isOrphan) {
             $orphanProcs += [pscustomobject]@{
                 SiteName = $candidateSite
                 Pid      = $p.ProcessId

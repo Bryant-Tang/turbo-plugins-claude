@@ -67,6 +67,20 @@ function Test-OrphanSiteNameMatch {
     return ($SiteName -match $stemPattern)
 }
 
+# Decide whether an iisexpress.exe /site:<name> looks like ANY turbo-plugin site, regardless
+# of which csproj it belongs to. The turbo-plugin site-name shape is "<stem>-<8 hex>"; the
+# 8-hex identity-hash suffix is the load-bearing discriminator that keeps non-turbo-plugin
+# IIS Express sites out of the match. Used by tp-cleanup-orphan-iis's NO-PROJECT path, where
+# no single csproj stem is known (Test-OrphanSiteNameMatch pins a specific stem; this does not).
+#
+# Returns $true when $SiteName matches the generic turbo-plugin family, else $false.
+function Test-TurboPluginSiteName {
+    param(
+        [Parameter(Mandatory = $true)][string]$SiteName
+    )
+    return ($SiteName -match '^.+-[0-9a-f]{8}$')
+}
+
 function Find-ApplicationhostTarget {
     param([string]$RepoRoot, [string]$ProjectFile)
     # v1.0 (U3) — canonical applicationhost.config lives at .turbo-plugin/applicationhost.config
@@ -85,7 +99,10 @@ function Resolve-IisSettings {
 
     $repoRoot = (Get-Location).Path
 
-    $projectFile = Find-SingleCsproj -RepoRoot $repoRoot -CliProjectValue $Project
+    # run/stop resolve under the 'run' section (back-compat fallback to [build].project).
+    # A .sln is rejected here (no -AllowSolution): IIS settings read csproj XML / project identity.
+    $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'run' -CliProjectValue $Project
+    $projectFile = $target.Path
 
     $projectContent = Get-Content -LiteralPath $projectFile -Raw
     $iisUrlMatch = [regex]::Match($projectContent, '<IISUrl>([^<]+)</IISUrl>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)

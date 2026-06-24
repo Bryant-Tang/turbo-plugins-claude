@@ -16,7 +16,10 @@ try {
     if ([string]::IsNullOrWhiteSpace($repoRoot)) { throw 'Not inside a git repository.' }
     $repoRoot = Get-NormalizedAbsolutePath -Path $repoRoot
 
-    $projectFile = Find-SingleCsproj -RepoRoot $repoRoot -CliProjectValue $Project
+    # Explicit target only (no auto-detect). run/stop family => section 'run' (falls back to
+    # [build].project). A .sln is rejected (no -AllowSolution): identity is per-csproj.
+    $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'run' -CliProjectValue $Project
+    $projectFile = $target.Path
 
     $topLevel = (& git rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($topLevel)) { throw 'Not inside a git repository.' }

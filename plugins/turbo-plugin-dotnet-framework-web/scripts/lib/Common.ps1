@@ -100,33 +100,59 @@ MSBuild 路徑未設定且找不到 VS 安裝。請跑 /tp-setup 互動填入 MS
 "@
 }
 
-# Find the single .csproj in the repo, using config or CLI arg, or auto-detecting.
-# Args: -RepoRoot <path> -CliProjectValue <string-or-null>
-# Returns: absolute path to the .csproj file.
-# Throws if 0 or >1 .csproj found (when no config/CLI value provided) or if the configured path does not exist.
-function Find-SingleCsproj {
+# Resolve the EXPLICIT build/run/publish target (a .csproj or .sln) for an operation.
+# "Give agent the VS 2022": no auto-detection — the agent (via the SKILL) decides which
+# project to act on and passes it explicitly, or it comes from the operation's config
+# memory. There is deliberately no repo scan and no "multiple found" throw; an ambiguous
+# repo is the agent's call to make, not the script's.
+#
+# Resolution chain:
+#   CLI -CliProjectValue  ->  [<Section>].project  ->  (run/stop only) [build].project  ->  clear error
+#
+# Args:
+#   -RepoRoot        absolute repo root used for config lookup + relative-path resolution.
+#   -Section         'build' | 'run' | 'publish' — selects the config key and the back-compat fallback.
+#                    run/stop both resolve under 'run' (run/stop share one target).
+#   -CliProjectValue an explicit CLI target (pass '' / $null when not provided).
+#   -AllowSolution   when set, a .sln target is allowed (build only). Otherwise a .sln throws
+#                    so run/stop/publish (which read csproj XML / project identity) fail loudly.
+#   -AllowMissing    when set, returns $null instead of throwing when nothing resolves. Used by
+#                    tp-cleanup-orphan-iis's no-project path to branch to generic site matching.
+#
+# Returns: [pscustomobject] @{ Path = <absolute path>; Type = 'csproj' | 'sln' }  (or $null with -AllowMissing).
+function Resolve-ProjectTarget {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
-        [string]$CliProjectValue = ''
+        [Parameter(Mandatory = $true)][ValidateSet('build', 'run', 'publish')][string]$Section,
+        [string]$CliProjectValue = '',
+        [switch]$AllowSolution,
+        [switch]$AllowMissing
     )
-    $projectPathRel = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'build' -Key 'project' -CliValue $CliProjectValue -Default $null
+    $projectPathRel = Resolve-ConfigValue -RepoRoot $RepoRoot -Section $Section -Key 'project' -CliValue $CliProjectValue -Default $null
+    # Back-compat: run/stop fall back to [build].project when [run].project is unset, so users
+    # who configured only [build].project before the per-operation key split keep working.
+    if ([string]::IsNullOrWhiteSpace($projectPathRel) -and $Section -eq 'run') {
+        $projectPathRel = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'build' -Key 'project' -CliValue $null -Default $null
+    }
     if ([string]::IsNullOrWhiteSpace($projectPathRel)) {
-        $candidates = @(Get-ChildItem -LiteralPath $RepoRoot -Recurse -Filter '*.csproj' -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch '\\(bin|obj|node_modules|\.vs|\.git)\\' })
-        if ($candidates.Count -eq 0) {
-            throw 'No .csproj found. Specify -Project, set [build].project in .turbo-plugin/config.toml, or run inside a project root.'
+        if ($AllowMissing) { return $null }
+        $hint = switch ($Section) {
+            'build'   { 'Specify -Project (a .csproj or .sln) or set [build].project in .turbo-plugin/config.toml.' }
+            'run'     { 'Specify -Project (a .csproj) or set [run].project (falls back to [build].project) in .turbo-plugin/config.toml.' }
+            'publish' { 'Specify -Project (a .csproj) or set [publish].project in .turbo-plugin/config.toml.' }
         }
-        if ($candidates.Count -gt 1) {
-            $paths = ($candidates | ForEach-Object { $_.FullName }) -join "`n  "
-            throw "Multiple .csproj files found:`n  $paths`nSpecify -Project or set [build].project in .turbo-plugin/config.toml."
-        }
-        return $candidates[0].FullName
+        throw "No $Section target resolved. $hint"
     }
     $projectFile = Resolve-RepoPath -RepoRoot $RepoRoot -PathValue $projectPathRel
     if (-not (Test-Path -LiteralPath $projectFile -PathType Leaf)) {
         throw "Project file does not exist: $projectFile"
     }
-    return $projectFile
+    $isSolution = ([System.IO.Path]::GetExtension($projectFile)).ToLower() -eq '.sln'
+    if ($isSolution -and -not $AllowSolution) {
+        throw "A .sln target is only valid for build. The $Section operation needs a .csproj, got: $projectFile"
+    }
+    $type = if ($isSolution) { 'sln' } else { 'csproj' }
+    return [pscustomobject]@{ Path = $projectFile; Type = $type }
 }
 
 # Resolve a pubxml <PublishUrl> into the two display lines tp-publish prints (U10 / KTD8 / R15):

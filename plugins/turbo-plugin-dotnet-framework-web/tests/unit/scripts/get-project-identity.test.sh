@@ -55,6 +55,10 @@ write_csproj() {
   </ProjectExtensions>
 </Project>
 EOF
+    # Explicit target via config (no auto-detect): get-project-identity resolves [build].project
+    # (run section falls back to it). Script is invoked with no -Project.
+    mkdir -p "$1/.turbo-plugin"
+    printf '[build]\nproject = "HelloApp.csproj"\n' > "$1/.turbo-plugin/config.toml"
 }
 
 init_git_repo() {

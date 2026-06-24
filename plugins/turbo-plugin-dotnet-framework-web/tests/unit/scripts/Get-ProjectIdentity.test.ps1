@@ -91,6 +91,14 @@ BeforeAll {
         )
         $csprojPath = [System.IO.Path]::Combine($Dir, $CsprojName)
         [System.IO.File]::WriteAllText($csprojPath, $script:minimalCsproj, (New-Object System.Text.UTF8Encoding($false)))
+        # Explicit target via config (no auto-detect): Get-ProjectIdentity resolves [build].project
+        # (run section falls back to it). The script is invoked with no -Project, so config carries it.
+        $tpDir = [System.IO.Path]::Combine($Dir, '.turbo-plugin')
+        $null = New-Item -ItemType Directory -Path $tpDir -Force
+        [System.IO.File]::WriteAllText(
+            [System.IO.Path]::Combine($tpDir, 'config.toml'),
+            "[build]`r`nproject = `"$CsprojName`"`r`n",
+            (New-Object System.Text.UTF8Encoding($false)))
         # git init + first commit so common-dir is stable
         Push-Location -LiteralPath $Dir
         try {

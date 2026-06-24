@@ -132,9 +132,11 @@ Describe 'Publish-Web' {
                 Invoke-GitSilent add -A
                 Invoke-GitSilent -c commit.gpgsign=false commit -q -m init
             } finally { Pop-Location }
-            $script:r2 = Invoke-Script -WorkDir $script:sb2
+            # Explicit -Project (no auto-detect): reaches the pubxml-finding step so the
+            # missing-pubxml error fires (the point of this case), not a "no target" error.
+            $script:r2 = Invoke-Script -WorkDir $script:sb2 -ExtraArgs @('-Project', 'HelloApp.csproj')
             $script:combined2 = $script:r2.Stdout + "`n" + $script:r2.Stderr
-            $script:r3 = Invoke-Script -WorkDir $script:sb2
+            $script:r3 = Invoke-Script -WorkDir $script:sb2 -ExtraArgs @('-Project', 'HelloApp.csproj')
         }
         AfterAll { Remove-Sandbox $script:sb2 }
 

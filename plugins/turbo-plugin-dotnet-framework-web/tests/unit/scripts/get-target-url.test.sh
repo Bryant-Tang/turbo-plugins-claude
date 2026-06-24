@@ -53,6 +53,10 @@ write_csproj() {
   </ProjectExtensions>
 </Project>
 EOF
+    # Explicit target via config (no auto-detect): get-target-url → Resolve-IisSettings reads
+    # [run].project, falling back to [build].project. Script is invoked with no -Project.
+    mkdir -p "$1/.turbo-plugin"
+    printf '[build]\nproject = "HelloApp.csproj"\n' > "$1/.turbo-plugin/config.toml"
 }
 
 init_git_repo() {

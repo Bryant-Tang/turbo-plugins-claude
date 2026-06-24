@@ -27,6 +27,7 @@ BeforeAll {
 
     $script:testRoot = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'test-turbo-plugin')
     $script:cfgPath = [System.IO.Path]::Combine($script:testRoot, '.turbo-plugin', 'config.toml')
+    $script:SandboxBase = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes')
 
     # ─── Git helper: PS 5.1 + EAP=Stop bites on git stderr warnings (LF/CRLF etc) ───
     function Invoke-GitSilent {
@@ -164,6 +165,58 @@ Describe 'Remove-OrphanIis' {
         }
         It 'control: non-hex hash does NOT match' {
             (Test-OrphanSiteNameMatch -CsprojStem 'HelloApp' -SiteName 'HelloApp-zzzzzzzz') | Should -BeFalse
+        }
+    }
+
+    # ─── KTD8: no-project path uses the GENERIC turbo-plugin family pattern ──────
+    # When no current project is resolvable, cleanup can't pin a single stem; it matches the
+    # generic "<stem>-<8 hex>" family via Test-TurboPluginSiteName. The 8-hex suffix keeps
+    # non-turbo-plugin IIS Express sites out of the match.
+    Context 'KTD8: Test-TurboPluginSiteName generic family match' {
+        $genericCases = @(
+            @{ Site = 'HelloApp-deadbeef'; Expect = $true }
+            @{ Site = 'My.App-cafe1234';   Expect = $true }
+            @{ Site = 'Anything-0badf00d'; Expect = $true }
+            @{ Site = 'nohash';            Expect = $false }
+            @{ Site = 'HelloApp-zzzzzzzz'; Expect = $false }
+            @{ Site = 'Foo-deadbee';       Expect = $false }
+            @{ Site = 'Foo-deadbeef0';     Expect = $false }
+        )
+
+        It "generic site '<Site>' match = <Expect>" -TestCases $genericCases {
+            param($Site, $Expect)
+            (Test-TurboPluginSiteName -SiteName $Site) | Should -Be $Expect
+        }
+    }
+
+    # ─── KTD8: no-project -RemoveAll is refused (live-site protection) ───────────
+    # After auto-detect removal, a no-project invocation can't identify the live site to
+    # exclude, so blanket -RemoveAll would risk killing it. The script refuses and points the
+    # user to -Project (scoped) or -RemoveSite (specific). With -Project the behavior is unchanged.
+    Context 'KTD8: no-project -RemoveAll refused' {
+        BeforeAll {
+            $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
+            $script:noProjSandbox = [System.IO.Path]::Combine($script:SandboxBase, "turbo-plugin-test-roi-noproj-$guid")
+            $null = New-Item -ItemType Directory -Path $script:noProjSandbox -Force
+            Push-Location -LiteralPath $script:noProjSandbox
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                [System.IO.File]::WriteAllText((Join-Path $script:noProjSandbox 'README.txt'), 'no project', (New-Object System.Text.UTF8Encoding($false)))
+                Invoke-GitSilent add -A
+                Invoke-GitSilent -c commit.gpgsign=false commit -q -m init
+            } finally { Pop-Location }
+            $script:roiNoProj = Invoke-Script -WorkDir $script:noProjSandbox -ExtraArgs @('-RemoveAll')
+            $script:roiNoProjCombined = $script:roiNoProj.Stdout + "`n" + $script:roiNoProj.Stderr
+        }
+        AfterAll {
+            try { [System.IO.Directory]::Delete($script:noProjSandbox, $true) } catch { }
+        }
+
+        It 'no-project -RemoveAll exits != 0' { ($script:roiNoProj.Exit -ne 0) | Should -BeTrue }
+        It 'no-project -RemoveAll refuses blanket removal' {
+            $script:roiNoProjCombined | Should -Match 'Refusing -RemoveAll without a project'
         }
     }
 }
