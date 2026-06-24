@@ -4,6 +4,38 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-24
+
+把 build / run / stop / publish 改成「給 agent 用的 VS 2022」:agent 判斷要操作哪個 csproj / `.sln` 與
+configuration / platform,把明確參數傳給變薄的 executor;沒指定的 config 一律省略、交 MSBuild / `.sln` /
+`Directory.Build.props` / pubxml 決定(對齊 VS)。
+
+### Changed
+
+- **skill 改為 agent 判斷 target/config**:`tp-build` / `tp-publish` / `tp-run` / `tp-stop` 由 agent 探索候選(Glob csproj/`.sln`、跳過 `bin`/`obj`/`node_modules`/`.vs`/`.git`、讀 `.sln`)、查記憶、不確定就 `AskUserQuestion`,再傳明確 `-Project`;不再靠 script 自動偵測單一 csproj。
+- **executor 無值才省略 config(對齊 VS)**:`Build-Web` / `Publish-Web` 不再恆傳 `/p:Configuration`(舊版 build 恆 Debug、publish 恆 Release),只有 CLI 或記憶有值才附 `/p:Configuration|Platform`;publish 的 configuration 改以 pubxml 內嵌 `<Configuration>` 為準。
+- **run/stop 記憶 key 由 `[build].project` 遷移為 `[run].project`(有 fallback,向後相容)**:run/stop 改讀 `[run].project`,無值時 fallback 讀既有 `[build].project`——既有只設過 `[build].project` 的專案不會 break。save-back 之後一律寫 `[run].project`。
+- **build 接受 `.sln`(整方案)**:build 預設可建整個 `.sln`(`SolutionDir` 由 `.sln` 所在目錄推導);run / stop / publish 的 target 只能 csproj,收到 `.sln` 清楚報錯。
+- **per-operation 結果模板**:build / run / publish / stop 收尾各印 `BUILD_OUTPUT` / `RUN_OUTPUT` / `PUBLISH_OUTPUT` / `STOP_OUTPUT`,回報 agent 傳入值 + **executor 解析後的實際 target**(糾錯閘);未指定的 config 標「由 MSBuild / solution 決定」,不假造預設值。
+- **cleanup 無-project 行為差異(KTD8)**:`tp-cleanup-orphan-iis` 有 `-Project` 時行為完全不變(scoped、排除活站台);移除自動偵測後,**無 `-Project` 時**改用通用 turbo-plugin 站台樣式 `^.+-[0-9a-f]{8}$` 列舉,並**拒絕 `-RemoveAll`**(無法分辨活站台,只能逐站台 `-RemoveSite`),避免誤殺正在跑的 instance。
+- `tp-setup` 在 `config.toml` 的 dotnet 區塊 seed `[build]` / `[run]` / `[publish]` 啟用空 section(欄位全註解、不預填值),讓記憶存回直接在既有 section 下填 key。
+
+### Added
+
+- **記憶 save-back**:`skills/tp-setup/assets/memory-save-back.md` 共用片段(read-the-file 機制),build / publish / run 執行後讀並遵循它,比對 agent 這次選定的 target / config / pubxml 與已存記憶,有差異就 `AskUserQuestion` 問四去向(存 committed / 存 local / 撤回省略〔刪 key〕/ 不存)。stop 不 save-back。
+- per-operation 記憶 key:`[build].project`(可為 `.sln`)、`[run].project`、`[publish].project` / `[publish].default_pubxml`;各操作讀寫自己的 key。
+- lib:`Resolve-ProjectTarget`(明確 target 解析 + csproj/`.sln` 型別判別 + 向後相容 fallback)、`Test-TurboPluginSiteName`(cleanup 無-project 通用樣式)、`Format-BuildResultLines` / `Format-RunResultLines` / `Format-StopResultLines`(結果模板)。
+
+### Removed
+
+- `Find-SingleCsproj` 的「掃 repo 自動取單一 csproj、多個就 throw」邏輯(改 `Resolve-ProjectTarget` 一律吃明確 target)。
+- executor 的 Configuration / Platform 內建 default(`Debug` / `Release` / `Any CPU`)——改為無值即省略 `/p:`。
+
+### Fixed
+
+- executor 恆傳 `/p:Configuration` 壓過 csproj `<Configuration Condition="'$(Configuration)'==''">` 預設、靜默偏離 VS 的問題:無值省略後,build/publish 的 config 解析與 VS 一致。
+- SKILL 文件移除過時敘述(自動偵測、內建 default、誤植的 `TURBO_PLUGIN_MSBUILD_PATH` env〔實際讀 `config.local.toml [tools].msbuild_path`〕)。
+
 ## [0.1.0] - 2026-06-20
 
 ### Added
