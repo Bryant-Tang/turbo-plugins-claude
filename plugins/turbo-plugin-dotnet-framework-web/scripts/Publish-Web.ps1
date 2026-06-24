@@ -48,8 +48,12 @@ try {
         throw "Publish profile does not exist: $pubxmlAbsPath"
     }
 
-    $publishConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'configuration' -CliValue $Configuration -Default 'Release'
-    $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default 'Any CPU'
+    # Configuration / Platform: OMIT when the agent gave no value — the pubxml's embedded
+    # <Configuration>/<Platform> govern the publish (that is how VS publishes from a profile).
+    # Forcing Release/Any CPU (the pre-U4 default) overrode the profile and could publish the
+    # wrong configuration. -Default $null keeps "no value" as no value.
+    $publishConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'configuration' -CliValue $Configuration -Default $null
+    $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default $null
 
     # Pre-publish: run Compress-Content for frontend. Compress-Content.ps1 is shipped in this
     # plugin alongside Publish-Web.ps1, so the prior Test-Path guard was redundant —
@@ -60,16 +64,21 @@ try {
     $publishProfileName = [System.IO.Path]::GetFileNameWithoutExtension($pubxmlAbsPath)
     $publishProfileDir  = [System.IO.Path]::GetDirectoryName($pubxmlAbsPath)
 
-    Write-Output "Running MSBuild Publish for $projectFile (Configuration: $publishConfiguration, Platform: $publishPlatform)"
+    Write-Output "Running MSBuild Publish for $projectFile"
     Write-Output "  Publish profile: $publishProfileName"
     Write-Output "  Profile root:    $publishProfileDir"
 
-    & $msbuildPath $projectFile `
-        /p:DeployOnBuild=true `
-        "/p:PublishProfile=$publishProfileName" `
-        "/p:PublishProfileRootFolder=$publishProfileDir" `
-        "/p:Configuration=$publishConfiguration" `
-        "/p:Platform=$publishPlatform"
+    # Pass /p:Configuration | /p:Platform only when the agent supplied a value; otherwise let the
+    # pubxml's embedded values govern (VS-aligned).
+    $publishArgs = @(
+        $projectFile,
+        '/p:DeployOnBuild=true',
+        "/p:PublishProfile=$publishProfileName",
+        "/p:PublishProfileRootFolder=$publishProfileDir"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($publishConfiguration)) { $publishArgs += "/p:Configuration=$publishConfiguration" }
+    if (-not [string]::IsNullOrWhiteSpace($publishPlatform)) { $publishArgs += "/p:Platform=$publishPlatform" }
+    & $msbuildPath @publishArgs
 
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Output 'Publish succeeded.'

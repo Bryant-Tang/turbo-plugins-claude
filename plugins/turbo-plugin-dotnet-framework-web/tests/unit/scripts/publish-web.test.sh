@@ -87,7 +87,31 @@ test_skill_reinvoke() {
     assertNotEquals 'case3: SKILL re-invoke exit != 0' 0 "$e"
 }
 
-# Case 4: real MSBuild publish deferred to Phase 2 (always SKIP).
+# Case 4 (U4): arg construction via stub MSBuild — config OMITTED when unspecified (pubxml
+# governs), PUBLISH_OUTPUT preserved. Proves the .sh delegator drives the new .ps1 behavior.
+test_arg_omit_config_stub() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb out e
+    sb="$(new_sb 'publish-sh-argomit')"
+    write_csproj "$sb"
+    mkdir -p "$sb/Properties/PublishProfiles"
+    cat > "$sb/Properties/PublishProfiles/FolderProfile.pubxml" <<'EOF'
+<Project><PropertyGroup><WebPublishMethod>FileSystem</WebPublishMethod><PublishUrl>bin\app.publish\</PublishUrl></PropertyGroup></Project>
+EOF
+    mkdir -p "$sb/.turbo-plugin"
+    printf '[publish]\nproject = "HelloApp.csproj"\n' > "$sb/.turbo-plugin/config.toml"
+    printf '[tools]\nmsbuild_path = "msbuild-stub.bat"\n' > "$sb/.turbo-plugin/config.local.toml"
+    printf '@echo off\r\necho MSBUILD_ARGS: %%*\r\n' > "$sb/msbuild-stub.bat"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    rm_sb "$sb"
+    assertEquals 'case4: stub publish exit 0' 0 "$e"
+    echo "$out" | grep -q '/p:Configuration'; assertFalse 'case4: /p:Configuration OMITTED (pubxml governs)' $?
+    echo "$out" | grep -q 'PUBLISH_OUTPUT'; assertTrue 'case4: PUBLISH_OUTPUT preserved' $?
+}
+
+# Case 5: real MSBuild publish deferred to Phase 2 (always SKIP).
 test_real_publish_deferred() {
     startSkipping
 }
