@@ -621,6 +621,49 @@ Describe 'Resolve-ProjectTarget' {
             Remove-IsolatedRepoRoot -Dir $repo
         }
     }
+
+    It 'publish resolves from [publish].project' {
+        $repo = New-IsolatedRepoRoot 'rpt-publish'
+        try {
+            $csproj = Join-Path $repo 'Pub.csproj'
+            Set-Content -LiteralPath $csproj -Value '<Project/>' -Encoding ASCII
+            Write-Toml -Path (Join-Path $repo '.turbo-plugin\config.toml') -Content "[publish]`r`nproject = `"Pub.csproj`"`r`n"
+            $t = Resolve-ProjectTarget -RepoRoot $repo -Section 'publish' -CliProjectValue ''
+            [System.IO.Path]::GetFullPath($t.Path) | Should -Be ([System.IO.Path]::GetFullPath($csproj))
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'publish does NOT fall back to [build].project (per-op isolation; only run/stop fall back)' {
+        $repo = New-IsolatedRepoRoot 'rpt-publish-noxfall'
+        try {
+            Set-Content -LiteralPath (Join-Path $repo 'Build.csproj') -Value '<Project/>' -Encoding ASCII
+            Write-Toml -Path (Join-Path $repo '.turbo-plugin\config.toml') -Content "[build]`r`nproject = `"Build.csproj`"`r`n"
+            { Resolve-ProjectTarget -RepoRoot $repo -Section 'publish' -CliProjectValue '' } |
+                Should -Throw -ExpectedMessage '*No publish target resolved*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'seeded empty sections do not false-resolve; per-op keys read independently' {
+        # Mirrors what tp-setup seeds: active-but-empty [build]/[publish] + a real [run].project.
+        $repo = New-IsolatedRepoRoot 'rpt-seeded'
+        try {
+            $runCsproj = Join-Path $repo 'Run.csproj'
+            Set-Content -LiteralPath $runCsproj -Value '<Project/>' -Encoding ASCII
+            Write-Toml -Path (Join-Path $repo '.turbo-plugin\config.toml') -Content "[build]`r`n[publish]`r`n[run]`r`nproject = `"Run.csproj`"`r`n"
+            # run resolves from [run].project
+            (Resolve-ProjectTarget -RepoRoot $repo -Section 'run' -CliProjectValue '').Path |
+                Should -Be ([System.IO.Path]::GetFullPath($runCsproj))
+            # empty [build] section does not false-resolve a target
+            { Resolve-ProjectTarget -RepoRoot $repo -Section 'build' -CliProjectValue '' } |
+                Should -Throw -ExpectedMessage '*No build target resolved*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
 }
 
 Describe 'Result-template family (KTD5)' {
