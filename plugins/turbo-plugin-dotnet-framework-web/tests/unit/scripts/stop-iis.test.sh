@@ -35,6 +35,19 @@ test_no_iis_running() {
     cd "$PLUGIN_ROOT"
     assertEquals 'case1: no-IIS exit 0' 0 "$e"
     echo "$out" | grep -Eq 'No IIS Express process found'; assertTrue 'case1: stdout No IIS Express process found' $?
+    echo "$out" | grep -Eq 'STOP_OUTPUT'; assertTrue 'case1: STOP_OUTPUT template emitted (KTD5)' $?
+}
+
+# Case 4 (U5): .sln target is rejected (run/stop need a csproj). Fixture has HelloApp.sln.
+test_sln_rejected() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    [ -d "$TEST_ROOT" ] || fail "fixture $TEST_ROOT missing"
+    local combined e
+    cd "$TEST_ROOT"
+    combined="$(bash "$SCRIPT_UNDER_TEST" -Project HelloApp.sln 2>&1)"; e=$?
+    cd "$PLUGIN_ROOT"
+    assertNotEquals 'case4: .sln exit != 0' 0 "$e"
+    echo "$combined" | grep -Eq '\.sln'; assertTrue 'case4: message mentions .sln' $?
 }
 
 # Case 2: [iis]=false -> exit != 0 + "IIS 已停用"

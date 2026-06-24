@@ -58,6 +58,10 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
             }) -join '; '
             Write-Output "tp-stop 用當前 identity 撈不到 instance,但偵測到下列同 csproj-stem 但不同 hash 的 instance — 可能是 worktree rename 留的 orphan: $orphanList。請手動殺或跑 /tp-cleanup-orphan-iis."
         }
+        # STOP result template (KTD5): report which site/target this stop acted on (糾錯閘),
+        # even when no process was found. stop never triggers save-back.
+        Write-Output 'STOP_OUTPUT (relay these lines to the user as the stop result):'
+        foreach ($l in (Format-StopResultLines -Site $settings.IisConfigSiteName -ResolvedTarget $settings.ProjectFile)) { Write-Output $l }
         exit 0
     }
 
@@ -81,6 +85,10 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
             Write-Output "Note: failed to remove temp applicationhost.config '$tempApphost': $($_.Exception.Message)"
         }
     }
+
+    # STOP result template (KTD5): report which site/target was stopped (糾錯閘). No save-back.
+    Write-Output 'STOP_OUTPUT (relay these lines to the user as the stop result):'
+    foreach ($l in (Format-StopResultLines -Site $settings.IisConfigSiteName -ResolvedTarget $settings.ProjectFile)) { Write-Output $l }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

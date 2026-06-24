@@ -100,6 +100,19 @@ Describe 'Stop-Iis' {
         It 'stdout 含 No IIS Express process found' {
             $script:r1.Stdout | Should -Match 'No IIS Express process found'
         }
+        It 'emits STOP_OUTPUT template with the targeted site (KTD5)' {
+            $script:r1.Stdout | Should -Match 'STOP_OUTPUT'
+            $script:r1.Stdout | Should -Match 'Site: HelloApp-[0-9a-f]{8}'
+        }
+    }
+
+    Context 'Case 4: .sln target rejected (run/stop need a csproj)' {
+        BeforeAll {
+            $script:rSln = Invoke-Script -WorkDir $script:TestRoot -ExtraArgs @('-Project', 'HelloApp.sln')
+            $script:rSlnCombined = $script:rSln.Stdout + "`n" + $script:rSln.Stderr
+        }
+        It '.sln exit != 0' { ($script:rSln.Exit -ne 0) | Should -BeTrue }
+        It '.sln message mentions .sln' { $script:rSlnCombined | Should -Match '\.sln' }
     }
 
     Context 'Case 2: [iis] disabled consistency' {

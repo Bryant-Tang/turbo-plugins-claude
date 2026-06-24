@@ -230,9 +230,11 @@ function Format-StopResultLines {
         [Parameter(Mandatory = $true)][string]$Site,
         [string]$ResolvedTarget = ''
     )
+    # "Site" is neutral (the site this stop targeted) so the template reads correctly whether a
+    # process was actually stopped or none was found — the executor's own line conveys the action.
     $lines = @()
     if (-not [string]::IsNullOrWhiteSpace($ResolvedTarget)) { $lines += "Target: $ResolvedTarget" }
-    $lines += "Stopped site: $Site"
+    $lines += "Site: $Site"
     return $lines
 }
 

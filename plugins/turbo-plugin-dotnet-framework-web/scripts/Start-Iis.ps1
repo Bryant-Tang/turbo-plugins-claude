@@ -197,6 +197,11 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         throw "IIS Express started (PID $($process.Id)) but port $($settings.IisPort) is not LISTENING after ${timeoutSeconds}s. Check the IIS Express log or raise [run].listening_timeout_seconds in .turbo-plugin/config.toml."
     }
     Write-Output "Listening on $($settings.IisUrl)"
+
+    # RUN result template (KTD5): report the RESOLVED target (糾錯閘) + the web URL. run serves
+    # the last build output, so there is no configuration to report. URL stays bare/clickable.
+    Write-Output 'RUN_OUTPUT (relay these lines to the user as the run result):'
+    foreach ($l in (Format-RunResultLines -ResolvedTarget $settings.ProjectFile -WebUrl $settings.IisUrl)) { Write-Output $l }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
