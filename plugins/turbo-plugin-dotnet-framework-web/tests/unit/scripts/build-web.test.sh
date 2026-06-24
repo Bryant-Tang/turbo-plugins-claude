@@ -60,10 +60,40 @@ test_iis_false_no_script_gate() {
     rm_sb "$sb"
 }
 
-# Case 4: real MSBuild deferred to Phase 2 SKILL-level test (always skipped here).
+# Case 4 (U3): arg construction via a stub MSBuild — config OMITTED when unspecified (VS-aligned),
+# and BUILD_OUTPUT template emitted. Proves the .sh delegator drives the new .ps1 behavior end-to-end.
+test_arg_omit_config_stub() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb out e
+    sb="$(new_sb 'build-sh-argomit')"
+    cat > "$sb/HelloApp.csproj" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <OutputType>Library</OutputType>
+    <AssemblyName>HelloApp</AssemblyName>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+  </PropertyGroup>
+</Project>
+EOF
+    mkdir -p "$sb/.turbo-plugin"
+    printf '[build]\nproject = "HelloApp.csproj"\n' > "$sb/.turbo-plugin/config.toml"
+    printf '[tools]\nmsbuild_path = "msbuild-stub.bat"\n' > "$sb/.turbo-plugin/config.local.toml"
+    printf '@echo off\r\necho MSBUILD_ARGS: %%*\r\n' > "$sb/msbuild-stub.bat"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    rm_sb "$sb"
+    assertEquals 'case4: stub build exit 0' 0 "$e"
+    echo "$out" | grep -q '/p:Configuration'; assertFalse 'case4: /p:Configuration OMITTED when unspecified' $?
+    echo "$out" | grep -q 'BUILD_OUTPUT'; assertTrue 'case4: BUILD_OUTPUT template emitted' $?
+}
+
+# Case 5: real MSBuild deferred to Phase 2 SKILL-level test (always skipped here).
 test_real_msbuild_deferred() {
     startSkipping
-    assertTrue 'case4 (SKIP): real MSBuild deferred to Phase 2 SKILL' true
+    assertTrue 'case5 (SKIP): real MSBuild deferred to Phase 2 SKILL' true
 }
 
 # shellcheck disable=SC1090

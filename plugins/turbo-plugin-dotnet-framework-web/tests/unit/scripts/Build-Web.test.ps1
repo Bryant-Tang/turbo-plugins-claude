@@ -84,6 +84,54 @@ BeforeAll {
         } finally { Set-Location -LiteralPath $oldLoc }
     }
 
+    # csproj with the conditional Debug default (models a real .NET Framework web csproj):
+    # the executor must OMIT /p:Configuration so this <Configuration Condition> default wins,
+    # rather than forcing Debug (the pre-U3 bug that diverged from VS).
+    $script:CsprojConditional = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{00000000-1111-2222-3333-444444444444}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>HelloApp</RootNamespace>
+    <AssemblyName>HelloApp</AssemblyName>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+  </PropertyGroup>
+</Project>
+'@
+
+    # Stub MSBuild: a .bat that echoes its args ("MSBUILD_ARGS: ...") and exits 0, so arg
+    # construction is asserted WITHOUT running real MSBuild. Build-Web's Find-MSBuild reads
+    # [tools].msbuild_path (config.local.toml); we point it at the stub. New-BuildArgFixture
+    # builds a git sandbox + csproj (+ optional .sln) + the stub + config.
+    function New-BuildArgFixture {
+        param([string]$Purpose, [string]$ConfigToml = '', [switch]$WithSolution)
+        $sb = New-Sandbox $Purpose
+        [System.IO.File]::WriteAllText((Join-Path $sb 'HelloApp.csproj'), $script:CsprojConditional, (New-Object System.Text.UTF8Encoding($false)))
+        if ($WithSolution) {
+            [System.IO.File]::WriteAllText((Join-Path $sb 'HelloApp.sln'), '', (New-Object System.Text.UTF8Encoding($false)))
+        }
+        $tpDir = Join-Path $sb '.turbo-plugin'
+        $null = New-Item -ItemType Directory -Path $tpDir -Force
+        if (-not [string]::IsNullOrWhiteSpace($ConfigToml)) {
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.toml'), $ConfigToml, (New-Object System.Text.UTF8Encoding($false)))
+        }
+        # Stub MSBuild + point [tools].msbuild_path at it via config.local.toml.
+        [System.IO.File]::WriteAllText((Join-Path $sb 'msbuild-stub.bat'), "@echo off`r`necho MSBUILD_ARGS: %*`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.local.toml'), "[tools]`r`nmsbuild_path = `"msbuild-stub.bat`"`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        Push-Location -LiteralPath $sb
+        try {
+            Invoke-GitSilent init -q
+            Invoke-GitSilent config user.email 'test@example.invalid'
+            Invoke-GitSilent config user.name 'Test'
+            Invoke-GitSilent add -A
+            & git -c commit.gpgsign=false commit -q -m init *>$null
+        } finally { Pop-Location }
+        return $sb
+    }
+
     # ─── Build fixtures for case 1/2 (shared sandbox sb1) and case 3 (sb2) ───
     $script:sb1 = New-Sandbox 'build-nocsproj'
     Push-Location -LiteralPath $script:sb1
@@ -147,6 +195,54 @@ Describe 'Build-Web' {
         It 'stderr present (no IIS gate at script level)' {
             # Either .csproj error or some other; not asserting IIS 已停用 here (script doesn't gate)
             (($script:r3.Stdout + "`n" + $script:r3.Stderr).Length -gt 0) | Should -BeTrue
+        }
+    }
+
+    Context 'U3: arg construction (stub MSBuild) — omit config when unspecified, .sln SolutionDir' {
+        BeforeAll {
+            $script:sbRel = New-BuildArgFixture 'build-arg-release'
+            $script:rRel = Invoke-Script -WorkDir $script:sbRel -ExtraArgs @('-Project', 'HelloApp.csproj', '-Configuration', 'Release')
+
+            $script:sbOmit = New-BuildArgFixture 'build-arg-omit'
+            $script:rOmit = Invoke-Script -WorkDir $script:sbOmit -ExtraArgs @('-Project', 'HelloApp.csproj')
+
+            $script:sbCfg = New-BuildArgFixture 'build-arg-cfg' -ConfigToml "[build]`r`nproject = `"HelloApp.csproj`"`r`nconfiguration = `"Release`"`r`n"
+            $script:rCfg = Invoke-Script -WorkDir $script:sbCfg
+
+            $script:sbSln = New-BuildArgFixture 'build-arg-sln' -WithSolution
+            $script:rSln = Invoke-Script -WorkDir $script:sbSln -ExtraArgs @('-Project', 'HelloApp.sln')
+        }
+        AfterAll {
+            Remove-Sandbox $script:sbRel; Remove-Sandbox $script:sbOmit
+            Remove-Sandbox $script:sbCfg; Remove-Sandbox $script:sbSln
+        }
+
+        It 'passes /p:Configuration=Release when -Configuration given' {
+            $script:rRel.Stdout | Should -Match '/p:Configuration=Release'
+        }
+        It 'OMITS /p:Configuration when no value (core VS-alignment regression)' {
+            ($script:rOmit.Stdout + "`n" + $script:rOmit.Stderr) | Should -Not -Match '/p:Configuration'
+        }
+        It 'OMITS /p:Platform when no value' {
+            ($script:rOmit.Stdout + "`n" + $script:rOmit.Stderr) | Should -Not -Match '/p:Platform'
+        }
+        It 'uses [build].configuration from config when no CLI (memory = explicit choice)' {
+            $script:rCfg.Stdout | Should -Match '/p:Configuration=Release'
+        }
+        It '.sln target: builds the .sln with /p:SolutionDir from the .sln dir (trailing separator)' {
+            $script:rSln.Stdout | Should -Match 'HelloApp\.sln'
+            $script:rSln.Stdout | Should -Match ('/p:SolutionDir=' + [regex]::Escape($script:sbSln))
+            # SolutionDir ends with a path separator (the $(SolutionDir) convention).
+            $script:rSln.Stdout | Should -Match ([regex]::Escape($script:sbSln) + '\\')
+        }
+        It 'prints BUILD_OUTPUT template with the resolved target (糾錯閘)' {
+            $script:rOmit.Exit | Should -Be 0
+            $script:rOmit.Stdout | Should -Match 'BUILD_OUTPUT'
+            $script:rOmit.Stdout | Should -Match 'Target:.*HelloApp\.csproj'
+        }
+        It 'BUILD_OUTPUT marks unspecified configuration as MSBuild-decided (not Debug)' {
+            $script:rOmit.Stdout | Should -Match 'Configuration:.*MSBuild'
+            $script:rOmit.Stdout | Should -Not -Match 'Configuration: Debug'
         }
     }
 
