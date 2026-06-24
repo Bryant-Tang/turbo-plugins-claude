@@ -30,7 +30,12 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ### Step 1 — 枚舉孤兒
 
-執行(無刪除參數;若使用者帶 `--project <path>` 則一併轉發 `-Project <path>`):
+**先決定要不要帶 `-Project`(KTD8):**
+
+- **有當前專案時(剛 run/stop 過、或使用者帶 `--project`,或你能從 context / `[run].project`/`[build].project` 判斷出當前 csproj)→ 傳 `-Project <該 csproj>`**。這會把清理範圍縮到「該專案 stem-hash 家族」並**排除它目前活著的站台**(不誤殺正在跑的 instance)。
+- **真的沒有當前專案時 → 不帶 `-Project`**。script 改用通用 turbo-plugin 站台樣式(`<stem>-<8hex>`)列舉所有候選,但因為沒有「當前活站台」可排除,**無-project 模式下 `-RemoveAll` 會被拒絕**——只能逐站台 `-RemoveSite` 清(見 Step 2)。
+
+執行(無刪除參數;依上面決定是否帶 `-Project`):
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 [-Project <path>]
@@ -60,7 +65,7 @@ Parse into `{ site_name: string, kind: 'process'|'xml'|'both', pid: number|null 
 ```
 
 提供選項:
-- 全部清除(對應 `-RemoveAll`)
+- 全部清除(對應 `-RemoveAll`)——**僅在 Step 1 有帶 `-Project`(scoped)時提供**;無-project 模式不提供一鍵全清(script 會拒 `-RemoveAll`),改用下面的逐站台勾選
 - 各 site 各自一個 checkbox(對應對該 site 呼叫一次 `-RemoveSite <name>`)
 - 取消
 
@@ -88,6 +93,8 @@ Both `-RemoveSite` and `-RemoveAll` honor the same exit code contract. For the a
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **只處理 turbo-plugin 格式的 site name**(`<stem>-<8hex>`);script 本身已過濾,Skill 無需重複判斷。
+- **有當前專案就傳 `-Project`(KTD8)**:scoped 模式會排除該專案正在跑的活站台、避免誤殺;且只有 scoped 模式能用 `-RemoveAll`。
+- **無-project 不傷活站台**:沒有當前專案時不帶 `-Project`,script 用通用樣式列舉但**拒 `-RemoveAll`**(無法分辨活站台);只逐站台 `-RemoveSite` 清,且每個都要使用者明確勾選。
 - **不自動清除**:Step 2 的使用者確認不可跳過;絕不在沒有明確選擇下呼叫 `-RemoveAll`。
 - **不嘗試重建正確 site 條目**:清除後,使用者應重跑 `/tp-setup` 或用 Visual Studio 開啟 .sln 讓 VS 重建正確條目。
 - **stop-iis 的提示路徑**:`tp-stop` 偵測到同 stem-不同 hash 的 instance 時會建議使用者跑 `/tp-cleanup-orphan-iis`,本 skill 就是該流程的目的地。
