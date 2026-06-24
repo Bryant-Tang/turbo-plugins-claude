@@ -2,7 +2,13 @@
   "enabledPlugins": {
     "plugin-dev@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": true,
-    "compound-engineering@compound-engineering-plugin": true,
-    "coding-tutor@compound-engineering-plugin": true
+    "compound-engineering@compound-engineering-plugin": true
+  },
+  "compound-engineering-plugin": {
+    "source": {
+      "source": "git",
+      "url": "https://github.com/EveryInc/compound-engineering-plugin.git"
+    },
+    "autoUpdate": true
   }
 }
