@@ -23,7 +23,10 @@ try {
     $repoRoot = (Get-Location).Path
     $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'run' -CliProjectValue $Project -AllowMissing
     if ($null -ne $target) {
-        $settings = Resolve-IisSettings -Project $Project
+        # Reuse the already-resolved target path instead of re-passing the raw $Project (which,
+        # when the project came from config memory, would make Resolve-IisSettings re-read config
+        # and re-resolve to the same csproj). Same result, one fewer config lookup.
+        $settings = Resolve-IisSettings -Project $target.Path
         $currentSiteName = $settings.IisConfigSiteName
         $csprojStem      = [System.IO.Path]::GetFileNameWithoutExtension($settings.ProjectFile)
         $scoped = $true
