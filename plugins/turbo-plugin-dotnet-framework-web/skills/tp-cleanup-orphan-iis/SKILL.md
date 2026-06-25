@@ -73,8 +73,10 @@ Parse into `{ site_name: string, kind: 'process'|'xml'|'both', pid: number|null 
 
 ### Step 3 — 執行清除
 
-- 若使用者選「全部清除」,執行:`${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 -RemoveAll`
-- 否則對每個被勾選的 site 依序執行:`${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 -RemoveSite <site_name>`
+> **刪除指令要帶上 Step 1 用的同一個 `-Project`**(scoped 時)。`-RemoveAll` 只在 scoped 模式提供,而 script 在**無 `-Project` 時會拒絕 `-RemoveAll`**——若刪除指令漏掉 Step 1 帶過的 `-Project`,script 會在無-project 模式下重新解析:`-RemoveAll` 直接被拒,`-RemoveSite` 的比對範圍(通用樣式、不排除活站台)也可能與你 Step 1 確認過的範圍不一致。所以把 Step 1 的 `-Project` 原樣帶到刪除指令。
+
+- 若使用者選「全部清除」(僅 scoped 模式提供),執行:`${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 -Project <Step 1 的同一個 path> -RemoveAll`
+- 否則對每個被勾選的 site 依序執行:`${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 [-Project <Step 1 的同一個 path>] -RemoveSite <site_name>`(Step 1 是 scoped 就帶 `-Project`、無-project 模式不帶)
 
 把 script 的 stdout / stderr 直接呈現給使用者。
 

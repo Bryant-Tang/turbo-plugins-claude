@@ -35,6 +35,7 @@ configuration / platform,把明確參數傳給變薄的 executor;沒指定的 co
 
 - executor 恆傳 `/p:Configuration` 壓過 csproj `<Configuration Condition="'$(Configuration)'==''">` 預設、靜默偏離 VS 的問題:無值省略後,build/publish 的 config 解析與 VS 一致。
 - SKILL 文件移除過時敘述(自動偵測、內建 default、誤植的 `TURBO_PLUGIN_MSBUILD_PATH` env〔實際讀 `config.local.toml [tools].msbuild_path`〕)。
+- `tp-cleanup-orphan-iis` Step 3 的刪除指令補回 `-Project`:scoped 模式的「全部清除」原本叫 `-RemoveAll` 卻沒帶 `-Project`,而 script 在無 `-Project` 時會拒絕 `-RemoveAll`(KTD8),導致 scoped-via-CLI 情境下「全部清除」直接報錯;`-RemoveSite` 也補上 `-Project` 以讓刪除範圍與 Step 1 枚舉範圍一致。
 
 ## [0.1.0] - 2026-06-20
 
