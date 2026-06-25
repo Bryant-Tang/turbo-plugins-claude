@@ -33,7 +33,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 **先決定要不要帶 `-Project`(KTD8):**
 
 - **有當前專案時(剛 run/stop 過、或使用者帶 `--project`,或你能從 context / `[run].project`/`[build].project` 判斷出當前 csproj)→ 傳 `-Project <該 csproj>`**。這會把清理範圍縮到「該專案 stem-hash 家族」並**排除它目前活著的站台**(不誤殺正在跑的 instance)。
-- **真的沒有當前專案時 → 不帶 `-Project`**。script 改用通用 turbo-plugin 站台樣式(`<stem>-<8hex>`)列舉所有候選,但因為沒有「當前活站台」可排除,**無-project 模式下 `-RemoveAll` 會被拒絕**——只能逐站台 `-RemoveSite` 清(見 Step 2)。
+- **真的沒有當前專案時(且已窮盡判斷手段)→ 不帶 `-Project`**。**先盡力判斷當前專案**:看剛剛 run/stop 過哪個、使用者有沒有帶 `--project`、`[run].project`/`[build].project` 有沒有值、cwd 附近是不是只有一個明顯的 csproj。**都判斷不出來時,寧可先問使用者「現在的專案是哪個」,也不要直接走無-project**(走無-project 是最後手段)。確實無從判斷才不帶 `-Project`:此時 script 改用通用 turbo-plugin 站台樣式(`<stem>-<8hex>`)列舉所有候選,**但因為沒有「當前活站台」可排除,列出來的站台其實全是「正在跑的」程序、可能包含你自己正在使用的那個**。`-RemoveAll` 會被拒絕;逐站台 `-RemoveSite` 不會被攔,所以刪之前要特別小心(見 Step 2 的警示)。
 
 執行(無刪除參數;依上面決定是否帶 `-Project`):
 
@@ -69,6 +69,8 @@ Parse into `{ site_name: string, kind: 'process'|'xml'|'both', pid: number|null 
 - 各 site 各自一個 checkbox(對應對該 site 呼叫一次 `-RemoveSite <name>`)
 - 取消
 
+> **無-project 模式的警示(重要)**:Step 1 沒帶 `-Project` 時,清單裡的站台**全是正在跑的程序、無法分辨哪個是你自己正在使用的**。所以:(a) 預設**一個都不要勾**,讓使用者主動選;(b) 在 `AskUserQuestion` 的問題敘述裡明確警告「這些可能含你正在使用的站台,確認過再勾」;(c) **絕不**替使用者預選或建議「全選」。
+
 若使用者取消,直接結束、不執行任何刪除。
 
 ### Step 3 — 執行清除
@@ -95,8 +97,8 @@ Both `-RemoveSite` and `-RemoveAll` honor the same exit code contract. For the a
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **只處理 turbo-plugin 格式的 site name**(`<stem>-<8hex>`);script 本身已過濾,Skill 無需重複判斷。
-- **有當前專案就傳 `-Project`(KTD8)**:scoped 模式會排除該專案正在跑的活站台、避免誤殺;且只有 scoped 模式能用 `-RemoveAll`。
-- **無-project 不傷活站台**:沒有當前專案時不帶 `-Project`,script 用通用樣式列舉但**拒 `-RemoveAll`**(無法分辨活站台);只逐站台 `-RemoveSite` 清,且每個都要使用者明確勾選。
+- **盡力判斷當前專案、能判斷就傳 `-Project`(KTD8)**:scoped 模式會排除該專案正在跑的活站台、避免誤殺,且只有 scoped 模式能用 `-RemoveAll`。**走無-project 是最後手段**——判斷不出時寧可先問使用者,別直接無-project。
+- **無-project 模式要警示活站台**:沒有當前專案時不帶 `-Project`,script 用通用樣式列舉但**拒 `-RemoveAll`**(無法分辨活站台);列出的站台全是正在跑的程序、**可能含你正在使用的**,只逐站台 `-RemoveSite` 清、每個都要使用者明確勾選,且刪前要警示(見 Step 2)。
 - **不自動清除**:Step 2 的使用者確認不可跳過;絕不在沒有明確選擇下呼叫 `-RemoveAll`。
 - **不嘗試重建正確 site 條目**:清除後,使用者應重跑 `/tp-setup` 或用 Visual Studio 開啟 .sln 讓 VS 重建正確條目。
 - **stop-iis 的提示路徑**:`tp-stop` 偵測到同 stem-不同 hash 的 instance 時會建議使用者跑 `/tp-cleanup-orphan-iis`,本 skill 就是該流程的目的地。
