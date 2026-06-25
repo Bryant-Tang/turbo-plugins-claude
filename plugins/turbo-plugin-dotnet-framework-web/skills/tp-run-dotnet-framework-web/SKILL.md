@@ -33,8 +33,9 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 你是這個專案的 VS,由你決定 run 的對象,**不靠 script 自動偵測**。
 
 - run 一律是**單一 csproj**(IIS Express 跑一個 web 專案),**不接受 `.sln`**。
-- 先查記憶 `[run].project`(無值時 fallback 讀 `[build].project`)。有值且檔在 → 用它。
-- 沒記憶時用 Glob 找 `*.csproj`(跳過 `bin/`、`obj/`、`node_modules/`、`.vs/`、`.git/`),判斷哪個是要在本機跑起來的 web 專案;多個合理且無從判斷 → `AskUserQuestion` 請使用者選。
+- 先查記憶 `[run].project`(無值時 fallback 讀 `[build].project`)。有值、檔在、**且是 csproj** → 用它。
+- **fallback 撈到的 `[build].project` 可能是 `.sln`(整個方案)**——run 跑的是單一 web 專案、不能跑方案。這時**別把 `.sln` 當 target**,改走下面的探索(跟「沒記憶」一樣),由你自己判斷出該跑的 web csproj。
+- 沒記憶(或 fallback 撈到 `.sln`)時用 Glob 找 `*.csproj`(跳過 `bin/`、`obj/`、`node_modules/`、`.vs/`、`.git/`),判斷哪個是要在本機跑起來的 web 專案;多個合理且無從判斷 → `AskUserQuestion` 請使用者選。
 - run **不要**傳 configuration——它服務的是上次 build 的產物。
 
 ### Step 2 — 啟動 IIS Express

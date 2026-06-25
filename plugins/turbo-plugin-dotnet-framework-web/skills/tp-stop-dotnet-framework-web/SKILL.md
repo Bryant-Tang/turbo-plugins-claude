@@ -33,8 +33,9 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 由你決定 stop 的對象,**不靠 script 自動偵測**。
 
 - stop 一律針對**單一 csproj**的站台,**不接受 `.sln`**。
-- 先查記憶 `[run].project`(無值時 fallback `[build].project`)。有值且檔在 → 用它。
-- 沒記憶時用 Glob 找 `*.csproj`(跳過 `bin/`、`obj/`、`node_modules/`、`.vs/`、`.git/`);多個合理且無從判斷 → `AskUserQuestion` 請使用者選(或就是你剛 run 起來的那個)。
+- 先查記憶 `[run].project`(無值時 fallback `[build].project`)。有值、檔在、**且是 csproj** → 用它。
+- **fallback 撈到的 `[build].project` 可能是 `.sln`**——stop 是針對單一 csproj 的站台、不對應整個方案。這時**別把 `.sln` 當 target**,改走下面的探索,由你自己判斷出要停哪個 csproj 的站台。
+- 沒記憶(或 fallback 撈到 `.sln`)時用 Glob 找 `*.csproj`(跳過 `bin/`、`obj/`、`node_modules/`、`.vs/`、`.git/`);多個合理且無從判斷 → `AskUserQuestion` 請使用者選(或就是你剛 run 起來的那個)。
 
 ### Step 2 — 停止 IIS Express
 
