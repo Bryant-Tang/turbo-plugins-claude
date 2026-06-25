@@ -207,12 +207,15 @@ Describe 'Publish-Web' {
             $script:rpOmit.Stdout | Should -Match '/p:PublishProfile=FolderProfile'
             $script:rpOmit.Stdout | Should -Match '/p:DeployOnBuild=true'
         }
-        It 'preserves the PUBLISH_OUTPUT two-line contract (path + file:/// URL, no trailing punctuation)' {
+        It 'preserves the PUBLISH_OUTPUT bare path + file:/// URL contract (no trailing punctuation)' {
             $script:rpOmit.Stdout | Should -Match 'PUBLISH_OUTPUT'
             $script:rpOmit.Stdout | Should -Match 'app\.publish'
             $script:rpOmit.Stdout | Should -Match 'file:///.*app\.publish'
             # file:/// line ends without trailing punctuation (stays clickable)
             ($script:rpOmit.Stdout -split "`r?`n" | Where-Object { $_ -match '^file:///' } | Select-Object -First 1) | Should -Match '[^.,;:]$'
+        }
+        It 'PUBLISH_OUTPUT includes the resolved Target line (糾錯閘, consistent with build/run/stop)' {
+            ($script:rpOmit.Stdout -split "`r?`n" | Where-Object { $_ -match '^Target: ' } | Select-Object -First 1) | Should -Match 'HelloApp\.csproj'
         }
         It '>1 pubxml without -Pubxml errors (unchanged pubxml resolution)' {
             ($script:rpMulti.Exit -ne 0) | Should -BeTrue

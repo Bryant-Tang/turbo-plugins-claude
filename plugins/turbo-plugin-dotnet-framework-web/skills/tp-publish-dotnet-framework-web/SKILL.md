@@ -52,9 +52,14 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶明確參數:`-Project <csproj>`、(可選)`-Pubxml <path>`、(可選)`-Configuration`/`-Platform`。Script 會:解析 csproj target(CLI → `[publish].project` → 清楚報錯;**收到 `.sln` 報錯**)、找 MSBuild、解析 pubxml(CLI → `[publish].default_pubxml` → `Properties/PublishProfiles/` 單一)、跑 frontend pack(若 `[frontend]` 齊備)、跑 `msbuild /p:DeployOnBuild=true /p:PublishProfile=<name>`(**有值才附** `/p:Configuration|Platform`)、後處理 parse `<PublishUrl>` + `<WebPublishMethod>` 回報產出位置。
 
-### Step 3 — 回報產出位置(逐字、可點擊)
+### Step 3 — 回報結果(逐字、路徑可點擊)
 
-腳本成功後印一行 `PUBLISH_OUTPUT (...)` marker,**緊接其後的兩行**即產出位置——第一行 raw Windows 絕對路徑、第二行 `file:///` URL(非 FileSystem 發佈方式則 marker 後只有一行 URL)。把那兩行(或一行)**逐字**呈現給使用者:**各自單獨成行、前後不接任何散文或標點**(不要包成「產出在:…」、也不要在行尾加句號),讓終端機能把路徑算成可點擊連結。**只轉述那兩行,不要轉述 marker 行本身。** 此外腳本也會印出解析後的 target 與 profile(「Running MSBuild Publish for <csproj>」「Publish profile: <name>」),這是糾錯閘——讓使用者確認發佈的是不是對的專案 / profile。
+腳本成功後印一行 `PUBLISH_OUTPUT (...)` marker,**緊接其後數行**即結果模板,把它們**逐字**轉述給使用者(與 build/run/stop 同一套):
+
+- `Target: <csproj>`、`Profile: <pubxml>` ——**糾錯閘**,讓使用者確認發佈的是不是對的專案 / profile(尤其 target 來自記憶、你沒明傳 `-Project` 時)。這兩行是標籤、照常轉述即可。
+- 接著是產出位置:第一行 raw Windows 絕對路徑、第二行 `file:///` URL(非 FileSystem 發佈方式則只有一行 URL)。這(些)路徑/URL 行必須**各自單獨成行、前後不接任何散文或標點**(不要包成「產出在:…」、也不要在行尾加句號),終端機才會把它算成可點擊連結。
+
+**不要轉述 marker 行本身**;`Target:` / `Profile:` 照常轉述,只有路徑/URL 那幾行要保持光禿可點擊。
 
 ### Step 4 — 記憶存回(save-back)
 
@@ -77,7 +82,7 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets
 
 ## Completion Checks
 
-- `msbuild` 結束 exit code 為 0、stdout 含 `PUBLISH_OUTPUT` 兩行(或一行)產出位置。
+- `msbuild` 結束 exit code 為 0、stdout 含 `PUBLISH_OUTPUT` 模板(`Target:` / `Profile:` + 產出位置路徑/URL)。
 - `<PublishUrl>` 路徑含新 artifact。
 - 若 frontend 設定齊備:`<PublishUrl>/<frontend-output-dir>/` 含 frontend build 結果。
 - save-back:若這次選擇與記憶不同,已問過使用者並寫對 `[publish]` 的 per-op key。
@@ -88,7 +93,7 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets
 - **Multiple .pubxml**: 該 csproj 有多個 .pubxml 且沒指定 → script fail loudly 列候選;你應改用 `AskUserQuestion` 選一個再傳 `-Pubxml`。
 - **省略 config 由 pubxml 決定**: 不傳 `--configuration` → MSBuild 命令列**不含** `/p:Configuration`,由 pubxml 內嵌 `<Configuration>` 決定。
 - **`.sln` 被拒**: 傳 `-Project <.sln>` → script 報錯(publish 需 csproj)。
-- **發佈位置兩行模板**: publish 成功後 stdout 含 `PUBLISH_OUTPUT (...)` marker,緊接兩行——raw Windows 路徑 + `file:///` URL,**兩行皆無結尾標點**。agent 須**逐字、各自成行**轉述那兩行(不轉述 marker 行)。含空白的路徑仍須完整保留在單行。
+- **結果模板**: publish 成功後 stdout 含 `PUBLISH_OUTPUT (...)` marker,緊接數行——`Target: <csproj>` / `Profile: <pubxml>`(糾錯閘)+ raw Windows 路徑 + `file:///` URL(非 FileSystem 則只有 URL 一行)。路徑/URL 行**無結尾標點**、各自成行,agent 須**逐字**轉述(不轉述 marker 行)。含空白的路徑仍須完整保留在單行。
 
 ## Tool Preference
 

@@ -112,12 +112,19 @@ try {
         return
     }
 
+    # The result-template lead lines (the 糾錯閘) shared by every PUBLISH_OUTPUT branch:
+    # Target = the csproj actually resolved/published, Profile = the pubxml used. They sit above the
+    # bare path/URL line(s) so the agent relays "which project" the same way build/run/stop do
+    # (Format-*ResultLines / KTD5), while the path/URL lines stay bare for terminal clickability.
+    $publishMarker = 'PUBLISH_OUTPUT (relay these lines to the user as the publish result; keep the path/URL line(s) bare so they stay clickable):'
+    $publishLead   = @("Target: $projectFile", "Profile: $publishProfileName")
+
     if ($publishUrlRaw -match '\$\(') {
         [Console]::Error.WriteLine('Warning: <PublishUrl> contains MSBuild properties; cannot resolve statically.')
-        # Emit via the SAME PUBLISH_OUTPUT marker as the resolved path so the SKILL's single
-        # marker-based parsing covers this branch too. The value is the unresolved raw PublishUrl
-        # (no real path is computable here); the agent relays it verbatim like any other.
-        Write-Output 'PUBLISH_OUTPUT (relay the next line verbatim, on its own line, no surrounding prose or punctuation):'
+        # Unresolved MSBuild property — no real path computable; relay the raw PublishUrl as the
+        # location line after the shared lead, via the SAME marker so the SKILL parses one shape.
+        Write-Output $publishMarker
+        foreach ($l in $publishLead) { Write-Output $l }
         Write-Output $publishUrlRaw
         return
     }
@@ -125,16 +132,15 @@ try {
     $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
     $out = Get-PublishOutputLines -PublishUrlRaw $publishUrlRaw -Method $method -ProjectDir $projectDir
 
-    # U10 / KTD8 / R15: emit the publish location as BARE line(s) the agent relays VERBATIM — the
-    # raw Windows path then the file:/// URL (FileSystem), each on its own line with NO trailing
-    # punctuation, after a marker line so the SKILL can locate them. The agent must NOT wrap them in
-    # prose or append a period, so the terminal keeps the paths clickable.
+    # U10 / KTD8 / R15: after the shared marker + lead lines, emit the publish location as BARE
+    # line(s) the agent relays VERBATIM — the raw Windows path then the file:/// URL (FileSystem),
+    # each on its own line with NO trailing punctuation, so the terminal keeps the paths clickable.
+    Write-Output $publishMarker
+    foreach ($l in $publishLead) { Write-Output $l }
     if ($out.IsFileSystem) {
-        Write-Output 'PUBLISH_OUTPUT (relay the next two lines verbatim, each on its own line, no surrounding prose or punctuation):'
         Write-Output $out.Resolved
         Write-Output $out.DisplayPath
     } else {
-        Write-Output 'PUBLISH_OUTPUT (relay the next line verbatim, on its own line, no surrounding prose or punctuation):'
         Write-Output $out.Resolved
     }
 }

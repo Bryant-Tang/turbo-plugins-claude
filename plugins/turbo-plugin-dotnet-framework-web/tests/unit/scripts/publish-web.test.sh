@@ -109,6 +109,7 @@ EOF
     assertEquals 'case4: stub publish exit 0' 0 "$e"
     echo "$out" | grep -q '/p:Configuration'; assertFalse 'case4: /p:Configuration OMITTED (pubxml governs)' $?
     echo "$out" | grep -q 'PUBLISH_OUTPUT'; assertTrue 'case4: PUBLISH_OUTPUT preserved' $?
+    echo "$out" | grep -Eq 'Target: .*HelloApp\.csproj'; assertTrue 'case4: PUBLISH_OUTPUT includes resolved Target line' $?
 }
 
 # Case 5: real MSBuild publish deferred to Phase 2 (always SKIP).
