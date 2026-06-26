@@ -10,20 +10,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Versioning Rules（重要）
 
-Claude Code 的 plugin 更新機制是基於 **版本號** 而不是 git commit。每一個 PR 或開發分支若有改到某個 plugin，都要 bump 該 plugin 的版本號：
+Claude Code 的 plugin 更新機制是基於 **版本號**。版本由 **release-please** 依 conventional commit 自動管理——**不要手動 bump `plugin.json`、也不要手寫發版的 CHANGELOG 區段**。
 
-- **patch（修訂號）**：bug 修正、文件修整、向後相容的內部調整
-- **minor（次版號）**：新增 skill / command / script，或新增不破壞既有用法的功能
-- **major（主版號）**：**只在使用者明確要求時** bump（破壞性變更也要先和使用者確認）
+**怎麼運作**：每次 merge 進 `main`，`.github/workflows/release-please.yml` 會依各 plugin 自上次發版以來的 commit type，為「有可發版變更」的 plugin 各開一個 **Release PR**（自動更新該 plugin 的 `.claude-plugin/plugin.json` `version` + `CHANGELOG.md`）；merge 那個 Release PR 即發版 + 打 tag（`<plugin>-v<version>`）。設定在 repo 根的 `release-please-config.json` + `.release-please-manifest.json`（四個 plugin 各自獨立版本 / 各自 Release PR）。
 
-每次 bump 必須同步更新 **兩個檔案**：
+**commit type → 版本級距**（只有 `feat` / `fix` 會觸發發版）：
 
-1. `plugins/<plugin>/.claude-plugin/plugin.json` 的 `version` 欄位
-2. `plugins/<plugin>/CHANGELOG.md` — 在 `[Unreleased]` 之下新增一個對應版本與日期的區段（格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 的 `Added` / `Changed` / `Fixed` / `Removed` 分類，使用繁體中文）
+- `fix:` → **patch**
+- `feat:` → **minor**
+- `feat!:` 或 commit body 含 `BREAKING CHANGE:` → **major**（破壞性變更，**仍須先和使用者確認**）
+- `refactor` / `perf` / `docs` / `db` / `chore` / `test`：**單獨不觸發發版**，但會隨下一次 `feat` / `fix` 發版時一起列進 CHANGELOG（`chore` / `test` / `ci` / `build` 預設隱藏）。若某個純文件 / refactor 變更**必須單獨發佈**，改用 `fix:` 讓它觸發 patch。
 
-只動到單一 plugin 的 PR 只 bump 那一個 plugin；跨多個 plugin 的 PR 要分別 bump 每個受影響的 plugin。
+**CHANGELOG 由 commit 生成**：每條 bullet = 你 commit 的**標題描述**（`type(scope): ` 後那段），**commit 寫繁中、CHANGELOG 就是繁中**；分類標題（`Added` / `Fixed` / `Changed` …）由 `release-please-config.json` 的 `changelog-sections` 依 commit type 對應。所以**寫好 commit 標題 = 寫好 CHANGELOG**。
 
-**一個 PR / 開發分支對同一個 plugin 只 bump 一次。** 若該分支先前已 bump 過某 plugin、且**尚未合併進 `main`**，後續在同一分支上對該 plugin 的新實作一律**併入前面已 bump 的那個版本號**底下（CHANGELOG 寫進該版本已存在的區段，**不要**新增區段、也不要再 bump）。只有當變更跨越「已發佈（合併進 `main`）」界線之後，新的變更才開下一個版本號。換言之:bump 對應的是「下次發佈」這件事，不是「每次 commit / 每個 unit」。
+**初版是手寫的種子**：每個 plugin 的 `## [0.1.0]` 是手寫的乾淨初版（描述最終 ship 的狀態）；release-please 從**下一次變更**起接手，把新版本疊在 0.1.0 之上。`.release-please-manifest.json` 記錄各 plugin 現在的版本。（首次啟用步驟——merge 後替四個 plugin 各打一個 `0.1.0` tag 當基準——見 `release-please.yml` 開頭註解。）
+
+**所以**：① 不要手改 `plugin.json` 的 `version`、也不要手寫發版 CHANGELOG 區段（那兩處由 release-please 的 Release PR 維護）。② 想發版就把變更寫成清楚的 `feat:` / `fix:` commit。③ release-please 把「自上次發版以來的所有 commit」累積成一個 Release PR——等同「一批變更發一版」，不是每個 commit 發一版。④ major 仍須使用者明確同意才用 `!` / `BREAKING CHANGE`。
 
 ## Plugin Architecture
 
@@ -35,7 +37,7 @@ Claude Code 的 plugin 更新機制是基於 **版本號** 而不是 git commit�
 plugins/<plugin-name>/
 ├── .claude-plugin/plugin.json   # 必要 — name / description / version
 ├── .mcp.json                    # 可選 — MCP server 宣告
-├── CHANGELOG.md                 # 必要 — 每次版本 bump 同步更新
+├── CHANGELOG.md                 # 必要 — 手寫初版 0.1.0 種子,之後由 release-please 維護
 ├── README.md                    # 必要 — 安裝、用法、plugin 專屬規範
 ├── LICENSE                      # MIT
 ├── commands/<name>.md           # 可選 — slash command（含 frontmatter）
@@ -114,8 +116,9 @@ plugins/<plugin-name>/
 
 `.claude-plugin/marketplace.json` 列出全部 plugin 與其相對路徑。新增 plugin 時要：
 
-1. 在 `plugins/` 下建立完整目錄結構（含 `.claude-plugin/plugin.json` 起 version `0.1.0`，以及 `tests/` 自動化測試套件）。
+1. 在 `plugins/` 下建立完整目錄結構（含 `.claude-plugin/plugin.json` 起 version `0.1.0`、手寫 `CHANGELOG.md` 的 `## [0.1.0]` 種子，以及 `tests/` 自動化測試套件）。
 2. 在 `marketplace.json` 的 `plugins` 陣列加一筆 `{ name, description, source: "./plugins/<dir>" }`。
-3. repo 根 README.md 安裝章節同步更新（新增該 plugin 的搜尋 / 安裝步驟）。
+3. **註冊進 release-please**：`release-please-config.json` 的 `packages` 加一筆（`component` + `extra-files` 指向該 plugin 的 `.claude-plugin/plugin.json`），`.release-please-manifest.json` 加 `"plugins/<dir>": "0.1.0"`。
+4. repo 根 README.md 安裝章節同步更新（新增該 plugin 的搜尋 / 安裝步驟）。
 
-CI 不需要每加一個 plugin 就手寫 workflow——只要 `tests/` 遵循慣例佈局，`.github/workflows/tests.yml` 會自動探索並納入。
+CI 不需要每加一個 plugin 就手寫 workflow——只要 `tests/` 遵循慣例佈局，`.github/workflows/tests.yml` 會自動探索並納入；release-please 也只看上述兩個設定檔。
