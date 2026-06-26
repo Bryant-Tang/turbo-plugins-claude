@@ -13,13 +13,21 @@ try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 # and a raw UTF-8 string passed as argv goes through CreateProcessA. PowerShell 7+ uses
 # CreateProcessW, and the Win10 "Beta UTF-8" codepage makes CP_ACP == UTF-8.
 #
-# IMPORTANT: a False result here does NOT mean turbo-plugin's SVN operations break.
-# The push/pull scripts handle non-ASCII filenames in BOTH shells regardless of this flag —
-# the PowerShell scripts scope [Console]::OutputEncoding to the system ANSI codepage around svn
-# calls (so capture + argv stay byte-consistent with the on-disk filename), and the Git Bash
-# (.sh) scripts parse `svn status --xml` (always UTF-8). This flag is therefore a CROSS-PLATFORM
-# PORTABILITY signal — whether non-ASCII filenames land in SVN as portable UTF-8 vs system DBCS —
-# NOT a local "will it work" gate. (Token name kept for contract stability; see WARNING below.)
+# IMPORTANT: a False result here does NOT mean turbo-plugin's SVN operations break, and it does
+# NOT mean filenames are stored non-portably. Empirically (svn 1.14 + PS5.1 + cp950, verified by
+# reading the FSFS revision bytes): filenames whose characters are REPRESENTABLE in the active
+# ANSI codepage (e.g. Traditional Chinese in Big5) round-trip correctly and svn stores them as
+# portable UTF-8 -- a UTF-8 (Mac/Linux) checkout sees them correctly. The push/pull scripts handle
+# this in BOTH shells: the PowerShell scripts scope [Console]::OutputEncoding to the system ANSI
+# codepage around svn (argv bytes match svn's locale, so svn converts ANSI->UTF-8 correctly), and
+# the Git Bash (.sh) scripts parse `svn status --xml` (always UTF-8).
+#
+# What False ACTUALLY signals: on PS5.1 + a non-UTF-8 codepage, native-exe argv can only carry
+# characters the active codepage can represent. A filename with characters OUTSIDE that codepage
+# (e.g. Japanese kana / CJK-ext / emoji on a Traditional-Chinese cp950 host) cannot be passed to
+# svn.exe via argv at all -- it is lost/mangled to '?'. That is a LOCAL limitation (it breaks on
+# this host, not merely cross-platform); the PS7 / Win10-UTF8 fix is only needed when you must use
+# filenames with characters beyond your system codepage. (Token name kept for contract stability.)
 
 # Output structured tokens for SKILL parsing:
 #   PS_VERSION=<major.minor>
@@ -72,18 +80,18 @@ Write-Output "RECOMMENDATION=$recommendation"
 if (-not $argvSafe) {
     Write-Output ''
     Write-Output 'NOTE: PowerShell 5.1 + non-UTF-8 system ANSI codepage detected.'
-    Write-Output '  This does NOT break local SVN operations. turbo-plugin push/pull scripts'
-    Write-Output '  handle non-ASCII filenames in THIS environment on BOTH shells: the PowerShell'
-    Write-Output '  scripts wrap svn calls in the system ANSI codepage (OutputEncoding), and the Git'
-    Write-Output '  Bash (.sh) scripts parse `svn status --xml`. Both add/commit/checkout non-ASCII'
-    Write-Output '  filenames correctly here -- you do NOT need to switch shells.'
+    Write-Output '  This does NOT break local SVN operations, and it does NOT make filenames'
+    Write-Output '  non-portable. turbo-plugin push/pull scripts wrap svn in the system ANSI codepage'
+    Write-Output '  (PowerShell) / parse `svn status --xml` (Git Bash), so filenames whose characters'
+    Write-Output '  are representable in your codepage (e.g. Traditional Chinese on cp950) are stored'
+    Write-Output '  in SVN as portable UTF-8 -- a Mac/Linux (UTF-8) checkout sees them correctly.'
     Write-Output ''
-    Write-Output '  The only remaining concern is CROSS-PLATFORM interop: in this environment SVN'
-    Write-Output '  stores non-ASCII filenames as system DBCS bytes (Big5 / GB2312 / Shift-JIS), not'
-    Write-Output '  UTF-8. If your SVN repo has Mac/Linux (UTF-8) contributors, they may see garbled'
-    Write-Output '  filenames. For portable UTF-8 filenames across operating systems, either:'
+    Write-Output '  The real limitation: on this host a native-exe argument can only carry characters'
+    Write-Output '  your system codepage can represent. A filename containing characters OUTSIDE it'
+    Write-Output '  (e.g. Japanese kana / emoji on a Traditional-Chinese system) cannot be passed to'
+    Write-Output '  svn at all and is lost/mangled -- and that breaks locally, not just cross-platform.'
+    Write-Output '  If you need filenames with characters beyond your system codepage, either:'
     Write-Output '    - install PowerShell 7+   (winget install Microsoft.PowerShell --silent), or'
     Write-Output '    - enable the Win10 UTF-8 codepage (intl.cpl -> Administrative -> Beta UTF-8 + reboot).'
-    Write-Output '  If your whole team uses the same Chinese/CJK Windows, or you avoid non-ASCII'
-    Write-Output '  filenames, no action is needed.'
+    Write-Output '  If you only use ASCII + your-own-language filenames, no action is needed.'
 }

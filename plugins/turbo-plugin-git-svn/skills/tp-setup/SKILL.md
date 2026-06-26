@@ -41,28 +41,31 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 讀並執行 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/setup-base.md` 的 **Pre-check** 與 **Case 偵測**
 (Git ≥ 2.31、非 submodule;case (a)/(b)/(c)/(d) 優先序)。
 
-#### 1.2 Encoding profile detect（中文檔名 SVN 跨平台相容性,純資訊性）
+#### 1.2 Encoding profile detect（檔名編碼可攜性,純資訊性）
 
 跑 `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Test-EncodingSupport.ps1"`。
 
-> **重要**:`ARGV_SAFE_FOR_UNICODE=False` **不代表**本機中文檔名 SVN 操作會壞。push/pull
-> 腳本已在此環境正確處理非 ASCII 檔名(`.ps1` 把 `[Console]::OutputEncoding` 設系統 ANSI codepage 包住
-> svn、`.sh` 用 `svn status --xml`),兩個 shell 都能正常 add/commit/checkout。此 flag 純粹是**跨平台
-> 可攜性**訊號:非 ASCII 檔名存進 SVN 是 UTF-8(PS7 / Win10-UTF8)還是系統 DBCS(PS5.1 + 中文 codepage)。
+> **重要**:`ARGV_SAFE_FOR_UNICODE=False` **不代表**本機中文檔名 SVN 操作會壞,**也不代表**檔名會以非可攜方式存進 SVN。
+> 已實證(svn 1.14 + PS5.1 + cp950,讀 FSFS revision bytes 確認):**凡系統 codepage 能表示的字元(例如 Big5 內的繁中
+> 檔名),svn 會存成可攜 UTF-8,Mac/Linux(UTF-8)checkout 看到的是正確檔名。** push/pull 腳本已正確處理(`.ps1` 把
+> `[Console]::OutputEncoding` 設系統 ANSI codepage 包住 svn,argv 對齊 svn locale → svn 正確 ANSI→UTF-8;`.sh` 用
+> `svn status --xml`,恆為 UTF-8)。
+>
+> 此 flag 真正的意義:PS5.1 + 非-UTF-8 codepage 下,native-exe 的 argv **只能承載你 codepage 表示得了的字元**。檔名若含
+> **超出該 codepage 的字元**(如繁中 cp950 系統上的日文假名 / CJK 擴充字 / emoji),根本傳不進 svn、會被降成 `?` 遺失——
+> 而且這是**本機就壞**,不是只壞在跨平台。修法(PS7 / Win10 UTF-8)**只在你需要用超出系統 codepage 的字元時**才需要。
 
 parse stdout 的 `ARGV_SAFE_FOR_UNICODE`:
 - `True` → 略過。
-- `False` → **本機操作無虞**,只有「跨平台團隊」需處理。用 `AskUserQuestion` 問**實際情境**(不用技術術語):
+- `False` → **本機與跨平台對「codepage 內的檔名」都無虞**;只有「要用超出系統 codepage 的字元當檔名」才需處理。用 `AskUserQuestion` 問**實際情境**(不用技術術語):
 
-  **Question text**:
-  > 偵測到你用 PowerShell 5.1 + 中文 Windows。**你本機用 turbo-plugin 推 / 拉含中文檔名的 SVN 都沒問題**
-  > (plugin 已處理)。唯一要確認的是會不會影響同事:**你的 SVN repo 有沒有 Mac/Linux 同事會 checkout?**
+  **Question text**(對新使用者**直接講限制**就好——不要鋪陳「你本來沒問題」這種他根本不知道存在的問題):
+  > 小提醒:在你目前的環境(Windows 中文版 + PowerShell 5.1)下,**SVN 檔名不能用「中文以外」的特殊文字**——例如日文假名、韓文、emoji(一般中文與英數字檔名不受影響)。你之後會需要用這類文字當**檔名**嗎?
 
   | 選項 | 動作 |
   |---|---|
-  | (a) 沒有,我跟同事都用中文 Windows | 在 `.turbo-plugin/encoding-status.local.md` 記「same-codepage team;push/pull 本機已正確處理;SVN 存 DBCS(Big5);無需額外設定」。**不寫**任何 routing/force_bash。 |
-  | (b) 有 Mac/Linux 同事會 svn checkout | nested `AskUserQuestion` 二選一:**(b1) 裝 PowerShell 7+**(`winget install --id Microsoft.PowerShell --silent ...`;winget 缺則導向 https://aka.ms/powershell;裝後在 `.claude/settings.local.json` 寫 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`、請使用者改用 pwsh.exe 重啟)。**(b2) 開 Windows UTF-8 設定**(`Start-Process intl.cpl -Verb RunAs`,引導勾「Beta:UTF-8」後重開機)。 |
-  | (c) 我不會用中文檔名 | 在 `.turbo-plugin/encoding-status.local.md` 記「ASCII-only filenames;無跨平台編碼顧慮」。 |
+  | (a) 不會(只用中文 / 英數 / ASCII 檔名)— 預設、絕大多數情況 | 在 `.turbo-plugin/encoding-status.local.md` 記「codepage-representable + ASCII filenames only;push/pull 本機正確處理;SVN 存可攜 UTF-8;無需額外設定」。**不寫**任何 routing/force_bash。 |
+  | (b) 會用到中文以外的特殊文字(日文 / 韓文 / emoji 等) | nested `AskUserQuestion` 二選一:**(b1) 裝 PowerShell 7+**(`winget install --id Microsoft.PowerShell --silent ...`;winget 缺則導向 https://aka.ms/powershell;裝後在 `.claude/settings.local.json` 寫 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`、請使用者改用 pwsh.exe 重啟)。**(b2) 開 Windows UTF-8 設定**(`Start-Process intl.cpl -Verb RunAs`,引導勾「Beta:UTF-8」後重開機)。 |
 
   純資訊性、不阻塞;完成印一句確認後繼續。
 
