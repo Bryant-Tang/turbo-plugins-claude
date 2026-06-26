@@ -1,6 +1,6 @@
 ---
 name: tp-commit-msg
-description: '撰寫或檢查 git commit message 時主動使用:依本專案語意規範產出 / 檢查訊息(祈使句、what + why、語言一致;不得引用 git SHA 或僅本地識別碼;commit type 一律依 `.commitlintrc.json`,本 skill 不列舉 type)。準備 commit 一段改動時就套用,不需使用者另外明講「幫我寫 commit message」。'
+description: '撰寫或檢查 git commit message 時主動使用:依本專案語意規範產出 / 檢查訊息(祈使句、what + why、語言一致;不得引用 git SHA 或僅本地識別碼)。**本 skill 不驗證、不限制 commit type**(type 沿用該 repo 既有慣例即可)。準備 commit 一段改動時就套用,不需使用者另外明講「幫我寫 commit message」。'
 argument-hint: 'Optional: draft commit message or the change to summarize'
 user-invocable: true
 allowed-tools: Read, Bash, Grep, Glob
@@ -18,15 +18,14 @@ allowed-tools: Read, Bash, Grep, Glob
 
 - 寫出讓**未來不在現場的讀者**(其他同事、半年後的自己)看得懂「改了什麼、為什麼改」的 commit message。
 - 訊息本身要能獨立成立——不依賴當前對話、ticket、或暫時情境就能理解。
-- 本 skill **只**負責訊息的**語意品質**;commit **type** 的有效集合由 `.commitlintrc.json` 決定,本 skill 不列舉、不重新定義 type。
+- 本 skill **只**負責訊息的**語意品質**;**不驗證、不限制、不列舉 commit type**——type 前綴沿用該 repo 既有 commit 慣例即可。
 
 ## Core Rules
 
-### Type(交給 commitlint,本 skill 不列舉)
+### Type(不驗證、不限制)
 
-- commit type 前綴(`feat` / `fix` / ... )一律以專案 repo root 的 `.commitlintrc.json` 為準;若該檔不存在或無顯式 `rules.type-enum`,沿用 conventional commits 慣例。
-- 本 skill **不**在文件裡硬列一份 type 清單,避免與 `.commitlintrc.json` 分歧。要查有效 type 時讀 `.commitlintrc.json`。
-- type 的「哪些會進 SVN history」是 `tp-push-to-svn` 的篩選決策(另一回事),不在本 skill 範圍。
+- commit type 前綴(`feat` / `fix` / `refactor` / `docs` / ...)**沿用該 repo 既有 commit 慣例**即可;本 skill **不**強制固定 type 清單、**不**驗證 type、**不**讀任何 commitlint 設定檔。turbo-plugin-git-svn 整體不管 commit type。
+- type 的「哪些會進 SVN history」是 `tp-push-to-svn` 的範圍(它同樣不依 type 過濾、全收非-merge subject),不在本 skill 範圍。
 
 ### 不得引用「換個環境就對不上」的識別碼
 
@@ -45,7 +44,7 @@ allowed-tools: Read, Bash, Grep, Glob
 ## Procedure
 
 1. 釐清這個 commit 實際改了什麼(讀 diff / `git status` / `git diff --staged`,必要時)。
-2. 選 type:讀 repo root `.commitlintrc.json` 的 `rules.type-enum` 取有效 type;依改動性質挑最貼切的一個(程式行為變更 vs 純文件 vs 重構 vs 雜務)。**不要**自行發明 type。
+2. 選 type:依改動性質挑一個貼切的 conventional 前綴(程式行為變更→`feat`/`fix`、純文件→`docs`、重構→`refactor`、雜務→`chore` 等),沿用該 repo 既有慣例;本 skill 不驗證、不限制 type。
 3. 寫 subject:`<type>: <祈使描述做了什麼>`,精簡且聚焦單一主題。
 4. 視需要寫 body:改動原因不顯而易見、或 bug 修正時,補「為什麼 / 原本錯在哪」。
 5. 自我檢查(見 Completion Checks):掃過訊息,移除任何 git SHA、本地識別碼、依賴當前對話情境的措辭。
@@ -53,7 +52,7 @@ allowed-tools: Read, Bash, Grep, Glob
 
 ## Completion Checks
 
-- type 來自 `.commitlintrc.json`(或 conventional 慣例),非自行發明,且本 skill 未硬列 type 清單。
+- commit type 沿用該 repo 既有 / conventional 慣例;本 skill 未驗證、未限制 type,也未讀任何 commitlint 設定。
 - 訊息中**沒有**特定 git SHA / commit hash。
 - 訊息中**沒有**需求 / 計畫 / 任務代號或單一 session 項目編號等僅本地識別碼。
 - subject 為祈使句、聚焦單一主題;動機不顯而易見時 body 有交代「為什麼」。

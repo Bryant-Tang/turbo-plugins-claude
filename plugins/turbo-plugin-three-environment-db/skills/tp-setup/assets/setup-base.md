@@ -61,7 +61,7 @@
 ## Base 段不做的事（交給各 plugin 的 concern 段）
 
 - **git init / 預設分支 / 初始 commit / `remote-svn/main` bridge / 連接歷史 / `[svn]` 設定 /
-  `.commitlintrc.json` / `.svn/` ignore** → **git-svn** concern。
+  `.svn/` ignore** → **git-svn** concern。
 - **`[iis]/[build]/[publish]/[frontend]/[run]` 設定 / `applicationhost.config` / `.vs//bin//obj/` ignore /
   MSBuild / IIS Express 路徑偵測** → **dotnet** concern。
 - **`dbhub.example.local.toml` / `dbhub.local.toml` / `.mcp.json`(tp-dbhub)** → **db** concern。

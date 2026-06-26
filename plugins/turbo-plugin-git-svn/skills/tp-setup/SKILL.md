@@ -14,7 +14,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 1. **共用 base 段**(concern-neutral):pre-check + case 偵測 + 建 `.turbo-plugin/` 與共用檔骨架。見
    `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/setup-base.md`,**先讀並執行該檔**。
-2. **git-svn concern 段**(本檔):git↔SVN bridge bootstrap、`[svn]` 設定、`.commitlintrc.json`、
+2. **git-svn concern 段**(本檔):git↔SVN bridge bootstrap、`[svn]` 設定、
    `.gitignore` 的 git-svn 區塊。
 
 > 本 plugin **不**處理 IIS apphost(屬 `turbo-plugin-dotnet-framework-web`)、dbhub(屬
@@ -77,7 +77,7 @@ parse stdout 的 `ARGV_SAFE_FOR_UNICODE`:
 - case (a):設定固定 `svn:ignore=.git` 並 commit 到 SVN 伺服器
 - case (b):將 SVN 內容合進當前 git branch(merge commit 留本地,**不**自動 push)
 
-`.gitignore` / `.commitlintrc.json` / `CLAUDE.md` / `.turbo-plugin/` 寫入、git 本地 op、template copy、
+`.gitignore` / `CLAUDE.md` / `.turbo-plugin/` 寫入、git 本地 op、template copy、
 AskUserQuestion 本身、檔案讀取/probe **不列**。
 
 ---
@@ -112,9 +112,6 @@ AskUserQuestion 本身、檔案讀取/probe **不列**。
 4. **git-svn 設定與檔案**:
    - `.turbo-plugin/config.toml` 的 `git-svn` 標記區塊:確保含 `[svn]` section(目前無必填 key,保留空 section
      供未來 svn 行為設定)。用 base 段「更新自己區塊」程序,只動 `# >>> turbo-plugin:git-svn >>>` 區塊。
-   - **`.commitlintrc.json`**(git-svn **owns**):**不存在**則複製
-     `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/commitlintrc-template.json`;**已存在**則 JSON parse +
-     merge `rules.type-enum[2]`(模板 12 類 union,保留使用者既有 rules,不覆寫整檔)。
 
 5. **初始 commit(commit 前先確認)**。main 需至少一個 commit,sub-step 7 的 `git worktree add` 才有 HEAD 可依附:
    - **先確認 git 提交身分**:`git config user.name` / `user.email`(local+global 合併)。任一為空 →
@@ -162,7 +159,7 @@ AskUserQuestion 本身、檔案讀取/probe **不列**。
 1. 檢查 `git config --get svn-remote.svn.url`。非空 → 警告「偵測到 git-svn 設定(`<url>`)。turbo-plugin 不相容
    git-svn,請手動移除:`git config --unset-all svn-remote.svn.url` + 移除 `.git/svn/`」。`AskUserQuestion`:已移除 / 取消。
 2. 跑 base 骨架(`.gitignore` base、`.turbo-plugin/`、`config.toml` 殼、`CLAUDE.md` base)
-   + case (a) sub-step 3(git-svn `.gitignore` 追加)、4(git-svn 設定 + `.commitlintrc.json`)。**先依 sub-step 5
+   + case (a) sub-step 3(git-svn `.gitignore` 追加)、4(git-svn 設定)。**先依 sub-step 5
    的「git 提交身分」檢查**確認身分(case (b) 會建 merge commit;同樣**不自動代填**)。case (b) 已有歷史,**不跑**初始 commit。
 3. 跑 case (a) sub-step 6-7(SVN URL + remote-svn/main bridge + svn checkout + 固定 svn:ignore),**外加**(即
    sub-step 8 在 case (b) 的對應做法,故不再另跑 8)`git merge --allow-unrelated-histories -m "chore: connect SVN
@@ -177,8 +174,7 @@ AskUserQuestion 本身、檔案讀取/probe **不列**。
 1. base 骨架缺項補建(`.turbo-plugin/` / `config.toml` 殼 / `.gitignore` base / `CLAUDE.md` base)— 已存在不覆寫。
 2. `.gitignore` 缺 git-svn patterns(`.turbo-plugin/worktrees/`、`.svn/`)→ idempotent append。
 3. `config.toml` 的 `git-svn` 區塊缺 `[svn]` → 補(只動自己標記區塊)。
-4. `.commitlintrc.json` 缺 → 複製 template;**已存在則 JSON merge `rules.type-enum[2]` 不覆寫整檔**。
-5. `CLAUDE.md` base 區塊缺 → 注入(marker 比對,內容相同則 skip)。
+4. `CLAUDE.md` base 區塊缺 → 注入(marker 比對,內容相同則 skip)。
 
 > case (c) **不**處理 bridge bootstrap(那是 case (a)/(b));若主 worktree 尚無 `remote-svn/main` bridge 且
 > 使用者要建,請改跑 case (a)/(b) 或用 `/tp-push-to-svn` 首推 bootstrap。
@@ -202,7 +198,7 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 
 - **偵測結果**:Phase 1 的 case + Phase 2 子流程。
 - **寫入位置清單**:base 骨架(`.turbo-plugin/` / `config.toml` / `.gitignore` / `CLAUDE.md`)+
-  git-svn 項目(`.commitlintrc.json` / `config.toml [svn]` / `.gitignore` git-svn patterns)各標「新建 / 已存在 / 補設定」。
+  git-svn 項目(`config.toml [svn]` / `.gitignore` git-svn patterns)各標「新建 / 已存在 / 補設定」。
 - **bridge 結果**(case (a)/(b)):`remote-svn/main` branch + `.turbo-plugin/worktrees/remote-svn-main` worktree、
   svn checkout、固定 `svn:ignore=.git`、連接歷史。
 - **使用者仍須手動處理**:
@@ -218,7 +214,7 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 
 - **Case 偵測順序固定**(submodule → no .git → not main worktree → no .turbo-plugin → else),不要更改。
 - **先跑共用 base 段、再做 git-svn concern** — base 只建 concern-neutral 共用檔骨架;bridge / `[svn]` /
-  `.commitlintrc.json` 等屬 git-svn concern。
+  git-svn 標記區塊等屬 git-svn concern。
 - **Case (a) 的 sub-step 7 內部順序 7a-7g 不可重排** — 7a `--no-checkout`、7e svn checkout、7d empty commit
   是 SVN obstruction 與後續 merge 的 load-bearing;7f propset + 7g commit 把固定 svn:ignore 固化,必在 7e 之後。
 - **Case (a) `git init` 一律帶 `-b main`** — 否則首推 branch mismatch。
@@ -230,8 +226,7 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 - **Case (c)/(d) 必須 idempotent** — 跑兩次結果同跑一次,不重複追加標記區塊、不覆寫已存在 shared file。
 - **標記區塊只動自己 concern 的** — config.toml 用 concern 標記、CLAUDE.md 用單一 `base` 區塊;git-svn 只寫
   config.toml 的 `git-svn`(及 CLAUDE.md 的 `base`,若 base 段未先建)區塊,不碰 dotnet 區塊或標記外內容。
-- 寫 `.commitlintrc.json` 用 JSON parse + array merge(`rules.type-enum[2]`),不用 string 替換。
-- **不裝** husky / commit-msg hook、**不執行** npm 工具鏈。`.commitlintrc.json` 純諮詢(無 hook 強制);commit type 的語意檢查由 `tp-commit-msg` 對該檔負責,`tp-push-to-svn` **不再**做 type 過濾(push body 收所有非-merge subject)。
+- **turbo-plugin-git-svn 不管 commit type**:**不裝** husky / commit-msg hook、**不執行** npm 工具鏈、**不產生 `.commitlintrc.json`**;`tp-commit-msg` 只顧訊息語意品質(不驗證 / 不限制 type)、`tp-push-to-svn` 不依 type 過濾(push body 收所有非-merge subject)。
 - **執行路由(挑 `.ps1` 還是 `.sh`)**:依環境選工具,**不要用 Bash 工具去呼叫 `pwsh` / `powershell`**——
   - Windows + 有 Git Bash → 用 **Bash 工具**跑 `.sh`。
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
@@ -245,7 +240,7 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 
 - `.turbo-plugin/` 存在,內含 `config.toml`(含 `git-svn` 標記區塊內的 `[svn]`)。
 - `.gitignore` 含 base(`.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`)+ git-svn(`.turbo-plugin/worktrees/`、`.svn/`)patterns。
-- `.commitlintrc.json` 含 `rules.type-enum[2]` ⊇ 12 類預設;`CLAUDE.md` 含 `base` 標記區塊。
+- `CLAUDE.md` 含 `base` 標記區塊。
 - Case (a)/(b):`git branch -a` 含 `remote-svn/main`,`git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-main`,
   該 worktree 內含 `.svn/`;主 worktree `git status --porcelain` 乾淨。
 - Case (a):`git rev-parse --abbrev-ref HEAD` = `main`;`git config user.name`/`user.email` 皆非空;

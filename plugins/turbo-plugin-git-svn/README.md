@@ -16,12 +16,12 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 | `/tp-reset-branch-to-main` | 把指定分支 `git reset --hard` 成 main 內容 |
 | `/tp-merge-main-into-branches` | 把最新 main merge 進指定(預設全部非 remote-svn)本地分支 |
 | `/tp-suggest-ignore` | 偵測 untracked 檔案建議加入 `.gitignore`,並可把已不該追蹤的檔從 SVN un-track |
-| `/tp-commit-msg` | 撰寫 / 檢查 commit message 語意(type 依 commitlint;禁 SHA / 本地識別碼) |
+| `/tp-commit-msg` | 撰寫 / 檢查 commit message 語意(祈使句、what+why;禁 SHA / 本地識別碼;不驗證 / 不限制 type) |
 
 ## 設定
 
 - 需 git + SVN client(`svn` / `svnadmin` 在 PATH)。
-- `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml`(+ `.commitlintrc.json`、`CLAUDE.md` base 區塊);machine-specific 偏好寫進 gitignored `config.local.toml`。
+- `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml`(+ `CLAUDE.md` base 區塊);machine-specific 偏好寫進 gitignored `config.local.toml`。
 
 ## 安裝
 

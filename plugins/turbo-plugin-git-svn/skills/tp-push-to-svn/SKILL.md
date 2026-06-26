@@ -12,7 +12,7 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 
 把本地 git working branch 的新 commits push 上 SVN。SVN message body 由 prepare 腳本**確定性鎖定**為這次推送範圍內**所有非-merge commit 的 subject 條列**(`- ` 開頭、無 hash、無 commit-type 過濾);agent 只負責寫一行 **title**。body 經 temp 檔交付給 commit 腳本自行組合(title + 鎖定 body),agent 無法竄改 body。
 
-**設計理念**:SVN history 的可讀性來自「完整保留每個 code-level subject」,不再做 type 篩選或逐筆未知 type 詢問。要改 body 內容,請對對應 commit `git rebase` / amend subject 後重跑本 skill。commit 格式的語意檢查由獨立的 `tp-commit-msg` 對使用者的 `.commitlintrc.json` 負責,與本 skill 無關。
+**設計理念**:SVN history 的可讀性來自「完整保留每個 code-level subject」,不再做 type 篩選或逐筆未知 type 詢問。要改 body 內容,請對對應 commit `git rebase` / amend subject 後重跑本 skill。commit 訊息的語意品質由獨立的 `tp-commit-msg` 負責(它**不**驗證 / 限制 commit type),與本 skill 無關。
 
 ## Procedure
 
