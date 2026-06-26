@@ -20,12 +20,12 @@ try {
     $projectFile = $target.Path
 
     # MSBuild path: config.local.toml [tools] msbuild_path → standard VS install locations
-    # (v1.0+ U2: strict cut, no env var fallback — throws with /tp-setup guidance if missing)
+    # (strict cut, no env var fallback — throws with /tp-setup guidance if missing)
     $msbuildPath = Find-MSBuild -RepoRoot $repoRoot
 
     # Configuration / Platform: OMIT when the agent gave no value (no CLI, no [build] memory) so
     # MSBuild / the .sln / Directory.Build.props resolve them — this matches VS. Forcing Debug/AnyCPU
-    # (the pre-U3 behavior) overrode the csproj's `<Configuration Condition="'$(Configuration)'==''">`
+    # (the prior behavior) overrode the csproj's `<Configuration Condition="'$(Configuration)'==''">`
     # default and silently diverged from VS. -Default $null keeps "no value" as no value.
     $buildConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'build' -Key 'configuration' -CliValue $Configuration -Default $null
     $buildPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'build' -Key 'platform' -CliValue $Platform -Default $null

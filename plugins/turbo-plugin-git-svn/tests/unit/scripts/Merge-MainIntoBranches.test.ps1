@@ -2,7 +2,7 @@
 #
 # Script under test: plugins/turbo-plugin-git-svn/scripts/Merge-MainIntoBranches.ps1
 #
-# New contract (v0.5.0): [-Branch <name>] is [string[]].
+# New contract: [-Branch <name>] is [string[]].
 #   - No -Branch  -> target = EVERY local branch except 'main' and 'remote-svn/*'.
 #   - -Branch X,Y -> target = exactly X,Y. A name that is missing OR excluded
 #     (main / remote-svn/*) is reported "SKIP <b> (not found / excluded)" and skipped,

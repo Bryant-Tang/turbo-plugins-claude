@@ -2,7 +2,7 @@
 #
 # Tests for plugins/turbo-plugin-git-svn/scripts/Submit-SvnCommit.ps1.
 #
-# Scope (U9: --Message renamed to --Title; agent supplies only the title, body comes from the
+# Scope (--Message renamed to --Title; agent supplies only the title, body comes from the
 # locked pin written by Build-SvnCommit):
 #   - missing -Branch → required-arg error
 #   - missing -Title → required-arg error
@@ -90,7 +90,7 @@ Describe 'Submit-SvnCommit' {
             }
         }
 
-        # v0.5.0 U7/U8: any valid branch name is accepted now; 'develop' is a legal name
+        # Any valid branch name is accepted now; 'develop' is a legal name
         # with no bridge worktree, so the script fails with "Remote worktree ... not found"
         # (the old "Unsupported branch" rejection no longer exists).
         It 'exit != 0' { ($script:res3.ExitCode -ne 0) | Should -BeTrue }

@@ -1,6 +1,6 @@
 ﻿# Build-SeedRepo.ps1
 #
-# Idempotent seed builder for turbo-plugin v1.0 script tests SVN fixture.
+# Idempotent seed builder for turbo-plugin script tests SVN fixture.
 #
 # 產出:
 #   plugins/turbo-plugin-git-svn/tests/fixtures/seed/svn-repo-r1-r20.dump
@@ -396,7 +396,7 @@ not UTF-8). Stored bytes form a Windows-platform-specific canonical instead.
   Actually stored bytes:      $actualHex
 Continuing — dump file will reflect Windows-platform-specific encoding.
 R18 中文 byte-level 測試需改為 round-trip text stability check,而非 canonical
-UTF-8 byte equality。詳見 U1 PR description / plan trade-off update。
+UTF-8 byte equality。詳見 PR description / plan trade-off update。
 "@
 }
 

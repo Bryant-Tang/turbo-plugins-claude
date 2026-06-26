@@ -1,7 +1,7 @@
 # Get-PushPreflight.test.ps1 (Pester 5)
 #
 # Script: plugins/turbo-plugin-git-svn/scripts/Get-PushPreflight.ps1
-# Token contract (v0.5.0 U9): emits exactly ONE terminal token prefixed 'TP_TOKEN:'.
+# Token contract: emits exactly ONE terminal token prefixed 'TP_TOKEN:'.
 # Precedence: DETACHED_HEAD > BRANCH_MISMATCH_WARNING > BRIDGE_ABSENT > BRIDGE_PRESENT.
 # These tests build their own minimal git sandboxes (no svn / no .turbo-plugin worktrees
 # needed for the token-routing scenarios most worth pinning).
@@ -113,7 +113,7 @@ Describe 'Get-PushPreflight token contract' {
         # A valid branch passes sanitization; running OUTSIDE any git repo makes Get-MainWorktree
         # throw AFTER $sanitized is set. The catch must emit exactly one TP_TOKEN:ERROR so the
         # SKILL (which routes only by TP_TOKEN: lines) is never handed an undocumented "exit 1,
-        # no token". This is the PS<->sh parity path hardened in v0.5.1.
+        # no token". This is the PS<->sh parity path hardened.
         It 'emits a single TP_TOKEN:ERROR for a valid branch run outside a git repo' -Skip:(-not $hasGit) {
             $nonGit = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pf-nongit-$([Guid]::NewGuid().ToString('N'))")
             $null = New-Item -ItemType Directory -Path $nonGit -Force

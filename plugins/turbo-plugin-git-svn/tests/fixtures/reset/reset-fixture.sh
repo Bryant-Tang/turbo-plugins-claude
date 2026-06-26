@@ -5,7 +5,7 @@
 #
 # On Windows this is exercised via Git Bash (the .sh phase 1 test path). On Linux/macOS
 # native it works the same modulo the svnadmin dump format compatibility (out of scope
-# for v1.0 — see plan K-Decision).
+# see plan K-Decision).
 #
 # Defaults are repo-relative, gitignored tests/.sandbox/ (override with --test-root / --svn-repo):
 #   --test-root <tests>/.sandbox/test-turbo-plugin
@@ -92,7 +92,7 @@ if [[ $SKIP_SVN -eq 0 ]]; then
 
     # ─── Step 3: svn checkout remote-svn-main / remote-svn-test-1 ─────────────
     #
-    # v1.0 (U1) nested layout (matches get_worktrees_dir): the container lives INSIDE
+    # nested layout (matches get_worktrees_dir): the container lives INSIDE
     # the main worktree at <TEST_ROOT>/.turbo-plugin/worktrees/. All turbo-plugin
     # scripts read this nested path.
 

@@ -21,7 +21,7 @@ try {
     $projectFile = $target.Path
 
     # MSBuild path: config.local.toml [tools] msbuild_path → standard VS install locations
-    # (v1.0+ U2: strict cut, no env var fallback — throws with /tp-setup guidance if missing)
+    # (strict cut, no env var fallback — throws with /tp-setup guidance if missing)
     $msbuildPath = Find-MSBuild -RepoRoot $repoRoot
 
     # pubxml: CLI arg → config.toml [publish].default_pubxml → auto-detect single .pubxml under project's Properties/PublishProfiles
@@ -50,7 +50,7 @@ try {
 
     # Configuration / Platform: OMIT when the agent gave no value — the pubxml's embedded
     # <Configuration>/<Platform> govern the publish (that is how VS publishes from a profile).
-    # Forcing Release/Any CPU (the pre-U4 default) overrode the profile and could publish the
+    # Forcing Release/Any CPU (the prior default) overrode the profile and could publish the
     # wrong configuration. -Default $null keeps "no value" as no value.
     $publishConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'configuration' -CliValue $Configuration -Default $null
     $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default $null
@@ -136,7 +136,7 @@ try {
     $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
     $out = Get-PublishOutputLines -PublishUrlRaw $publishUrlRaw -Method $method -ProjectDir $projectDir
 
-    # U10 / KTD8 / R15: after the shared marker + lead lines, emit the publish location as BARE
+    # KTD8: after the shared marker + lead lines, emit the publish location as BARE
     # line(s) the agent relays VERBATIM — the raw Windows path then the file:/// URL (FileSystem),
     # each on its own line with NO trailing punctuation, so the terminal keeps the paths clickable.
     Write-Output $publishMarker

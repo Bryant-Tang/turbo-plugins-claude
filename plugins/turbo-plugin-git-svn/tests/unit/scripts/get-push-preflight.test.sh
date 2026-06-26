@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # get-push-preflight.test.sh (shUnit2)
 #
-# Script under test: scripts/get-push-preflight.sh (v0.5.0 U9).
+# Script under test: scripts/get-push-preflight.sh.
 # Token contract: emits exactly ONE terminal token prefixed 'TP_TOKEN:'.
 # Precedence: DETACHED_HEAD > BRANCH_MISMATCH_WARNING > BRIDGE_ABSENT > BRIDGE_PRESENT.
 # Mirrors the scenarios pinned by the PS sibling Get-PushPreflight.test.ps1:
@@ -145,7 +145,7 @@ test_bridge_absent() {
 # ── Case 7: post-sanitization failure → TP_TOKEN:ERROR (parity with .ps1 catch) ──
 # A valid branch passes sanitization; $SB itself is not a git repo, so get_main_worktree
 # fails AFTER sanitization. _die_token must emit exactly one TP_TOKEN:ERROR (never tokenless),
-# matching the .ps1 catch. This is the PS<->sh parity path hardened in v0.5.1.
+# matching the .ps1 catch. This is the PS<->sh parity path hardened.
 test_error_token_on_postsanitization_failure() {
     if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi
     # Hermetic guard: this scenario REQUIRES $SB to be outside any git repo so

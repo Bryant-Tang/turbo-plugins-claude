@@ -42,7 +42,7 @@ try {
     # 1. Collect orphan processes: iisexpress.exe whose /site:<name> looks like a turbo-plugin
     #    site. Scoped mode matches this project's stem (different hash than current); no-project
     #    mode matches the generic <stem>-<8hex> family (no live site is known to exclude).
-    # v1.0 (U3) — canonical applicationhost.config is shared across worktrees and never mutated
+    # canonical applicationhost.config is shared across worktrees and never mutated
     # at runtime; XML orphan site scan is therefore obsolete (canonical only contains current
     # project's site entries managed by VS / tp-setup, not stale per-worktree entries).
     $processes = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'iisexpress.exe'" -ErrorAction SilentlyContinue)
@@ -70,7 +70,7 @@ try {
         $orphanMap[$op.SiteName] = @{ Pid = $op.Pid }
     }
 
-    # 3. v1.0 (U3) — clean up stale per-launch temp applicationhost.config files in %TEMP%
+    # 3. clean up stale per-launch temp applicationhost.config files in %TEMP%
     #    whose owning iisexpress.exe is gone. Files match pattern turbo-plugin-iis-*.config.
     #    For each file, identify-by-content (parse XML, read site name) is overkill; instead,
     #    match the running iisexpress.exe processes' -config:<path> argument and remove temp
@@ -108,7 +108,7 @@ try {
     }
 
     if ($orphanMap.Count -eq 0 -and $orphanTempFiles.Count -eq 0) {
-        # v0.2.7+ F-U13.6 fix: if user explicitly asked to remove a specific site but no orphans
+        # fix: if user explicitly asked to remove a specific site but no orphans
         # exist, surface a warning rather than silently exit 0 ("No orphan...") — user might
         # think the removal succeeded when actually nothing was checked against their request.
         if (-not [string]::IsNullOrWhiteSpace($RemoveSite)) {
@@ -172,7 +172,7 @@ try {
         }
     }
 
-    # 6. v1.0 (U3) — remove stale temp applicationhost.config files when -RemoveAll given.
+    # 6. remove stale temp applicationhost.config files when -RemoveAll given.
     #    (For -RemoveSite, leave temp files alone — they're keyed by identity-hash, not site
     #    name, so we can't reliably correlate to a single requested site.)
     if ($RemoveAll -and $orphanTempFiles.Count -gt 0) {

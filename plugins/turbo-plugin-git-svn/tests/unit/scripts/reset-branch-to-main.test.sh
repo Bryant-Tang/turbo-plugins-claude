@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # reset-branch-to-main.test.sh (shUnit2)
 #
-# Script under test: scripts/reset-branch-to-main.sh (v0.5.0).
+# Script under test: scripts/reset-branch-to-main.sh.
 # New contract (generalized from reset-remote-test.sh — no test-<n>):
 #   reset-branch-to-main.sh --branch <name> [--diff-only]
 # Emits LOSE / GAIN / FILES_LOST_AFTER_PUSH previews; early-exits "already equals main".

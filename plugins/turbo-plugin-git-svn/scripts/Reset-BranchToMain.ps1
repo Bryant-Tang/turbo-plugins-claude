@@ -32,7 +32,7 @@ try {
         throw "Main worktree has uncommitted changes. Commit or stash before reset.`n$mainStatus"
     }
 
-    # Dirty-check the remote worktree. v0.5.0 U12: `.svn/` is now gitignored in the bridge
+    # Dirty-check the remote worktree. `.svn/` is now gitignored in the bridge
     # (synced from main by New-RemoteBridge), so git ignores SVN's binary metadata; no
     # hand-filtering of `.svn/*` is needed and genuine manual edits are still caught.
     $remoteStatus = (& git -C $remoteWorktreePath status --porcelain | Out-String).Trim()

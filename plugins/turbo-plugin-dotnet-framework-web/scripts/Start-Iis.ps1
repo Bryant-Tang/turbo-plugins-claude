@@ -92,8 +92,8 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     if ([string]::IsNullOrWhiteSpace($settings.ApplicationhostConfigFile)) {
         throw "applicationhost.config 路徑無法解析。請執行 /tp-setup 建立 .turbo-plugin/applicationhost.config。"
     }
-    # Find-IisExpressPath (in lib/IisHelpers.ps1) throws on missing/invalid path
-    # since v1.0 (U2); guard kept as defensive layer in case caller short-circuits the helper.
+    # Find-IisExpressPath (in lib/IisHelpers.ps1) throws on missing/invalid path;
+    # guard kept as defensive layer in case caller short-circuits the helper.
     if (-not (Test-Path -LiteralPath $settings.IisExpressPath -PathType Leaf)) {
         throw "IIS Express executable does not exist: $($settings.IisExpressPath)"
     }
@@ -131,7 +131,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         }
     }
 
-    # v1.0 (U3) — render a per-launch temp applicationhost.config:
+    # render a per-launch temp applicationhost.config:
     #   1. Delete any stale temp file from a previous run (same identity-hash).
     #   2. Copy canonical → %TEMP%\turbo-plugin-iis-<identity-hash>.config.
     #   3. In the temp file, replace the __TURBO_PLUGIN_PHYSICAL_PATH__ placeholder
@@ -157,7 +157,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     # Patch physicalPath in the temp file. Try placeholder substitution first (cheap, line-level);
     # if no substitution happened, fall back to XML SetAttribute for the resolved site name —
     # this handles the case where canonical was sourced from VS with concrete absolute paths
-    # (e.g. before U5 tp-setup placeholder rewrite shipped).
+    # (e.g. before the tp-setup placeholder rewrite shipped).
     $placeholder = '__TURBO_PLUGIN_PHYSICAL_PATH__'
     # XML attribute values escape backslash as-is (no \ escaping required), but `&`, `<`, `"`
     # must be encoded. csproj paths can contain `&` (rare) on Windows; encode defensively.

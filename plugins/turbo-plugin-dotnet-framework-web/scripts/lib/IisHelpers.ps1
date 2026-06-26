@@ -3,11 +3,11 @@ $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'Common.ps1'))
 
-# Locate iisexpress.exe. Lookup order (v1.0+ U2 — strict cut, no env fallback):
+# Locate iisexpress.exe. Lookup order (strict cut, no env fallback):
 #   1. .turbo-plugin/config.local.toml [tools] iis_express_path  (machine-specific, gitignored)
 #   2. Standard install paths (Program Files (x86) / Program Files)
 #   3. Throw with /tp-setup guidance.
-# $env:TURBO_PLUGIN_IIS_EXPRESS_PATH is deliberately NOT read — v1.0 is the first release;
+# $env:TURBO_PLUGIN_IIS_EXPRESS_PATH is deliberately NOT read — this is the first release;
 # no legacy users to migrate. If the env var happens to be set externally, it is ignored.
 function Find-IisExpressPath {
     param([string]$RepoRoot = '')
@@ -83,7 +83,7 @@ function Test-TurboPluginSiteName {
 
 function Find-ApplicationhostTarget {
     param([string]$RepoRoot, [string]$ProjectFile)
-    # v1.0 (U3) — canonical applicationhost.config lives at .turbo-plugin/applicationhost.config
+    # canonical applicationhost.config lives at .turbo-plugin/applicationhost.config
     # (committed to git, cross-worktree shared, never mutated at runtime). start-iis renders a
     # per-launch temp file with physicalPath substituted to the current worktree's csproj dir.
     # VS UI manages .vs/<sln>/config/applicationhost.config independently — turbo-plugin no

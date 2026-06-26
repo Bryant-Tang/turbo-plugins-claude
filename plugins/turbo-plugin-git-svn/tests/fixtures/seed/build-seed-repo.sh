@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build-seed-repo.sh
 #
-# Bash equivalent of build-seed-repo.ps1 for turbo-plugin v1.0 Phase 1 SVN seed.
+# Bash equivalent of build-seed-repo.ps1 for turbo-plugin Phase 1 SVN seed.
 #
 # Strategy: on Windows (Git Bash / MSYS) delegate to the PowerShell version since
 # it already handles the F-2 / F-3 quirks (cmd /c dump redirect + svnadmin setlog

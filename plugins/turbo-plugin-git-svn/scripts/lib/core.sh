@@ -184,7 +184,7 @@ read_turbo_plugin_config() {
 # Echoes resolved value (empty string if nothing resolved).
 # Uses sentinel __TP_FOUND__: so empty-string config values are distinguished from "not found".
 #
-# v1.0+ U1: config.local.toml (gitignored, machine-specific) is consulted BEFORE
+# config.local.toml (gitignored, machine-specific) is consulted BEFORE
 # config.toml so its key-level values override the canonical version-controlled file.
 # This is the bash equivalent of Core.ps1's "read config.toml then merge local on top"
 # — semantically identical for the get-one-key API surface.

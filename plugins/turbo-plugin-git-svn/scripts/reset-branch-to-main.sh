@@ -44,7 +44,7 @@ if [[ -n "$MAIN_STATUS" ]]; then
   exit 1
 fi
 
-# Dirty-check the remote worktree. v0.5.0 U12: `.svn/` is gitignored in the bridge (synced
+# Dirty-check the remote worktree. `.svn/` is gitignored in the bridge (synced
 # from main by new-remote-bridge), so git ignores SVN's binary metadata; no hand-filtering
 # of `.svn/*` is needed and genuine manual edits are still caught.
 REMOTE_STATUS="$(git -C "$REMOTE_PATH" status --porcelain)"

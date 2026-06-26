@@ -1,8 +1,8 @@
 ﻿# Invoke-PostToolUseEnterWorktree.test.ps1 (Pester 5)
 #
 # Script: plugins/turbo-plugin-dotnet-framework-web/scripts/hooks/Invoke-PostToolUseEnterWorktree.ps1
-# Behavior: v1.0 (U3) — fully no-op. Drain stdin, emit empty JSON `{}`, exit 0.
-#   v1.0 separates concerns（canonical / runtime / VS UI 三層分離），hook 無事可做。
+# Behavior: fully no-op. Drain stdin, emit empty JSON `{}`, exit 0.
+#   Separates concerns（canonical / runtime / VS UI 三層分離），hook 無事可做。
 #
 # Cases:
 #   1. happy no-op: invoke 不傳特殊 env / stdin → exit 0、stdout 是 `{}` JSON、

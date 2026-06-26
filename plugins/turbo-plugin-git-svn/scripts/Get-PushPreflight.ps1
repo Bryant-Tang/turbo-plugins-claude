@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
 
-# Pre-flight detection for tp-push-to-svn first-push bootstrap (v0.5.0 U9).
+# Pre-flight detection for tp-push-to-svn first-push bootstrap.
 # Inspects git HEAD + bridge presence and emits exactly ONE terminal routing token,
 # prefixed 'TP_TOKEN:' so the SKILL can trust it (raw branch text cannot forge it).
 # Precedence: DETACHED_HEAD > BRANCH_MISMATCH_WARNING > BRIDGE_ABSENT > BRIDGE_PRESENT.

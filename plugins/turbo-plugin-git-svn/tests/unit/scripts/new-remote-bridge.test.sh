@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # new-remote-bridge.test.sh (shUnit2)
 #
-# Script under test: scripts/new-remote-bridge.sh (v0.5.0 U9).
+# Script under test: scripts/new-remote-bridge.sh.
 # New contract (generalized from new-remote-test.sh — no test-<n>):
 #   new-remote-bridge.sh --branch <name> --svn-url <url>
 # Creates the git<->SVN BRIDGE ONLY (remote-svn/<branch> branch + worktree + svn checkout);

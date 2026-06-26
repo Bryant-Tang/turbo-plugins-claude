@@ -9,14 +9,14 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
-# v1.0 (U3) — PostToolUse EnterWorktree hook is fully no-op.
+# PostToolUse EnterWorktree hook is fully no-op.
 #
-# Prior to v1.0, this hook copied .turbo-plugin/applicationhost.config into
+# Previously, this hook copied .turbo-plugin/applicationhost.config into
 # .vs/<sln>/config/applicationhost.config and rewrote physicalPath there for the
 # entered worktree. That coupled turbo-plugin to VS's internal directory and
 # polluted .vs/ writes on every EnterWorktree call.
 #
-# v1.0 separates concerns:
+# Separates concerns:
 #   - Canonical applicationhost.config: .turbo-plugin/applicationhost.config
 #     (committed to git, cross-worktree shared, never mutated at runtime)
 #   - Runtime config: %TEMP%\turbo-plugin-iis-<identity-hash>.config

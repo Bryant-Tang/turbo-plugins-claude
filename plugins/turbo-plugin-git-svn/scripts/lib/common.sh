@@ -17,7 +17,7 @@ get_worktrees_dir() {
   echo "$main_worktree/.turbo-plugin/worktrees"
 }
 
-# Validate a branch name for remote-svn worktree mapping (v0.5.0 U7 allowlist).
+# Validate a branch name for remote-svn worktree mapping (allowlist).
 # Returns 0 if OK, else prints the reason to stderr and returns 1. 'main' is the
 # canonical trust anchor and always passes; other casings of 'main' are rejected so
 # they cannot impersonate the anchor directory.
@@ -77,7 +77,7 @@ find_remote_worktree_collision() {
   return 0
 }
 
-# Map any branch to its remote-svn ref + worktree dir (v0.5.0 U7 — generalized from
+# Map any branch to its remote-svn ref + worktree dir (generalized from
 # the old hard-coded main / test-<n>). Mapping:
 #   name = remote-svn-<branch with '/' -> '-'>, ref = remote-svn/<branch>
 # Args: <branch_name> <worktrees_dir>

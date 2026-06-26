@@ -29,7 +29,7 @@ try {
         throw "Main worktree has uncommitted changes. Please commit or stash before pulling from SVN.`n$mainStatus"
     }
 
-    # Dirty-check the remote worktree. v0.5.0 U12: `.svn/` is now in the bridge's .gitignore
+    # Dirty-check the remote worktree. `.svn/` is now in the bridge's .gitignore
     # (synced from main by New-RemoteBridge), so git ignores SVN's binary metadata and we no
     # longer hand-filter `.svn/*`; genuine manual edits are still caught and would otherwise be
     # packaged into the sync commit.

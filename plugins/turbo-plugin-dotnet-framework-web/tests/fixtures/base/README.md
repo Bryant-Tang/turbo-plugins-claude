@@ -30,7 +30,7 @@ base/
 `base/` 目錄,並重跑:
 
 ```powershell
-.\tests\v1.0\fixtures\reset\Reset-Fixture.ps1
+.\tests\fixtures\reset\Reset-Fixture.ps1
 ```
 
 ## 變更時注意

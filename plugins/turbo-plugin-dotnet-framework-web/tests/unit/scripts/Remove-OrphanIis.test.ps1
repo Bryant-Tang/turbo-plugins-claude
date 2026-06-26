@@ -126,7 +126,7 @@ Describe 'Remove-OrphanIis' {
     }
 
     # ─── R5: regex-metacharacter 誤殺防護 (canonical 斷言) ───────────────────────
-    # v1.0 的 Remove-OrphanIis 比對 running iisexpress.exe 的 /site:<name> 命令列,
+    # Remove-OrphanIis 比對 running iisexpress.exe 的 /site:<name> 命令列,
     # 用 "^<csprojStem>-<8hex>$" pattern。stem 須被當 literal (regex-escape),否則含
     # metachar 的 stem (如 My.Test) 會誤 match 別的站台 (如 MyXTest-deadbeef) → 把不該
     # 清的站台當 orphan 殺掉。以下證明 escape 生效。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Internal helper (v0.5.0 U9): create the git<->SVN bridge for an EXISTING local branch
+# Internal helper: create the git<->SVN bridge for an EXISTING local branch
 # on its first push. Generalized from new-remote-test.sh (no test-<n>; takes --branch +
 # --svn-url). Does NOT create a working branch -- that is already the caller's current
 # branch; this only creates the remote-svn/<branch> bridge branch + worktree + svn checkout.
@@ -32,7 +32,7 @@ if [[ ! -d "$WORKTREES_DIR" ]]; then
   echo "Error: worktrees directory not found: $WORKTREES_DIR. Run /tp-setup first." >&2; exit 1
 fi
 
-# Resolve + sanitize the branch (U7): rejects unsafe names; computes ref + dir + MAX_PATH.
+# Resolve + sanitize the branch: rejects unsafe names; computes ref + dir + MAX_PATH.
 RESOLVED="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR")" || exit 1
 REMOTE_NAME="${RESOLVED%%|*}"
 REMOTE_BRANCH="${RESOLVED#*|}"; REMOTE_BRANCH="${REMOTE_BRANCH%%|*}"

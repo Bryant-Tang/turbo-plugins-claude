@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# invoke-posttooluse-enterworktree.test.sh (shUnit2) — bash sibling for invoke-posttooluse-enterworktree.sh (v1.0 no-op hook)
+# invoke-posttooluse-enterworktree.test.sh (shUnit2) — bash sibling for invoke-posttooluse-enterworktree.sh (no-op hook)
 #
 # Behavior: 在 Windows / Git Bash 把 stdin pipe 給 .ps1 native impl;非 Windows
 # 直接印 `{}` exit 0。兩條路徑 always exit 0(hook 是 advisory,不可 block session)。

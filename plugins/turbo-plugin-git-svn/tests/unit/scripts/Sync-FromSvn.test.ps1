@@ -2,7 +2,7 @@
 #
 # Tests for plugins/turbo-plugin-git-svn/scripts/Sync-FromSvn.ps1.
 #
-# Scope (U4 plan):
+# Scope:
 #   - missing -Branch arg → fail-loudly
 #   - unsupported branch name (-Branch foo) → "Unsupported branch"
 #   - remote-svn-main worktree missing → fail-loudly
@@ -96,7 +96,7 @@ Describe 'Sync-FromSvn' {
             }
         }
 
-        # v0.5.0 U7/U8: 'foo' is a valid branch name now (no more "Unsupported branch"
+        # 'foo' is a valid branch name now (no more "Unsupported branch"
         # rejection); with no bridge worktree the script fails "Remote worktree ... not found".
         It 'exit != 0 (no bridge for this branch)' { ($script:res2.ExitCode -ne 0) | Should -BeTrue }
         It 'stderr mentions the missing remote worktree' { $script:res2.Combined | Should -Match 'not found' }
@@ -141,7 +141,7 @@ Describe 'Sync-FromSvn' {
         # F-U(test infra): Reset-Fixture requires svnadmin load to succeed; if the seed dump in
         # the working tree has been LF→CRLF mangled by git autocrlf (no .gitattributes binary rule),
         # load fails with E200004. We detect that and SKIP rather than FAIL — the corruption is a
-        # U1 fixture artefact, not a U4 / pull-from-svn regression. Missing svn/svnadmin or a
+        # fixture artefact, not a pull-from-svn regression. Missing svn/svnadmin or a
         # missing dump also SKIP (Unix runners).
 
         It 'r5 中文 commit msg decodes to 字典 #3.1' -Skip:(-not $script:HasSvn) {
@@ -163,7 +163,7 @@ Describe 'Sync-FromSvn' {
                 if ([System.IO.File]::Exists($resetOut)) { try { [System.IO.File]::Delete($resetOut) } catch {} }
 
                 if ($rc -ne 0 -and $resetLog -match 'E200004|Could not convert|svnadmin load failed') {
-                    Set-ItResult -Skipped -Because 'Reset-Fixture failed with svnadmin-load corruption (likely LF→CRLF dump mangle; U1 .gitattributes fix needed)'
+                    Set-ItResult -Skipped -Because 'Reset-Fixture failed with svnadmin-load corruption (likely LF→CRLF dump mangle; .gitattributes fix needed)'
                     return
                 }
 

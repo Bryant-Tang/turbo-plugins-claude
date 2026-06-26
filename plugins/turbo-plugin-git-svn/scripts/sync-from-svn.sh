@@ -42,7 +42,7 @@ fi
 
 ORIGINAL_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD)"
 
-# Dirty-check the remote worktree. v0.5.0 U12: `.svn/` is now in the bridge's .gitignore
+# Dirty-check the remote worktree. `.svn/` is now in the bridge's .gitignore
 # (synced from main by new-remote-bridge), so git ignores SVN's binary metadata and the
 # manual `.svn/*` filter is gone; genuine manual edits are still caught and would otherwise
 # be packaged into the sync commit.

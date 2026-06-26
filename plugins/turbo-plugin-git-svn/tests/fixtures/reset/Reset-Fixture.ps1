@@ -1,6 +1,6 @@
 ﻿# Reset-Fixture.ps1
 #
-# Per-case fixture reset entry for turbo-plugin v1.0 Phase 1 tests.
+# Per-case fixture reset entry for turbo-plugin Phase 1 tests.
 #
 # 做三件事:
 #   1. robocopy /MIR  plugins/turbo-plugin-git-svn/tests/fixtures/base  ->  $TestRoot
@@ -9,7 +9,7 @@
 #   2. svnadmin create $SvnRepo; svnadmin load < seed.dump  (via cmd /c redirect, F-2 一致)
 #   3. svn checkout trunk -> <TestRoot>\.turbo-plugin\worktrees\remote-svn-main
 #      svn checkout branches/test-1 -> <TestRoot>\.turbo-plugin\worktrees\remote-svn-test-1
-#      (v1.0 U1 nested layout: container lives INSIDE the main worktree at
+#      (nested layout: container lives INSIDE the main worktree at
 #       <TestRoot>\.turbo-plugin\worktrees\。所有 turbo-plugin script — resolve-iis-settings /
 #       svn-log / pull-from-svn 等 — 都讀這個 nested 路徑。)
 #
@@ -161,7 +161,7 @@ if (-not $SkipSvn) {
 
     # ─── Step 3: svn checkout remote-svn-main / remote-svn-test-1 ─────────────
     #
-    # v1.0 (U1) nested layout (matches Get-WorktreesDir):
+    # nested layout (matches Get-WorktreesDir):
     #   <TestRoot>                              main project
     #   <TestRoot>/.turbo-plugin/worktrees/     worktrees container (inside main)
     #     ├── remote-svn-main/

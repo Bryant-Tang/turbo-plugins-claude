@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
 
-# Internal helper (v0.5.0 U9): create the git<->SVN bridge for an EXISTING local branch
+# Internal helper: create the git<->SVN bridge for an EXISTING local branch
 # on its first push. Generalized from the old New-RemoteTest (no test-<n> numbering;
 # takes an explicit -Branch + -SvnUrl). It does NOT create a working branch -- the
 # working branch is already the caller's current branch; this only creates the
@@ -28,7 +28,7 @@ try {
         throw "Worktrees directory not found: $worktreesDir. Run /tp-setup first to bootstrap."
     }
 
-    # Resolve + sanitize the branch (U7): rejects unsafe names and computes the bridge
+    # Resolve + sanitize the branch: rejects unsafe names and computes the bridge
     # ref + worktree dir, with the MAX_PATH guard.
     $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir
     $remoteBranch       = $remote.Branch   # remote-svn/<branch>

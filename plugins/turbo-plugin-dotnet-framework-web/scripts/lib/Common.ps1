@@ -48,7 +48,7 @@ function Format-IisExpressSiteName {
     return "$stem-$IdentityHash"
 }
 
-# Locate MSBuild.exe. Lookup order (v1.0+ U2 — strict cut, no env fallback):
+# Locate MSBuild.exe. Lookup order (strict cut, no env fallback):
 #   1. .turbo-plugin/config.local.toml [tools] msbuild_path  (machine-specific, gitignored)
 #   2. Standard VS install paths (VS 2017/2019/2022 Enterprise/Professional/Community)
 #   3. Throw with /tp-setup guidance.
@@ -155,7 +155,7 @@ function Resolve-ProjectTarget {
     return [pscustomobject]@{ Path = $projectFile; Type = $type }
 }
 
-# Resolve a pubxml <PublishUrl> into the two display lines tp-publish prints (U10 / KTD8 / R15):
+# Resolve a pubxml <PublishUrl> into the two display lines tp-publish prints (KTD8):
 # the raw absolute path and a file:/// URL. For a FileSystem publish a relative PublishUrl is
 # resolved against the project directory, the trailing backslash is trimmed, and the file:/// URL
 # is the same path with backslashes flipped to forward slashes. For non-FileSystem methods (FTP,

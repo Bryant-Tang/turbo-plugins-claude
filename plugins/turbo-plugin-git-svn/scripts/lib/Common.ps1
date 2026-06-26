@@ -18,7 +18,7 @@ function Get-WorktreesDir {
 }
 
 
-# Validate a branch name for remote-svn worktree mapping (v0.5.0 U7 allowlist).
+# Validate a branch name for remote-svn worktree mapping (allowlist).
 # Throws with a sanitization message on rejection. 'main' is the canonical trust
 # anchor and always passes; other casings of 'main' are rejected so they cannot
 # impersonate the anchor directory.
@@ -79,7 +79,7 @@ function Find-RemoteWorktreeCollision {
     return $null
 }
 
-# Map any branch to its remote-svn ref + worktree dir (v0.5.0 U7 — generalized from
+# Map any branch to its remote-svn ref + worktree dir (generalized from
 # the old hard-coded main / test-<n>). Mapping:
 #   ref      = remote-svn/<branch>                 (slashes preserved)
 #   worktree = remote-svn-<branch with '/' -> '-'>

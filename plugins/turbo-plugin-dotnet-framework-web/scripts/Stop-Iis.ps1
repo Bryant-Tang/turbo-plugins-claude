@@ -74,7 +74,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         }
     }
 
-    # v1.0 (U3) — clean up the per-launch temp applicationhost.config so subsequent
+    # clean up the per-launch temp applicationhost.config so subsequent
     # start-iis rounds always start from a fresh copy of canonical.
     $tempApphost = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash).config")
     if (Test-Path -LiteralPath $tempApphost -PathType Leaf) {

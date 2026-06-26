@@ -2,7 +2,7 @@
 #
 # Script under test: plugins/turbo-plugin-git-svn/scripts/Reset-BranchToMain.ps1
 #
-# New contract (v0.5.0): -Branch <name> [-DiffOnly] (no -N / test-<n>). Resets ANY local
+# New contract: -Branch <name> [-DiffOnly] (no -N / test-<n>). Resets ANY local
 # branch to main's tip. Emits LOSE / GAIN / FILES_LOST_AFTER_PUSH preview tokens; with
 # -DiffOnly it exits after the preview without mutating. Early-exits with
 # "<branch> already equals main. Nothing to reset." when there is nothing to do.

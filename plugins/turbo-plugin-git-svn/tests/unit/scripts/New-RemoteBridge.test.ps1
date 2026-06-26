@@ -2,7 +2,7 @@
 #
 # Script under test: plugins/turbo-plugin-git-svn/scripts/New-RemoteBridge.ps1
 #
-# New contract (v0.5.0 U9): -Branch <name> -SvnUrl <url> (no -N / test-<n>). Creates the
+# New contract: -Branch <name> -SvnUrl <url> (no -N / test-<n>). Creates the
 # remote-svn/<branch> BRIDGE branch (rooted at the repo init commit) + a linked worktree +
 # svn checkout. It does NOT create a working branch -- the working branch is the caller's
 # current branch. Behaviour preserved from the old New-RemoteTest "spirit":

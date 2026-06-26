@@ -54,7 +54,7 @@ function Get-NormalizedAbsolutePath {
 }
 
 function Get-MainWorktree {
-    # v0.2.7+ F-U2.3 fix: wrap git call in try/catch to prevent PS 5.1 + StrictMode + EAP=Stop
+    # fix: wrap git call in try/catch to prevent PS 5.1 + StrictMode + EAP=Stop
     # from bubbling raw git "fatal: not a git repository" stderr as terminating NativeCommandError
     # before our self-emitted "Not inside a git repository." throw can fire.
     $commonDir = ''
@@ -125,7 +125,7 @@ function Get-RelativePathSafe {
         [Parameter(Mandatory = $true)][string]$From,
         [Parameter(Mandatory = $true)][string]$To
     )
-    # v0.2.7+ F-U2.9 fix: define same-path return contract explicitly. MakeRelativeUri's
+    # fix: define same-path return contract explicitly. MakeRelativeUri's
     # behavior on $From == $To is ambiguous (can return "" or "../<basename>" depending on
     # trailing-separator state); callers expecting a meaningful empty result get surprised.
     $fromTrimmed = $From.TrimEnd('\','/')
@@ -149,7 +149,7 @@ function Get-RelativePathSafe {
 # Supports: [section] headers, `key = "string"`, `key = 'string'`, `key = <bool|int|float>`,
 # `# comments`, and blank lines. Multi-line values, nested tables, and arrays are not handled.
 #
-# v1.0+ U1: $ConfigPath accepts either a single string or an array of paths. When given
+# $ConfigPath accepts either a single string or an array of paths. When given
 # multiple paths, files are read in order and merged with later paths overriding earlier
 # ones at key-level (shallow per-section merge). Missing files are skipped silently.
 # Typical use: pass @(config.toml, config.local.toml) so the local file (gitignored,
@@ -221,7 +221,7 @@ function Resolve-ConfigValue {
     if ($null -ne $CliValue -and -not ([string]::IsNullOrWhiteSpace([string]$CliValue))) {
         return $CliValue
     }
-    # v1.0+ U1: read config.toml first then merge config.local.toml on top of it.
+    # read config.toml first then merge config.local.toml on top of it.
     # config.local.toml is gitignored (machine-specific tool paths etc.) and takes precedence.
     $configPath      = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
     $configLocalPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.local.toml')

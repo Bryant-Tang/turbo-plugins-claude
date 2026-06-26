@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-flight detection for tp-push-to-svn first-push bootstrap (v0.5.0 U9).
+# Pre-flight detection for tp-push-to-svn first-push bootstrap.
 # Emits exactly ONE terminal routing token prefixed 'TP_TOKEN:'. See the .ps1 sibling
 # for the full contract. Precedence:
 #   DETACHED_HEAD > BRANCH_MISMATCH_WARNING > BRIDGE_ABSENT > BRIDGE_PRESENT
