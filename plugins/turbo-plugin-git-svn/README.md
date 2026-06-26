@@ -51,9 +51,9 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 
 bridge 靠 `New-RemoteBridge` 建立時的 `svn rm --keep-local .git`（修正 `svn checkout --force` 的副作用）+ 固定 `svn:ignore=.git` 來確保 `.git` 不被推進 SVN。其餘該排除的檔一律由 `.gitignore` + push 腳本的 `git check-ignore` 決定（bridge 的 add-set = `svn status` 的 `?` 減去 git-ignored），讓 remote-svn 用起來更接近 remote git。
 
-## Commit message 類型過濾（`tp-push-to-svn`）
+## SVN commit body 的組裝（`tp-push-to-svn`）
 
-`tp-push-to-svn` 在組裝 SVN commit body 時會 parse 每個 commit 的 subject 前綴：過濾掉 `Merge ` / `doc` / `docs` / `db` / `chore` 開頭的 subject，只保留 `feat` / `fix` / `refactor`。所以 commit type 用對才會出現在 SVN history——程式碼變更用 `feat` / `fix`、行為不變的整理用 `refactor`、純文件 / SQL / 雜務用 `doc` / `db` / `chore`（後三者不會進 SVN body）。
+`tp-push-to-svn` 組裝 SVN commit body 時,收錄推送範圍內**所有非-merge commit 的 subject**,**不依 conventional-commit type 過濾**——`feat` / `fix` / `refactor` / `docs` / `db` / `chore` 等各型 subject 都會進 SVN body。唯一被排除的是 **merge commit**（`Merge ...`;且範圍內若全是 merge commit、沒有任何 code-level subject 可記,腳本會 hard-stop 提示先補一個非-merge commit）。body 由腳本鎖定、agent 只寫 title。
 
 ## Hooks
 
