@@ -80,6 +80,10 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($publishPlatform)) { $publishArgs += "/p:Platform=$publishPlatform" }
     & $msbuildPath @publishArgs
 
+    # Backstop only: under EAP=Stop a real MSBuild failure that writes stderr throws a terminating
+    # NativeCommandError BEFORE this line (caught by the outer catch -> exit 1, still fail-loud). This
+    # guard only catches the rare non-zero-exit-without-stderr case. Working-as-designed per repo
+    # CLAUDE.md ("PS 5.1 相容性" — EAP=Stop + native-exe stderr); do not "fix" by forcing reachability.
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Output 'Publish succeeded.'
 

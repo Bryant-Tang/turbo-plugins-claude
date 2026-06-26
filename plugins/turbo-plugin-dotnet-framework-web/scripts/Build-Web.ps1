@@ -42,6 +42,10 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($buildConfiguration)) { $msbuildArgs += "/p:Configuration=$buildConfiguration" }
     if (-not [string]::IsNullOrWhiteSpace($buildPlatform)) { $msbuildArgs += "/p:Platform=$buildPlatform" }
     & $msbuildPath @msbuildArgs
+    # Backstop only: under EAP=Stop a real MSBuild failure that writes stderr throws a terminating
+    # NativeCommandError BEFORE this line (caught by the outer catch -> exit 1, still fail-loud). This
+    # guard only catches the rare non-zero-exit-without-stderr case. Working-as-designed per repo
+    # CLAUDE.md ("PS 5.1 相容性" — EAP=Stop + native-exe stderr); do not "fix" by forcing reachability.
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     # Frontend pack is delegated to Compress-Content.ps1 (shipped alongside Build-Web.ps1);
