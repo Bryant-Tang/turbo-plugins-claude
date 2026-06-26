@@ -8,18 +8,14 @@
 
 ### Added
 
-- 自單體 `turbo-plugin` v0.6.0 拆出,成為獨立可安裝 plugin;承接 git↔SVN bridge 與 setup 職責(以 `git mv` 保留 git lineage,完整歷史見 `git log --follow`)。
+- 初版:git↔SVN bridge 與 setup 的獨立可安裝 plugin。
 - 9 支 skill(保 `tp-*` 前綴):`tp-setup`、`tp-pull-from-svn`、`tp-push-to-svn`、`tp-checkout-svn-branch`、`tp-svn-log`、`tp-reset-branch-to-main`、`tp-merge-main-into-branches`、`tp-suggest-ignore`、`tp-commit-msg`。
 - SVN bridge 腳本對(`.ps1` + `.sh`):Build-SvnCommit / Submit-SvnCommit / Sync-FromSvn / Get-SvnLog / Get-PushPreflight / New-RemoteBridge / Checkout-SvnBranch / Merge-MainIntoBranches / Reset-BranchToMain / Tag-Release / Test-EncodingSupport。
-- `lib`:`Core.{ps1,sh}` 複本 + SVN concern `Common.ps1` / `common.sh`(branch 名消毒、remote worktree 解析、SVN URL trust 邊界檢查、`svn status --xml` 解析,自單體抽出、去除 dotnet concern)+ `ps1-delegate.sh`。
+- `lib`:`Core.{ps1,sh}` 複本 + SVN concern `Common.ps1` / `common.sh`(branch 名消毒、remote worktree 解析、SVN URL trust 邊界檢查、`svn status --xml` 解析;去除 dotnet concern)+ `ps1-delegate.sh`。
 - `SessionStart` advisory hook(marker 缺失時提示 `/tp-setup`;dbhub / IIS 分支已移至 sibling plugin)。
 - `default-files/.turbo-plugin/`:`config.toml` 範本,引入 marker scaffolding(config.toml 用 `# >>> turbo-plugin:<concern> >>>` TOML 註解標記),讓各 plugin 的 setup 只寫自己的標記區塊、彼此不覆蓋(已驗證 `Read-TurboPluginConfig` 略過 `#` marker 行)。
 - `tp-setup` 改為 **standalone 架構**:共用 `assets/setup-base.md`(concern-neutral 骨架,各 plugin 引用)+ git-svn concern(bridge bootstrap / `[svn]` / `.commitlintrc.json` / git-svn 標記區塊)。**移除 IIS apphost(→ dotnet plugin)、dbhub(→ db plugin)、Phase 3 Claude Code 功能詢問**。
 - **`conventions.md`「先讀慣例」機制整套退役**:`tp-commit-msg` / `tp-csharp-comment` / `tp-js-comment` / `tp-db-management` 全改靠各自 skill 的 `description` 讓 agent 主動觸發。base 段不再建 `conventions.md`、setup 不寫它、移除 `default-files` 的 conventions.md 範本;`CLAUDE.md` base snippet 只留「不得提交僅限本機之物」硬規則(不再指向 conventions.md)。`tp-commit-msg` description 一併由「使用者要求時 / 建議執行」改為主動觸發式。
-- 兩層測試套件入口 + 各 SVN 腳本 / lib helper / hook 行為測試(`Common.test.ps1` / `common.test.sh` 自單體拆出、只保留 SVN concern + Core 覆蓋;新增 config reader 容忍 `#` marker 行 + 未知 section 的回歸測試)。
+- 兩層測試套件入口 + 各 SVN 腳本 / lib helper / hook 行為測試(`Common.test.ps1` / `common.test.sh` 只保留 SVN concern + Core 覆蓋;新增 config reader 容忍 `#` marker 行 + 未知 section 的回歸測試)。
 - **`tp-push-to-svn` push 訊息改腳本鎖定(body 腳本組、title agent 寫)**:`build-svn-commit` 以 `git log --no-merges --pretty=format:'- %s'` 列出範圍內**所有非-merge commit subject**(`- ` 條列、無 hash、**無 commit-type 過濾**;merge 以 parent 數排除),把鎖定 body 寫進 `MERGE_HEAD.tp_svn_body` pin 檔並印 `BODY` 區段。`submit-svn-commit` 參數由 `--message` 改為 **`--title`**(agent 只給一行 title),讀回鎖定 body 自組「title + 空行 + body」;title 先 collapse 成單行,防止用換行把內容塞進 body 繞過鎖定。SKILL 移除 commit-type 篩選 / unknown-type 逐筆詢問 / 自由編輯迴圈,確認改固定三選「確認送出 / 改標題 / 取消」;區間只有 merge commit 時硬停(不 stage、不問 release tag,與「有 merge commit 才問 tag」規則一致)。新增 `Get-SvnPushBody` / `get_svn_push_body` lib helper,並補 body determinism(相同 commit 集合 → 位元組一致)/ no-merges 排除 / docs·chore 全入 body / 特殊字元原樣 / only-merge 空 body 的單元測試。
 - **新 skill `tp-checkout-svn-branch`(U11 / R16–R20 / KTD5)**:一步把**既有** SVN 分支匯入成 `remote-svn/<branch>` bridge + 已填內容工作分支(工作分支由 bridge ref 開出,首次 `/tp-pull-from-svn` 不撞 unrelated histories)。**對 SVN 端唯讀**——以 `New-RemoteBridge` 為樣板但跳過其 `svn copy` / `svn:ignore` propset / `svn commit` arm,只 `svn checkout`(讀)+ 本機 git 寫;失敗完整回滾(work branch / worktree / bridge),被匯入分支無新 revision。前置:`remote-svn-main` 必須是有效 svn WC(訊息區分目錄缺 / WC 損壞並帶 svn info 原因,不自行 bootstrap 主 bridge)。所有守衛在任何 mutation 之前:`Assert-TrustedSvnUrl` 信任檢查(R18)、`Resolve-RemoteWorktree` 命名 / 碰撞(R19)、同名工作分支零副作用拒絕(R20)、分支名預設取 SVN 葉名消毒(葉名空 / 被 allowlist 拒 → 要求 `--branch`)。新增 `Checkout-SvnBranch.ps1` + `checkout-svn-branch.sh` 腳本對與兩層測試(arg / 衝突 / fail-closed 純 git 跑;trust 拒絕 / 唯讀 happy import round-trip〔bridge+work branch tip 相等、merge-base 非空、SVN 無新 revision〕svn-gated、無 svn 自我 SKIP)。
-
-### 遷移說明
-
-- 舊安裝 `turbo-plugin@turbo-plugins-claude` 已由四個獨立 plugin 取代。git↔SVN bridge 與 setup 流程改裝 `turbo-plugin-git-svn@turbo-plugins-claude`;.NET Framework Web / 三環境 DB / 程式碼註解功能分別改裝 `turbo-plugin-dotnet-framework-web` / `turbo-plugin-three-environment-db` / `turbo-plugin-code-comment`。

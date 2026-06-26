@@ -9,7 +9,7 @@ orchestrator 會把這個目錄完整 mirror 到 repo 內 gitignored 的 `<tests
 完全乾淨的 fixture 上跑。
 
 git↔SVN bridge 是**內容無關**的(決定 push 哪些檔靠 git,不看檔案類型),所以這裡放什麼當工作樹內容都可以。
-目前沿用一個小型 sample 專案當 version-control payload。**IIS / .NET 建置 / 發佈等 concern 已隨四拆移至
+目前沿用一個小型 sample 專案當 version-control payload。**IIS / .NET 建置 / 發佈等 concern 屬
 `turbo-plugin-dotnet-framework-web`**,所以此 fixture 不再帶 `applicationhost.config` 或
 `[iis]/[build]/[publish]/[run]` 設定 — `.turbo-plugin/config.toml` 只留 git-svn 自己的 `[svn]` 區段。
 

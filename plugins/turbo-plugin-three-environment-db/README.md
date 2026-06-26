@@ -1,6 +1,6 @@
 # turbo-plugin-three-environment-db
 
-三環境 DB 開發輔助 plugin。是單體 `turbo-plugin`（v0.6.0）拆出的四個獨立 plugin 之一。
+三環境 DB 開發輔助 plugin。turbo-plugins-claude marketplace 的獨立 plugin。
 
 ## 內容
 

@@ -1,6 +1,6 @@
 {
   "name": "turbo-plugin-three-environment-db",
-  "description": "三環境 DB 開發輔助:tp-setup + tp-db-management skill + tp-dbhub MCP server(.mcp.json,經 DBHub 容器連 SQL Server)。SessionStart advisory hook 在 peer worktree 缺 dbhub.local.toml 時提示。自單體 turbo-plugin v0.6.0 拆出。",
+  "description": "三環境 DB 開發輔助:tp-setup + tp-db-management skill + tp-dbhub MCP server(.mcp.json,經 DBHub 容器連 SQL Server)。SessionStart advisory hook 在 peer worktree 缺 dbhub.local.toml 時提示。",
   "version": "0.1.0",
   "license": "MIT",
   "author": {

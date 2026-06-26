@@ -1,6 +1,6 @@
 # turbo-plugin-dotnet-framework-web
 
-.NET Framework Web 本機開發雜務 plugin（IIS Express + MSBuild）。是單體 `turbo-plugin`（v0.6.0）拆出的四個獨立 plugin 之一。
+.NET Framework Web 本機開發雜務 plugin（IIS Express + MSBuild）。turbo-plugins-claude marketplace 的獨立 plugin。
 
 env-free 設計，集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-plugin 共用）。
 

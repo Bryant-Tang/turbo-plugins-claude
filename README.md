@@ -2,7 +2,7 @@
 
 Some Claude plugins that handle a .NET Framework Web + git↔SVN bridged dev process.
 
-單體 `turbo-plugin` 已四拆為四個正交、各自獨立安裝的 plugin。只裝你需要的那塊：
+turbo-plugins-claude 收納四個正交、各自獨立安裝的 plugin。只裝你需要的那塊：
 
 | Plugin | 用途 | 需要 setup? |
 |---|---|---|

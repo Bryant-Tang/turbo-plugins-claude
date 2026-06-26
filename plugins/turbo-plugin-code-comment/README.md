@@ -1,6 +1,6 @@
 # turbo-plugin-code-comment
 
-C# 與 JavaScript / TypeScript 的**註解撰寫慣例** skill 集。是單體 `turbo-plugin`（v0.6.0）拆出的四個獨立 plugin 之一。
+C# 與 JavaScript / TypeScript 的**註解撰寫慣例** skill 集。turbo-plugins-claude marketplace 的獨立 plugin。
 
 純 skill plugin：**無 script、不碰 `.turbo-plugin/` 專案狀態、無需 setup**——裝了即可用。
 

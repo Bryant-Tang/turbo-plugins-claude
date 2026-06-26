@@ -6,7 +6,7 @@
 
 ## [0.1.0] - 2026-06-20
 
-初版:自單體 `turbo-plugin` v0.6.0 拆出,成為獨立可安裝 plugin。build / run / stop / publish 採「給 agent 用的 VS 2022」行為模型——agent 判斷要操作哪個 csproj / `.sln` 與 configuration / platform / pubxml,把明確參數傳給變薄的 executor;executor 對齊 VS,agent 沒指定的 config 一律省略、交 MSBuild / `.sln` / `Directory.Build.props` / pubxml 決定。
+初版:獨立可安裝的 .NET Framework Web 本機開發 plugin。build / run / stop / publish 採「給 agent 用的 VS 2022」行為模型——agent 判斷要操作哪個 csproj / `.sln` 與 configuration / platform / pubxml,把明確參數傳給變薄的 executor;executor 對齊 VS,agent 沒指定的 config 一律省略、交 MSBuild / `.sln` / `Directory.Build.props` / pubxml 決定。
 
 ### Added
 
@@ -22,7 +22,3 @@
 - PostToolUse EnterWorktree advisory hook(Windows-only,目前 no-op)。
 - `default-files/.turbo-plugin/applicationhost.config` 範本。
 - 兩層測試套件入口(`tests/Invoke-ScriptTests.ps1` + `tests/invoke-script-tests.sh`)+ 各腳本 / lib helper / hook 行為測試。
-
-### 遷移說明
-
-- 舊安裝 `turbo-plugin@turbo-plugins-claude` 已由四個獨立 plugin 取代。若需 .NET Framework Web 開發,改裝 `turbo-plugin-dotnet-framework-web@turbo-plugins-claude`。

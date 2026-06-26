@@ -1,6 +1,6 @@
 # turbo-plugin-git-svn
 
-git↔SVN bridge 本機開發工具集（setup + SVN bridge）。是單體 `turbo-plugin`（v0.6.0）拆出的四個獨立 plugin 之一,以 `git mv` 保留 git lineage。
+git↔SVN bridge 本機開發工具集（setup + SVN bridge）。turbo-plugins-claude marketplace 的獨立 plugin。
 
 env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-plugin 共用）。
 

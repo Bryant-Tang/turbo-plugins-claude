@@ -8,7 +8,7 @@
 
 ### Added
 
-- 自單體 `turbo-plugin` v0.6.0 拆出,成為獨立可安裝 plugin。
+- 初版:三環境 DB 開發輔助的獨立可安裝 plugin。
 - `tp-db-management` skill(含 `assets/sql-script-template.sql`)。
 - `tp-setup` skill(standalone:共用 `assets/setup-base.md` concern-neutral 骨架 + db concern〔`dbhub.example.local.toml` 範本、提示填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`〕;無 git repo 時 fail-loud,不自行 git init)。
 - `tp-db-management` 的 `description` 強化為**主動觸發**式(「做任何資料庫 / SQL 工作時主動使用、不要繞過直接手寫 SQL」),改靠 description 讓 agent 自動採用;`conventions.md`「先讀慣例」機制已整套退役,db setup 不再寫它。
@@ -17,7 +17,3 @@
 - `default-files/.turbo-plugin/dbhub.example.local.toml` 連線設定範本。
 - 兩層測試套件入口 + SessionStart hook 行為測試(PS + bash:non-git / dbhub 警示 / no-marker 靜默 / gate no-op)。
 - `scripts/lib/Core.{ps1,sh}`:universal core helper 複本(供 hook 用),與其它 plugin 逐位元組一致(由 repo 層 CI job 把關)。
-
-### 遷移說明
-
-- 舊安裝 `turbo-plugin@turbo-plugins-claude` 已由四個獨立 plugin 取代。若需三環境 DB,改裝 `turbo-plugin-three-environment-db@turbo-plugins-claude`。
