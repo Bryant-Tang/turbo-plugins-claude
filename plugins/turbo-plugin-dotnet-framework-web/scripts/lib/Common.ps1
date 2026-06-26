@@ -52,7 +52,7 @@ function Format-IisExpressSiteName {
 #   1. .turbo-plugin/config.local.toml [tools] msbuild_path  (machine-specific, gitignored)
 #   2. Standard VS install paths (VS 2017/2019/2022 Enterprise/Professional/Community)
 #   3. Throw with /tp-setup guidance.
-# $env:TURBO_PLUGIN_MSBUILD_PATH is deliberately NOT read — turbo-plugin v1.0 is the
+# $env:TURBO_PLUGIN_MSBUILD_PATH is deliberately NOT read — turbo-plugin is the
 # first release; no legacy users to migrate. If the env var happens to be set by some
 # other tool, it is ignored.
 function Find-MSBuild {

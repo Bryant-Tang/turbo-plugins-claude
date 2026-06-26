@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # svn-status-xml-roundtrip.test.sh (shUnit2)
 #
-# Regression coverage for the non-ASCII (中文) filename push-to-svn bug (v0.5.2).
+# Regression coverage for the non-ASCII (中文) filename push-to-svn bug.
 #
 # Root cause (forensic): build/submit-svn-commit.sh used to CAPTURE plain `svn status` text and
 # slice the path by column offset, then re-pass that captured path as argv to `svn add/commit`.

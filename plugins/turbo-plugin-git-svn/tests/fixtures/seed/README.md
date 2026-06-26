@@ -1,6 +1,6 @@
 # plugins/turbo-plugin-git-svn/tests/fixtures/seed/
 
-turbo-plugin v1.0 PR-readiness Script tests 測試的 **SVN seed dump source**。
+turbo-plugin Script tests 的 **SVN seed dump source**。
 
 ## 內容
 
@@ -33,8 +33,8 @@ seed/
 
 ```powershell
 # 從 worktree root
-.\plugins\turbo-plugin\tests\fixtures\seed\Build-SeedRepo.ps1            # idempotent skip if dump exists
-.\plugins\turbo-plugin\tests\fixtures\seed\Build-SeedRepo.ps1 -Force     # 強制重建
+.\plugins\turbo-plugin-git-svn\tests\fixtures\seed\Build-SeedRepo.ps1            # idempotent skip if dump exists
+.\plugins\turbo-plugin-git-svn\tests\fixtures\seed\Build-SeedRepo.ps1 -Force     # 強制重建
 ```
 
 ## 25 條中文字典 mapping

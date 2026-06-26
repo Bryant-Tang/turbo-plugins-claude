@@ -1,6 +1,6 @@
 ﻿# Invoke-ScriptTests.ps1
 #
-# turbo-plugin script-tests orchestrator (v0.5.0 U16 — Pester 5 rewrite).
+# turbo-plugin script-tests orchestrator (Pester 5).
 #
 # Pipeline:
 #   1. Lint pre-flight (tools/lint-ps-compat.ps1 over scripts/). Skipped by -SkipPreflight.

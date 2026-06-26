@@ -13,7 +13,7 @@ try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 # and a raw UTF-8 string passed as argv goes through CreateProcessA. PowerShell 7+ uses
 # CreateProcessW, and the Win10 "Beta UTF-8" codepage makes CP_ACP == UTF-8.
 #
-# IMPORTANT (v0.5.2): a False result here does NOT mean turbo-plugin's SVN operations break.
+# IMPORTANT: a False result here does NOT mean turbo-plugin's SVN operations break.
 # The push/pull scripts handle non-ASCII filenames in BOTH shells regardless of this flag —
 # the PowerShell scripts scope [Console]::OutputEncoding to the system ANSI codepage around svn
 # calls (so capture + argv stay byte-consistent with the on-disk filename), and the Git Bash
@@ -72,7 +72,7 @@ Write-Output "RECOMMENDATION=$recommendation"
 if (-not $argvSafe) {
     Write-Output ''
     Write-Output 'NOTE: PowerShell 5.1 + non-UTF-8 system ANSI codepage detected.'
-    Write-Output '  This does NOT break local SVN operations. turbo-plugin push/pull scripts (v0.5.2+)'
+    Write-Output '  This does NOT break local SVN operations. turbo-plugin push/pull scripts'
     Write-Output '  handle non-ASCII filenames in THIS environment on BOTH shells: the PowerShell'
     Write-Output '  scripts wrap svn calls in the system ANSI codepage (OutputEncoding), and the Git'
     Write-Output '  Bash (.sh) scripts parse `svn status --xml`. Both add/commit/checkout non-ASCII'

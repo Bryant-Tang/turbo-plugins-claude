@@ -1,6 +1,6 @@
 # Svn-StatusXml-Roundtrip.test.ps1 (Pester 5)
 #
-# Regression coverage for the non-ASCII (Chinese) filename push-to-svn bug (v0.5.2), PS side.
+# Regression coverage for the non-ASCII (Chinese) filename push-to-svn bug, PS side.
 #
 # Root cause (forensic): Build/Submit-SvnCommit.ps1 captured `svn status` text and re-passed
 # the parsed path as argv to `svn add/commit`. PowerShell encodes native-command ARGV using
@@ -41,7 +41,7 @@ BeforeAll {
     ) + '.txt'
 }
 
-Describe 'Svn non-ASCII filename encoding (v0.5.2)' {
+Describe 'Svn non-ASCII filename encoding' {
 
     Context 'Structural: scripts swap Console.OutputEncoding to the system ANSI codepage' {
         It 'Build-SvnCommit.ps1 sets OutputEncoding to the ANSI codepage' {

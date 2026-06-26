@@ -1,6 +1,6 @@
 # plugins/turbo-plugin-dotnet-framework-web/tests/fixtures/base/
 
-turbo-plugin v1.0 PR-readiness Script tests 測試的 **fixture base mirror source**。
+turbo-plugin Script tests 的 **fixture base mirror source**。
 
 ## 用途
 

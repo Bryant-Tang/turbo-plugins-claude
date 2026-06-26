@@ -45,7 +45,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 跑 `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Test-EncodingSupport.ps1"`。
 
-> **重要(v0.5.2 後)**:`ARGV_SAFE_FOR_UNICODE=False` **不代表**本機中文檔名 SVN 操作會壞。push/pull
+> **重要**:`ARGV_SAFE_FOR_UNICODE=False` **不代表**本機中文檔名 SVN 操作會壞。push/pull
 > 腳本已在此環境正確處理非 ASCII 檔名(`.ps1` 把 `[Console]::OutputEncoding` 設系統 ANSI codepage 包住
 > svn、`.sh` 用 `svn status --xml`),兩個 shell 都能正常 add/commit/checkout。此 flag 純粹是**跨平台
 > 可攜性**訊號:非 ASCII 檔名存進 SVN 是 UTF-8(PS7 / Win10-UTF8)還是系統 DBCS(PS5.1 + 中文 codepage)。

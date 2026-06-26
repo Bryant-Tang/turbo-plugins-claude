@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # invoke-script-tests.sh
 #
-# Bash script-tests orchestrator (v0.5.0 U17 — shUnit2 rewrite). Owns the *.test.sh
+# Bash script-tests orchestrator (shUnit2). Owns the *.test.sh
 # suite. On a two-orchestrator CI runner (e.g. ubuntu) the .ps1 suite is run separately
 # by the PowerShell orchestrator (pwsh + Pester); this one does NOT run .ps1, so the .sh
 # files never double-run.
