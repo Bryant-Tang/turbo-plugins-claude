@@ -43,7 +43,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 #### 1.2 Encoding profile detect（檔名編碼可攜性,純資訊性）
 
-跑 `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Test-EncodingSupport.ps1"`。
+跑編碼偵測 script(`${CLAUDE_PLUGIN_ROOT}/scripts/Test-EncodingSupport.ps1` / `${CLAUDE_PLUGIN_ROOT}/scripts/test-encoding-support.sh`,無參數),**依下方 Decision Rules 的「執行路由」選工具**:有 Git Bash 就用 **Bash 工具**跑 `.sh`(其 `-ExecutionPolicy Bypass` 包在 `ps1-delegate.sh` 內、不在 agent 下的指令上,故 auto mode 不會擋);無 Git Bash 才用 **PowerShell 工具**直接跑 `.ps1`。
 
 > **重要**:`ARGV_SAFE_FOR_UNICODE=False` **不代表**本機中文檔名 SVN 操作會壞,**也不代表**檔名會以非可攜方式存進 SVN。
 > 已實證(svn 1.14 + PS5.1 + cp950,讀 FSFS revision bytes 確認):**凡系統 codepage 能表示的字元(例如 Big5 內的繁中
@@ -232,6 +232,11 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
   config.toml 的 `git-svn`(及 CLAUDE.md 的 `base`,若 base 段未先建)區塊,不碰 dotnet 區塊或標記外內容。
 - 寫 `.commitlintrc.json` 用 JSON parse + array merge(`rules.type-enum[2]`),不用 string 替換。
 - **不裝** husky / commit-msg hook、**不執行** npm 工具鏈。`.commitlintrc.json` 純諮詢(無 hook 強制);commit type 的語意檢查由 `tp-commit-msg` 對該檔負責,`tp-push-to-svn` **不再**做 type 過濾(push body 收所有非-merge subject)。
+- **執行路由(挑 `.ps1` 還是 `.sh`)**:依環境選工具,**不要用 Bash 工具去呼叫 `pwsh` / `powershell`**——
+  - Windows + 有 Git Bash → 用 **Bash 工具**跑 `.sh`。
+  - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
+  - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
+  Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - Git Bash 路徑(`/c/Users/...`)若使用者輸入,寫進設定檔前轉成 Windows 格式(`C:/Users/...`)。
 - **Phase summary transparency**:只列「會動到外部」的 unconditional 動作;repo-only 本地寫入 / git 本地 op /
   template copy 不列。措辭平實白話 + 具體項目名稱,不用 raw shell 指令。
