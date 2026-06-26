@@ -38,6 +38,7 @@ configuration / platform,把明確參數傳給變薄的 executor;沒指定的 co
 - `tp-cleanup-orphan-iis` Step 3 的刪除指令補回 `-Project`:scoped 模式的「全部清除」原本叫 `-RemoveAll` 卻沒帶 `-Project`,而 script 在無 `-Project` 時會拒絕 `-RemoveAll`(KTD8),導致 scoped-via-CLI 情境下「全部清除」直接報錯;`-RemoveSite` 也補上 `-Project` 以讓刪除範圍與 Step 1 枚舉範圍一致。
 - publish 的 `PUBLISH_OUTPUT` 補上 `Target:` / `Profile:` 行(糾錯閘),與 build/run/stop 的 per-op 模板一致:原本 publish 只 relay 產出路徑/URL、解析後 target 只出現在 relay 區塊外的 prose(R12 對 publish 的缺口);現把 target/profile 放進 agent 逐字轉述的區塊,路徑/URL 仍維持光禿可點擊。
 - `tp-run` / `tp-stop` SKILL 的 Step 1 補上:`[build].project` fallback **撈到 `.sln` 時不要當 target**,改由 agent 自己 Glob 探索 web csproj(run/stop 不能跑/停整個方案)。修掉「只設過 `[build].project = *.sln` 的向後相容使用者跑 run/stop 會被 script `.sln` 報錯擋下」的邊角——agent 現在會自行判斷出該跑/停的 csproj,而非把方案硬傳給 script。
+- `tp-cleanup-orphan-iis` SKILL 文件對齊現行 script:移除早已退役的 applicationhost.config XML `<site>` 孤兒描述(`<kind>` = process/xml/both、`pid=-`、`Select-Xml` / `Remove-ApplicationhostSite` / `Move-Item` 等 Test Scenarios),改為現行實際輸出——`ORPHAN: <site> process pid=<n>`(只有 process 類)+ 先前完全未記載的 `ORPHAN_TEMP: <path>`(殘留 temp 暫存檔,只能靠 scoped `-RemoveAll` 清、`-RemoveSite` 不動);並修正 no-orphan 訊息字串。
 
 ## [0.1.0] - 2026-06-20
 

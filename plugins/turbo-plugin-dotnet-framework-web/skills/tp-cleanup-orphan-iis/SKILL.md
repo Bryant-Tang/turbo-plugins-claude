@@ -1,6 +1,6 @@
 ---
 name: tp-cleanup-orphan-iis
-description: '清除殘留的孤兒 IIS Express process 及 applicationhost.config site 條目,通常在 worktree rename 或 project 搬移後出現。使用者明確要求清除時執行;tp-stop 偵測到同 csproj-stem 但不同 hash 的 orphan instance 時建議。'
+description: '清除殘留的孤兒 IIS Express process 及 %TEMP% 殘留的 per-launch applicationhost.config 暫存檔,通常在 worktree rename 或 project 搬移後出現。使用者明確要求清除時執行;tp-stop 偵測到同 csproj-stem 但不同 hash 的 orphan instance 時建議。'
 argument-hint: '[--project <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Grep, AskUserQuestion
@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Grep, AskUserQuestion
 
 ## Purpose
 
-清除因 worktree rename / project 搬移留下的孤兒 IIS Express instance 與 applicationhost.config `<site>` 條目。turbo-plugin 以 `<csproj-stem>-<sha256前8字元>` 格式命名 site,hash 改變後舊條目 / 舊 process 不會自動清除。
+清除因 worktree rename / project 搬移留下的孤兒 IIS Express instance 與殘留的 per-launch temp applicationhost.config 暫存檔。turbo-plugin 以 `<csproj-stem>-<sha256前8字元>` 格式命名 site,hash 改變後舊 process / 舊暫存檔不會自動清除(canonical applicationhost.config 跨 worktree 共用、執行時不被改,故**無** XML `<site>` 孤兒)。
 
 實際掃描與移除動作都在 `${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1`(Windows-only;非 Windows 沒有 IIS Express)。Skill 只負責呼叫 script、解析輸出、跟使用者確認後再次呼叫 script 執行刪除。
 
@@ -43,15 +43,16 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 [-Project <path>]
 
 stdout 會是以下其中之一:
 
-- `No orphan IIS Express instances or applicationhost.config sites found.` → 沒有孤兒,直接結束,告知使用者「未發現孤兒」即可。
-- 一行或多行 `ORPHAN: <site_name> <kind> pid=<n|->`,其中 `<kind>` 是 `process` / `xml` / `both`,`pid` 在 `xml` 類為 `-`。
+- `No orphan IIS Express instances or stale temp applicationhost.config files found.` → 沒有孤兒,直接結束,告知使用者「未發現孤兒」即可。
+- 一行或多行下列兩種:
+  - `ORPHAN: <site_name> process pid=<n>` —— 一個正在跑的孤兒 `iisexpress.exe`(`pid` 是整數)。
+  - `ORPHAN_TEMP: <path>` —— 一個沒有任何 live iisexpress 引用、殘留在 `%TEMP%` 的 `turbo-plugin-iis-*.config` 暫存檔。
 
-**Parse rule**: each ORPHAN: line has shape `ORPHAN: <site_name> <kind> pid=<value>` where:
-- `<kind>` is one of `process` / `xml` / `both`
-- `<value>` is an integer PID when kind is `process` or `both`
-- `<value>` is the literal string `-` when kind is `xml` (no running process)
+**Parse rule**:
+- `ORPHAN:` 行 → `{ site_name: string, pid: number }`。kind 固定是 `process`(canonical applicationhost.config 跨 worktree 共用、執行時永不被改,故已無 XML `<site>` 孤兒;不再有 `xml` / `both` 類或 `pid=-`)。
+- `ORPHAN_TEMP:` 行 → `{ temp_path: string }`。
 
-Parse into `{ site_name: string, kind: 'process'|'xml'|'both', pid: number|null }`, mapping `-` to `null`。進入 Step 2。
+進入 Step 2。
 
 ### Step 2 — 使用者確認
 
@@ -59,15 +60,18 @@ Parse into `{ site_name: string, kind: 'process'|'xml'|'both', pid: number|null 
 
 ```
 偵測到下列孤兒,選擇要清除的項目:
-  <site_name_1>  [<kind>]  pid=<n>
-  <site_name_2>  [<kind>]  pid=<n>
+  process: <site_name_1>  pid=<n>
+  process: <site_name_2>  pid=<n>
+  temp:    <temp_path_1>
   ...
 ```
 
 提供選項:
-- 全部清除(對應 `-RemoveAll`)——**僅在 Step 1 有帶 `-Project`(scoped)時提供**;無-project 模式不提供一鍵全清(script 會拒 `-RemoveAll`),改用下面的逐站台勾選
-- 各 site 各自一個 checkbox(對應對該 site 呼叫一次 `-RemoveSite <name>`)
+- 全部清除(對應 `-RemoveAll`,會一併移除殘留 temp 暫存檔)——**僅在 Step 1 有帶 `-Project`(scoped)時提供**;無-project 模式不提供一鍵全清(script 會拒 `-RemoveAll`),改用下面的逐站台勾選
+- 各 `ORPHAN:` process 各自一個 checkbox(對應對該 site 呼叫一次 `-RemoveSite <name>`)
 - 取消
+
+> **temp 暫存檔只能靠 `-RemoveAll` 清**:`-RemoveSite` 只停 process、**不動** temp 檔(temp 檔以 identity-hash 命名、無法對應到單一 site name)。所以只勾 process orphan 用 `-RemoveSite` 時,`ORPHAN_TEMP:` 檔會留著;要連 temp 一起清得用 scoped `-RemoveAll`。
 
 > **無-project 模式的警示(重要)**:Step 1 沒帶 `-Project` 時,清單裡的站台**全是正在跑的程序、無法分辨哪個是你自己正在使用的**。所以:(a) 預設**一個都不要勾**,讓使用者主動選;(b) 在 `AskUserQuestion` 的問題敘述裡明確警告「這些可能含你正在使用的站台,確認過再勾」;(c) **絕不**替使用者預選或建議「全選」。
 
@@ -105,21 +109,19 @@ Both `-RemoveSite` and `-RemoveAll` honor the same exit code contract. For the a
 
 ## Completion Checks
 
-- 對使用者選擇要刪除的每個 site:再跑一次 `Remove-OrphanIis.ps1`(不帶刪除參數)的 stdout 應不再包含對應 `ORPHAN:` 行。
+- 對使用者選擇要刪除的每個 process orphan:再跑一次 `Remove-OrphanIis.ps1`(不帶刪除參數)的 stdout 應不再包含對應 `ORPHAN:` 行。
+- 若用 scoped `-RemoveAll` 清過 temp 暫存檔:重跑後對應 `ORPHAN_TEMP:` 行也應消失。
 - 未被選到的孤兒應仍出現在重跑後的列表中(只移除使用者明確選擇的項目)。
 
 ## Test Scenarios
 
-- **Process orphan only**: launch a dummy IIS Express with `/site:<csproj-stem>-deadbeef`(隨意 hash),確認 enumerate-only 模式輸出 `ORPHAN: <name> process pid=<n>`、kind 是 `process`、pid 是整數。`-RemoveSite <name>` 後 `Get-Process iisexpress` 確認該 PID 不見。
-- **XML orphan only**: 手動編輯 applicationhost.config 加 `<site name="<csproj-stem>-cafe1234">...</site>`,enumerate 應顯示 `ORPHAN: <name> xml pid=-`、kind 是 `xml`、pid 是字面 `-`。`-RemoveSite <name>` 後該 site node 從 XML 移除。
-- **Both kinds**: 同 site name 同時有 process + XML node,enumerate 顯示 `ORPHAN: <name> both pid=<n>`。`-RemoveSite` 同時殺 process 並移除 XML。
-  - Post-removal: `Get-Process iisexpress | Where-Object { $_.CommandLine -match '/site:<that-name>' }` 為空。
-  - Re-run enumerate 不再列該 ORPHAN 行。
-  - `Select-Xml -Path <apphost> -XPath "//site[@name='<that-name>']"` 為空。
-- **Cancel path**: enumerate 後使用者選 Cancel,確認 script 沒被以 `-RemoveAll` / `-RemoveSite` 模式呼叫、applicationhost.config + iisexpress process list 都沒改。
-- **Idempotency**: 連跑 enumerate 兩次,輸出穩定;`-RemoveAll` 兩次,第二次顯示 `No orphan IIS Express instances or applicationhost.config sites found.` 並 exit 0。
-- **Partial selection**: 3 個 orphan,只選 1 個 → 該 site 不見、其餘 2 個 enumerate 仍出現。
-- **Partial failure**: 在 second terminal 用 PowerShell 開 `[System.IO.File]::Open($apphostPath, 'Open', 'Read', 'None')` 取得獨佔讀取鎖。先 terminal 跑 `-RemoveAll` 對 2 個 orphan,Stop-Process 應全成功,但 Remove-ApplicationhostSite 在第二個 site 上 Move-Item 失敗(file locked)。確認 exit code 為 2、stdout 含 `PARTIAL_FAILURE: failed=1 sites=<that-name>`、stderr 含 per-site reason。釋放鎖後 re-run enumerate,確認剩該 1 個 orphan(其他都清掉)。
+- **Process orphan**: launch a dummy IIS Express with `/site:<csproj-stem>-deadbeef`(隨意 hash),enumerate-only 模式輸出 `ORPHAN: <name> process pid=<n>`(pid 是整數)。`-RemoveSite <name>` 後 `Get-Process iisexpress` 確認該 PID 不見。
+- **Temp-file orphan**: 在 `%TEMP%` 放一個沒有 live iisexpress 引用的 `turbo-plugin-iis-<hash>.config`,enumerate 顯示 `ORPHAN_TEMP: <path>`。scoped `-RemoveAll` 後該檔被移除;`-RemoveSite` **不**動 temp 檔(temp 以 identity-hash 命名、不對應單一 site)。
+- **Cancel path**: enumerate 後使用者選 Cancel,確認 script 沒被以 `-RemoveAll` / `-RemoveSite` 模式呼叫、iisexpress process list + `%TEMP%` 都沒改。
+- **Idempotency**: 連跑 enumerate 兩次,輸出穩定;scoped `-RemoveAll` 兩次,第二次顯示 `No orphan IIS Express instances or stale temp applicationhost.config files found.` 並 exit 0。
+- **Partial selection**: 3 個 process orphan,只 `-RemoveSite` 1 個 → 該 site 不見、其餘 2 個 enumerate 仍出現。
+- **Partial failure**: scoped `-RemoveAll` 對多個 orphan,其中一個 `Stop-Process` 失敗(例如該 PID 權限不足無法殺)→ exit code 2、stdout 含 `PARTIAL_FAILURE: failed=<n> sites=<comma-list>`、stderr 含 per-site reason。re-run enumerate 確認失敗的仍在、其餘已清。
+- **No-project `-RemoveAll` 被拒**: 不帶 `-Project` 跑 `-RemoveAll` → 非 0 exit、訊息為「Refusing -RemoveAll without a project...」,不殺任何 process。
 
 ## Tool Preference
 
