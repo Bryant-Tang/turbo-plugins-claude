@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Type
 
-這個 repo 是一個 **Claude Code plugin marketplace**（不是一般應用程式），由 `.claude-plugin/marketplace.json` 宣告，並收納若干獨立 plugin 在 `plugins/` 底下。沒有 build / lint 指令——驗證方式有二：自動化的 plugin 測試套件（見「測試標準」），以及「在實際 Claude Code session 中安裝並執行 plugin 的 skill / command」。
+這個 repo 是一個 **Claude Code plugin marketplace**（不是一般應用程式），由 `.claude-plugin/marketplace.json` 宣告，並收納若干獨立 plugin 在 `plugins/` 底下。沒有 build / lint 指令——驗證靠**自動化的 plugin 測試套件**（見「測試標準」）。
 
 > **每個 plugin 的細節規範寫在各自的 `plugins/<name>/README.md`。** 本檔只收 marketplace 層級、跨 plugin 通用的規約；任何只對單一 plugin 成立的內容（worktree 模型、特定 skill 的命名/路徑 convention、env 前綴、commit-type 過濾等）一律寫進該 plugin 自己的 README，不要回流到本檔。
 
@@ -22,6 +22,8 @@ Claude Code 的 plugin 更新機制是基於 **版本號** 而不是 git commit�
 2. `plugins/<plugin>/CHANGELOG.md` — 在 `[Unreleased]` 之下新增一個對應版本與日期的區段（格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 的 `Added` / `Changed` / `Fixed` / `Removed` 分類，使用繁體中文）
 
 只動到單一 plugin 的 PR 只 bump 那一個 plugin；跨多個 plugin 的 PR 要分別 bump 每個受影響的 plugin。
+
+**一個 PR / 開發分支對同一個 plugin 只 bump 一次。** 若該分支先前已 bump 過某 plugin、且**尚未合併進 `main`**，後續在同一分支上對該 plugin 的新實作一律**併入前面已 bump 的那個版本號**底下（CHANGELOG 寫進該版本已存在的區段，**不要**新增區段、也不要再 bump）。只有當變更跨越「已發佈（合併進 `main`）」界線之後，新的變更才開下一個版本號。換言之:bump 對應的是「下次發佈」這件事，不是「每次 commit / 每個 unit」。
 
 ## Plugin Architecture
 
@@ -53,7 +55,7 @@ plugins/<plugin-name>/
   - **長 orchestrator command**：body 包含完整的 Procedure / Decision Rules / Completion Checks 段落，含 `AskUserQuestion` 多步互動、parse script 輸出、委派其它指令——形式上幾乎等同 SKILL 寫法，差別只在於不會被 agent 自動觸發。
 
   **選 command 的時機**：使用者主動觸發為主，agent 沒有「該主動建議」的場景。`/<plugin>:<name>` 觸發路徑與 SKILL 完全相同，差別只在於 agent 是否會自動依 description 觸發。
-- **Script**：實際做事的地方。**所有 script 都要同時提供 `.ps1` 和 `.sh` 兩個版本**，行為一致；Windows 走 PowerShell、其它平台走 Bash。命名為配對（如 `pull-from-svn.ps1` + `pull-from-svn.sh`）。
+- **Script**：實際做事的地方。**所有 script 都要同時提供 `.ps1` 和 `.sh` 兩個版本**，行為一致；Windows 走 PowerShell、其它平台走 Bash。命名為配對，**`.ps1` 用 PascalCase（Verb-Noun）、`.sh` 用小寫連字**（如 `Build-SvnCommit.ps1` + `build-svn-commit.sh`、`Remove-OrphanIis.ps1` + `remove-orphan-iis.sh`）。
 
 ### Cross-platform script 約定
 
@@ -88,7 +90,7 @@ plugins/<plugin-name>/
 
 **Script 測試（自動化）**：驗證 `scripts/*.ps1` / `*.sh` 的實際行為。`.ps1` 走 Windows PowerShell 5.1、`.sh` 走 bash，行為一致。由 plugin 的標準入口 orchestrator 跑：`plugins/<name>/tests/Invoke-ScriptTests.ps1`（PowerShell）與 `plugins/<name>/tests/invoke-script-tests.sh`（bash）。CI 依此入口探索並執行。
 
-> 先前的「Skill 測試（人工、可重複）」層已退役——改以自動化測試為唯一常駐驗證標準（搭配「在實際 Claude Code session 中安裝並執行 plugin 的 skill / command」做臨機驗證，見開頭 Repository Type）。不再維護 `tests/docs/` 手動測試流程文件（schema / session 計畫 / budget / rollback / fail-then-fix）。
+> 先前的「Skill 測試（人工、可重複）」層已退役——改以**自動化測試為唯一常駐驗證標準**。不再維護 `tests/docs/` 手動測試流程文件（schema / session 計畫 / budget / rollback / fail-then-fix）。
 
 共通原則：
 
@@ -104,7 +106,7 @@ plugins/<plugin-name>/
 
 - **Changelog 語言**：CHANGELOG.md 用 **繁體中文** 撰寫，分類用 `Added` / `Changed` / `Fixed` / `Removed`（不翻譯）。
 - **日期**：CHANGELOG.md 與其它需要日期的地方都用絕對日期（`YYYY-MM-DD`），不要用「今天」「上週」這種相對時間。
-- **Commit message 類型**：建議用 conventional commit type 前綴——`feat` / `fix` 限程式碼、`refactor` 給行為不變的整理（含測試重構）、`doc` 給純文件、`db` 給 SQL 腳本、`chore` 給非實作雜務。（若某 plugin 會依 type 過濾 commit，過濾規則寫在該 plugin 的 README。）
+- **Commit message 類型**：建議用 conventional commit type 前綴——`feat` / `fix` 限程式碼、`refactor` 給行為不變的整理（含測試重構）、`docs` 給純文件、`db` 給 SQL 腳本、`chore` 給非實作雜務。（若某 plugin 會依 type 過濾 commit，過濾規則寫在該 plugin 的 README。）
 - **不要 commit `.local.*`**：已經在 `.gitignore`，但要記得不要把任何 `*.local.*` 設定檔加進範本以外的位置。
 - **不得提交僅限本機才有的東西**：機器路徑（`C:\Users\...`、`C:\Turbo\...` 等絕對路徑）、內部 hostname / URL（內網 SVN / host）、僅本機或單次情境才有意義的識別碼（需求 / 計畫 / 任務代號、單一 session 的項目編號）一律不得寫進任何版控檔（含文件、範本、測試 fixture）。文件需要舉例時改用固定 placeholder token（如 `<MACHINE-PATH>` / `<INTERNAL-SVN-URL>`）；測試一律走 repo 相對的 gitignored sandbox。此為常駐規約，目前以人工 / code review 把關（advisory），自動化 CI lint 列為後續工作。
 
