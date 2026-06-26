@@ -61,7 +61,7 @@ BeforeAll {
         }
     }
 
-    # Minimal csproj content for a fixture (.NET Framework web app shape — enough for Find-SingleCsproj)
+    # Minimal csproj content for a fixture (.NET Framework web app shape — enough for Get-ProjectIdentity / Resolve-ProjectTarget)
     $script:minimalCsproj = @'
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
