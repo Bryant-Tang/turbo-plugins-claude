@@ -129,11 +129,12 @@ AskUserQuestion 本身、檔案讀取/probe **不列**。
 
 7. **建 `remote-svn/main` orphan branch + worktree**(7a-7g 不可重排;前提:sub-step 2/3 已把
    `.turbo-plugin/worktrees/` 寫進 `.gitignore`、sub-step 5 已建初始 commit):
-   - 7a. `git worktree add --detach --no-checkout ".turbo-plugin/worktrees/remote-svn-main"`(`--no-checkout` 確保 dir 空,svn checkout 不被 obstruct)
+   - 7a. `git worktree add --detach --no-checkout ".turbo-plugin/worktrees/remote-svn-main"`(`--no-checkout` 先不簽出檔案)
    - 7b. cd 進新 worktree
    - 7c. `git checkout --orphan remote-svn/main`
-   - 7d. `git rm -rf --cached .` 然後 `git commit --allow-empty -m "init: remote-svn/main branch"`
-   - 7e. `svn checkout <url> .`
+   - 7d. **清空 working tree 後建空 commit**(三步分開跑,禁 `&&`):`git rm -rf --cached .`(清 index)→ **`git clean -dffx`**(清磁碟上未追蹤 / ignored 檔)→ `git commit --allow-empty -m "init: remote-svn/main branch"`。
+     > **`git clean` 不可省**:`git checkout --orphan`(7c)會「如同 checkout start point」把**初始 commit 的檔**(`.gitignore`、`CLAUDE.md`、`.claude/`、`.turbo-plugin/`)寫回 working tree——即使 7a 用了 `--no-checkout` 也一樣;`git rm --cached` 只清 index、磁碟檔仍在。略過 `git clean`,7e 的 `svn checkout` 會被這些磁碟檔 **obstruct**:對**已有同名檔的非空 SVN repo**(重跑、或該 URL 已有內容)會撞成 `.gitignore` / `CLAUDE.md` 等 **tree conflict**。清空後再 checkout,SVN 端內容為權威、無衝突。(`git clean` 不會刪 `.git` 指標檔。)
+   - 7e. `svn checkout <url> .`(working tree 已 `git clean` 清空,不會 obstruct;故不需 `--force`)
    - 7f. 設定**固定** `svn:ignore=.git`:`svn propset svn:ignore '.git' .`(`.git` 是唯一無法靠 push 腳本
      `git check-ignore` 過濾的 must-exclude 路徑;其餘排除項由 `.gitignore` 涵蓋,不寫進 svn:ignore)。
    - 7g. **commit 該屬性**:`svn commit -m "svn:ignore=.git (turbo-plugin bridge)"`。此為 case (a) 唯一的
@@ -215,8 +216,9 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 - **Case 偵測順序固定**(submodule → no .git → not main worktree → no .turbo-plugin → else),不要更改。
 - **先跑共用 base 段、再做 git-svn concern** — base 只建 concern-neutral 共用檔骨架;bridge / `[svn]` /
   git-svn 標記區塊等屬 git-svn concern。
-- **Case (a) 的 sub-step 7 內部順序 7a-7g 不可重排** — 7a `--no-checkout`、7e svn checkout、7d empty commit
-  是 SVN obstruction 與後續 merge 的 load-bearing;7f propset + 7g commit 把固定 svn:ignore 固化,必在 7e 之後。
+- **Case (a) 的 sub-step 7 內部順序 7a-7g 不可重排** — 7d 的 `git clean -dffx`(清空 working tree)是避免 7e
+  `svn checkout` 被 obstruct 的 load-bearing 步驟(`--no-checkout` 不足以保證 working tree 為空,見 7d 註);
+  7f propset + 7g commit 把固定 svn:ignore 固化,必在 7e 之後。
 - **Case (a) `git init` 一律帶 `-b main`** — 否則首推 branch mismatch。
 - **Case (a) sub-step 8 / case (b) 的 connect merge 不可省** — 否則首次 push/pull 撞 unrelated histories。
 - **不自動代填使用者身分或設定** — git `user.name`/`user.email`、SVN URL 等缺漏一律先 `AskUserQuestion` 再做;
