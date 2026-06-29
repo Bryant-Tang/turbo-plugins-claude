@@ -22,6 +22,7 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 
 - 需 git + SVN client(`svn` / `svnadmin` 在 PATH)。
 - `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml`(+ `CLAUDE.md` base 區塊);machine-specific 偏好寫進 gitignored `config.local.toml`。
+- case (a)(新建)/(b)(接管現有 git+SVN)的 git↔SVN bridge bootstrap 由固定腳本 `Initialize-GitSvnBridge`(`.ps1` / `.sh`)承接(空 main 先行 → orphan bridge + `svn checkout` → 固定 `svn:ignore=.git` → `git merge --allow-unrelated-histories` 進當前分支),agent 只留收 SVN URL / 收 git 身分 / 確認;base 骨架在腳本成功後才疊上。
 
 ## 安裝
 
@@ -49,7 +50,7 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 
 ## `.git` 不進 SVN 的機制
 
-bridge 靠 `New-RemoteBridge` 建立時的 `svn rm --keep-local .git`（修正 `svn checkout --force` 的副作用）+ 固定 `svn:ignore=.git` 來確保 `.git` 不被推進 SVN。其餘該排除的檔一律由 `.gitignore` + push 腳本的 `git check-ignore` 決定（bridge 的 add-set = `svn status` 的 `?` 減去 git-ignored），讓 remote-svn 用起來更接近 remote git。
+bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用）+ 固定 `svn:ignore=.git` 來確保 `.git` 不被推進 SVN——首個 bridge（`tp-setup` case (a)/(b)）由 `Initialize-GitSvnBridge` / `initialize-git-svn-bridge.sh` 做、後續工作分支的 bridge 由 `New-RemoteBridge` / `Checkout-SvnBranch` 做。其餘該排除的檔一律由 `.gitignore` + push 腳本的 `git check-ignore` 決定（bridge 的 add-set = `svn status` 的 `?` 減去 git-ignored），讓 remote-svn 用起來更接近 remote git。
 
 ## SVN commit body 的組裝（`tp-push-to-svn`）
 
