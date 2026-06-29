@@ -1,0 +1,375 @@
+# Initialize-GitSvnBridge.test.ps1 (Pester 5)
+#
+# Script under test: plugins/turbo-plugin-git-svn/scripts/Initialize-GitSvnBridge.ps1
+#
+# Contract: -SvnUrl <url> [-Branch <name=main>]. First-bridge bootstrap that bridges the
+# CURRENT repo to an SVN URL and merges the SVN content into the current branch. Two-arm
+# flow on "has root commit":
+#   case (a) no HEAD  -> seed an empty root commit, then bridge + merge (unrelated histories);
+#   case (b) has HEAD -> bridge + merge into the current branch (can conflict on overlap).
+# Pre-bridge guards: scheme allowlist (^(https?|svn|file)://) and a git-identity check that
+# emits TP_TOKEN:IDENTITY_REQUIRED. A merge conflict emits TP_TOKEN:MERGE_CONFLICT (no abort,
+# no rollback). A mid-run failure AFTER the bridge worktree exists rolls back the local git side.
+#
+# svn-gated cases (anything that drives a real svn checkout/commit) self-SKIP when svn.exe or
+# the seed dump are absent. Arg/identity/url-validation cases run on plain git.
+#
+# KTD8 isolation (stricter than New-RemoteBridge.test): every svn CLIENT call this test makes
+# (propget / info) passes --config-dir <sandbox>/.svnconfig so the real %APPDATA%\Subversion is
+# never touched. svnadmin create/load take no --config-dir (they read no global state). The
+# script-under-test's own internal svn calls are out of the test's control.
+
+# --- Discovery-time svn gate (evaluated BEFORE BeforeAll) -----------------------
+$script:DumpPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'seed', 'svn-repo-r1-r20.dump'))
+$SvnAvailable = $false
+try {
+    $null = (& svn --version --quiet 2>$null)
+    $SvnAvailable = ($LASTEXITCODE -eq 0)
+} catch {
+    $SvnAvailable = $false
+}
+$SvnReady = ($SvnAvailable -and [System.IO.File]::Exists($script:DumpPath))
+
+BeforeAll {
+    $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
+    $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-GitSvnBridge.ps1')
+    $script:DumpPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'seed', 'svn-repo-r1-r20.dump'))
+
+    # Shared test helpers (New-Sandbox / Remove-Sandbox / Run-Git / Run-Git-Capture / Invoke-PsScript).
+    . ([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'lib', 'ScriptsCommon.ps1'))
+
+    # CRITICAL isolation: the gitignored sandbox lives INSIDE this plugin's own git repo, so a test
+    # dir that is not yet its own repo (scenario 6's pre-init state) would let the script's
+    # `git rev-parse` / worktree / clean escape UPWARD into the real repo. Fence every child git
+    # invocation at the sandbox base so it can never traverse above it. Each scenario still git-inits
+    # its own $root, so the fence only blocks the dangerous upward escape.
+    $script:PrevCeiling = $env:GIT_CEILING_DIRECTORIES
+    $script:SandboxBase = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '.sandbox', 'sandboxes'))
+    $null = New-Item -ItemType Directory -Path $script:SandboxBase -Force
+    $env:GIT_CEILING_DIRECTORIES = $script:SandboxBase
+
+    # Runtime svn-availability flag (the file-scope $SvnAvailable used by -Skip: is only in scope at
+    # DISCOVERY; an It body that branches on svn at RUN time needs this script-scoped copy).
+    $script:SvnAvailableRt = $false
+    try {
+        $null = (& svn --version --quiet 2>$null)
+        $script:SvnAvailableRt = ($LASTEXITCODE -eq 0)
+    } catch {
+        $script:SvnAvailableRt = $false
+    }
+
+    function Get-WorktreesDir {
+        param([string]$Root)
+        return [System.IO.Path]::Combine($Root, '.turbo-plugin', 'worktrees')
+    }
+
+    function Get-BridgePath {
+        param([string]$Root, [string]$Branch = 'main')
+        $dash = $Branch -replace '/', '-'
+        return [System.IO.Path]::Combine((Get-WorktreesDir -Root $Root), "remote-svn-$dash")
+    }
+
+    # Create an SVN repo under the sandbox. -Load seeds it from the r1-r20 dump (trunk + branches);
+    # without -Load it is an empty rev-0 repo. svnadmin takes NO --config-dir. Returns the file:///
+    # URI (repos root), or $null if the svn pipeline failed.
+    function New-SvnRepo {
+        param([string]$Sandbox, [string]$Name = 'svnrepo', [switch]$Load)
+        $repo = [System.IO.Path]::Combine($Sandbox, $Name)
+        & svnadmin create $repo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        if ($Load) {
+            $loadCmd = "svnadmin load `"$repo`" < `"$($script:DumpPath)`""
+            & cmd.exe /c $loadCmd > $null 2>$null
+            if ($LASTEXITCODE -ne 0) { return $null }
+        }
+        return ('file:///' + ($repo -replace '\\', '/'))
+    }
+
+    # case (a) fixture: a git repo with identity but NO root commit (no HEAD) and no .gitignore.
+    function New-CaseARepo {
+        param([string]$Root)
+        $null = New-Item -ItemType Directory -Path $Root -Force
+        $null = Run-Git -Cwd $Root -GitArgs @('init', '-b', 'main')
+        $null = Run-Git -Cwd $Root -GitArgs @('config', 'user.email', 'test@turbo-plugin')
+        $null = Run-Git -Cwd $Root -GitArgs @('config', 'user.name',  'turbo-plugin-test')
+    }
+
+    # case (b) fixture: a git repo with identity + committed files (from -Files name->content).
+    # Deliberately commits NO .gitignore so the bridge's own .gitignore (.svn/) merges without an
+    # add/add conflict -- conflicts in these tests come only from the seeded overlap file.
+    function New-CaseBRepo {
+        param([string]$Root, [hashtable]$Files)
+        $null = New-Item -ItemType Directory -Path $Root -Force
+        $null = Run-Git -Cwd $Root -GitArgs @('init', '-b', 'main')
+        $null = Run-Git -Cwd $Root -GitArgs @('config', 'user.email', 'test@turbo-plugin')
+        $null = Run-Git -Cwd $Root -GitArgs @('config', 'user.name',  'turbo-plugin-test')
+        foreach ($k in $Files.Keys) {
+            $p = [System.IO.Path]::Combine($Root, $k)
+            $dir = [System.IO.Path]::GetDirectoryName($p)
+            if (-not [System.IO.Directory]::Exists($dir)) { $null = New-Item -ItemType Directory -Path $dir -Force }
+            [System.IO.File]::WriteAllText($p, $Files[$k])
+        }
+        $null = Run-Git -Cwd $Root -GitArgs @('add', '-A')
+        $null = Run-Git -Cwd $Root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '-m', 'initial')
+    }
+
+    # svn propget svn:ignore on a working copy, isolated via --config-dir (KTD8).
+    function Get-SvnIgnore {
+        param([string]$WcPath, [string]$ConfigDir)
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        try {
+            $out = & svn propget --config-dir $ConfigDir svn:ignore $WcPath 2>$null
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+        return ($out | Out-String).Trim()
+    }
+
+    function Get-BridgeBranchCount {
+        param([string]$Root)
+        $raw = Run-Git-Capture -Cwd $Root -GitArgs @('branch', '--list', 'remote-svn/main')
+        if ([string]::IsNullOrWhiteSpace($raw)) { return 0 }
+        return @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }).Count
+    }
+}
+
+AfterAll {
+    if ($null -eq $script:PrevCeiling) {
+        Remove-Item Env:\GIT_CEILING_DIRECTORIES -ErrorAction SilentlyContinue
+    } else {
+        $env:GIT_CEILING_DIRECTORIES = $script:PrevCeiling
+    }
+}
+
+Describe 'Initialize-GitSvnBridge' {
+
+    It 'script-under-test exists' {
+        [System.IO.File]::Exists($script:ScriptUnderTest) | Should -BeTrue
+    }
+
+    Context 'Scenario 1: case (a) + EMPTY svn -> clean connect, empty main' {
+        It 'connects, main carries no project files, bridge clean, svn:ignore=.git' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-1'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SvnRepo -Sandbox $sb
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build empty svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0
+                $res.Stdout | Should -Match 'SVN bridge connected\.'
+
+                # remote-svn/main branch exists (exactly one).
+                (Get-BridgeBranchCount -Root $root) | Should -Be 1
+
+                $bridge = Get-BridgePath -Root $root
+                # bridge worktree is clean.
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+                # svn:ignore on the bridge WC is exactly .git.
+                (Get-SvnIgnore -WcPath $bridge -ConfigDir $cfg) | Should -BeExactly '.git'
+
+                # main is empty: only the merged .gitignore, no SVN project files.
+                $mainFiles = Run-Git-Capture -Cwd $root -GitArgs @('ls-files')
+                $mainFiles | Should -BeExactly '.gitignore'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 2: case (a) + NON-EMPTY svn (/trunk) -> svn content lands on main' {
+        It 'connects, main has the svn content, bridge clean, .svn ignored + untracked' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'igsb-2'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseARepo -Root $root
+                $uri = New-SvnRepo -Sandbox $sb -Load
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build seeded svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk")
+                $res.ExitCode | Should -Be 0
+                $res.Stdout | Should -Match 'SVN bridge connected\.'
+
+                # main carries the imported svn content.
+                $mainFiles = Run-Git-Capture -Cwd $root -GitArgs @('ls-files')
+                $mainFiles | Should -Match 'README\.txt'
+
+                $bridge = Get-BridgePath -Root $root
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+
+                # bridge .gitignore contains .svn/
+                $gi = [System.IO.Path]::Combine($bridge, '.gitignore')
+                [System.IO.File]::Exists($gi) | Should -BeTrue
+                @([System.IO.File]::ReadAllLines($gi) | Where-Object { $_.Trim() -eq '.svn/' }).Count | Should -BeGreaterThan 0
+
+                # .svn metadata is NOT tracked by git in the bridge.
+                $bridgeFiles = Run-Git-Capture -Cwd $bridge -GitArgs @('ls-files')
+                $bridgeFiles | Should -Not -Match '(^|\n)\.svn'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 3: case (b) + overlapping svn content (different) -> MERGE_CONFLICT' {
+        It 'emits TP_TOKEN:MERGE_CONFLICT, exits non-zero, leaves the merge in progress' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'igsb-3'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                # README.txt exists in trunk; seed a DIFFERENT README.txt on the git side -> add/add conflict.
+                New-CaseBRepo -Root $root -Files @{ 'README.txt' = "GIT-SIDE README - intentional conflict`n" }
+                $uri = New-SvnRepo -Sandbox $sb -Load
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build seeded svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk")
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'TP_TOKEN:MERGE_CONFLICT'
+                $res.Combined | Should -Match 'README\.txt'
+
+                # Conflict left in place (NOT aborted): MERGE_HEAD present in the main worktree.
+                [System.IO.File]::Exists([System.IO.Path]::Combine($root, '.git', 'MERGE_HEAD')) | Should -BeTrue
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 4: case (b) + NON-overlapping svn content -> clean merge of both sides' {
+        It 'connects, main has both the original and the svn files' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'igsb-4'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseBRepo -Root $root -Files @{ 'original.txt' = "original git-only file`n" }
+                $uri = New-SvnRepo -Sandbox $sb -Load
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build seeded svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk")
+                $res.ExitCode | Should -Be 0
+                $res.Stdout | Should -Match 'SVN bridge connected\.'
+
+                $mainFiles = Run-Git-Capture -Cwd $root -GitArgs @('ls-files')
+                $mainFiles | Should -Match 'original\.txt'
+                $mainFiles | Should -Match 'README\.txt'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 5: case (b) + EMPTY svn -> no-op merge, original content intact' {
+        It 'connects, original file unchanged, bridge clean' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-5'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseBRepo -Root $root -Files @{ 'original.txt' = "keep me intact`n" }
+                $uri = New-SvnRepo -Sandbox $sb
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build empty svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0
+                $res.Stdout | Should -Match 'SVN bridge connected\.'
+
+                # original content intact.
+                $orig = [System.IO.File]::ReadAllText([System.IO.Path]::Combine($root, 'original.txt'))
+                $orig | Should -Match 'keep me intact'
+                (Run-Git-Capture -Cwd $root -GitArgs @('ls-files')) | Should -Match 'original\.txt'
+
+                $bridge = Get-BridgePath -Root $root
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 6: git identity gate, then a clean re-run' {
+        It 'emits TP_TOKEN:IDENTITY_REQUIRED (no bridge), then succeeds once identity is set' {
+            $sb = New-Sandbox -Tag 'igsb-6'
+            $prevG = $env:GIT_CONFIG_GLOBAL
+            $prevS = $env:GIT_CONFIG_SYSTEM
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $null = New-Item -ItemType Directory -Path $root -Force   # NOT a git repo yet (script git-inits it)
+
+                # Hide any ambient git identity: empty global + system config files.
+                $emptyG = [System.IO.Path]::Combine($sb, 'empty-global.gitconfig')
+                $emptyS = [System.IO.Path]::Combine($sb, 'empty-system.gitconfig')
+                [System.IO.File]::WriteAllText($emptyG, '')
+                [System.IO.File]::WriteAllText($emptyS, '')
+                $env:GIT_CONFIG_GLOBAL = $emptyG
+                $env:GIT_CONFIG_SYSTEM = $emptyS
+
+                $repo = [System.IO.Path]::Combine($sb, 'svnrepo')
+                $uri  = 'file:///' + ($repo -replace '\\', '/')
+
+                # --- no identity -> TP_TOKEN:IDENTITY_REQUIRED, exit 1, .git created, no bridge. ---
+                $res1 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res1.ExitCode | Should -Be 1
+                $res1.Stdout | Should -Match 'TP_TOKEN:IDENTITY_REQUIRED'
+                [System.IO.Directory]::Exists([System.IO.Path]::Combine($root, '.git')) | Should -BeTrue
+                (Get-BridgeBranchCount -Root $root) | Should -Be 0
+
+                # The re-run drives a real svn checkout/commit -> svn-gated.
+                if (-not $script:SvnAvailableRt) { return }
+                $null = New-SvnRepo -Sandbox $sb
+                # Set LOCAL identity (writes to .git/config, unaffected by the empty global).
+                $null = Run-Git -Cwd $root -GitArgs @('config', 'user.email', 'test@turbo-plugin')
+                $null = Run-Git -Cwd $root -GitArgs @('config', 'user.name',  'turbo-plugin-test')
+
+                $res2 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res2.ExitCode | Should -Be 0
+                $res2.Stdout | Should -Match 'SVN bridge connected\.'
+                # exactly one remote-svn/main (no duplicate / no "already exists" failure).
+                (Get-BridgeBranchCount -Root $root) | Should -Be 1
+            } finally {
+                $env:GIT_CONFIG_GLOBAL = $prevG
+                $env:GIT_CONFIG_SYSTEM = $prevS
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 7: invalid SVN URL -> rejected before any side effect' {
+        It 'exits non-zero with the invalid-URL wording and creates no bridge' {
+            $sb = New-Sandbox -Tag 'igsb-7'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseARepo -Root $root
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', 'not-a-url')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match "Invalid SVN URL 'not-a-url'"
+                # nothing created.
+                [System.IO.Directory]::Exists((Get-BridgePath -Root $root)) | Should -BeFalse
+                (Get-BridgeBranchCount -Root $root) | Should -Be 0
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 8: mid-run failure after worktree creation -> rollback, no residue' {
+        It 'on failed svn checkout rolls back the bridge branch + worktree dir' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-8'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseBRepo -Root $root -Files @{ 'original.txt' = "git-only`n" }
+                # A scheme-valid file:// URL pointing at a non-existent repo -> passes URL validation,
+                # passes git init/identity/case-split, then svn checkout (step 8) fails -> rollback.
+                $bogus = [System.IO.Path]::Combine($sb, 'no-such-repo')
+                $bogusUri = 'file:///' + ($bogus -replace '\\', '/')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $bogusUri)
+                $res.ExitCode | Should -Not -Be 0
+
+                # rollback removed both the bridge branch and the bridge worktree dir.
+                (Get-BridgeBranchCount -Root $root) | Should -Be 0
+                [System.IO.Directory]::Exists((Get-BridgePath -Root $root)) | Should -BeFalse
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+}
