@@ -1,6 +1,6 @@
 ---
 name: tp-setup
-description: '設定 turbo-plugin-git-svn 環境(git↔SVN bridge)。使用者明確要求 setup 時執行;agent 偵測到 .turbo-plugin/ marker 不存在 / SessionStart 提示需 setup 時可建議使用者執行,**不要自動觸發**。先跑共用 base 段(建 .turbo-plugin/ + concern-neutral 共用檔),再做 git↔SVN bridge bootstrap。涵蓋四個 case:(a) 新建 git+SVN / (b) 接管既有 git+SVN / (c) 主 worktree 補設定 / (d) peer worktree。'
+description: '設定 turbo-plugin-git-svn 環境(git↔SVN bridge)。使用者明確要求 setup 時執行;agent 偵測到 .turbo-plugin/ marker 不存在 / SessionStart 提示需 setup 時可建議使用者執行,**不要自動觸發**。兩層:共用 base 段(.turbo-plugin/ + concern-neutral 共用檔)與 git↔SVN bridge bootstrap;case (a)/(b) 的 bridge bootstrap 由 Initialize-GitSvnBridge 腳本承接、base 骨架腳本後置。涵蓋四個 case:(a) 新建 git+SVN / (b) 接管既有 git+SVN / (c) 主 worktree 補設定 / (d) peer worktree。'
 argument-hint: 'optional: --svn-url <url>'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
@@ -12,10 +12,11 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 `turbo-plugin-git-svn` 的設定入口。流程兩層:
 
-1. **共用 base 段**(concern-neutral):pre-check + case 偵測 + 建 `.turbo-plugin/` 與共用檔骨架。見
-   `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/setup-base.md`,**先讀並執行該檔**。
-2. **git-svn concern 段**(本檔):git↔SVN bridge bootstrap、`[svn]` 設定、
-   `.gitignore` 的 git-svn 區塊。
+1. **共用 base 段**(concern-neutral):pre-check + case 偵測(**先跑**)+ 共用檔骨架(`.turbo-plugin/` 等)。見
+   `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/setup-base.md`,**先讀並執行該檔的 pre-check + case 偵測**;
+   骨架建立**時機依 case 不同**:case (c)/(d) 即時建、**case (a)/(b) 在 bootstrap 腳本成功後才建**(見 Phase 2)。
+2. **git-svn concern 段**(本檔):git↔SVN bridge bootstrap(case (a)/(b) 委派 `Initialize-GitSvnBridge` 腳本)、
+   `[svn]` 設定、`.gitignore` 的 git-svn 區塊。
 
 > 本 plugin **不**處理 IIS apphost(屬 `turbo-plugin-dotnet-framework-web`)、dbhub(屬
 > `turbo-plugin-three-environment-db`)。那些 plugin 各有自己的 `tp-setup`,共用同一份 base 段、
@@ -25,8 +26,8 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 | Case | 觸發條件 | git-svn 動作 |
 |---|---|---|
-| (a) 新建 | `.git/` 不存在 | base 骨架 → `git init -b main` → git-svn ignore/設定 → 確認身分後初始 commit → SVN URL → `remote-svn/main` orphan + worktree + svn checkout + 固定 `svn:ignore=.git` → 連接 main↔remote-svn/main 歷史 |
-| (b) init-from-existing | `.git/` 存在 + `.turbo-plugin/` 不存在 | 警告 git-svn 不相容 → base 骨架 + git-svn 設定 → SVN URL → bridge + svn checkout → `git merge --allow-unrelated-histories` 合 SVN content |
+| (a) 新建 | `.git/` 不存在 | 收 SVN URL → 確認 → 呼叫 `Initialize-GitSvnBridge`(腳本做 `git init` → 身分檢查 → 空 commit → `remote-svn/main` orphan bridge + svn checkout + 固定 `svn:ignore=.git` → merge 進空 main)→ **腳本後**套 base 骨架 + git-svn 設定 |
+| (b) init-from-existing | `.git/` 存在 + `.turbo-plugin/` 不存在 | 警告 git-svn 不相容 → 收 SVN URL → 確認 → 呼叫 `Initialize-GitSvnBridge`(同上,merge 進**既有**分支、可能衝突)→ 衝突則引導手動解 → **腳本後**套 base 骨架 + git-svn 設定 |
 | (c) 主 worktree 補設定 | `.turbo-plugin/` 存在 + 在主 worktree | idempotent 補 base 骨架 + git-svn 標記區塊 / 缺檔 |
 | (d) peer-mode | `.turbo-plugin/` 存在 + 在 peer worktree | git-svn 無 per-peer 檔,僅確認 marker 存在;實際無動作(dbhub per-peer 屬 db plugin) |
 
@@ -72,9 +73,10 @@ parse stdout 的 `ARGV_SAFE_FOR_UNICODE`:
 #### 1.3 Phase summary + override
 
 依 base 段「Case 偵測」的 Phase summary 規則:平實白話報告偵測到的 case + 高階步驟,用 `AskUserQuestion`
-讓使用者「執行偵測到的 case / 改執行其他 case / 取消」。**只列「會動到外部」**的 unconditional 動作:
+讓使用者「執行偵測到的 case / 改執行其他 case / 取消」。**只列「會動到外部」**的 unconditional 動作
+(case (a)/(b) 的下列動作皆由 `Initialize-GitSvnBridge` 腳本執行):
 - case (a)/(b):從 SVN 伺服器抓取專案內容(`svn checkout <url>`)
-- case (a):設定固定 `svn:ignore=.git` 並 commit 到 SVN 伺服器
+- case (a)/(b):設定固定 `svn:ignore=.git` 並 commit 到 SVN 伺服器
 - case (b):將 SVN 內容合進當前 git branch(merge commit 留本地,**不**自動 push)
 
 `.gitignore` / `CLAUDE.md` / `.turbo-plugin/` 寫入、git 本地 op、template copy、
@@ -84,88 +86,95 @@ AskUserQuestion 本身、檔案讀取/probe **不列**。
 
 ### Phase 2 — base 骨架 + git-svn concern
 
-先依 base 段「Base 檔骨架」建立 concern-neutral 共用檔(`.turbo-plugin/` 目錄、`config.toml` 殼、
-`.gitignore` base 區塊、`CLAUDE.md` base 區塊),再依 case 做下列 git-svn 動作。
+**骨架時機依 case 不同**:
+- **case (a)/(b)**:bridge bootstrap 由 `Initialize-GitSvnBridge` 腳本承接,腳本會把 SVN 內容 merge 進當前分支。
+  base 骨架(`.turbo-plugin/` / `config.toml` 殼 / `.gitignore` base / `CLAUDE.md` base)與 git-svn 設定一律
+  **在腳本成功後**才疊上(KTD1「空 main 先行 + 骨架後置」)——**不要**在呼叫腳本前先建骨架。
+- **case (c)/(d)**:不跑 bootstrap,base 骨架在各自 case 段內依 base 段「Base 檔骨架」idempotent 建立(時機不變)。
 
 #### 2(a). Case (a) — 新建 git+SVN
 
-**順序敏感,以下不可重排**(SVN obstruction 避免 +「先 ignore 再 commit」+ 歷史連接):
+bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → orphan bridge + svn checkout + 固定
+`svn:ignore=.git` → merge 進空 main)**全部交給 `Initialize-GitSvnBridge` 腳本**;agent 只留收 URL、收身分、
+確認三件互動,base 骨架腳本後置。**不要**自己逐條下 git/svn 指令。
 
-1. `git init -b main`。**明確 `-b main`** — 與稍後 `remote-svn/main` bridge 對齊;裸 `git init` 多落在
-   `master`,會使首次 `/tp-push-to-svn` branch mismatch。Git ≥ 2.31 已於 Pre-check 驗證。
+1. **收 SVN URL(前置)**。腳本需要 URL 才能跑,故在呼叫前先收:`AskUserQuestion`(自由文字)收 **SVN URL**
+   (若 argument 已帶 `--svn-url` 則用它)。空 / 格式不對(非 http(s)/svn/file)→ 重問或取消。
 
-2. **base 骨架**(見 base 段):寫 `.gitignore` base(`.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`)、
-   建 `.turbo-plugin/`、複製 `config.toml` 殼、注入 `CLAUDE.md` base 區塊。
-   **此步必須先於 sub-step 5 的初始 commit 與 sub-step 7 的 `git worktree add`**。
-
-3. **git-svn 的 `.gitignore` 追加**(idempotent,缺則加):
+2. **呼叫 bootstrap 腳本**(依下方 Decision Rules「執行路由」選 `.ps1` / `.sh`;PowerShell 一律單破折號參數
+   `-SvnUrl`):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Initialize-GitSvnBridge.ps1" -SvnUrl <url>
    ```
-   .turbo-plugin/worktrees/
-   .svn/
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/initialize-git-svn-bridge.sh" --svn-url <url>
    ```
-   - `.turbo-plugin/worktrees/`:nested bridge worktree 容器不污染主 worktree `git status`。
-   - `.svn/`:讓 git 忽略 bridge worktree 內的 SVN 管理目錄。
-   - > 注意:.NET 產物(`.vs/` / `bin/` / `obj/` / `packages/`)的 ignore 屬 **dotnet** plugin。若這是 .NET
-     > 專案,請也裝 `turbo-plugin-dotnet-framework-web` 並跑其 setup;或在 sub-step 5 初始 commit 的「將被
-     > commit」清單確認時自行補上這些 pattern(該確認步驟是把 .NET 機器產物擋在版控外的後盾)。
+   腳本內部(無需 agent 逐條下指令):`git init -b main`(idempotent、無需身分)→ 檢查 git 身分 →
+   root-commit 分流(case (a) 無 root commit → 建空 commit)→ orphan bridge worktree + `git clean` 清空 →
+   plain `svn checkout` → `svn rm --keep-local .git` → 確保 bridge `.gitignore` 含 `.svn/` → `git add -A`
+   commit SVN 內容到 bridge → 固定 `svn propset svn:ignore=.git` + `svn commit` → `git merge
+   --allow-unrelated-histories` 進空 main(零衝突)。中途失敗自動 rollback 本機 git 端(含 Windows `.svn` 唯讀檔
+   清理);已執行的 `svn commit`(svn:ignore)為永久,乾淨重跑會吸收。
 
-4. **git-svn 設定與檔案**:
-   - `.turbo-plugin/config.toml` 的 `git-svn` 標記區塊:確保含 `[svn]` section(目前無必填 key,保留空 section
-     供未來 svn 行為設定)。用 base 段「更新自己區塊」程序,只動 `# >>> turbo-plugin:git-svn >>>` 區塊。
+3. **身分未設(`TP_TOKEN:IDENTITY_REQUIRED`)→ 收身分後重呼叫**。腳本在 `git init` 後若偵測 git
+   `user.name`/`user.email` 任一為空,印 `TP_TOKEN:IDENTITY_REQUIRED` 並非零 exit(此時 `.git` 已建、bridge 未建)。agent:
+   - 用**固定模板** `AskUserQuestion`(自由文字)收 name / email。**不自動代填**(尤其**不得**用 Claude 帳號
+     email / 本機使用者名稱)。
+   - 寫 **repo-local**:`git config user.name <name>` 與 `git config user.email <email>`(**不加 `--global`**;
+     此時腳本已 `git init`,`--local` 有 repo 可寫)。**分兩步、禁 `&&` 串接**。
+   - **重新呼叫**同一支腳本(乾淨重跑:`git init` no-op、仍無 root commit → 走 case (a) arm、不會重複建 bridge)。
 
-5. **初始 commit(commit 前先確認)**。main 需至少一個 commit,sub-step 7 的 `git worktree add` 才有 HEAD 可依附:
-   - **先確認 git 提交身分**:`git config user.name` / `user.email`(local+global 合併)。任一為空 →
-     **不自動代填**(尤其**不得**用 Claude 帳號 email / 本機使用者名稱);用 `AskUserQuestion` 請使用者輸入
-     (寫 **repo-local**,**不加 `--global`),或「先自行 `git config` 後重跑」/「取消」。
-   - **列兩份清單**(dry-run,先不 stage):**將被 commit** = `git add -An`;**被 ignore** =
-     `git status --ignored --porcelain` 取 `!!`。(不要混用 `git status --porcelain`。)
-   - `AskUserQuestion` 確認:「確認建立初始 commit」/「先補 `.gitignore`(free-text 收 pattern,idempotent 加,
-     重列再問)」/「取消」。
-   - 確認後**分兩步**(禁 `&&` 串接 state-changing git):先 `git add -A`,再
-     `git commit -m "chore: initial commit (turbo-plugin setup)"`。
-   - 邊界:`git add -A` 後 index 為空(`git diff --cached --quiet` exit 0)→ `git commit --allow-empty`。
+4. **腳本成功後 → base 骨架後置**(疊在 merge 進來的 SVN 內容上,全 idempotent):
+   - **順序硬性要求:先 append `.gitignore` 的 git-svn patterns(4b),才做任何 `git add`(4d)**。否則巢狀
+     bridge worktree(`.turbo-plugin/worktrees/`)與其 `.svn/` 在 main 尚未被 ignore,`git add -A` 會誤把 `.svn`
+     內容 stage 進 main。
+   - 4a. **base 骨架**(見 base 段「Base 檔骨架」):建 `.turbo-plugin/`、複製 `config.toml` 殼、`.gitignore`
+     base 區塊(`.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`)、注入 `CLAUDE.md` base 區塊。
+   - 4b. **git-svn `.gitignore` 追加**(idempotent,缺則加):
+     ```
+     .turbo-plugin/worktrees/
+     .svn/
+     ```
+     - `.turbo-plugin/worktrees/`:nested bridge worktree 容器不污染主 worktree `git status`。
+     - `.svn/`:讓 git 忽略 bridge worktree 內的 SVN 管理目錄。
+   - 4c. **git-svn 設定**:`.turbo-plugin/config.toml` 的 `git-svn` 標記區塊確保含 `[svn]` section(目前無必填
+     key,保留空 section 供未來 svn 行為設定)。用 base 段「更新自己區塊」程序,只動 `# >>> turbo-plugin:git-svn >>>` 區塊。
+   - 4d. **commit 骨架**(分兩步、禁 `&&` 串接 state-changing git):先 `git add -A`(此時 4b 已 ignore 掉
+     `.svn/` 與 worktree 容器),再 `git commit -m "chore: turbo-plugin git-svn setup (skeleton)"`。
+     > .NET 產物(`.vs/` / `bin/` / `obj/` / `packages/`)的 ignore 屬 **dotnet** plugin。若這是 .NET 專案,請也裝
+     > `turbo-plugin-dotnet-framework-web` 並跑其 setup;或在 4d `git add -A` 前先補上這些 pattern(這是把 .NET
+     > 機器產物擋在版控外的後盾)。
 
-6. `AskUserQuestion`(自由文字)收 **SVN URL**(若 argument 沒帶 `--svn-url`)。空 / 格式不對(非 http(s)/svn/file)→ 重問或取消。
-
-7. **建 `remote-svn/main` orphan branch + worktree**(7a-7g 不可重排;前提:sub-step 2/3 已把
-   `.turbo-plugin/worktrees/` 寫進 `.gitignore`、sub-step 5 已建初始 commit):
-   - 7a. `git worktree add --detach --no-checkout ".turbo-plugin/worktrees/remote-svn-main"`(`--no-checkout` 先不簽出檔案)
-   - 7b. cd 進新 worktree
-   - 7c. `git checkout --orphan remote-svn/main`
-   - 7d. **清空 working tree 後建空 commit**(三步分開跑,禁 `&&`):`git rm -rf --cached .`(清 index)→ **`git clean -dffx`**(清磁碟上未追蹤 / ignored 檔)→ `git commit --allow-empty -m "init: remote-svn/main branch"`。
-     > **`git clean` 不可省**:`git checkout --orphan`(7c)會「如同 checkout start point」把**初始 commit 的檔**(`.gitignore`、`CLAUDE.md`、`.claude/`、`.turbo-plugin/`)寫回 working tree——即使 7a 用了 `--no-checkout` 也一樣;`git rm --cached` 只清 index、磁碟檔仍在。略過 `git clean`,7e 的 `svn checkout` 會被這些磁碟檔 **obstruct**:對**已有同名檔的非空 SVN repo**(重跑、或該 URL 已有內容)會撞成 `.gitignore` / `CLAUDE.md` 等 **tree conflict**。清空後再 checkout,SVN 端內容為權威、無衝突。(`git clean` 不會刪 `.git` 指標檔。)
-   - 7e. `svn checkout <url> .`(working tree 已 `git clean` 清空,不會 obstruct;故不需 `--force`)
-   - 7f. 設定**固定** `svn:ignore=.git`:`svn propset svn:ignore '.git' .`(`.git` 是唯一無法靠 push 腳本
-     `git check-ignore` 過濾的 must-exclude 路徑;其餘排除項由 `.gitignore` 涵蓋,不寫進 svn:ignore)。
-   - 7g. **commit 該屬性**:`svn commit -m "svn:ignore=.git (turbo-plugin bridge)"`。此為 case (a) 唯一的
-     svn commit;7f propset 與 7g commit 分兩步(禁 `&&`)。
-
-   **Step 7 rollback**(7e 失敗時):`git worktree remove --force .turbo-plugin/worktrees/remote-svn-main` →
-   `git branch -D remote-svn/main` → 確認清理後重跑 `/tp-setup`。
-
-8. **連接 main ↔ remote-svn/main 歷史**。`remote-svn/main` 為 orphan,與 main 無共同祖先;不連接則首次
-   push/pull 撞 `refusing to merge unrelated histories`。**`<main-worktree>` = sub-step 1 `git init` 的專案根**;
-   sub-step 7b 已 cd 進 bridge worktree,故**務必用 `git -C <main-worktree>`**:
-
-   `git -C <main-worktree> merge --allow-unrelated-histories -m "chore: connect SVN bridge via turbo-plugin" remote-svn/main`
-
-> **case (a) 中途取消/失敗的復原**:sub-step 2/3 後 `.turbo-plugin/` 已建。若在 sub-step 5/8 取消後直接重跑,
-> case 偵測會因 `.turbo-plugin/` 已存在判成 **case (c)**,**不會**補做 `git init` / 初始 commit / 連接歷史。
-> 要乾淨重跑 case (a):先移除 `.turbo-plugin/`(及已建的 `remote-svn/main` branch 與 worktree)再重跑。
+> **case (a) 中途取消/失敗的復原**:腳本的 rollback 會清掉中途失敗留下的 bridge branch / worktree;唯一可能
+> 殘留的是身分 throw 留下的 bare 空 `.git`(無 commit)。若使用者此時取消、之後直接重跑 `/tp-setup`,case 偵測
+> 會因 `.git` 已存在判成 **case (b)**——但 case (b) 一樣呼叫本腳本,腳本偵測「無 root commit」會自走 case (a)
+> arm(空 commit + merge 進空 main),仍能正確完成。要回到乾淨的 case (a) 偵測:先移除該 bare `.git` 再重跑。
+> (4a 之後才建 `.turbo-plugin/`,故腳本未成功前不會殘留 `.turbo-plugin/`。)
 
 完成後 fall through to Phase 4。
 
 #### 2(b). Case (b) — 接管既有 git+SVN
 
-1. 檢查 `git config --get svn-remote.svn.url`。非空 → 警告「偵測到 git-svn 設定(`<url>`)。turbo-plugin 不相容
-   git-svn,請手動移除:`git config --unset-all svn-remote.svn.url` + 移除 `.git/svn/`」。`AskUserQuestion`:已移除 / 取消。
-2. 跑 base 骨架(`.gitignore` base、`.turbo-plugin/`、`config.toml` 殼、`CLAUDE.md` base)
-   + case (a) sub-step 3(git-svn `.gitignore` 追加)、4(git-svn 設定)。**先依 sub-step 5
-   的「git 提交身分」檢查**確認身分(case (b) 會建 merge commit;同樣**不自動代填**)。case (b) 已有歷史,**不跑**初始 commit。
-3. 跑 case (a) sub-step 6-7(SVN URL + remote-svn/main bridge + svn checkout + 固定 svn:ignore),**外加**(即
-   sub-step 8 在 case (b) 的對應做法,故不再另跑 8)`git merge --allow-unrelated-histories -m "chore: connect SVN
-   via turbo-plugin (r<rev>)" remote-svn/main` 把 SVN content 合進當前主 branch。merge 衝突 → 列衝突檔提示手動解,
-   **不自動 abort**。
+case (b) 與 case (a) **共用同一支 `Initialize-GitSvnBridge` 腳本**;差別只在腳本偵測「**已有 root commit**」會走
+case (b) arm(不建空 commit、用當前分支、merge 進**有內容**的分支可能衝突)。
+
+1. **git-svn 不相容檢查**:`git config --get svn-remote.svn.url`。非空 → 警告「偵測到 git-svn 設定(`<url>`)。
+   turbo-plugin 不相容 git-svn,請手動移除:`git config --unset-all svn-remote.svn.url` + 移除 `.git/svn/`」。
+   `AskUserQuestion`:已移除 / 取消。
+2. **收 SVN URL(前置)+ 呼叫 bootstrap 腳本**:同 case (a) sub-step 1-2(收 URL → 依執行路由呼叫
+   `Initialize-GitSvnBridge`)。腳本偵測**已有 root commit** → case (b) arm:不建空 commit、用當前分支,bridge
+   bootstrap 後 `git merge --allow-unrelated-histories` 把 SVN 內容合進**當前分支**。身分未設一樣回
+   `TP_TOKEN:IDENTITY_REQUIRED` → 同 case (a) sub-step 3 固定模板收身分 + `git config --local` + 重呼叫。
+3. **merge 衝突(`TP_TOKEN:MERGE_CONFLICT <files>`)→ agent 端收尾,不重呼叫腳本**。populated git × populated
+   SVN 有重疊檔(`CLAUDE.md` 等)時腳本印 `TP_TOKEN:MERGE_CONFLICT` + 非零 exit,**bridge 已建成且刻意不
+   rollback、merge 留在進行中**。agent:
+   - **不**重呼叫 bootstrap 腳本(會撞「bridge 已存在」死路)。
+   - 列出衝突檔(token 後的清單),引導使用者手動解衝突 + `git add` 已解檔 + `git commit` 完成該 merge
+     (**不自動 abort**,同先前 case (b) 行為)。
+   - merge commit 完成後,**由 agent 直接接 case (a) sub-step 4「base 骨架後置」收尾**(套 `.gitignore` /
+     `CLAUDE.md` / config 並 commit)。
+4. **腳本成功(merge 乾淨)→ base 骨架後置**:同 case (a) sub-step 4(疊在當前分支上,先 append `.gitignore`
+   patterns 再 `git add`)。
 
 完成後 fall through to Phase 4。
 
@@ -206,7 +215,8 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
   - 若是 .NET Framework Web 專案 → 裝 `turbo-plugin-dotnet-framework-web` 並跑其 `/tp-setup`(IIS / build 設定)。
   - 若要用三環境 DB → 裝 `turbo-plugin-three-environment-db` 並跑其 `/tp-setup`(dbhub)。
 - **下一步建議**:
-  - case (a)/(b):「現在可執行 `/tp-pull-from-svn --branch main` 拉初次 SVN 內容」。
+  - case (a)/(b):「bridge 已連接、初次 SVN 內容已在當前分支;之後用 `/tp-pull-from-svn --branch main` 同步 SVN
+    後續變更、`/tp-push-to-svn` 推送本機 commit」。
   - case (c)/(d):「設定已就緒」。
 
 ---
@@ -214,17 +224,22 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 ## Decision Rules
 
 - **Case 偵測順序固定**(submodule → no .git → not main worktree → no .turbo-plugin → else),不要更改。
-- **先跑共用 base 段、再做 git-svn concern** — base 只建 concern-neutral 共用檔骨架;bridge / `[svn]` /
-  git-svn 標記區塊等屬 git-svn concern。
-- **Case (a) 的 sub-step 7 內部順序 7a-7g 不可重排** — 7d 的 `git clean -dffx`(清空 working tree)是避免 7e
-  `svn checkout` 被 obstruct 的 load-bearing 步驟(`--no-checkout` 不足以保證 working tree 為空,見 7d 註);
-  7f propset + 7g commit 把固定 svn:ignore 固化,必在 7e 之後。
-- **Case (a) `git init` 一律帶 `-b main`** — 否則首推 branch mismatch。
-- **Case (a) sub-step 8 / case (b) 的 connect merge 不可省** — 否則首次 push/pull 撞 unrelated histories。
+- **case (a)/(b) 的 bridge bootstrap 委派 `Initialize-GitSvnBridge` 腳本** — agent 不再逐條下 git/svn 指令;
+  `git init -b main` / 身分 throw / 空 commit / orphan bridge + `git clean` + plain `svn checkout` / 固定
+  `svn:ignore=.git` / `git merge --allow-unrelated-histories`(連接歷史、避免首推 unrelated histories)全在腳本內,
+  rollback 含 Windows `.svn` 唯讀檔清理。
+- **case (a)/(b) base 骨架腳本後置(KTD1)** — base 骨架 + git-svn 設定必在腳本成功後才疊上(腳本把 SVN 內容
+  merge 進當前分支);**先 append `.gitignore` 的 git-svn patterns(`.turbo-plugin/worktrees/`、`.svn/`)才做任何
+  `git add`**,否則巢狀 bridge worktree 的 `.svn/` 會被誤 stage 進 main。case (c)/(d) 不跑 bootstrap、骨架時機不變。
+- **身分 throw 重呼叫迴圈(case (a)/(b))** — 腳本回 `TP_TOKEN:IDENTITY_REQUIRED` 時 agent 用固定模板收身分、
+  `git config --local` 寫入(此時腳本已 `git init`,`--local` 可寫)、**重呼叫同一支腳本**(乾淨重跑、不重複建 bridge)。
+- **case (b) `TP_TOKEN:MERGE_CONFLICT` 由 agent 端收尾、不重呼叫腳本** — bridge 已建成且不 rollback;agent 列衝突檔、
+  引導手動解 + commit merge(不自動 abort),再直接接「base 骨架後置」收尾。盲目重呼叫腳本會撞「bridge 已存在」死路。
 - **不自動代填使用者身分或設定** — git `user.name`/`user.email`、SVN URL 等缺漏一律先 `AskUserQuestion` 再做;
   **絕不**拿 Claude 帳號 email / 本機使用者名稱 / 臆測值代填。寫 git 身分一律 repo-local(不加 `--global`)。
-- **初始 commit 前先列「將被 commit / 被忽略」兩清單並確認** — git-svn 的 `.gitignore` 不含 .NET 產物區塊
-  (那是 dotnet plugin),此確認步驟是把機器產物擋在版控外的後盾;使用者可在此補 pattern。
+- **骨架 commit 的 .NET 產物後盾** — git-svn 的 `.gitignore` 不含 .NET 產物區塊(那是 dotnet plugin);若是 .NET
+  專案,在 case (a)/(b) sub-step 4d `git add -A` 前先補 `.vs/`/`bin/`/`obj/`/`packages/` pattern(或裝 dotnet
+  plugin 跑其 setup),把機器產物擋在版控外。
 - **Case (c)/(d) 必須 idempotent** — 跑兩次結果同跑一次,不重複追加標記區塊、不覆寫已存在 shared file。
 - **標記區塊只動自己 concern 的** — config.toml 用 concern 標記、CLAUDE.md 用單一 `base` 區塊;git-svn 只寫
   config.toml 的 `git-svn`(及 CLAUDE.md 的 `base`,若 base 段未先建)區塊,不碰 dotnet 區塊或標記外內容。
@@ -244,14 +259,20 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 - `.gitignore` 含 base(`.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`)+ git-svn(`.turbo-plugin/worktrees/`、`.svn/`)patterns。
 - `CLAUDE.md` 含 `base` 標記區塊。
 - Case (a)/(b):`git branch -a` 含 `remote-svn/main`,`git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-main`,
-  該 worktree 內含 `.svn/`;主 worktree `git status --porcelain` 乾淨。
+  該 worktree 內含 `.svn/`;**腳本後置的 base 骨架已 commit**,故主 worktree `git status --porcelain` 乾淨。
 - Case (a):`git rev-parse --abbrev-ref HEAD` = `main`;`git config user.name`/`user.email` 皆非空;
   `git merge-base main remote-svn/main` 非空(歷史已連接)。
+- Case (b):`git config user.name`/`user.email` 皆非空;當前分支與 `remote-svn/main` 的 `git merge-base` 非空
+  (SVN 內容已併入);若 merge 曾衝突,須使用者先手動解完 + `git commit` 後 agent 才接骨架收尾。
 - Case (c)/(d):跑兩次結果同跑一次(idempotent)。
 - Case (d):未動到任何 git-versioned shared file。
 
 ## Test Scenarios
 
+- **case (a)/(b) bridge bootstrap**:由 `Initialize-GitSvnBridge` 腳本的兩層自動測試覆蓋(case a/b × 空/非空
+  SVN、身分 throw 重呼叫、MERGE_CONFLICT 回報、rollback;見 `tests/unit/scripts/Initialize-GitSvnBridge.test.*`);
+  SKILL 端的編排(收 URL/身分重呼叫/骨架後置/衝突收尾)為 agent-prose,以一次真實 `/tp-setup` case (a)(空與非空
+  SVN)+ 一次 case (b)人工驗證為準。
 - **base 骨架 idempotent**:乾淨 sandbox 跑 case (c) 兩次,`.turbo-plugin/` 內容與 `.gitignore` /
   `CLAUDE.md` 的標記區塊不重複、不變動。
 - **標記區塊不互蓋**:在已有 dotnet 標記區塊的 `config.toml` 上跑 git-svn setup,只更新 git-svn 區塊,dotnet 區塊與標記外內容不變。
