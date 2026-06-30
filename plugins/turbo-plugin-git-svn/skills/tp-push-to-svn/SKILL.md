@@ -88,22 +88,35 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
 2. **Continue to commit**:略過 prepare,直接進 Step 3(使用既有 staged merge)。**注意**:此路徑沒有新的 prepare 輸出可顯示 `BODY` / `FILES`;直接請 agent propose title 進 Step 4。commit 腳本會讀既有 prepare 寫下的 `MERGE_HEAD.tp_svn_body`;若該 pin 不存在會 fail-closed,要求 abort + 重 prepare
 3. **Cancel**:結束 skill,不做任何清理
 
-### Step 3 — Review 鎖定 body 並由 agent 寫 title
+### Step 3 — 呈現異動檔案、agent 寫 title(body 進 Step 4 預覽,不另印純文字)
 
-prepare 輸出含 `BODY` 與 `FILES` 兩段:
+prepare 輸出含 `BODY` 與 `FILES` 兩段。**呈現順序**:異動檔案放**最後**(緊鄰 Step 4 的 AskUserQuestion);body **不**在此單獨印,改原樣放進 Step 4 的問句。
 
-- 把 `BODY` 段(`- <subject>` 條列)**原樣**呈現給使用者,並用**白話**說明(**不要照丟「body」「鎖定」這類內部術語**):「下面每一行對應這次推送的一個 commit,內容由系統自動帶出、**不能在這裡編輯**;要改這些行,請去改對應的 commit(`git rebase` / amend)後重跑」。
-- 把 `FILES` 段呈現給使用者(svn status:`?`→新增、`!`→刪除、`M`→修改;標 `ignored` 者被 git check-ignore 過濾,本次不會進 SVN)。
-- 由 **agent propose 一行 title**(摘要本次推送的高層意圖)。title 會在 commit 腳本端被 collapse 成單行(內嵌換行會被移除),所以 agent**無法**藉 title 的換行把額外內容塞進 body。
+- **title(agent 內部 propose,先不印)**:agent 依 `BODY` 段內容 propose 一行 title(摘要本次推送的高層意圖);它會成為 Step 4 預覽訊息的第一行。title 在 commit 腳本端會 collapse 成單行(內嵌換行移除),agent **無法**藉換行把額外內容塞進 body。
+- **body 不另印純文字**:`BODY` 段(每個 commit 一行的條列)**不**在此單獨 dump——它會原樣放進 Step 4 `AskUserQuestion` 的訊息預覽。避免「先用純文字把預覽印一次、再叫使用者看上方」的重複。
+- **異動檔案(FILES,最後一段純文字輸出)**:把 `FILES` 段以白話呈現(svn status:`?`→新增、`!`→刪除、`M`→修改;標 `ignored` 者被 git check-ignore 過濾、本次不會進 SVN)。**這是 AskUserQuestion 正上方的最後一段純文字**;若清單有疑慮項(例如含機器路徑的設定檔),在此一併白話提醒。
 
-### Step 4 — 確認(固定模板)
+### Step 4 — 確認(固定模板):SVN 訊息預覽放進 AskUserQuestion 問句
 
-先把**即將送到 SVN 的提交訊息預覽**原樣印出(第一行標題 + 空行 + 每個 commit 一行的條列),再用 `AskUserQuestion` 三選一。**對使用者一律白話,絕不把「title」「鎖定 body」這類內部術語照進問句或選項**(內部結構 = title 那行 + 空行 + body 條列,僅供 agent 對照)。
+緊接 Step 3 的異動檔案之後**直接** `AskUserQuestion`,把**完整 SVN message 預覽放進 `question` 本身**——**不要**先用純文字把預覽印一次、再用「以上 / 上方是預覽」帶過。**白話,不洩漏內部術語**(「title + 鎖定 body」等內部結構僅供 agent 對照,不可照進問句或選項)。
 
-- **AskUserQuestion 問句(白話,固定語意)**:「以上是即將提交到 SVN 的訊息(第一行是標題、下面每行對應一個 commit)。要怎麼做?」
-- 三選一:
+- **`question`**(把預覽嵌進去,固定語意):
+
+  ```
+  即將提交到 SVN 的訊息如下,要怎麼做?
+  (第一行是標題;下面每行對應這次推送的一個 commit,由系統自動帶出、不能改)
+
+  <title>
+
+  - <subject 1>
+  - <subject 2>
+  …
+  ```
+
+- **`header`**:短籤,如「送出 SVN」。
+- 三選一(選項描述也用白話):
   1. **確認送出** → 進 Step 5。
-  2. **改標題** → 請使用者輸入新標題(自由文字,單行)→ 以「新標題 + 同一份 commit 條列」重新渲染預覽 → 回本 Step 4。**只有第一行標題可改,下面的 commit 條列永遠是系統帶出的那份。**
+  2. **改標題** → 請使用者輸入新標題(自由文字,單行)→ 以「新標題 + 同一份 commit 條列」**重組同樣的預覽問句**再問一次 → 回本 Step 4。**只有第一行標題可改,下面的 commit 條列永遠是系統帶出的那份。**
   3. **取消** → 跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill。
 
 > 注意:送出前若你又 commit 新內容進 working branch,Step 5 的 commit 腳本會偵測 git HEAD SHA 不符並 abort,提示重跑 prepare。請在送出前確認不會再 commit 新內容。
