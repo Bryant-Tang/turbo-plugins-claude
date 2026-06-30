@@ -72,12 +72,18 @@ parse stdout 的 `ARGV_SAFE_FOR_UNICODE`:
 
 #### 1.3 Phase summary + override
 
-依 base 段「Case 偵測」的 Phase summary 規則:平實白話報告偵測到的 case + 高階步驟,用 `AskUserQuestion`
-讓使用者「執行偵測到的 case / 改執行其他 case / 取消」。**只列「會動到外部」**的 unconditional 動作
-(case (a)/(b) 的下列動作皆由 `Initialize-GitSvnBridge` 腳本執行):
-- case (a)/(b):從 SVN 伺服器抓取專案內容(`svn checkout <url>`)
-- case (a)/(b):設定固定 `svn:ignore=.git` 並 commit 到 SVN 伺服器
-- case (b):將 SVN 內容合進當前 git branch(merge commit 留本地,**不**自動 push)
+依 base 段「Case 偵測」的 Phase summary 規則:**平實白話**報告偵測到的**情境**(不是代號)+ 高階步驟,用
+`AskUserQuestion` 讓使用者「照偵測到的情境執行 / 改用其他情境 / 取消」。**對使用者一律用白話描述情境,絕不把
+「case (a)/(b)/(c)/(d)」這類內部代號丟給使用者**——使用者根本不知道那是什麼;各情境的白話說法見 base 段
+「Phase summary + override」的對照表(如偵測 (a) 講「全新的專案資料夾,將建立版控並接上 SVN」)。
+下列 `AskUserQuestion` 的選項標籤與「即將執行」描述都用白話,例如:
+- 「照偵測結果執行(全新專案 → 建立 git+SVN bridge)」/「這其實是<其他情境的白話> → 改用那個」/「取消」。
+
+**只列「會動到外部」**的 unconditional 動作,對使用者用白話呈現(下方括號內的 case 代號 / 指令僅供 agent 對照,
+不要照唸給使用者;case (a)/(b) 皆由 `Initialize-GitSvnBridge` 腳本執行):
+- (新建 / 接管)從 SVN 伺服器抓取專案內容(`svn checkout <url>`)
+- (新建 / 接管)設定固定 `svn:ignore=.git` 並 commit 到 SVN 伺服器
+- (接管既有 git)將 SVN 內容合進當前 git branch(merge commit 留本地,**不**自動 push)
 
 `.gitignore` / `CLAUDE.md` / `.turbo-plugin/` 寫入、git 本地 op、template copy、
 AskUserQuestion 本身、檔案讀取/probe **不列**。

@@ -75,6 +75,13 @@ elif not exist .turbo-plugin:     → case (b) init-from-existing
 else:                             → case (c) 補設定
 ```
 
-- **Phase summary + override**:進 case 前先平實白話報告「偵測為 case (X),即將 <高階步驟>」,
-  並用 `AskUserQuestion` 讓使用者「執行偵測到的 case / 改執行其他 case / 取消」。**只列「會動到外部」**
+- **Phase summary + override**:進 case 前先**平實白話**報告偵測到的情境與即將執行的高階步驟,並用
+  `AskUserQuestion` 讓使用者「照偵測到的情境執行 / 改用其他情境 / 取消」。**對使用者一律用白話描述情境,
+  不要把「case (a)/(b)/(c)/(d)」這類內部代號丟給使用者**(使用者不知道那是什麼);各情境的白話說法
+  (concern-neutral,各 plugin concern 段可再補自己 concern 的具體動作):
+  - 偵測 (a) → 「這看起來是全新的專案資料夾(還沒有版本控制)——將為它建立版控並完成首次設定」
+  - 偵測 (b) → 「這是既有的 git 專案、但還沒被 turbo-plugin 設定過——將接管並補上設定」
+  - 偵測 (c) → 「這個專案先前已設定過——將補齊 / 更新本機設定」
+  - 偵測 (d) → 「這是附屬的工作目錄(peer worktree)——只確認設定已就緒」
+  選項標籤與「即將執行」描述都用上述白話(「偵測 (X)」只是給 agent 對照、不要照唸代號)。**只列「會動到外部」**
   的 unconditional 動作(如 `svn checkout` 從伺服器抓內容);純 repo-only 的本地檔寫入 / git 本地 op 不列。
