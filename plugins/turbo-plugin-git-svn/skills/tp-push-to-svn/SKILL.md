@@ -92,17 +92,19 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
 
 prepare 輸出含 `BODY` 與 `FILES` 兩段:
 
-- 把 `BODY` 段(`- <subject>` 條列)**原樣**呈現給使用者,並說明:這段 body 是腳本鎖定的「本次範圍內所有非-merge commit subject」,**無 type 過濾、無法在此編輯**;要改 body 內容請對對應 commit `git rebase` / amend 後重跑 prepare。
+- 把 `BODY` 段(`- <subject>` 條列)**原樣**呈現給使用者,並用**白話**說明(**不要照丟「body」「鎖定」這類內部術語**):「下面每一行對應這次推送的一個 commit,內容由系統自動帶出、**不能在這裡編輯**;要改這些行,請去改對應的 commit(`git rebase` / amend)後重跑」。
 - 把 `FILES` 段呈現給使用者(svn status:`?`→新增、`!`→刪除、`M`→修改;標 `ignored` 者被 git check-ignore 過濾,本次不會進 SVN)。
 - 由 **agent propose 一行 title**(摘要本次推送的高層意圖)。title 會在 commit 腳本端被 collapse 成單行(內嵌換行會被移除),所以 agent**無法**藉 title 的換行把額外內容塞進 body。
 
 ### Step 4 — 確認(固定模板)
 
-`AskUserQuestion` 顯示完整 SVN message 預覽(**title 那行 + 空行 + 鎖定 body**),三選一:
+先把**即將送到 SVN 的提交訊息預覽**原樣印出(第一行標題 + 空行 + 每個 commit 一行的條列),再用 `AskUserQuestion` 三選一。**對使用者一律白話,絕不把「title」「鎖定 body」這類內部術語照進問句或選項**(內部結構 = title 那行 + 空行 + body 條列,僅供 agent 對照)。
 
-1. **確認送出** → 進 Step 5。
-2. **改標題** → 請使用者輸入新 title(自由文字,單行)→ 以「新 title + 鎖定 body」重新渲染預覽 → 回本 Step 4。**只有 title 可改,body 永遠是鎖定那一份。**
-3. **取消** → 跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill。
+- **AskUserQuestion 問句(白話,固定語意)**:「以上是即將提交到 SVN 的訊息(第一行是標題、下面每行對應一個 commit)。要怎麼做?」
+- 三選一:
+  1. **確認送出** → 進 Step 5。
+  2. **改標題** → 請使用者輸入新標題(自由文字,單行)→ 以「新標題 + 同一份 commit 條列」重新渲染預覽 → 回本 Step 4。**只有第一行標題可改,下面的 commit 條列永遠是系統帶出的那份。**
+  3. **取消** → 跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill。
 
 > 注意:送出前若你又 commit 新內容進 working branch,Step 5 的 commit 腳本會偵測 git HEAD SHA 不符並 abort,提示重跑 prepare。請在送出前確認不會再 commit 新內容。
 
@@ -150,6 +152,7 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **Body 由腳本鎖定,agent 只寫 title**:body = prepare 階段 `git log --no-merges` 取出的**所有非-merge commit subject**(`- ` 條列、無 hash、無 type 過濾),經 `MERGE_HEAD.tp_svn_body` temp 檔交付。commit 腳本只收 `--title`,自行組合 `title + 空行 + 鎖定 body`;**agent 不可傳自由 message / body**。要改 body 內容請 amend / rebase 對應 commit 後重跑 prepare。
+- **對使用者一律白話、不洩漏內部術語**:`title` / `鎖定 body` / `BODY` / `FILES` / `prepare` / token 名等是 agent / 腳本的**內部用語**,呈現給使用者(尤其 `AskUserQuestion` 問句與選項標籤)時一律換白話——例如 body 講「每個 commit 一行的條列、由系統自動帶出、不能在這裡改」、title 講「第一行標題」。內部結構描述(如「title + 鎖定 body」)只供 agent 對照,**不要照進使用者看得到的文字**。
 - **Merge state 必須乾淨**:Step 2 開頭 check `MERGE_HEAD` 不存在;cancel 一律呼叫 `git merge --abort` 確保不留 stale state。
 - **UTF-8 no-BOM commit message**:Step 5 script 已正確處理,**不要**改成 `svn commit -m "..."`(Windows CP_ACP 會 mangle 中文)。
 - **Pull-from-svn 是 prerequisite**:remote SVN HEAD 不 up-to-date 直接拒跑,讓使用者先 `/tp-pull-from-svn`。
