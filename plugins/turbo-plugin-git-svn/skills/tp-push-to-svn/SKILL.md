@@ -92,7 +92,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
 
 prepare 輸出含 `BODY` 與 `FILES` 兩段。**呈現順序**:異動檔案放**最後**(緊鄰 Step 4 的 AskUserQuestion);body **不**在此單獨印,改原樣放進 Step 4 的問句。
 
-- **title(agent 內部 propose,先不印)**:agent 依 `BODY` 段內容 propose 一行 title(摘要本次推送的高層意圖);它會成為 Step 4 預覽訊息的第一行。title 在 commit 腳本端會 collapse 成單行(內嵌換行移除),agent **無法**藉換行把額外內容塞進 body。
+- **title(agent 內部 propose,先不印)**:agent 依 `BODY` 段內容 propose 一行 title(摘要本次推送的高層意圖);它會成為 Step 4 預覽訊息的第一行。**title 是白話一行摘要,固定不要加 conventional-commit type 前綴**(`feat:` / `fix:` / `chore:` / `docs:` / `refactor:` 等都不要)——SVN 端不跑 release-please / commitlint,type 前綴對 SVN 訊息只是雜訊;直接寫人看得懂的摘要即可。title 在 commit 腳本端會 collapse 成單行(內嵌換行移除),agent **無法**藉換行把額外內容塞進 body。
 - **body 不另印純文字**:`BODY` 段(每個 commit 一行的條列)**不**在此單獨 dump——它會原樣放進 Step 4 `AskUserQuestion` 的訊息預覽。避免「先用純文字把預覽印一次、再叫使用者看上方」的重複。
 - **異動檔案(FILES,最後一段純文字輸出)**:把 `FILES` 段以白話呈現(svn status:`?`→新增、`!`→刪除、`M`→修改;標 `ignored` 者被 git check-ignore 過濾、本次不會進 SVN)。**這是 AskUserQuestion 正上方的最後一段純文字**;若清單有疑慮項(例如含機器路徑的設定檔),在此一併白話提醒。
 
@@ -165,6 +165,7 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **Body 由腳本鎖定,agent 只寫 title**:body = prepare 階段 `git log --no-merges` 取出的**所有非-merge commit subject**(`- ` 條列、無 hash、無 type 過濾),經 `MERGE_HEAD.tp_svn_body` temp 檔交付。commit 腳本只收 `--title`,自行組合 `title + 空行 + 鎖定 body`;**agent 不可傳自由 message / body**。要改 body 內容請 amend / rebase 對應 commit 後重跑 prepare。
 - **對使用者一律白話、不洩漏內部術語**:`title` / `鎖定 body` / `BODY` / `FILES` / `prepare` / token 名等是 agent / 腳本的**內部用語**,呈現給使用者(尤其 `AskUserQuestion` 問句與選項標籤)時一律換白話——例如 body 講「每個 commit 一行的條列、由系統自動帶出、不能在這裡改」、title 講「第一行標題」。內部結構描述(如「title + 鎖定 body」)只供 agent 對照,**不要照進使用者看得到的文字**。
+- **SVN 訊息 title 不帶 commit-type 前綴**:agent propose 的 title 是白話一行摘要,**固定不寫成** `feat:` / `fix:` / `chore:` / `docs:` 這種 conventional-commit 形式(SVN 端無 release-please / commitlint 消費 type,純雜訊)。**body 條列是 verbatim git subject、保留原樣(可能含 type),不在此限**——只規範 agent 寫的 title。「改標題」時也提示使用者免帶 type 前綴。
 - **Merge state 必須乾淨**:Step 2 開頭 check `MERGE_HEAD` 不存在;cancel 一律呼叫 `git merge --abort` 確保不留 stale state。
 - **UTF-8 no-BOM commit message**:Step 5 script 已正確處理,**不要**改成 `svn commit -m "..."`(Windows CP_ACP 會 mangle 中文)。
 - **Pull-from-svn 是 prerequisite**:remote SVN HEAD 不 up-to-date 直接拒跑,讓使用者先 `/tp-pull-from-svn`。
@@ -172,7 +173,7 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
 
 ## Completion Checks
 
-- SVN message body = 本次範圍內**所有非-merge commit subject** 的 `- ` 條列(無 type 過濾);merge commit 不在 body;message 第一行為 agent 寫的 title。
+- SVN message body = 本次範圍內**所有非-merge commit subject** 的 `- ` 條列(無 type 過濾);merge commit 不在 body;message 第一行為 agent 寫的 title(白話、**無 conventional-commit type 前綴**)。
 - SVN log 顯示新 revision 含繁體中文正確編碼(no mangle)。
 - 本地 `git log --oneline remote-svn/<branch>` 含 `Merge branch '<branch>' into remote-svn/<branch>` 自動 merge commit。
 - Remote worktree 內 `git status --porcelain` 為空,`svn status` 為空(或只有 git-ignored 的本地檔案)。
