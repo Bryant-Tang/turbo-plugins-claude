@@ -188,5 +188,33 @@ test_reject_unversioned() {
     case "$out" in *"not tracked by SVN"*) assertTrue 'reports not-svn-tracked' 0 ;; *) fail "no not-svn-tracked wording: $out" ;; esac
 }
 
+# ── Case 6: reconcile pre-flight refuses a DIRTY main worktree BEFORE the irreversible svn delete ─
+test_reject_dirty_main() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_bridge_with_files; then startSkipping; return 0; fi
+    untrack_on_main 'foo.csproj.user'          # isolate the dirty condition
+    printf 'locally modified\n' > "$ROOT/app.txt"   # dirty an UNRELATED tracked file
+    local out rc
+    out="$(cd "$ROOT" && bash "$SCRIPT_UNDER_TEST" --branch main --path foo.csproj.user 2>&1)"; rc=$?
+    assertNotEquals "dirty main exits non-zero (out: $out)" 0 "$rc"
+    case "$out" in *"uncommitted changes"*) assertTrue 'reports dirty main' 0 ;; *) fail "no dirty-main wording: $out" ;; esac
+    # svn delete did NOT happen; bridge unchanged.
+    if (cd "$BRIDGE" && svn list --config-dir "$CFG") | grep -q 'foo.csproj.user'; then assertTrue 'foo.csproj.user still in svn' 0; else fail 'foo.csproj.user was deleted despite dirty main'; fi
+    assertTrue 'bridge clean' "[ -z \"\$(git -C '$BRIDGE' status --porcelain)\" ]"
+}
+
+# ── Case 7: data-safety -- refuses when main still tracks the path (caller skipped git rm --cached) ─
+test_reject_main_still_tracks() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_bridge_with_files; then startSkipping; return 0; fi
+    # DO NOT untrack_on_main: main still tracks foo.csproj.user (the contract violation).
+    local out rc
+    out="$(cd "$ROOT" && bash "$SCRIPT_UNDER_TEST" --branch main --path foo.csproj.user 2>&1)"; rc=$?
+    assertNotEquals "still-tracked exits non-zero (out: $out)" 0 "$rc"
+    case "$out" in *"still git-tracked in the main worktree"*) assertTrue 'reports still-tracked' 0 ;; *) fail "no still-tracked wording: $out" ;; esac
+    if (cd "$BRIDGE" && svn list --config-dir "$CFG") | grep -q 'foo.csproj.user'; then assertTrue 'still in svn' 0; else fail 'file deleted despite contract violation'; fi
+    assertTrue 'file still on disk in main' "[ -e '$ROOT/foo.csproj.user' ]"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

@@ -236,4 +236,43 @@ Describe 'Remove-SvnFile' {
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
+
+    Context 'Case 7: reconcile pre-flight refuses a DIRTY main worktree BEFORE the irreversible svn delete' {
+        It 'refuses on dirty main, leaves SVN untouched (nothing changed)' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'rmsvn-7'
+            try {
+                $ctx = New-BridgeWithFiles -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build bridge'; return }
+                # untrack the target on main (isolate the dirty condition), then dirty an UNRELATED tracked file.
+                Untrack-OnMain -Root $ctx.Root -RelPath 'foo.csproj.user'
+                $enc = New-Object Text.UTF8Encoding($false)
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($ctx.Root, 'app.txt'), "locally modified`n", $enc)
+                (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('status', '--porcelain')) | Should -Not -BeNullOrEmpty
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main', '-Path', 'foo.csproj.user')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'uncommitted changes'
+                # svn delete did NOT happen -- file still in SVN, bridge unchanged.
+                (Svn-ListWc -WcPath $ctx.Bridge -ConfigDir $ctx.Cfg) | Should -Match 'foo\.csproj\.user'
+                (Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 8: data-safety -- refuses when main still tracks the path (caller skipped git rm --cached)' {
+        It 'refuses so the reconcile merge cannot delete the kept-local file; SVN + disk untouched' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'rmsvn-8'
+            try {
+                $ctx = New-BridgeWithFiles -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build bridge'; return }
+                # DO NOT Untrack-OnMain: main still tracks foo.csproj.user (the contract violation).
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main', '-Path', 'foo.csproj.user')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'still git-tracked in the main worktree'
+                # nothing deleted: still in SVN, still on disk in main.
+                (Svn-ListWc -WcPath $ctx.Bridge -ConfigDir $ctx.Cfg) | Should -Match 'foo\.csproj\.user'
+                [System.IO.File]::Exists([System.IO.Path]::Combine($ctx.Root, 'foo.csproj.user')) | Should -BeTrue
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
 }

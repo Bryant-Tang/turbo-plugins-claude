@@ -68,6 +68,35 @@ try {
     $gitTracked = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = $prevEAP
 
+    # Reconcile-path pre-flight (still BEFORE any svn delete). The reconcile branch commits a
+    # `sync:` on remote-svn/<branch> and merges it into <branch>; these must be verified up front,
+    # because `svn delete`+`svn commit` are irreversible and a failure AFTER them would leave the
+    # SVN copy gone plus an orphaned sync commit on the bridge.
+    if ($gitTracked) {
+        # main worktree must be clean for the merge (mirror Sync-FromSvn.ps1:27-30).
+        $mainStatusPre = (& git -C $mainWorktree status --porcelain | Out-String).Trim()
+        if ($mainStatusPre) {
+            throw "Main worktree has uncommitted changes; cannot merge the SVN removal into '$Branch'. Commit or stash first (nothing has been changed).`n$mainStatusPre"
+        }
+        # remote-svn/<branch> must not already be ahead of <branch> (an orphaned sync from a prior
+        # aborted pull/removal); otherwise the reconcile merge would drag it in (mirror Sync-FromSvn.ps1:44-49).
+        $unmerged = (& git -C $mainWorktree log --oneline "$Branch..$remoteBranch" | Out-String).Trim()
+        if ($unmerged) {
+            throw "remote-svn/$Branch has unmerged sync commit(s) ahead of '$Branch'; resolve first (run /tp-pull-from-svn, or 'git -C $mainWorktree merge $remoteBranch'), then retry. Nothing has been changed.`n$unmerged"
+        }
+        # Data-safety: the caller (Un-track A) must have `git rm --cached` the path on <branch> FIRST
+        # so the file stays on disk. If <branch> still tracks it, the reconcile merge would DELETE the
+        # local copy -- refuse rather than lose the file the user asked to keep.
+        $prevEAP2 = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        & git -C $mainWorktree ls-files --error-unmatch -- $Path 2>$null | Out-Null
+        $mainTracks = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prevEAP2
+        if ($mainTracks) {
+            throw "Path '$Path' is still git-tracked in the main worktree on '$Branch'. Run 'git rm --cached -- $Path' + commit first (keeps the local file); refusing so the reconcile merge does not delete it."
+        }
+    }
+
     # ---- ANSI OutputEncoding region for svn (aligns non-ASCII path argv with on-disk names;
     # matches Submit-SvnCommit.ps1). git messages here are ASCII, so a single region is safe. ----
     $tpPrevConsoleEnc = [Console]::OutputEncoding
@@ -79,6 +108,7 @@ try {
         # svn-tracked check + local-modification (M) detection. `svn status <path>` prints nothing
         # for a clean tracked file, `?` for unversioned, `M` when locally modified.
         $svnStat = (& svn status -- $Path | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw "svn status failed for: $Path" }
         $svnStatFirst = ''
         foreach ($ln in ($svnStat -split "`n")) {
             if ($ln.Trim().Length -gt 0) { $svnStatFirst = $ln.Substring(0, 1); break }
@@ -89,15 +119,27 @@ try {
         $useForce = ($svnStatFirst -eq 'M')
 
         # svn delete (+ --force when locally modified) then commit via a UTF-8 no-BOM message file
-        # (never `svn commit -m` -- CP_ACP would mangle a non-ASCII path/message).
-        if ($useForce) { & svn delete --force -- $Path } else { & svn delete -- $Path }
-        if ($LASTEXITCODE -ne 0) { throw "svn delete failed for: $Path" }
-
+        # (never `svn commit -m` -- CP_ACP would mangle a non-ASCII path/message). If delete or commit
+        # fails, `svn revert` the path so the bridge working copy is left CLEAN -- otherwise a dangling
+        # scheduled deletion wedges the next /tp-pull-from-svn and re-runs of this script.
         $msgFile = [System.IO.Path]::GetTempFileName()
         try {
+            if ($useForce) { & svn delete --force -- $Path } else { & svn delete -- $Path }
+            if ($LASTEXITCODE -ne 0) { throw "svn delete failed for: $Path" }
             Write-Utf8NoBom -Path $msgFile -Content "remove $Path from svn (turbo-plugin)"
+            # EAP-soften the commit so a native stderr write does not throw before we can revert.
+            $eaCommit = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
             & svn commit --file $msgFile --encoding UTF-8 -- $Path
-            if ($LASTEXITCODE -ne 0) { throw "svn commit (delete) failed for: $Path" }
+            $commitRc = $LASTEXITCODE
+            $ErrorActionPreference = $eaCommit
+            if ($commitRc -ne 0) { throw "svn commit (delete) failed for: $Path" }
+        } catch {
+            $eaRevert = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            & svn revert -- $Path 2>$null | Out-Null
+            $ErrorActionPreference = $eaRevert
+            throw
         } finally {
             if (Test-Path -LiteralPath $msgFile) { Remove-Item -LiteralPath $msgFile -Force -ErrorAction SilentlyContinue }
         }
@@ -107,7 +149,11 @@ try {
         $eaU = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         & svn update 2>$null | Out-Null
+        $svnUpdateRc = $LASTEXITCODE
         $ErrorActionPreference = $eaU
+        if ($svnUpdateRc -ne 0) {
+            [Console]::Error.WriteLine('Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.')
+        }
         $svnRev = (& svn info --show-item revision | Out-String).Trim()
     } finally {
         Pop-Location
@@ -125,11 +171,8 @@ try {
         & git -C $remotePath commit -m "sync: svn r$svnRev"
         if ($LASTEXITCODE -ne 0) { throw 'git commit (sync) failed in bridge worktree' }
 
-        $mainStatus = (& git -C $mainWorktree status --porcelain | Out-String).Trim()
-        if ($mainStatus) {
-            throw "Main worktree has uncommitted changes; cannot merge the SVN removal into '$Branch'. Commit or stash first.`n$mainStatus"
-        }
-
+        # (main-clean / unmerged-sync / main-untracks-path were all verified in pre-flight, before
+        # the irreversible svn delete, so the merge below is known-safe here.)
         $originalBranch = (& git -C $mainWorktree rev-parse --abbrev-ref HEAD | Out-String).Trim()
         $switched = $false
         if ($originalBranch -ne $Branch) {

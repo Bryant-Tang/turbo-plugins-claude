@@ -70,6 +70,35 @@ else
   GIT_TRACKED=false
 fi
 
+# Reconcile-path pre-flight (still BEFORE any svn delete). The reconcile branch commits a `sync:`
+# on remote-svn/<branch> and merges it into <branch>; verify these up front, because svn delete +
+# svn commit are irreversible and a failure after them would leave the SVN copy gone plus an
+# orphaned sync commit on the bridge.
+if [[ "$GIT_TRACKED" == true ]]; then
+  # main worktree must be clean for the merge (mirror sync-from-svn.sh:36-41).
+  MAIN_STATUS_PRE="$(git -C "$MAIN_WORKTREE" status --porcelain)"
+  if [[ -n "$MAIN_STATUS_PRE" ]]; then
+    echo "Error: main worktree has uncommitted changes; cannot merge the SVN removal into '$BRANCH'. Commit or stash first (nothing has been changed)." >&2
+    echo "$MAIN_STATUS_PRE" >&2
+    exit 1
+  fi
+  # remote-svn/<branch> must not already be ahead of <branch> (orphaned sync) — else the reconcile
+  # merge would drag it in (mirror sync-from-svn.sh:59-67).
+  UNMERGED="$(git -C "$MAIN_WORKTREE" log --oneline "${BRANCH}..${REMOTE_BRANCH}" 2>/dev/null || true)"
+  if [[ -n "$UNMERGED" ]]; then
+    echo "Error: remote-svn/${BRANCH} has unmerged sync commit(s) ahead of '${BRANCH}'; resolve first (run /tp-pull-from-svn, or 'git -C $MAIN_WORKTREE merge $REMOTE_BRANCH'), then retry. Nothing has been changed." >&2
+    echo "$UNMERGED" >&2
+    exit 1
+  fi
+  # Data-safety: the caller (Un-track A) must have `git rm --cached` the path on <branch> FIRST so
+  # the file stays on disk. If <branch> still tracks it, the reconcile merge would DELETE the local
+  # copy — refuse rather than lose the file the user asked to keep.
+  if git -C "$MAIN_WORKTREE" ls-files --error-unmatch -- "$REL_PATH" >/dev/null 2>&1; then
+    echo "Error: path '$REL_PATH' is still git-tracked in the main worktree on '$BRANCH'. Run 'git rm --cached -- $REL_PATH' + commit first (keeps the local file); refusing so the reconcile merge does not delete it." >&2
+    exit 1
+  fi
+fi
+
 # svn-tracked check + local-modification (M) detection. `svn status <path>` prints nothing for a
 # clean tracked file, `?` for unversioned, `M` when locally modified.
 SVN_STAT="$(cd "$REMOTE_PATH" && svn status -- "$REL_PATH")" || { echo "Error: svn status failed for '$REL_PATH'." >&2; exit 1; }
@@ -89,13 +118,21 @@ MSG_FILE="$(mktemp)"
 trap 'rm -f "$MSG_FILE"' EXIT
 write_utf8_no_bom "$MSG_FILE" "remove $REL_PATH from svn (turbo-plugin)"
 
+# On delete/commit failure, `svn revert` so the bridge WC is left CLEAN — a dangling scheduled
+# deletion would otherwise wedge the next /tp-pull-from-svn and re-runs of this script.
+svn_remove_failed() {
+  svn revert -- "$REL_PATH" >/dev/null 2>&1 || true
+  popd >/dev/null 2>&1 || true
+  echo "Error: svn delete/commit failed for '$REL_PATH'; the deletion was reverted (bridge left clean)." >&2
+  exit 1
+}
 pushd "$REMOTE_PATH" >/dev/null
 if [[ "$SVN_FIRST" == 'M' ]]; then
-  svn delete --force -- "$REL_PATH"
+  svn delete --force -- "$REL_PATH" || svn_remove_failed
 else
-  svn delete -- "$REL_PATH"
+  svn delete -- "$REL_PATH" || svn_remove_failed
 fi
-svn commit --file "$MSG_FILE" --encoding UTF-8 -- "$REL_PATH"
+svn commit --file "$MSG_FILE" --encoding UTF-8 -- "$REL_PATH" || svn_remove_failed
 svn update >/dev/null || echo 'Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.' >&2
 SVN_REV="$(svn info --show-item revision)"
 popd >/dev/null
@@ -106,13 +143,8 @@ if [[ "$GIT_TRACKED" == true ]]; then
   git -C "$REMOTE_PATH" add -A
   git -C "$REMOTE_PATH" commit -m "sync: svn r$SVN_REV"
 
-  MAIN_STATUS="$(git -C "$MAIN_WORKTREE" status --porcelain)"
-  if [[ -n "$MAIN_STATUS" ]]; then
-    echo "Error: main worktree has uncommitted changes; cannot merge the SVN removal into '$BRANCH'. Commit or stash first." >&2
-    echo "$MAIN_STATUS" >&2
-    exit 1
-  fi
-
+  # (main-clean / unmerged-sync / main-untracks-path were all verified in pre-flight, before the
+  # irreversible svn delete, so the merge below is known-safe here.)
   ORIGINAL_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD)"
   SWITCHED=false
   if [[ "$ORIGINAL_BRANCH" != "$BRANCH" ]]; then
