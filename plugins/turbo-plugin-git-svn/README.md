@@ -15,7 +15,7 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 | `/tp-svn-log` | 在 `remote-svn-*` worktree 跑 SVN log(中文安全 + 互動分頁) |
 | `/tp-reset-branch-to-main` | 把指定分支 `git reset --hard` 成 main 內容 |
 | `/tp-merge-main-into-branches` | 把最新 main merge 進指定(預設全部非 remote-svn)本地分支 |
-| `/tp-suggest-ignore` | 偵測 untracked 檔案建議加入 `.gitignore`,並可把已不該追蹤的檔從 SVN un-track |
+| `/tp-suggest-ignore` | 偵測 untracked 檔案建議加入 `.gitignore`,並可把已不該追蹤的檔從 SVN un-track(SVN 移除委派 `Remove-SvnFile`,不裸 svn) |
 | `/tp-commit-msg` | 撰寫 / 檢查 commit message 語意(祈使句、what+why;禁 SHA / 本地識別碼;不驗證 / 不限制 type) |
 
 ## 設定
