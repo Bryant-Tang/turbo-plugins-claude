@@ -135,9 +135,9 @@ For each inconsistent file use `AskUserQuestion`:
 
 **Un-track — from both (one question per file):**
 
-For each candidate use `AskUserQuestion`:
-- Option A: Stop git tracking + delete from SVN (full cleanup: `git rm --cached` + `.gitignore` + SVN delete)
-- Option B: Stop git tracking, keep SVN version (**show mandatory warning**: "After this, SVN changes to this file will no longer propagate through git to your working directory.")
+For each candidate use `AskUserQuestion` (keep the labels plain — describe the outcome, not the git/svn commands):
+- Option A: Keep the file locally, but stop tracking it and remove it from SVN (full cleanup).
+- Option B: Stop tracking it locally, keep it in SVN (**show mandatory warning**: "After this, SVN changes to this file will no longer propagate through git to your working directory.")
 - Option C: Skip
 
 ### Step 5 — Execute approved changes
@@ -158,35 +158,46 @@ If main worktree has uncommitted changes, report the error and ask user to commi
 Use the Edit tool to remove the matching line from `.gitignore`, then commit as above.
 
 **Inconsistency — Option B (delete from SVN):**
-In the remote worktree:
+**Do NOT run raw `svn delete` / `svn commit` yourself.** Delegate to `Remove-SvnFile` (it does the
+UTF-8-safe `svn delete` + commit; the file is git-ignored so the bridge stays clean, no reconcile).
+`<branch>` is the branch of the remote worktree the inconsistent file lives in; `<file>` is its
+bridge-relative path. Pick the tool per **Execution routing** (Decision Rules):
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/remove-svn-file.sh" --branch <branch> --path <file>
+```
 ```powershell
-svn delete "<file>"
-svn commit -m "remove <file> (no longer tracked in git)"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Remove-SvnFile.ps1" -Branch <branch> -Path <file>
 ```
 
-**Un-track — Option A (full cleanup):**
-In main worktree:
+**Un-track — Option A (stop git tracking + delete from SVN, keep the local file):**
+1. In the main worktree, stop tracking but **keep the file on disk**, then ignore it (`.gitignore`
+   **may be added now** — unlike push, `Remove-SvnFile` deletes directly and is not affected by
+   `.gitignore`). Run as two separate steps (no `&&`):
 ```powershell
 git -C <main-worktree> rm --cached "<file>"
-# edit .gitignore to add pattern
-git -C <main-worktree> add .gitignore
-git -C <main-worktree> commit -m "chore: stop tracking <file>"
 ```
-Then in remote worktree:
+   then Edit `.gitignore` to append `<file>`, then commit (`git add .gitignore` then
+   `git commit -m "chore: stop tracking <file>"`). The main worktree is now clean.
+2. Delegate the SVN removal to `Remove-SvnFile` (the file is git-tracked on the bridge, so the
+   script reconciles: `svn delete` + a `sync: svn r<rev>` commit + a merge into `<branch>`, formats
+   identical to `/tp-pull-from-svn`). Pick the tool per **Execution routing**:
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/remove-svn-file.sh" --branch <branch> --path <file>
+```
 ```powershell
-svn delete "<file>"
-svn commit -m "remove <file>"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Remove-SvnFile.ps1" -Branch <branch> -Path <file>
 ```
+   If the script exits non-zero, report its message and stop (the local file is kept regardless).
 
-**Un-track — Option B (git stops, SVN keeps):**
-In main worktree only — no SVN changes needed:
+**Un-track — Option B (git stops tracking, SVN keeps the file):**
+In main worktree only — no SVN changes. Run as two separate steps (no `&&`):
 ```powershell
 git -C <main-worktree> rm --cached "<file>"
-# edit .gitignore to add pattern
-git -C <main-worktree> add .gitignore
-git -C <main-worktree> commit -m "chore: stop git tracking of <file>"
 ```
-The `push-to-svn` explicit commit list ensures future M-status modifications to this file won't be pushed to SVN.
+then Edit `.gitignore` to append `<file>`, then commit (`git add .gitignore` then
+`git commit -m "chore: stop git tracking of <file>"`). **Add the `.gitignore` entry now (before any
+future push)**: with the file git-ignored, a later `/tp-push-to-svn` skips it (its `git check-ignore`
+filter), so the SVN copy is protected from an accidental `!`-delete.
 
 ### Step 6 — Report summary
 
@@ -196,16 +207,20 @@ List what was changed in each category and what was skipped.
 
 - If `.gitignore` does not exist, create it before editing.
 - If remote worktree is absent, only Git Ignore is available (Inconsistency / Un-track need remote worktrees).
+- **All SVN removal is delegated to `Remove-SvnFile`; never run raw `svn delete` / `svn commit`, and never delegate to `/tp-push-to-svn` for a removal.** push can't do it: it refuses to start on an unignored-but-untracked file (main-clean gate) and skips git-ignored files (`git check-ignore`). `Remove-SvnFile` deletes directly and, when the path is git-tracked on the bridge, reconciles with commit formats **identical to `/tp-pull-from-svn`** (`sync: svn r<rev>` + `Merge branch 'remote-svn/<branch>' into <branch>`), so `remote-svn/*` only ever carries sync + merge commits.
+- **`.gitignore` timing differs by intent**: Un-track A adds `.gitignore` **before** calling `Remove-SvnFile` and it's fine (the script isn't push, so `check-ignore` never suppresses the delete); Un-track B adds `.gitignore` immediately to **protect** the SVN copy from a future push's `!`-delete. Both are "add now" here — the after-push ordering only matters when a removal is routed through push, which this SKILL never does.
+- **Execution routing (pick `.ps1` vs `.sh`)**: don't use the Bash tool to call `pwsh` / `powershell`. Windows + Git Bash → **Bash tool** runs `.sh`; Windows + no Git Bash → **PowerShell tool** runs `.ps1` (single-dash params `-Branch` / `-Path`); Linux / macOS → **Bash tool** runs `.sh`. Git Bash detection: check `C:\Program Files\Git\bin\bash.exe`, then `C:\Program Files (x86)\Git\bin\bash.exe`; else `where.exe bash` but **exclude** `System32\bash.exe` (WSL).
 - **Un-track option B warning is mandatory** — never skip it before proceeding with Un-track Option B.
-- SVN delete (Inconsistency option B and Un-track option A) is destructive: always ask a second `AskUserQuestion` confirmation before executing.
+- SVN removal (Inconsistency option B and Un-track option A) is destructive: always ask a second `AskUserQuestion` confirmation before delegating to `Remove-SvnFile`.
 - An Inconsistency or Un-track file must be confirmed individually — no "apply all" option.
 - On git operation failure (dirty working tree), stop and report; do not proceed to the next step.
 
 ## Completion Checks
 
 - Git Ignore: new patterns appear in `.gitignore` and in a new git commit on main branch.
-- Inconsistency (option B) / Un-track (option A): `svn log` on the remote worktree shows a deletion commit; `svn list` no longer includes the file.
-- Un-track (option B): `git ls-files <file>` returns empty in main worktree; `.gitignore` includes the pattern.
+- Inconsistency (option B): `svn list` no longer includes the file; the bridge worktree `git status --porcelain` is clean (no-reconcile — the file was git-ignored).
+- Un-track (option A): `svn list` no longer includes the file; `remote-svn/<branch>` tip is a `sync: svn r<rev>` commit and `<branch>` tip is a `Merge branch 'remote-svn/<branch>' into <branch>` commit (both matching `/tp-pull-from-svn`); the **local file is still on disk** in the main worktree but `git ls-files <file>` returns empty; `.gitignore` includes the pattern; the bridge worktree is clean.
+- Un-track (option B): `git ls-files <file>` returns empty in main worktree; the file is still on disk; `.gitignore` includes the pattern; SVN copy unchanged.
 
 ## Test Scenarios
 
@@ -213,5 +228,6 @@ List what was changed in each category and what was skipped.
 - **Direct mode --remove-git**: 對已存在 pattern 跑 `--remove-git` → 該行從 .gitignore 移除、commit 新增。對不存在 pattern 跑 → 印 "not found" 不 commit。
 - **Direct mode --add-svn / --remove-svn 已移除**: 跑 `--add-svn` 或 `--remove-svn` → 回報 unknown/unsupported flag,不執行任何 svn 操作。
 - **Analysis mode**: 在有 untracked `.env` 的 repo 跑 analysis mode → Git Ignore prompt 出現 .env,使用者選 Apply all → .gitignore 加 .env、commit 新增;分析不出現「SVN Ignore」分類。
-- **Un-track Option A 無 svn:ignore 寫入**: 對同被 git/SVN 追蹤的檔跑 Un-track Option A → `git rm --cached` + `.gitignore` + `svn delete` 生效,流程**不再**有任何 svn:ignore 寫入。
+- **Un-track Option A 委派 Remove-SvnFile(reconcile)**: 對同被 git/SVN 追蹤的檔跑 Un-track Option A → main `git rm --cached` + `.gitignore` + commit,再委派 `Remove-SvnFile`;`svn list` 不含該檔、`remote-svn/<branch>` 末筆 `sync: svn r<rev>` + `<branch>` 末筆 `Merge branch ...`(格式同 pull)、本機檔仍在但不被 git 追蹤、bridge 乾淨。流程**不再**有裸 `svn delete` / `svn commit` 或 push 委派。(自動化覆蓋見 `tests/unit/scripts/Remove-SvnFile.test.*`。)
+- **Inconsistency Option B 委派 Remove-SvnFile(no-reconcile)**: 對 git-ignored + svn-tracked 檔跑 Option B → 委派 `Remove-SvnFile`;`svn list` 不含該檔、bridge 乾淨、`remote-svn/<branch>` 無新 commit。
 - **No remote worktrees**: 沒 remote-* worktree 的 repo 跑 analysis mode → 只跑 Git Ignore 分類,跳過 Inconsistency / Un-track。
