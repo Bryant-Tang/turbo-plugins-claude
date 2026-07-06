@@ -82,9 +82,13 @@ if [[ "$GIT_TRACKED" == true ]]; then
     echo "$MAIN_STATUS_PRE" >&2
     exit 1
   fi
-  # remote-svn/<branch> must not already be ahead of <branch> (orphaned sync) — else the reconcile
-  # merge would drag it in (mirror sync-from-svn.sh:59-67).
-  UNMERGED="$(git -C "$MAIN_WORKTREE" log --oneline "${BRANCH}..${REMOTE_BRANCH}" 2>/dev/null || true)"
+  # remote-svn/<branch> must not carry an ORPHANED sync commit -- a `sync: svn r<N>` (non-merge)
+  # left ahead of <branch> by an interrupted pull/removal, which the reconcile merge would drag in.
+  # `--no-merges` is load-bearing: a normal push leaves a benign `Merge branch '<branch>' into
+  # remote-svn/<branch>` MERGE commit ahead of <branch> (its content is already in <branch>), and
+  # that steady state must NOT trip this guard. Only a non-merge sync is a genuine orphan.
+  # (mirror sync-from-svn.sh.)
+  UNMERGED="$(git -C "$MAIN_WORKTREE" log --oneline --no-merges "${BRANCH}..${REMOTE_BRANCH}" 2>/dev/null || true)"
   if [[ -n "$UNMERGED" ]]; then
     echo "Error: remote-svn/${BRANCH} has unmerged sync commit(s) ahead of '${BRANCH}'; resolve first (run /tp-pull-from-svn, or 'git -C $MAIN_WORKTREE merge $REMOTE_BRANCH'), then retry. Nothing has been changed." >&2
     echo "$UNMERGED" >&2

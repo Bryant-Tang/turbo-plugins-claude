@@ -56,7 +56,10 @@ fi
 # F-U(synth #11): detect previously-orphaned remote sync commit (svn update + git commit
 # succeeded last time but the subsequent merge into $BRANCH was aborted). Refuse until the
 # user resolves it (manual merge or rerun /tp-pull-from-svn after committing conflict resolution).
-UNMERGED_REMOTE="$(git -C "$MAIN_WORKTREE" log --oneline "${BRANCH}..${REMOTE_BRANCH}" 2>/dev/null || true)"
+# `--no-merges` is load-bearing: a normal push leaves a benign `Merge branch '<branch>' into
+# remote-svn/<branch>` MERGE commit ahead of $BRANCH (content already in $BRANCH); that steady
+# state must NOT trip this guard. Only a non-merge `sync:` commit ahead is a genuine orphan.
+UNMERGED_REMOTE="$(git -C "$MAIN_WORKTREE" log --oneline --no-merges "${BRANCH}..${REMOTE_BRANCH}" 2>/dev/null || true)"
 if [[ -n "$UNMERGED_REMOTE" ]]; then
   UNMERGED_COUNT="$(printf '%s\n' "$UNMERGED_REMOTE" | wc -l | tr -d '[:space:]')"
   echo "Error: remote/${REMOTE_BRANCH} has $UNMERGED_COUNT unmerged sync commit(s) ahead of '${BRANCH}':" >&2

@@ -30,6 +30,8 @@ BeforeAll {
     $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
     $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Remove-SvnFile.ps1')
     $script:InitScript      = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-GitSvnBridge.ps1')
+    $script:BuildScript     = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Build-SvnCommit.ps1')
+    $script:SubmitScript    = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Submit-SvnCommit.ps1')
 
     . ([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'lib', 'ScriptsCommon.ps1'))
 
@@ -104,6 +106,17 @@ BeforeAll {
         [System.IO.File]::AppendAllText([System.IO.Path]::Combine($Root, '.gitignore'), "$RelPath`n", $enc)
         $null = Run-Git -Cwd $Root -GitArgs @('add', '.gitignore')
         $null = Run-Git -Cwd $Root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '-m', "chore: stop tracking $RelPath")
+    }
+
+    # Push main into the bridge (build + submit) to reach the NORMAL post-push state where
+    # remote-svn/main is ahead of main by a benign `Merge branch 'main' into remote-svn/main`.
+    # Returns $true on success.
+    function Push-Main {
+        param([string]$Root)
+        $b = Invoke-PsScript -ScriptPath $script:BuildScript  -Cwd $Root -ScriptArgs @('-Branch', 'main')
+        if ($b.ExitCode -ne 0) { return $false }
+        $s = Invoke-PsScript -ScriptPath $script:SubmitScript -Cwd $Root -ScriptArgs @('-Branch', 'main', '-Title', 'sync main to svn')
+        return ($s.ExitCode -eq 0)
     }
 }
 
@@ -272,6 +285,52 @@ Describe 'Remove-SvnFile' {
                 # nothing deleted: still in SVN, still on disk in main.
                 (Svn-ListWc -WcPath $ctx.Bridge -ConfigDir $ctx.Cfg) | Should -Match 'foo\.csproj\.user'
                 [System.IO.File]::Exists([System.IO.Path]::Combine($ctx.Root, 'foo.csproj.user')) | Should -BeTrue
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 9: regression -- Un-track A reconciles in the NORMAL post-push state' {
+        # After a push, remote-svn/main is ahead of main by a benign `Merge branch 'main' into
+        # remote-svn/main` commit. Before the `--no-merges` guard fix, the unmerged-sync guard
+        # false-fired on that merge and refused.
+        It 'no false unmerged-sync refusal; removes from SVN and reconciles cleanly' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'rmsvn-9'
+            try {
+                $ctx = New-BridgeWithFiles -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build bridge'; return }
+                if (-not (Push-Main -Root $ctx.Root)) { Set-ItResult -Skipped -Because 'could not push main to reach post-push state'; return }
+                # Confirm post-push: remote-svn/main ahead by exactly one commit, and it is a MERGE.
+                (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'main..remote-svn/main')).Trim() | Should -Be '1'
+                (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', '--no-merges', 'main..remote-svn/main')).Trim() | Should -Be '0'
+
+                Untrack-OnMain -Root $ctx.Root -RelPath 'foo.csproj.user'
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main', '-Path', 'foo.csproj.user')
+                $res.Combined | Should -Not -Match 'unmerged sync'
+                $res.ExitCode | Should -Be 0
+                (Svn-ListWc -WcPath $ctx.Bridge -ConfigDir $ctx.Cfg) | Should -Not -Match 'foo\.csproj\.user'
+                (Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('log', '-1', '--pretty=%s', 'remote-svn/main')) | Should -Match '^sync: svn r\d+$'
+                (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', '-1', '--pretty=%s')) | Should -BeExactly "Merge branch 'remote-svn/main' into main"
+                [System.IO.File]::Exists([System.IO.Path]::Combine($ctx.Root, 'foo.csproj.user')) | Should -BeTrue
+                (Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 10: a GENUINE orphaned sync (non-merge sync ahead) is still refused' {
+        # The --no-merges guard must not weaken protection: a real interrupted pull leaves a
+        # non-merge `sync:` commit ahead of main, and Remove-SvnFile must still refuse.
+        It 'refuses on a non-merge sync ahead; SVN untouched' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'rmsvn-10'
+            try {
+                $ctx = New-BridgeWithFiles -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build bridge'; return }
+                # Simulate an interrupted pull: a non-merge sync commit on remote-svn/main not merged to main.
+                $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'sync: svn r777')
+                Untrack-OnMain -Root $ctx.Root -RelPath 'foo.csproj.user'
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main', '-Path', 'foo.csproj.user')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'unmerged sync'
+                (Svn-ListWc -WcPath $ctx.Bridge -ConfigDir $ctx.Cfg) | Should -Match 'foo\.csproj\.user'
             } finally { Remove-Sandbox -Dir $sb }
         }
     }

@@ -23,6 +23,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/remove-svn-file.sh"
 INIT_SCRIPT="$PLUGIN_ROOT/scripts/initialize-git-svn-bridge.sh"
+BUILD_SCRIPT="$PLUGIN_ROOT/scripts/build-svn-commit.sh"
+SUBMIT_SCRIPT="$PLUGIN_ROOT/scripts/submit-svn-commit.sh"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 SANDBOX_BASE="$PLUGIN_ROOT/tests/.sandbox/sandboxes"
 
@@ -104,6 +106,14 @@ untrack_on_main() {
     printf '%s\n' "$rel" >> "$ROOT/.gitignore"
     git -C "$ROOT" add .gitignore >/dev/null 2>&1
     git -C "$ROOT" -c commit.gpgsign=false commit -m "chore: stop tracking $rel" >/dev/null 2>&1
+}
+
+# Push main into the bridge (build + submit) to reach the NORMAL post-push state where
+# remote-svn/main is ahead of main by a benign `Merge branch 'main' into remote-svn/main` commit.
+push_main() {
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch main ) >/dev/null 2>&1 || return 1
+    ( cd "$ROOT" && bash "$SUBMIT_SCRIPT" --branch main --title 'sync main to svn' ) >/dev/null 2>&1 || return 1
+    return 0
 }
 
 # ── Case 0: script exists ─────────────────────────────────────────────────────
@@ -214,6 +224,49 @@ test_reject_main_still_tracks() {
     case "$out" in *"still git-tracked in the main worktree"*) assertTrue 'reports still-tracked' 0 ;; *) fail "no still-tracked wording: $out" ;; esac
     if (cd "$BRIDGE" && svn list --config-dir "$CFG") | grep -q 'foo.csproj.user'; then assertTrue 'still in svn' 0; else fail 'file deleted despite contract violation'; fi
     assertTrue 'file still on disk in main' "[ -e '$ROOT/foo.csproj.user' ]"
+}
+
+# ── Case 8: regression -- Un-track A works in the NORMAL post-push state ───────
+# After a push, remote-svn/main is ahead of main by a benign `Merge branch 'main' into
+# remote-svn/main` commit. Before the `--no-merges` guard fix, the unmerged-sync guard false-fired
+# on that merge and refused. Verify it now reconciles cleanly.
+test_untrack_a_after_push_regression() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_bridge_with_files; then startSkipping; return 0; fi
+    if ! push_main; then startSkipping; return 0; fi
+    # Confirm the post-push state: remote-svn/main ahead by exactly ONE commit, and it is a MERGE.
+    assertEquals 'remote-svn/main ahead by one commit (post-push)' 1 "$(git -C "$ROOT" rev-list --count main..remote-svn/main)"
+    assertEquals 'the ahead commit is a merge (benign)' 0 "$(git -C "$ROOT" rev-list --count --no-merges main..remote-svn/main)"
+
+    untrack_on_main 'foo.csproj.user'
+    local out rc tip main_tip
+    out="$(cd "$ROOT" && bash "$SCRIPT_UNDER_TEST" --branch main --path foo.csproj.user 2>&1)"; rc=$?
+    case "$out" in *"unmerged sync"*) fail "regressed: guard false-fired in post-push state: $out" ;; *) assertTrue 'no false unmerged-sync refusal' 0 ;; esac
+    assertEquals "post-push reconcile exits 0 (out: $out)" 0 "$rc"
+    if (cd "$BRIDGE" && svn list --config-dir "$CFG") | grep -q 'foo.csproj.user'; then fail 'foo.csproj.user still in svn'; else assertTrue 'removed from svn' 0; fi
+    tip="$(git -C "$BRIDGE" log -1 --pretty=%s remote-svn/main)"
+    case "$tip" in sync:\ svn\ r[0-9]*) assertTrue 'remote-svn/main tip is a sync commit' 0 ;; *) fail "tip not a sync commit: '$tip'" ;; esac
+    main_tip="$(git -C "$ROOT" log -1 --pretty=%s)"
+    assertEquals 'main tip is the canonical merge' "Merge branch 'remote-svn/main' into main" "$main_tip"
+    assertTrue 'main keeps the disk file' "[ -e '$ROOT/foo.csproj.user' ]"
+    assertTrue 'bridge clean' "[ -z \"\$(git -C '$BRIDGE' status --porcelain)\" ]"
+}
+
+# ── Case 9: a GENUINE orphaned sync (non-merge `sync:` ahead) must still be refused ────
+# The --no-merges guard must NOT weaken protection: a real interrupted pull leaves a non-merge
+# `sync:` commit ahead of main, and Remove-SvnFile must still refuse it.
+test_reject_orphaned_sync_ahead() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_bridge_with_files; then startSkipping; return 0; fi
+    # Simulate an interrupted pull: a non-merge sync commit on remote-svn/main not merged to main.
+    git -C "$BRIDGE" -c commit.gpgsign=false commit --allow-empty -m 'sync: svn r777' >/dev/null 2>&1
+    untrack_on_main 'foo.csproj.user'
+    local out rc
+    out="$(cd "$ROOT" && bash "$SCRIPT_UNDER_TEST" --branch main --path foo.csproj.user 2>&1)"; rc=$?
+    assertNotEquals "orphaned sync refuses (out: $out)" 0 "$rc"
+    case "$out" in *"unmerged sync"*) assertTrue 'refuses on genuine orphaned sync' 0 ;; *) fail "did not refuse orphaned sync: $out" ;; esac
+    # No svn mutation happened.
+    if (cd "$BRIDGE" && svn list --config-dir "$CFG") | grep -q 'foo.csproj.user'; then assertTrue 'file still in svn' 0; else fail 'file deleted despite orphaned-sync refusal'; fi
 }
 
 # shellcheck disable=SC1090

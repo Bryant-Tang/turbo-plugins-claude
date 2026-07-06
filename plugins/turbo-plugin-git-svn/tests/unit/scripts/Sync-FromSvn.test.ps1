@@ -33,6 +33,9 @@ BeforeAll {
     $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
     $script:PluginRoot      = $pluginRoot
     $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Sync-FromSvn.ps1')
+    $script:InitScript      = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-GitSvnBridge.ps1')
+    $script:BuildScript     = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Build-SvnCommit.ps1')
+    $script:SubmitScript    = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Submit-SvnCommit.ps1')
     $script:ResetScript     = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'reset', 'Reset-Fixture.ps1'))
     $script:DumpPath        = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'seed', 'svn-repo-r1-r20.dump'))
     $script:ScriptExists    = [System.IO.File]::Exists($script:ScriptUnderTest)
@@ -59,6 +62,45 @@ BeforeAll {
             if ($c.Contains($ExpectedText)) { return $true }
         }
         return $false
+    }
+
+    function Get-WorktreesDir { param([string]$Root) [System.IO.Path]::Combine($Root, '.turbo-plugin', 'worktrees') }
+
+    # Build a real bridge (svn import + Initialize) then PUSH main into it, reaching the NORMAL
+    # post-push state where remote-svn/main is ahead of main by a benign `Merge branch 'main' into
+    # remote-svn/main` commit. Returns @{ Root; Bridge } or $null if the svn/bridge pipeline failed.
+    function New-PushedBridge {
+        param([string]$Sandbox)
+        $root = [System.IO.Path]::Combine($Sandbox, 'test-turbo-plugin')
+        $repo = [System.IO.Path]::Combine($Sandbox, 'svnrepo')
+        $cfg  = [System.IO.Path]::Combine($Sandbox, '.svnconfig')
+        & svnadmin create $repo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($repo -replace '\\', '/')
+        $seed = [System.IO.Path]::Combine($Sandbox, 'seed')
+        $null = New-Item -ItemType Directory -Path $seed -Force
+        $enc = New-Object Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($seed, '.gitignore'), "*.log`n", $enc)
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($seed, 'app.txt'), "app`n", $enc)
+        & svn import $seed $uri -m seed --no-auto-props --config-dir $cfg 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        $null = New-Item -ItemType Directory -Path $root -Force
+        $null = Run-Git -Cwd $root -GitArgs @('init', '-b', 'main')
+        $null = Run-Git -Cwd $root -GitArgs @('config', 'user.email', 'test@turbo-plugin')
+        $null = Run-Git -Cwd $root -GitArgs @('config', 'user.name',  'turbo-plugin-test')
+        $init = Invoke-PsScript -ScriptPath $script:InitScript -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+        if ($init.ExitCode -ne 0) { return $null }
+        [System.IO.File]::AppendAllText([System.IO.Path]::Combine($root, '.gitignore'), ".turbo-plugin/worktrees/`n.svn/`n", $enc)
+        $null = Run-Git -Cwd $root -GitArgs @('add', '.gitignore')
+        $null = Run-Git -Cwd $root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '-m', 'chore: skeleton gitignore')
+
+        $b = Invoke-PsScript -ScriptPath $script:BuildScript  -Cwd $root -ScriptArgs @('-Branch', 'main')
+        if ($b.ExitCode -ne 0) { return $null }
+        $s = Invoke-PsScript -ScriptPath $script:SubmitScript -Cwd $root -ScriptArgs @('-Branch', 'main', '-Title', 'sync main to svn')
+        if ($s.ExitCode -ne 0) { return $null }
+        $dash = 'main'
+        return @{ Root = $root; Bridge = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), "remote-svn-$dash") }
     }
 }
 
@@ -175,6 +217,40 @@ Describe 'Sync-FromSvn' {
             } finally {
                 Remove-Sandbox -Dir $sb5
             }
+        }
+    }
+
+    Context 'Case 6: regression -- pull does NOT false-refuse in the normal post-push state' {
+        # After a push, remote-svn/main is ahead of main by a benign `Merge branch 'main' into
+        # remote-svn/main` commit. Before the `--no-merges` guard fix, the unmerged-sync guard
+        # false-fired on that merge and refused the pull.
+        It 'pull succeeds (no unmerged-sync refusal) when remote-svn/main is ahead by a merge' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-6'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'main..remote-svn/main')).Trim() | Should -Be '1'
+                (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', '--no-merges', 'main..remote-svn/main')).Trim() | Should -Be '0'
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res.Combined | Should -Not -Match 'unmerged sync'
+                $res.ExitCode | Should -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 7: a GENUINE orphaned sync (non-merge sync ahead) is still refused' {
+        It 'refuses on a non-merge sync commit ahead of main' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-7'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                # Simulate an interrupted pull: a non-merge sync commit on remote-svn/main not merged to main.
+                $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'sync: svn r777')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'unmerged sync'
+            } finally { Remove-Sandbox -Dir $sb }
         }
     }
 }

@@ -78,9 +78,12 @@ try {
         if ($mainStatusPre) {
             throw "Main worktree has uncommitted changes; cannot merge the SVN removal into '$Branch'. Commit or stash first (nothing has been changed).`n$mainStatusPre"
         }
-        # remote-svn/<branch> must not already be ahead of <branch> (an orphaned sync from a prior
-        # aborted pull/removal); otherwise the reconcile merge would drag it in (mirror Sync-FromSvn.ps1:44-49).
-        $unmerged = (& git -C $mainWorktree log --oneline "$Branch..$remoteBranch" | Out-String).Trim()
+        # remote-svn/<branch> must not carry an ORPHANED sync commit -- a `sync: svn r<N>` (non-merge)
+        # left ahead of <branch> by an interrupted pull/removal, which the reconcile merge would drag in.
+        # `--no-merges` is load-bearing: a normal push leaves a benign `Merge branch '<branch>' into
+        # remote-svn/<branch>` MERGE commit ahead of <branch> (content already in <branch>); that steady
+        # state must NOT trip this guard. Only a non-merge sync is a genuine orphan. (mirror Sync-FromSvn.ps1.)
+        $unmerged = (& git -C $mainWorktree log --oneline --no-merges "$Branch..$remoteBranch" | Out-String).Trim()
         if ($unmerged) {
             throw "remote-svn/$Branch has unmerged sync commit(s) ahead of '$Branch'; resolve first (run /tp-pull-from-svn, or 'git -C $mainWorktree merge $remoteBranch'), then retry. Nothing has been changed.`n$unmerged"
         }

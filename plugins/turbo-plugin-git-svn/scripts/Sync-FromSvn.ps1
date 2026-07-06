@@ -41,7 +41,10 @@ try {
     # F-U(synth #11): detect previously-orphaned remote sync commit (svn update + git commit
     # succeeded last time but the subsequent merge into $Branch was aborted). Refuse fast-path
     # until the user resolves it (manual merge or rerun /tp-pull-from-svn after committing conflict resolution).
-    $unmergedRemoteRaw = (& git -C $mainWorktree log --oneline "$Branch..$($remote.Branch)" | Out-String).TrimEnd("`r","`n")
+    # `--no-merges` is load-bearing: a normal push leaves a benign `Merge branch '<branch>' into
+    # remote-svn/<branch>` MERGE commit ahead of $Branch (content already in $Branch); that steady
+    # state must NOT trip this guard. Only a non-merge `sync:` commit ahead is a genuine orphan.
+    $unmergedRemoteRaw = (& git -C $mainWorktree log --oneline --no-merges "$Branch..$($remote.Branch)" | Out-String).TrimEnd("`r","`n")
     $unmergedRemoteLines = @($unmergedRemoteRaw -split "`n" | Where-Object { $_ })
     if ($unmergedRemoteLines.Count -gt 0) {
         $unmergedDisplay = $unmergedRemoteLines -join "`n"
