@@ -433,5 +433,79 @@ test_first_push_scoped_commit_and_up_to_date() {
     assertTrue 'bridge git worktree clean' "[ -z \"\$(git -C '$wt' status --porcelain)\" ]"
 }
 
+# Build a bridge where main's .gitignore has an UNPUSHED change beyond remote-svn/main:
+# main mirrors trunk, remote-svn/main is pinned at the in-sync state, THEN main's .gitignore is
+# edited and committed (not pushed). This is the exact divergence that made the old bootstrap
+# cp main's newer .gitignore into the bridge worktree WITHOUT a git commit -> bridge git-dirty.
+# Echoes "ROOT|URI|CFG"; non-zero on any svn failure (caller SKIPs).
+make_unpushed_gitignore_scenario() {
+    local sb="$1"
+    local root="$sb/test-turbo-plugin" repo="$sb/svnrepo" cfg="$sb/.svnconfig" uri winrepo
+    mkdir -p "$cfg"
+    svnadmin create "$repo" >/dev/null 2>&1 || return 1
+    svnadmin load "$repo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
+    winrepo="$(cygpath -m "$repo" 2>/dev/null || printf '%s' "$repo")"
+    uri="file:///$winrepo"   # the seed dump already carries /trunk + /branches
+
+    # trunk: svn:ignore=.git + versioned .gitignore (in sync with what main will start from).
+    local twc="$sb/trunkwc"
+    svn --config-dir "$cfg" checkout "$uri/trunk" "$twc" >/dev/null 2>&1 || return 1
+    svn --config-dir "$cfg" propset svn:ignore '.git' "$twc" >/dev/null 2>&1 || return 1
+    printf '.svn/\n' > "$twc/.gitignore"
+    svn --config-dir "$cfg" add "$twc/.gitignore" >/dev/null 2>&1 || return 1
+    svn --config-dir "$cfg" commit "$twc" -m 'trunk: svn:ignore + gitignore' >/dev/null 2>&1 || return 1
+
+    mkdir -p "$root"
+    git -C "$root" init -b main >/dev/null 2>&1 || git -C "$root" init >/dev/null 2>&1
+    git -C "$root" config core.autocrlf false >/dev/null 2>&1
+    git -C "$root" config user.email 'test@turbo' >/dev/null 2>&1
+    git -C "$root" config user.name  'turbo' >/dev/null 2>&1
+    local worktrees="$root/.turbo-plugin/worktrees"
+    mkdir -p "$worktrees"
+    svn --config-dir "$cfg" checkout "$uri/trunk" "$worktrees/remote-svn-main" >/dev/null 2>&1 || return 1
+
+    # git main mirrors trunk with .gitignore=".svn/".
+    svn --config-dir "$cfg" export --force "$uri/trunk" "$sb/tx" >/dev/null 2>&1 || return 1
+    cp -r "$sb/tx/." "$root/" 2>/dev/null
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m 'main mirrors trunk' >/dev/null 2>&1 || return 1
+    # Pin remote-svn/main at the in-sync state, THEN diverge main's .gitignore (unpushed edit).
+    git -C "$root" branch remote-svn/main main >/dev/null 2>&1 || return 1
+    printf 'bin/\n' >> "$root/.gitignore"
+    git -C "$root" add .gitignore >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m 'chore: ignore bin (unpushed)' >/dev/null 2>&1 || return 1
+
+    printf '%s|%s|%s' "$root" "$uri" "$cfg"
+    return 0
+}
+
+# ── Case 14: first-push with an unpushed main .gitignore leaves the bridge git-clean (regression) ──
+# Bug: the old bootstrap synced main's .gitignore into the bridge worktree (cp) but did not git
+# commit it, so when main's .gitignore had diverged from SVN the bridge was left git-dirty and the
+# immediately-following build-svn-commit refused with "uncommitted git changes" -- breaking the whole
+# first push. The fix drops the .gitignore pre-sync entirely (svn:ignore comes from the `svn copy`;
+# the .gitignore change flows through the normal confirmed push), so the bridge stays clean.
+test_first_push_unpushed_gitignore_stays_clean() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root uri cfg out rc wt st
+    spec="$(make_unpushed_gitignore_scenario "$SB")" || { startSkipping; return 0; }
+    root="${spec%%|*}"; spec="${spec#*|}"
+    uri="${spec%%|*}"; cfg="${spec##*|}"
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-y --svn-url "$uri/branches/feat-y" 2>&1)"; rc=$?
+    assertEquals "bootstrap succeeds with an unpushed main .gitignore (out: $out)" 0 "$rc"
+
+    wt="$root/.turbo-plugin/worktrees/remote-svn-feat-y"
+    st="$(git -C "$wt" status --porcelain)"
+    # THE fix: the bridge worktree must be git-clean (no synced-but-uncommitted .gitignore), so the
+    # following build-svn-commit's git-clean gate passes.
+    assertEquals "bridge git-clean after bootstrap (dirty: $st)" "" "$st"
+
+    # And .git is still kept out of SVN (svn:ignore=.git inherited from the copy).
+    local ign
+    ign="$(svn --config-dir "$cfg" propget svn:ignore "$uri/branches/feat-y" 2>/dev/null | tr -d '\r\n')"
+    assertEquals 'new branch inherited svn:ignore=.git' '.git' "$ign"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

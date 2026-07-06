@@ -134,6 +134,57 @@ BeforeAll {
         return $uri
     }
 
+    # Build a bridge where main's .gitignore has an UNPUSHED change beyond remote-svn/main:
+    # main mirrors trunk, remote-svn/main is pinned at the in-sync state, THEN main's .gitignore is
+    # edited and committed (not pushed). This is the exact divergence that made the old bootstrap
+    # cp main's newer .gitignore into the bridge worktree WITHOUT a git commit -> bridge git-dirty.
+    # $Root must already be a git repo with a worktrees dir. Returns the svn repo URI, or $null.
+    function Initialize-UnpushedGitignoreScenario {
+        param([string]$Root, [string]$Sandbox)
+        $worktreesDir = Get-WorktreesDir -Root $Root
+        $svnRepo = [System.IO.Path]::Combine($Sandbox, 'svnrepo')
+        & svnadmin create $svnRepo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $loadCmd = "svnadmin load `"$svnRepo`" < `"$($script:DumpPath)`""
+        & cmd.exe /c $loadCmd > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($svnRepo -replace '\\', '/')   # the seed dump already carries /trunk + /branches
+
+        # trunk: svn:ignore=.git + versioned .gitignore (in sync with what main starts from).
+        $twc = [System.IO.Path]::Combine($Sandbox, 'trunkwc')
+        & svn checkout "$uri/trunk" $twc > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        & svn propset svn:ignore '.git' $twc > $null 2>$null
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($twc, '.gitignore')) -Value '.svn/' -NoNewline
+        & svn add ([System.IO.Path]::Combine($twc, '.gitignore')) > $null 2>$null
+        & svn commit $twc -m 'trunk: svn:ignore + gitignore' > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        $remoteMain = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-main')
+        & svn checkout "$uri/trunk" $remoteMain > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        # git main mirrors trunk with .gitignore=".svn/".
+        $tx = [System.IO.Path]::Combine($Sandbox, 'tx')
+        & svn export --force "$uri/trunk" $tx > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        Get-ChildItem -LiteralPath $tx -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $Root -Recurse -Force
+        }
+        & git -C $Root config core.autocrlf false 2>&1 | Out-Null
+        & git -C $Root add -A 2>&1 | Out-Null
+        & git -C $Root -c commit.gpgsign=false commit -m 'main mirrors trunk' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        # Pin remote-svn/main at the in-sync state, THEN diverge main's .gitignore (unpushed edit).
+        & git -C $Root branch 'remote-svn/main' 'main' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($Root, '.gitignore')) -Value ".svn/`r`nbin/`r`n" -NoNewline
+        & git -C $Root add .gitignore 2>&1 | Out-Null
+        & git -C $Root -c commit.gpgsign=false commit -m 'chore: ignore bin (unpushed)' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return $uri
+    }
+
     # True if NO partial git state (bridge branch / worktree dir) remains for $Branch.
     function Test-NoOrphanState {
         param([string]$Root, [string]$Branch)
@@ -512,6 +563,39 @@ Describe 'New-RemoteBridge' {
 
                 # the bridge git worktree is clean (build-svn-commit's git-clean gate would pass).
                 (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 14: first-push with an unpushed main .gitignore leaves the bridge git-clean (regression)' {
+        # Bug: the old bootstrap synced main's .gitignore into the bridge worktree (cp) but did not
+        # git commit it, so when main's .gitignore had diverged from SVN the bridge was left git-dirty
+        # and the immediately-following build-svn-commit refused ("uncommitted git changes"), breaking
+        # the whole first push. The fix drops the .gitignore pre-sync entirely (svn:ignore comes from
+        # the `svn copy`; the .gitignore change flows through the normal confirmed push).
+        It 'keeps the bridge git-clean after bootstrap (no synced-but-uncommitted .gitignore)' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-14'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                $uri = Initialize-UnpushedGitignoreScenario -Root $root -Sandbox $sb
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the unpushed-.gitignore scenario'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feat-y', '-SvnUrl', "$uri/branches/feat-y")
+                if ($res.ExitCode -ne 0) {
+                    Set-ItResult -Skipped -Because "bridge create did not succeed in this env: $($res.Combined)"
+                    return
+                }
+
+                $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feat-y')
+                # THE fix: the bridge worktree must be git-clean (build-svn-commit's gate would pass).
+                (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+                # And .git stays out of SVN via the inherited svn:ignore.
+                ((& svn propget svn:ignore "$uri/branches/feat-y" 2>$null | Out-String).Trim()) | Should -BeExactly '.git'
             } finally {
                 Remove-Sandbox -Dir $sb
             }
