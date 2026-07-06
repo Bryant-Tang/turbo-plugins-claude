@@ -132,21 +132,33 @@ try {
 
     Write-Output "Importing SVN branch '$SvnUrl' into bridge '$remoteBranch' and working branch '$Branch'..."
 
-    $initCommit = (& git -C $mainWorktree rev-list --max-parents=0 HEAD | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($initCommit)) { throw 'git rev-list --max-parents=0 HEAD failed (no root commit?)' }
-
     $workBranchCreated = $false
     try {
-        & git -C $mainWorktree branch $remoteBranch $initCommit
-        if ($LASTEXITCODE -ne 0) { throw "git branch $remoteBranch failed" }
-
-        & git -C $mainWorktree worktree add $remoteWorktreePath $remoteBranch
+        # Build the bridge as an ORPHAN branch with an empty worktree, NOT branched from a repo
+        # root commit. Once the repo has been through a bridge merge it has MULTIPLE root commits
+        # (the empty native root + each `sync:` import root), so `rev-list --max-parents=0 HEAD`
+        # returned a multi-line value that broke `git branch` with "not a valid object name". Worse,
+        # any root that carries content would contaminate this read-only import of an UNRELATED SVN
+        # branch. An orphan + clean guarantees an empty starting tree regardless of root count, so
+        # the import commit captures exactly the SVN branch content. Mirrors Initialize-GitSvnBridge.
+        & git -C $mainWorktree worktree add --detach --no-checkout $remoteWorktreePath
         if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
 
-        # READ the SVN content onto the bridge worktree. --force: `git worktree add` already
-        # created `.git` + init-commit content; svn would otherwise mark them "obstructed".
-        Write-Output "Running: svn checkout --force $SvnUrl $remoteWorktreePath"
-        & svn checkout --force $SvnUrl $remoteWorktreePath
+        & git -C $remoteWorktreePath checkout --orphan $remoteBranch
+        if ($LASTEXITCODE -ne 0) { throw "git checkout --orphan $remoteBranch failed" }
+
+        # Clear the index. Tolerate "pathspec '.' did not match" when the index is already empty.
+        $eaRmIdx = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        & git -C $remoteWorktreePath rm -rf --cached . 2>$null | Out-Null
+        $ErrorActionPreference = $eaRmIdx
+        & git -C $remoteWorktreePath clean -dffx
+        if ($LASTEXITCODE -ne 0) { throw 'git clean -dffx failed in bridge worktree' }
+
+        # READ the SVN content onto the (empty) bridge worktree. PLAIN svn checkout (no --force):
+        # the worktree is empty except the .git pointer file.
+        Write-Output "Running: svn checkout $SvnUrl $remoteWorktreePath"
+        & svn checkout $SvnUrl $remoteWorktreePath
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
 
         # Untrack `.git` from the svn working copy (pure-local WC fix; tolerate "not tracked").
@@ -180,9 +192,10 @@ try {
         }
         [System.IO.File]::WriteAllLines($peerGitignore, $ignoreLines)
 
-        # Commit the SVN content onto the bridge branch (overlay on the init commit). The
-        # working branch then descends from this commit, so it carries the content and the
-        # first pull shares history with the bridge.
+        # Commit the SVN content onto the orphan bridge branch (its first commit). The working
+        # branch then descends from this commit, so it carries the content and the first pull
+        # shares history with the bridge. On an empty SVN branch, seed an --allow-empty commit so
+        # the orphan branch still gets a HEAD for the working branch to descend from.
         & git -C $remoteWorktreePath add -A
         if ($LASTEXITCODE -ne 0) { throw 'git add -A failed in bridge worktree' }
         & git -C $remoteWorktreePath diff --cached --quiet
@@ -191,7 +204,8 @@ try {
             & git -C $remoteWorktreePath commit -m "import: svn branch $remoteWorktreeName"
             if ($LASTEXITCODE -ne 0) { throw 'git commit of imported SVN content failed' }
         } else {
-            Write-Output 'Imported SVN content matches the repo root commit; bridge left at the root commit.'
+            & git -C $remoteWorktreePath commit --allow-empty -m "import: svn branch $remoteWorktreeName (empty)"
+            if ($LASTEXITCODE -ne 0) { throw 'git commit (empty import) failed' }
         }
 
         # Create the working branch descending from the bridge ref (KTD5). Last mutation step.

@@ -86,7 +86,18 @@ fi
 
 echo "Creating SVN bridge for branch '$BRANCH'..."
 
-INIT_COMMIT="$(git -C "$MAIN_WORKTREE" rev-list --max-parents=0 HEAD)"
+# Base the new bridge branch on remote-svn/main's tip (the git mirror of trunk). The SVN feature
+# path below is `svn copy`d from trunk, so its git side must start from trunk's mirror -- this makes
+# the post-checkout worktree content match the branch tree (clean, no untracked-overwrite on the
+# first push merge) and gives the merge-back a recent common ancestor.
+# NOT `rev-list --max-parents=0 HEAD`: once the repo has been through a bridge merge it has MULTIPLE
+# root commits (the empty native root + each `sync:` import root), so that returned a multi-line
+# value that broke `git branch` with "not a valid object name". remote-svn/main is always a single
+# commit and always exists here (it is the trust anchor validated above).
+if ! BASE_REF="$(git -C "$MAIN_WORKTREE" rev-parse --verify -q 'refs/heads/remote-svn/main')"; then
+  echo "Error: bridge anchor branch 'remote-svn/main' not found. Run /tp-setup first to bootstrap the main bridge." >&2
+  exit 1
+fi
 
 # Use the SANITIZED dash-form (not raw user input) for the svn copy commit message.
 SVN_MSG_BRANCH="$REMOTE_NAME"
@@ -103,7 +114,7 @@ _rollback_bridge() {
 }
 trap _rollback_bridge ERR
 
-git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$INIT_COMMIT"
+git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$BASE_REF"
 git -C "$MAIN_WORKTREE" worktree add "$REMOTE_PATH" "$REMOTE_BRANCH"
 
 if svn info "$SVN_URL" >/dev/null 2>&1; then

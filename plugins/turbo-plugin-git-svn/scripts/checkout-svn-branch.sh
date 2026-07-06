@@ -127,9 +127,6 @@ fi
 
 echo "Importing SVN branch '$SVN_URL' into bridge '$REMOTE_BRANCH' and working branch '$BRANCH'..."
 
-INIT_COMMIT="$(git -C "$MAIN_WORKTREE" rev-list --max-parents=0 HEAD)"
-if [[ -z "$INIT_COMMIT" ]]; then echo "Error: git rev-list --max-parents=0 HEAD found no root commit." >&2; exit 1; fi
-
 # Rollback covers the LOCAL git side only. SVN was never written (read-only import), so the
 # target SVN branch has no new revision to undo.
 WORK_BRANCH_CREATED=false
@@ -148,13 +145,23 @@ _rollback() {
 }
 trap _rollback ERR
 
-git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$INIT_COMMIT"
-git -C "$MAIN_WORKTREE" worktree add "$REMOTE_PATH" "$REMOTE_BRANCH"
+# Build the bridge as an ORPHAN branch with an empty worktree, NOT branched from a repo root
+# commit. Once the repo has been through a bridge merge it has MULTIPLE root commits (the empty
+# native root + each `sync:` import root), so `rev-list --max-parents=0 HEAD` returned a multi-line
+# value that broke `git branch` with "not a valid object name". Worse, any root that carries content
+# would contaminate this read-only import of an UNRELATED SVN branch. An orphan + clean guarantees
+# an empty starting tree regardless of root count, so the import commit captures exactly the SVN
+# branch content. Mirrors initialize-git-svn-bridge.sh.
+git -C "$MAIN_WORKTREE" worktree add --detach --no-checkout "$REMOTE_PATH"
+git -C "$REMOTE_PATH" checkout --orphan "$REMOTE_BRANCH"
+# Clear the index. Tolerate "pathspec '.' did not match" when the index is already empty.
+git -C "$REMOTE_PATH" rm -rf --cached . >/dev/null 2>&1 || true
+git -C "$REMOTE_PATH" clean -dffx
 
-# READ the SVN content onto the bridge worktree. --force: `git worktree add` already created
-# `.git` + init-commit content; svn would otherwise mark them "obstructed".
-echo "Running: svn checkout --force $SVN_URL $REMOTE_PATH"
-svn checkout --force "$SVN_URL" "$REMOTE_PATH"
+# READ the SVN content onto the (empty) bridge worktree. PLAIN svn checkout (no --force): the
+# worktree is empty except the .git pointer file.
+echo "Running: svn checkout $SVN_URL $REMOTE_PATH"
+svn checkout "$SVN_URL" "$REMOTE_PATH"
 
 # Untrack `.git` from the svn working copy (pure-local WC fix; tolerate "not tracked"). We never
 # svn-commit, so this never reaches SVN.
@@ -173,14 +180,15 @@ if ! grep -qxF '.svn/' "$PEER_GI" 2>/dev/null; then
   printf '%s\n' '.svn/' >> "$PEER_GI"
 fi
 
-# Commit the SVN content onto the bridge branch (overlay on the init commit). The working
-# branch then descends from this commit, so it carries the content and the first pull shares
-# history with the bridge.
+# Commit the SVN content onto the orphan bridge branch (its first commit). The working branch
+# then descends from this commit, so it carries the content and the first pull shares history
+# with the bridge. On an empty SVN branch, seed an --allow-empty commit so the orphan branch
+# still gets a HEAD for the working branch to descend from.
 git -C "$REMOTE_PATH" add -A
 if ! git -C "$REMOTE_PATH" diff --cached --quiet; then
   git -C "$REMOTE_PATH" commit -m "import: svn branch $REMOTE_NAME"
 else
-  echo "Imported SVN content matches the repo root commit; bridge left at the root commit."
+  git -C "$REMOTE_PATH" commit --allow-empty -m "import: svn branch $REMOTE_NAME (empty)"
 fi
 
 # Create the working branch descending from the bridge ref (KTD5). Last mutation step.

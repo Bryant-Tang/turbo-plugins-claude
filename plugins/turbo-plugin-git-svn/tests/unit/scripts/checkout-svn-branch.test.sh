@@ -239,5 +239,57 @@ test_happy_import_readonly() {
     assertEquals 'import wrote no new SVN revision' "$rev_before" "$rev_after"
 }
 
+# Inject a SECOND root commit into main to reproduce the post-bridge two-root state (a parentless
+# `commit-tree` on the canonical empty tree, merged --allow-unrelated-histories).
+inject_second_root() {
+    local root="$1" second
+    second="$(git -C "$root" commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m 'sync: svn r1')"
+    git -C "$root" merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" "$second" >/dev/null 2>&1
+}
+
+# ── Case 10: two-root repo imports an UNRELATED branch without crash or contamination (regression) ──
+# Once main has been through a bridge merge it carries TWO root commits, so `rev-list
+# --max-parents=0 HEAD` returned a 2-line value that broke `git branch` ("not a valid object name").
+# Basing the bridge on an ORPHAN branch fixes that AND avoids contaminating the read-only import of
+# an unrelated branch with trunk content.
+test_two_root_import_no_contamination() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot uri co out rc files
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    uri="$reposroot"
+    # An svn branch 'other' that DIFFERS from trunk: drop Web.config, add only-branch.txt.
+    svn copy "$uri/trunk" "$uri/branches/other" -m 'branch: other' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    co="$SB/co"
+    svn checkout "$uri/branches/other" "$co" >/dev/null 2>&1 || { startSkipping; return 0; }
+    svn delete "$co/Web.config" >/dev/null 2>&1
+    echo 'only in branch' > "$co/only-branch.txt"
+    svn add "$co/only-branch.txt" >/dev/null 2>&1
+    ( cd "$co" && svn commit -m 'branch: drop Web.config, add only-branch.txt' >/dev/null 2>&1 ) || { startSkipping; return 0; }
+    inject_second_root "$root"
+    assertEquals 'main has two root commits (bridged state)' 2 "$(git -C "$root" rev-list --max-parents=0 HEAD | grep -c .)"
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$uri/branches/other" --branch other 2>&1)"; rc=$?
+    case "$out" in
+        *"not a valid object name"*) fail "regressed: two-root repo broke 'git branch' with: $out" ;;
+        *) assertTrue 'no invalid-object-name error' 0 ;;
+    esac
+    assertEquals 'import succeeded on a two-root repo' 0 "$rc"
+
+    files="$(git -C "$root" ls-tree -r --name-only other 2>/dev/null)"
+    printf '%s\n' "$files" | grep -qx 'only-branch.txt'
+    assertTrue 'imported branch-only file present' $?
+    if printf '%s\n' "$files" | grep -qx 'Web.config'; then
+        fail 'contamination: Web.config leaked (absent in the imported branch)'
+    else
+        assertTrue 'no trunk-only file leaked' 0
+    fi
+    if printf '%s\n' "$files" | grep -q '\.turbo-plugin'; then
+        fail 'contamination: .turbo-plugin leaked into the import'
+    else
+        assertTrue 'no .turbo-plugin contamination' 0
+    fi
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

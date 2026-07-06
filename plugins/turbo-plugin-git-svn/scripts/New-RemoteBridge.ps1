@@ -75,15 +75,27 @@ try {
 
     Write-Output "Creating SVN bridge for branch '$Branch'..."
 
-    $initCommit = (& git -C $mainWorktree rev-list --max-parents=0 HEAD | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) { throw "git rev-list failed" }
+    # Base the new bridge branch on remote-svn/main's tip (the git mirror of trunk). The SVN feature
+    # path below is `svn copy`d from trunk, so its git side must start from trunk's mirror -- this
+    # keeps the post-checkout worktree content matching the branch tree (no untracked-overwrite on
+    # the first push merge) and gives the merge-back a recent common ancestor.
+    # NOT `rev-list --max-parents=0 HEAD`: once the repo has been through a bridge merge it has
+    # MULTIPLE root commits (the empty native root + each `sync:` import root), so that returned a
+    # multi-line value that broke `git branch` with "not a valid object name". remote-svn/main is
+    # always a single commit and always exists here (it is the trust anchor validated above).
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $baseRef = (& git -C $mainWorktree rev-parse --verify -q 'refs/heads/remote-svn/main' 2>$null | Out-String).Trim()
+    $baseOk = ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($baseRef))
+    $ErrorActionPreference = $prevEAP
+    if (-not $baseOk) { throw "Bridge anchor branch 'remote-svn/main' not found. Run /tp-setup first to bootstrap the main bridge." }
 
     # Use the SANITIZED dash-form (not raw user input) for the svn copy commit message
     # so control characters can never enter SVN's permanent history.
     $svnMsgBranch = $remoteWorktreeName
 
     try {
-        & git -C $mainWorktree branch $remoteBranch $initCommit
+        & git -C $mainWorktree branch $remoteBranch $baseRef
         if ($LASTEXITCODE -ne 0) { throw "git branch $remoteBranch failed" }
 
         & git -C $mainWorktree worktree add $remoteWorktreePath $remoteBranch

@@ -65,6 +65,12 @@ BeforeAll {
         & svn checkout "$repoUri/trunk" $remoteMain > $null 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
 
+        # The bridge branch is now based on remote-svn/main's tip (not a repo root commit), so the
+        # anchor ref must exist for the create path to run. Real setups create it via Initialize;
+        # here a ref at main is enough (the svn checkout --force overlays the branch content anyway).
+        & git -C $Root branch 'remote-svn/main' 'main' > $null 2>&1
+        if ($LASTEXITCODE -ne 0) { return $null }
+
         $reposRoot = (& svn info --show-item repos-root-url $remoteMain 2>$null | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($reposRoot)) { return $null }
         return $reposRoot
@@ -375,6 +381,34 @@ Describe 'New-RemoteBridge' {
                 $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feature-x')
                 $ignore = (& svn propget svn:ignore $wtPath 2>$null | Out-String).Trim()
                 $ignore | Should -BeExactly '.git'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 12: two-root repo (already bridged) still bridges a new branch (regression)' {
+        It 'first-push on a repo with TWO root commits does not fail with "not a valid object name"' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-12'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'could not build remote-svn-main svn WC'; return }
+
+                # Inject a SECOND root into main to reproduce the post-bridge two-root state: a
+                # parentless commit-tree on the canonical empty tree, merged --allow-unrelated.
+                $second = (& git -C $root commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m 'sync: svn r1' | Out-String).Trim()
+                & git -C $root merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" $second 2>&1 | Out-Null
+                $roots = @((Run-Git-Capture -Cwd $root -GitArgs @('rev-list', '--max-parents=0', 'HEAD')) -split "`n" | Where-Object { $_.Trim() })
+                $roots.Count | Should -Be 2
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feat-y', '-SvnUrl', "$reposRoot/branches/feat-y")
+                $res.Combined | Should -Not -Match 'not a valid object name'
+                $res.ExitCode | Should -Be 0
+                (Run-Git-Capture -Cwd $root -GitArgs @('branch', '--list', 'remote-svn/feat-y')) | Should -Match 'remote-svn/feat-y'
             } finally {
                 Remove-Sandbox -Dir $sb
             }

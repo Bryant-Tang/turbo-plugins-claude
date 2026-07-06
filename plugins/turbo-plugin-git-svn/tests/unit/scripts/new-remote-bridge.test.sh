@@ -63,6 +63,10 @@ make_remote_main_wc() {
     winpath="$(cygpath -m "$svnrepo" 2>/dev/null || printf '%s' "$svnrepo")"
     uri="file:///$winpath"
     svn checkout "$uri/trunk" "$worktrees/remote-svn-main" >/dev/null 2>&1 || return 1
+    # The bridge branch is now based on remote-svn/main's tip (not a repo root commit), so the
+    # anchor ref must exist for the create path to run. Real setups create it via Initialize;
+    # here a ref at main is enough (the svn checkout --force overlays the branch content anyway).
+    git -C "$root" branch remote-svn/main main >/dev/null 2>&1 || return 1
     local reposroot
     reposroot="$(svn info --show-item repos-root-url "$worktrees/remote-svn-main" 2>/dev/null | tr -d '\r\n')"
     [ -n "$reposroot" ] || return 1
@@ -301,6 +305,37 @@ test_create_sets_fixed_svn_ignore() {
     wt="$root/.turbo-plugin/worktrees/remote-svn-feature-x"
     ign="$(svn propget svn:ignore "$wt" 2>/dev/null | tr -d '\r\n')"
     assertEquals 'bridge svn:ignore is exactly .git' '.git' "$ign"
+}
+
+# Inject a SECOND root commit into main to reproduce the post-bridge two-root state. `commit-tree`
+# on the canonical empty tree makes a parentless (root) commit like a `sync:` import root; merging
+# it --allow-unrelated-histories leaves main reachable from TWO roots (the exact bug trigger).
+inject_second_root() {
+    local root="$1" second
+    second="$(git -C "$root" commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m 'sync: svn r1')"
+    git -C "$root" merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" "$second" >/dev/null 2>&1
+}
+
+# ── Case 11: two-root repo (already bridged) still bridges a new branch (regression) ──
+# Reproduces the reported first-push failure: once main has been through a bridge merge it carries
+# TWO root commits, so `rev-list --max-parents=0 HEAD` returned a 2-line value that broke
+# `git branch` with "not a valid object name". Basing the bridge on remote-svn/main fixes it.
+test_two_root_repo_first_push_regression() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot out rc
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    inject_second_root "$root"
+    assertEquals 'main has two root commits (bridged state)' 2 "$(git -C "$root" rev-list --max-parents=0 HEAD | grep -c .)"
+    # First push of a NEW feature branch: the exact flow that used to crash on a two-root repo.
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-y --svn-url "$reposroot/branches/feat-y" 2>&1)"; rc=$?
+    case "$out" in
+        *"not a valid object name"*) fail "regressed: two-root repo broke 'git branch' with: $out" ;;
+        *) assertTrue 'no invalid-object-name error' 0 ;;
+    esac
+    assertEquals 'first-push bridge succeeded on a two-root repo' 0 "$rc"
+    git -C "$root" branch --list 'remote-svn/feat-y' | grep -q .
+    assertTrue 'bridge branch remote-svn/feat-y created' $?
 }
 
 # shellcheck disable=SC1090

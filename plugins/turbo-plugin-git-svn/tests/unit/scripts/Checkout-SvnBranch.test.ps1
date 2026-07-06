@@ -250,4 +250,50 @@ Describe 'Checkout-SvnBranch' {
             }
         }
     }
+
+    Context 'Case 9: two-root repo imports an UNRELATED branch without crash or contamination (regression)' {
+        It 'imports on a repo with TWO root commits with no "not a valid object name" and no trunk contamination' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-9'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+
+                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'could not build remote-svn-main svn WC'; return }
+
+                # An svn branch 'other' that DIFFERS from trunk: drop Web.config, add only-branch.txt.
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/other" -m 'branch: other' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'could not create svn branch'; return }
+                $co = [System.IO.Path]::Combine($sb, 'co')
+                & svn checkout "$reposRoot/branches/other" $co > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'could not checkout svn branch'; return }
+                & svn delete ([System.IO.Path]::Combine($co, 'Web.config')) > $null 2>$null
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, 'only-branch.txt'), 'only in branch')
+                & svn add ([System.IO.Path]::Combine($co, 'only-branch.txt')) > $null 2>$null
+                & svn commit $co -m 'branch: drop Web.config, add only-branch.txt' > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'could not commit svn branch diff'; return }
+
+                # Inject a SECOND root into main to reproduce the post-bridge two-root state: a
+                # parentless commit-tree on the canonical empty tree, merged --allow-unrelated.
+                $second = (& git -C $root commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m 'sync: svn r1' | Out-String).Trim()
+                & git -C $root merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" $second 2>&1 | Out-Null
+                $roots = @((Run-Git-Capture -Cwd $root -GitArgs @('rev-list', '--max-parents=0', 'HEAD')) -split "`n" | Where-Object { $_.Trim() })
+                $roots.Count | Should -Be 2
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-SvnUrl', "$reposRoot/branches/other", '-Branch', 'other')
+                $res.Combined | Should -Not -Match 'not a valid object name'
+                $res.ExitCode | Should -Be 0
+
+                $files = @((Run-Git-Capture -Cwd $root -GitArgs @('ls-tree', '-r', '--name-only', 'other')) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                $files | Should -Contain 'only-branch.txt'
+                $files | Should -Not -Contain 'Web.config'
+                ($files | Where-Object { $_ -like '*.turbo-plugin*' }) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
 }
