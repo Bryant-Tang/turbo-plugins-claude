@@ -188,6 +188,15 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/remove-svn-file.sh" --branch <branch> --path
 powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Remove-SvnFile.ps1" -Branch <branch> -Path <file>
 ```
    If the script exits non-zero, report its message and stop (the local file is kept regardless).
+3. **Sync the updated `.gitignore` to SVN** so it does not linger only on `main` until some later
+   push. `Remove-SvnFile`'s SVN commit is scoped to the deleted file only, so the new `.gitignore`
+   line is still git-side. Delegate to `/tp-push-to-svn --branch <branch>` (NOT to do the removal —
+   that is already done — only to propagate the `.gitignore`). Push merges `main` into the bridge
+   and commits the modified `.gitignore`; the removed file is already gone from SVN, so push does
+   **not** re-add it. **Note**: push carries *all* commits pending on `<branch>` (not only the
+   `.gitignore`) and runs its own confirmation, so the user sees the full change list and can cancel
+   there. If they cancel or the push fails, the un-track itself is already complete (file removed
+   from SVN + git, kept local); only the `.gitignore`-to-SVN sync defers to their next push.
 
 **Un-track — Option B (git stops tracking, SVN keeps the file):**
 In main worktree only — no SVN changes. Run as two separate steps (no `&&`):
@@ -207,7 +216,7 @@ List what was changed in each category and what was skipped.
 
 - If `.gitignore` does not exist, create it before editing.
 - If remote worktree is absent, only Git Ignore is available (Inconsistency / Un-track need remote worktrees).
-- **All SVN removal is delegated to `Remove-SvnFile`; never run raw `svn delete` / `svn commit`, and never delegate to `/tp-push-to-svn` for a removal.** push can't do it: it refuses to start on an unignored-but-untracked file (main-clean gate) and skips git-ignored files (`git check-ignore`). `Remove-SvnFile` deletes directly and, when the path is git-tracked on the bridge, reconciles with commit formats **identical to `/tp-pull-from-svn`** (`sync: svn r<rev>` + `Merge branch 'remote-svn/<branch>' into <branch>`), so `remote-svn/*` only ever carries sync + merge commits.
+- **All SVN removal is delegated to `Remove-SvnFile`; never run raw `svn delete` / `svn commit`, and never delegate to `/tp-push-to-svn` for the removal itself.** push can't remove: it refuses to start on an unignored-but-untracked file (main-clean gate) and skips git-ignored files (`git check-ignore`). `Remove-SvnFile` deletes directly and, when the path is git-tracked on the bridge, reconciles with commit formats **identical to `/tp-pull-from-svn`** (`sync: svn r<rev>` + `Merge branch 'remote-svn/<branch>' into <branch>`), so `remote-svn/*` only ever carries sync + merge commits. (Un-track A's follow-up `/tp-push-to-svn` in step 3 is a *different* thing — it runs **after** `Remove-SvnFile` has already removed the file, only to propagate the updated `.gitignore` to SVN.)
 - **`.gitignore` timing differs by intent**: Un-track A adds `.gitignore` **before** calling `Remove-SvnFile` and it's fine (the script isn't push, so `check-ignore` never suppresses the delete); Un-track B adds `.gitignore` immediately to **protect** the SVN copy from a future push's `!`-delete. Both are "add now" here — the after-push ordering only matters when a removal is routed through push, which this SKILL never does.
 - **Execution routing (pick `.ps1` vs `.sh`)**: don't use the Bash tool to call `pwsh` / `powershell`. Windows + Git Bash → **Bash tool** runs `.sh`; Windows + no Git Bash → **PowerShell tool** runs `.ps1` (single-dash params `-Branch` / `-Path`); Linux / macOS → **Bash tool** runs `.sh`. Git Bash detection: check `C:\Program Files\Git\bin\bash.exe`, then `C:\Program Files (x86)\Git\bin\bash.exe`; else `where.exe bash` but **exclude** `System32\bash.exe` (WSL).
 - **Un-track option B warning is mandatory** — never skip it before proceeding with Un-track Option B.
@@ -219,7 +228,7 @@ List what was changed in each category and what was skipped.
 
 - Git Ignore: new patterns appear in `.gitignore` and in a new git commit on main branch.
 - Inconsistency (option B): `svn list` no longer includes the file; the bridge worktree `git status --porcelain` is clean (no-reconcile — the file was git-ignored).
-- Un-track (option A): `svn list` no longer includes the file; `remote-svn/<branch>` tip is a `sync: svn r<rev>` commit and `<branch>` tip is a `Merge branch 'remote-svn/<branch>' into <branch>` commit (both matching `/tp-pull-from-svn`); the **local file is still on disk** in the main worktree but `git ls-files <file>` returns empty; `.gitignore` includes the pattern; the bridge worktree is clean.
+- Un-track (option A): `svn list` no longer includes the file; `remote-svn/<branch>` tip (before the step-3 push) is a `sync: svn r<rev>` commit and `<branch>` tip is a `Merge branch 'remote-svn/<branch>' into <branch>` commit (both matching `/tp-pull-from-svn`); the **local file is still on disk** in the main worktree but `git ls-files <file>` returns empty; `.gitignore` includes the pattern; the bridge worktree is clean. After the step-3 `/tp-push-to-svn` (unless the user cancelled it), the `.gitignore` change is also in SVN and the removed file is **not** re-added.
 - Un-track (option B): `git ls-files <file>` returns empty in main worktree; the file is still on disk; `.gitignore` includes the pattern; SVN copy unchanged.
 
 ## Test Scenarios
