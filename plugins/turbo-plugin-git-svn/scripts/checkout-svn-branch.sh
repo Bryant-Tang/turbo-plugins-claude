@@ -125,6 +125,13 @@ if ! svn info "$SVN_URL" >/dev/null 2>&1; then
   exit 1
 fi
 
+# The imported branch is based on remote-svn/main (the trunk mirror) so it shares history with this
+# repo's main; require that anchor ref up-front (before any mutation).
+if ! git -C "$MAIN_WORKTREE" rev-parse --verify -q 'refs/heads/remote-svn/main' >/dev/null; then
+  echo "Error: bridge anchor branch 'remote-svn/main' not found. Run git-svn /tp-setup first to bootstrap the main bridge." >&2
+  exit 1
+fi
+
 echo "Importing SVN branch '$SVN_URL' into bridge '$REMOTE_BRANCH' and working branch '$BRANCH'..."
 
 # Rollback covers the LOCAL git side only. SVN was never written (read-only import), so the
@@ -145,17 +152,19 @@ _rollback() {
 }
 trap _rollback ERR
 
-# Build the bridge as an ORPHAN branch with an empty worktree, NOT branched from a repo root
-# commit. Once the repo has been through a bridge merge it has MULTIPLE root commits (the empty
-# native root + each `sync:` import root), so `rev-list --max-parents=0 HEAD` returned a multi-line
-# value that broke `git branch` with "not a valid object name". Worse, any root that carries content
-# would contaminate this read-only import of an UNRELATED SVN branch. An orphan + clean guarantees
-# an empty starting tree regardless of root count, so the import commit captures exactly the SVN
-# branch content. Mirrors initialize-git-svn-bridge.sh.
-git -C "$MAIN_WORKTREE" worktree add --detach --no-checkout "$REMOTE_PATH"
-git -C "$REMOTE_PATH" checkout --orphan "$REMOTE_BRANCH"
-# Clear the index. Tolerate "pathspec '.' did not match" when the index is already empty.
-git -C "$REMOTE_PATH" rm -rf --cached . >/dev/null 2>&1 || true
+# Base the bridge branch on remote-svn/main's tip (the trunk mirror) so the imported branch SHARES
+# HISTORY with this repo's main: an svn-copied branch descends from trunk, and this reconstructs
+# that link (git merge-base with main is non-empty; a later merge-back is not "unrelated histories"
+# and diffs/rebases against main behave). NOT an orphan (that produced a disconnected single-root
+# branch the user could not merge back) and NOT `rev-list --max-parents=0 HEAD` (multi-root repos
+# returned a multi-line value that broke `git branch`). remote-svn/main is a single commit and was
+# verified to exist above.
+git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" 'remote-svn/main'
+git -C "$MAIN_WORKTREE" worktree add "$REMOTE_PATH" "$REMOTE_BRANCH"
+# EMPTY the worktree (keep the .git pointer) so the plain `svn checkout` below yields the EXACT SVN
+# branch tree. `git add -A` then records precisely the branch's delta from trunk (adds/mods/deletes)
+# as ONE commit whose parent is remote-svn/main -- content-accurate AND connected to main.
+git -C "$REMOTE_PATH" rm -rf . >/dev/null 2>&1 || true
 git -C "$REMOTE_PATH" clean -dffx
 
 # READ the SVN content onto the (empty) bridge worktree. PLAIN svn checkout (no --force): the
@@ -180,10 +189,10 @@ if ! grep -qxF '.svn/' "$PEER_GI" 2>/dev/null; then
   printf '%s\n' '.svn/' >> "$PEER_GI"
 fi
 
-# Commit the SVN content onto the orphan bridge branch (its first commit). The working branch
-# then descends from this commit, so it carries the content and the first pull shares history
-# with the bridge. On an empty SVN branch, seed an --allow-empty commit so the orphan branch
-# still gets a HEAD for the working branch to descend from.
+# Commit the branch's delta onto the bridge branch (a commit whose parent is remote-svn/main).
+# The working branch then descends from this commit, so it carries the content, connects to main,
+# and the first pull shares history with the bridge. When the SVN branch is identical to trunk
+# (no delta), seed an --allow-empty commit so the working branch still has a HEAD to descend from.
 git -C "$REMOTE_PATH" add -A
 if ! git -C "$REMOTE_PATH" diff --cached --quiet; then
   git -C "$REMOTE_PATH" commit -m "import: svn branch $REMOTE_NAME"

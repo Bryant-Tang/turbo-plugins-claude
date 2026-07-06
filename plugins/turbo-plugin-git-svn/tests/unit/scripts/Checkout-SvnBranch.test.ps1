@@ -52,6 +52,12 @@ BeforeAll {
         & svn checkout "$repoUri/trunk" $remoteMain > $null 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
 
+        # The import now bases the bridge branch on remote-svn/main (the trunk mirror) so the imported
+        # branch connects to main. Real setups create this anchor ref via tp-setup; a ref at main is
+        # enough here (the svn checkout fills the exact branch content regardless).
+        & git -C $Root branch 'remote-svn/main' 'main' > $null 2>&1
+        if ($LASTEXITCODE -ne 0) { return $null }
+
         $reposRoot = (& svn info --show-item repos-root-url $remoteMain 2>$null | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($reposRoot)) { return $null }
         return $reposRoot
@@ -239,6 +245,9 @@ Describe 'Checkout-SvnBranch' {
 
                 $mb = Run-Git-Capture -Cwd $root -GitArgs @('merge-base', 'feature-x', 'remote-svn/feature-x')
                 $mb | Should -Not -BeNullOrEmpty
+                # The imported working branch connects to THIS repo's main (not a disconnected orphan),
+                # so a later merge-back is not "unrelated histories". This is the U11 connection fix.
+                (Run-Git-Capture -Cwd $root -GitArgs @('merge-base', 'main', 'feature-x')) | Should -Not -BeNullOrEmpty
 
                 $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feature-x')
                 (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
@@ -286,6 +295,9 @@ Describe 'Checkout-SvnBranch' {
                                        -ScriptArgs @('-SvnUrl', "$reposRoot/branches/other", '-Branch', 'other')
                 $res.Combined | Should -Not -Match 'not a valid object name'
                 $res.ExitCode | Should -Be 0
+
+                # Connected to main (not an orphan), even on a two-root repo.
+                (Run-Git-Capture -Cwd $root -GitArgs @('merge-base', 'main', 'other')) | Should -Not -BeNullOrEmpty
 
                 $files = @((Run-Git-Capture -Cwd $root -GitArgs @('ls-tree', '-r', '--name-only', 'other')) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
                 $files | Should -Contain 'only-branch.txt'

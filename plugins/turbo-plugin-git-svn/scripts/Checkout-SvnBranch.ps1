@@ -130,27 +130,40 @@ try {
         throw "SVN branch does not exist (or is unreachable): $SvnUrl. tp-checkout-svn-branch imports an EXISTING branch read-only; it does not create SVN paths. Check the URL, or use /tp-push-to-svn first-push to create a new branch."
     }
 
+    # The imported branch is based on remote-svn/main (the trunk mirror) so it shares history with
+    # this repo's main; require that anchor ref up-front (before any mutation).
+    $eaAnchor = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    & git -C $mainWorktree rev-parse --verify -q 'refs/heads/remote-svn/main' 2>$null | Out-Null
+    $anchorOk = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $eaAnchor
+    if (-not $anchorOk) {
+        throw "Bridge anchor branch 'remote-svn/main' not found. Run git-svn /tp-setup first to bootstrap the main bridge."
+    }
+
     Write-Output "Importing SVN branch '$SvnUrl' into bridge '$remoteBranch' and working branch '$Branch'..."
 
     $workBranchCreated = $false
     try {
-        # Build the bridge as an ORPHAN branch with an empty worktree, NOT branched from a repo
-        # root commit. Once the repo has been through a bridge merge it has MULTIPLE root commits
-        # (the empty native root + each `sync:` import root), so `rev-list --max-parents=0 HEAD`
-        # returned a multi-line value that broke `git branch` with "not a valid object name". Worse,
-        # any root that carries content would contaminate this read-only import of an UNRELATED SVN
-        # branch. An orphan + clean guarantees an empty starting tree regardless of root count, so
-        # the import commit captures exactly the SVN branch content. Mirrors Initialize-GitSvnBridge.
-        & git -C $mainWorktree worktree add --detach --no-checkout $remoteWorktreePath
+        # Base the bridge branch on remote-svn/main's tip (the trunk mirror) so the imported branch
+        # SHARES HISTORY with this repo's main: an svn-copied branch descends from trunk, and this
+        # reconstructs that link (git merge-base with main is non-empty; a later merge-back is not
+        # "unrelated histories" and diffs/rebases against main behave). NOT an orphan (that produced
+        # a disconnected single-root branch the user could not merge back) and NOT `rev-list
+        # --max-parents=0 HEAD` (multi-root repos returned a multi-line value that broke `git branch`).
+        # remote-svn/main is a single commit and was verified to exist above.
+        & git -C $mainWorktree branch $remoteBranch 'remote-svn/main'
+        if ($LASTEXITCODE -ne 0) { throw "git branch $remoteBranch failed" }
+
+        & git -C $mainWorktree worktree add $remoteWorktreePath $remoteBranch
         if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
 
-        & git -C $remoteWorktreePath checkout --orphan $remoteBranch
-        if ($LASTEXITCODE -ne 0) { throw "git checkout --orphan $remoteBranch failed" }
-
-        # Clear the index. Tolerate "pathspec '.' did not match" when the index is already empty.
+        # EMPTY the worktree (keep the .git pointer) so the plain `svn checkout` below yields the EXACT
+        # SVN branch tree. `git add -A` then records precisely the branch's delta from trunk
+        # (adds/mods/deletes) as ONE commit whose parent is remote-svn/main.
         $eaRmIdx = $ErrorActionPreference
         $ErrorActionPreference = 'SilentlyContinue'
-        & git -C $remoteWorktreePath rm -rf --cached . 2>$null | Out-Null
+        & git -C $remoteWorktreePath rm -rf . 2>$null | Out-Null
         $ErrorActionPreference = $eaRmIdx
         & git -C $remoteWorktreePath clean -dffx
         if ($LASTEXITCODE -ne 0) { throw 'git clean -dffx failed in bridge worktree' }
@@ -192,10 +205,10 @@ try {
         }
         [System.IO.File]::WriteAllLines($peerGitignore, $ignoreLines)
 
-        # Commit the SVN content onto the orphan bridge branch (its first commit). The working
-        # branch then descends from this commit, so it carries the content and the first pull
-        # shares history with the bridge. On an empty SVN branch, seed an --allow-empty commit so
-        # the orphan branch still gets a HEAD for the working branch to descend from.
+        # Commit the branch's delta onto the bridge branch (a commit whose parent is remote-svn/main).
+        # The working branch then descends from this commit, so it carries the content, connects to
+        # main, and the first pull shares history with the bridge. When the SVN branch is identical to
+        # trunk (no delta), seed an --allow-empty commit so the working branch still has a HEAD.
         & git -C $remoteWorktreePath add -A
         if ($LASTEXITCODE -ne 0) { throw 'git add -A failed in bridge worktree' }
         & git -C $remoteWorktreePath diff --cached --quiet

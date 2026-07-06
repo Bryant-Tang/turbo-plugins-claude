@@ -60,6 +60,10 @@ make_remote_main_wc() {
     winpath="$(cygpath -m "$svnrepo" 2>/dev/null || printf '%s' "$svnrepo")"
     uri="file:///$winpath"
     svn checkout "$uri/trunk" "$worktrees/remote-svn-main" >/dev/null 2>&1 || return 1
+    # The import now bases the bridge branch on remote-svn/main (the trunk mirror) so the imported
+    # branch connects to main. Real setups create this anchor ref via tp-setup; here a ref at main
+    # is enough (the svn checkout fills the exact branch content regardless).
+    git -C "$root" branch remote-svn/main main >/dev/null 2>&1 || return 1
     local reposroot
     reposroot="$(svn info --show-item repos-root-url "$worktrees/remote-svn-main" 2>/dev/null | tr -d '\r\n')"
     [ -n "$reposroot" ] || return 1
@@ -229,6 +233,10 @@ test_happy_import_readonly() {
     assertEquals 'work branch tip == bridge tip' "$bridge_tip" "$work_tip"
     mb="$(git -C "$root" merge-base feature-x remote-svn/feature-x 2>/dev/null)"
     assertNotNull 'merge-base(feature-x, remote-svn/feature-x) is non-empty' "$mb"
+    # The imported working branch connects to THIS repo's main (not a disconnected orphan), so a
+    # later merge-back is not "unrelated histories". This is the U11 connection fix.
+    mb_main="$(git -C "$root" merge-base main feature-x 2>/dev/null)"
+    assertNotNull 'merge-base(main, feature-x) is non-empty (imported branch connects to main)' "$mb_main"
 
     # The bridge worktree is clean (.svn ignored — never staged into the import commit).
     wt_branch="$(git -C "$root/.turbo-plugin/worktrees/remote-svn-feature-x" status --porcelain 2>/dev/null)"
@@ -247,11 +255,12 @@ inject_second_root() {
     git -C "$root" merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" "$second" >/dev/null 2>&1
 }
 
-# ── Case 10: two-root repo imports an UNRELATED branch without crash or contamination (regression) ──
+# ── Case 10: two-root repo imports a divergent branch: no crash, no contamination, connected (regression) ──
 # Once main has been through a bridge merge it carries TWO root commits, so `rev-list
 # --max-parents=0 HEAD` returned a 2-line value that broke `git branch` ("not a valid object name").
-# Basing the bridge on an ORPHAN branch fixes that AND avoids contaminating the read-only import of
-# an unrelated branch with trunk content.
+# Basing the bridge on remote-svn/main (a single ref) fixes that; emptying the worktree before the
+# plain svn checkout keeps the import free of trunk-only content (exact branch tree); and the
+# remote-svn/main base makes the imported branch connect to main (not a disconnected orphan).
 test_two_root_import_no_contamination() {
     if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
     local root reposroot uri co out rc files
@@ -275,6 +284,11 @@ test_two_root_import_no_contamination() {
         *) assertTrue 'no invalid-object-name error' 0 ;;
     esac
     assertEquals 'import succeeded on a two-root repo' 0 "$rc"
+
+    # Connected to main (not an orphan): a two-root repo must still yield a branch that shares
+    # history with main.
+    mb_main="$(git -C "$root" merge-base main other 2>/dev/null)"
+    assertNotNull 'merge-base(main, other) is non-empty (connected on a two-root repo)' "$mb_main"
 
     files="$(git -C "$root" ls-tree -r --name-only other 2>/dev/null)"
     printf '%s\n' "$files" | grep -qx 'only-branch.txt'
