@@ -338,5 +338,100 @@ test_two_root_repo_first_push_regression() {
     assertTrue 'bridge branch remote-svn/feat-y created' $?
 }
 
+# Build a FAITHFUL first-push scenario for the scoped-commit / up-to-date regression:
+#   - svn trunk already carries svn:ignore=.git (post-tp-setup) so the bootstrap propset is a
+#     NO-OP -> '.' is not committed;
+#   - git main mirrors trunk but a versioned file (Templates/drift.txt) has DIVERGENT content
+#     (git "v2" vs svn "v1"), so `svn checkout --force` marks it locally modified on the new
+#     bridge worktree -- the exact drift the old unscoped commit swept into the svn:ignore commit;
+#   - main's .gitignore DIFFERS from trunk's, so a real .gitignore change IS committed (a child
+#     of '.' that does not bump '.', which is what leaves the WC root lagging without `svn update`).
+# Echoes "ROOT|WORKTREES|URI|CFG"; non-zero on any svn failure (caller SKIPs).
+make_drift_scenario() {
+    local sb="$1"
+    local root="$sb/test-turbo-plugin" repo="$sb/svnrepo" cfg="$sb/.svnconfig" uri winrepo
+    mkdir -p "$cfg"
+    svnadmin create "$repo" >/dev/null 2>&1 || return 1
+    svnadmin load "$repo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
+    winrepo="$(cygpath -m "$repo" 2>/dev/null || printf '%s' "$repo")"
+    uri="file:///$winrepo"
+
+    # trunk: svn:ignore=.git + versioned .gitignore(LF) + Templates/drift.txt content "v1".
+    local twc="$sb/trunkwc"
+    svn --config-dir "$cfg" checkout "$uri/trunk" "$twc" >/dev/null 2>&1 || return 1
+    svn --config-dir "$cfg" propset svn:ignore '.git' "$twc" >/dev/null 2>&1 || return 1
+    printf '.svn/\n' > "$twc/.gitignore"
+    svn --config-dir "$cfg" add "$twc/.gitignore" >/dev/null 2>&1 || return 1
+    mkdir -p "$twc/Templates"
+    printf 'v1\n' > "$twc/Templates/drift.txt"
+    svn --config-dir "$cfg" add "$twc/Templates" >/dev/null 2>&1 || return 1
+    svn --config-dir "$cfg" commit "$twc" -m 'trunk: svn:ignore + gitignore + drift v1' >/dev/null 2>&1 || return 1
+
+    mkdir -p "$root"
+    git -C "$root" init -b main >/dev/null 2>&1 || git -C "$root" init >/dev/null 2>&1
+    git -C "$root" config core.autocrlf false >/dev/null 2>&1
+    git -C "$root" config user.email 'test@turbo' >/dev/null 2>&1
+    git -C "$root" config user.name  'turbo' >/dev/null 2>&1
+    local worktrees="$root/.turbo-plugin/worktrees"
+    mkdir -p "$worktrees"
+    svn --config-dir "$cfg" checkout "$uri/trunk" "$worktrees/remote-svn-main" >/dev/null 2>&1 || return 1
+
+    # git main mirrors trunk, but drift.txt is "v2" (divergent) and .gitignore differs.
+    svn --config-dir "$cfg" export --force "$uri/trunk" "$sb/tx" >/dev/null 2>&1 || return 1
+    cp -r "$sb/tx/." "$root/" 2>/dev/null
+    printf 'v2\n' > "$root/Templates/drift.txt"
+    printf '.svn/\nbin/\n' > "$root/.gitignore"
+    git -C "$root" add -A >/dev/null 2>&1 || return 1
+    git -C "$root" -c commit.gpgsign=false commit -m 'main mirrors trunk (drift v2, gitignore differs)' >/dev/null 2>&1 || return 1
+    git -C "$root" branch remote-svn/main main >/dev/null 2>&1 || return 1
+
+    printf '%s|%s|%s|%s' "$root" "$worktrees" "$uri" "$cfg"
+    return 0
+}
+
+# ── Case 12: first-push bootstrap keeps the WC at HEAD and scopes the infra commit (regression) ──
+# Reproduces the reported first-push symptoms:
+#   B) the bootstrap svn:ignore commit left the WC one revision behind HEAD, so the very next
+#      build-svn-commit falsely demanded '/tp-pull-from-svn' on a freshly-created bridge;
+#   C) an unscoped `svn commit` swept `svn checkout --force` overlay drift (a file whose git
+#      bytes differ from the SVN base) into the commit, under the misleading svn:ignore message.
+# The fix scopes the commit (--depth empty + explicit targets) and `svn update`s to HEAD.
+test_first_push_scoped_commit_and_up_to_date() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root worktrees uri cfg
+    spec="$(make_drift_scenario "$SB")" || { startSkipping; return 0; }
+    root="${spec%%|*}"; spec="${spec#*|}"
+    worktrees="${spec%%|*}"; spec="${spec#*|}"
+    uri="${spec%%|*}"; cfg="${spec##*|}"
+
+    local out rc
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-y --svn-url "$uri/branches/feat-y" 2>&1)"; rc=$?
+    assertEquals "bootstrap succeeds (out: $out)" 0 "$rc"
+
+    local wt="$worktrees/remote-svn-feat-y"
+    local local_rev head_rev
+    local_rev="$(svn --config-dir "$cfg" info --show-item revision "$wt" 2>/dev/null | tr -d '[:space:]')"
+    head_rev="$(svn --config-dir "$cfg" info --show-item revision "$uri/branches/feat-y" 2>/dev/null | tr -d '[:space:]')"
+    # B: the WC must be exactly at HEAD (no mixed-revision lag) so build-svn-commit's up-to-date
+    # check passes without a spurious pull.
+    assertEquals "B: bridge WC rev ($local_rev) is at HEAD ($head_rev)" "$head_rev" "$local_rev"
+
+    # C: the bootstrap commit must NOT contain the overlay drift file.
+    local changed
+    changed="$(svn --config-dir "$cfg" log -v -r"$head_rev" "$uri/branches/feat-y" 2>/dev/null)"
+    case "$changed" in
+        *drift.txt*) fail "C: bootstrap commit r$head_rev swept overlay drift (drift.txt): $changed" ;;
+        *) assertTrue 'C: bootstrap commit excluded overlay drift' 0 ;;
+    esac
+
+    # The intended infra state still landed: svn:ignore is exactly .git.
+    local ign
+    ign="$(svn --config-dir "$cfg" propget svn:ignore "$wt" 2>/dev/null | tr -d '\r\n')"
+    assertEquals 'bridge svn:ignore is exactly .git' '.git' "$ign"
+
+    # The bridge git worktree is clean (build-svn-commit's git-clean gate would pass).
+    assertTrue 'bridge git worktree clean' "[ -z \"\$(git -C '$wt' status --porcelain)\" ]"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

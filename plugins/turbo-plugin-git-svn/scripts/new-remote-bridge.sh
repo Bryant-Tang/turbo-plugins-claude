@@ -154,7 +154,28 @@ fi
 (
   cd "$REMOTE_PATH"
   svn propset svn:ignore "$IGNORE_TO_APPLY" '.'
-  svn commit -m 'svn:ignore=.git; sync .gitignore from main; drop .git from svn'
+  # Scope the infra commit to ONLY the intended paths (svn:ignore on '.', the synced
+  # .gitignore, and the .git untrack). `svn checkout --force` overlays git's checked-out
+  # bytes onto the SVN base, so any file whose git bytes differ from the SVN base (e.g. a
+  # CRLF/LF or binary byte diff) shows as locally modified; an unscoped `svn commit` would
+  # silently sweep that drift into this commit under the "svn:ignore" message (mismatched
+  # history). `--depth empty` stops '.' from recursing into that unrelated drift; the real
+  # file content still reaches SVN later via the normal push (build-svn-commit's git merge).
+  COMMIT_TARGETS=('.')
+  if [[ -f .gitignore ]]; then
+    svn add --parents '.gitignore' >/dev/null 2>&1 || true   # no-op if already versioned
+    COMMIT_TARGETS+=('.gitignore')
+  fi
+  if svn status '.git' 2>/dev/null | grep -q '^D'; then
+    COMMIT_TARGETS+=('.git')                                  # include only a real scheduled deletion
+  fi
+  svn commit --depth empty -m 'svn:ignore=.git; sync .gitignore from main; drop .git from svn' "${COMMIT_TARGETS[@]}"
+  # Bring the WHOLE working copy to HEAD. The commit above bumps only the committed nodes;
+  # when the svn:ignore propset is a no-op (trunk already carried it) '.' is not committed,
+  # so the WC root stays pinned at the pre-commit revision while a deeper committed path
+  # advances HEAD -- that mixed-revision state trips build-svn-commit's `local == head`
+  # up-to-date check and falsely tells the user to /tp-pull-from-svn on a fresh bridge.
+  svn update >/dev/null
 )
 
 # All SVN steps succeeded; disable the rollback trap.

@@ -76,6 +76,64 @@ BeforeAll {
         return $reposRoot
     }
 
+    # Build a FAITHFUL first-push drift scenario (mirrors new-remote-bridge.test.sh make_drift_scenario):
+    #   - svn trunk already carries svn:ignore=.git (post-tp-setup) so the bootstrap propset is a
+    #     NO-OP -> '.' is not committed;
+    #   - git main mirrors trunk but a versioned file (Templates/drift.txt) has DIVERGENT content
+    #     (git "v2" vs svn "v1"), so `svn checkout --force` marks it locally modified on the new
+    #     bridge worktree -- the exact overlay drift the old unscoped commit swept in;
+    #   - main's .gitignore DIFFERS from trunk's, so a real .gitignore change IS committed (a child
+    #     of '.' that does not bump '.', which is what leaves the WC root lagging without `svn update`).
+    # $Root must already be a git repo with a worktrees dir (New-GitMainRepo -CreateWorktreesDir).
+    # Returns the svn repo URI, or $null on any svn/git failure.
+    function Initialize-DriftScenario {
+        param([string]$Root, [string]$Sandbox)
+        $worktreesDir = Get-WorktreesDir -Root $Root
+        $svnRepo = [System.IO.Path]::Combine($Sandbox, 'svnrepo')
+        & svnadmin create $svnRepo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $loadCmd = "svnadmin load `"$svnRepo`" < `"$($script:DumpPath)`""
+        & cmd.exe /c $loadCmd > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($svnRepo -replace '\\', '/')
+
+        # trunk: svn:ignore=.git + versioned .gitignore + Templates/drift.txt content "v1".
+        $twc = [System.IO.Path]::Combine($Sandbox, 'trunkwc')
+        & svn checkout "$uri/trunk" $twc > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        & svn propset svn:ignore '.git' $twc > $null 2>$null
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($twc, '.gitignore')) -Value '.svn/' -NoNewline
+        & svn add ([System.IO.Path]::Combine($twc, '.gitignore')) > $null 2>$null
+        $tmpl = [System.IO.Path]::Combine($twc, 'Templates')
+        $null = New-Item -ItemType Directory -Path $tmpl -Force
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($tmpl, 'drift.txt')) -Value 'v1' -NoNewline
+        & svn add $tmpl > $null 2>$null
+        & svn commit $twc -m 'trunk prep' > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        # remote-svn-main anchor WC (the trust anchor + svn copy source).
+        $remoteMain = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-main')
+        & svn checkout "$uri/trunk" $remoteMain > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        # git main mirrors trunk, but drift.txt = "v2" (divergent) and .gitignore differs.
+        $tx = [System.IO.Path]::Combine($Sandbox, 'tx')
+        & svn export --force "$uri/trunk" $tx > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        Get-ChildItem -LiteralPath $tx -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $Root -Recurse -Force
+        }
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($Root, 'Templates', 'drift.txt')) -Value 'v2' -NoNewline
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($Root, '.gitignore')) -Value ".svn/`r`nbin/`r`n" -NoNewline
+        & git -C $Root config core.autocrlf false 2>&1 | Out-Null
+        & git -C $Root add -A 2>&1 | Out-Null
+        & git -C $Root -c commit.gpgsign=false commit -m 'main mirrors trunk (drift v2, gitignore differs)' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        & git -C $Root branch 'remote-svn/main' 'main' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return $uri
+    }
+
     # True if NO partial git state (bridge branch / worktree dir) remains for $Branch.
     function Test-NoOrphanState {
         param([string]$Root, [string]$Branch)
@@ -409,6 +467,51 @@ Describe 'New-RemoteBridge' {
                 $res.Combined | Should -Not -Match 'not a valid object name'
                 $res.ExitCode | Should -Be 0
                 (Run-Git-Capture -Cwd $root -GitArgs @('branch', '--list', 'remote-svn/feat-y')) | Should -Match 'remote-svn/feat-y'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 13: first-push bootstrap keeps the WC at HEAD and scopes the infra commit (regression)' {
+        # Reproduces the reported first-push symptoms:
+        #   B) the bootstrap svn:ignore commit left the WC one revision behind HEAD, so the next
+        #      build-svn-commit falsely demanded '/tp-pull-from-svn' on a freshly-created bridge;
+        #   C) an unscoped `svn commit` swept `svn checkout --force` overlay drift (a file whose git
+        #      bytes differ from the SVN base) into the commit, under the svn:ignore message.
+        # The fix scopes the commit (--depth empty + explicit targets) and `svn update`s to HEAD.
+        It 'scopes the infra commit (no overlay drift) and leaves the WC at HEAD' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-13'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                $uri = Initialize-DriftScenario -Root $root -Sandbox $sb
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the drift scenario'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feat-y', '-SvnUrl', "$uri/branches/feat-y")
+                if ($res.ExitCode -ne 0) {
+                    Set-ItResult -Skipped -Because "bridge create did not succeed in this env: $($res.Combined)"
+                    return
+                }
+
+                $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feat-y')
+                $localRev = (& svn info --show-item revision $wtPath 2>$null | Out-String).Trim()
+                $headRev  = (& svn info --show-item revision "$uri/branches/feat-y" 2>$null | Out-String).Trim()
+                # B: the WC must be exactly at HEAD (no mixed-revision lag).
+                $localRev | Should -BeExactly $headRev
+
+                # C: the bootstrap commit must NOT contain the overlay drift file.
+                $changed = (& svn log -v -r $headRev "$uri/branches/feat-y" 2>$null | Out-String)
+                $changed | Should -Not -Match 'drift\.txt'
+
+                # intended infra state landed: svn:ignore is exactly .git.
+                $ignore = (& svn propget svn:ignore $wtPath 2>$null | Out-String).Trim()
+                $ignore | Should -BeExactly '.git'
+
+                # the bridge git worktree is clean (build-svn-commit's git-clean gate would pass).
+                (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
             } finally {
                 Remove-Sandbox -Dir $sb
             }
