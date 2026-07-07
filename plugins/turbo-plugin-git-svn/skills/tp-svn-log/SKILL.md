@@ -119,10 +119,11 @@ allowed-tools: Bash, Read
 - **Revision date range**: `--revision {2026-01-01}:{2026-05-26}` → svn 接受日期範圍格式。
 - **Invalid limit**: PowerShell `-Limit 'abc'` → PS param binding 直接拒;`-Limit -5` 或 bash `--limit -5` → script 拋 `Limit must be a positive integer`。
 - **Encoding (zh-TW)**: SVN repo 有 commit message「修正中文檔名」→ 顯示為正確 UTF-8 中文,**不變 `?`**(此為 XML 解析的主要驗證)。
-- **Multi-line commit message**: SVN 有一筆 commit message 含換行 → PS [xml] / bash xmllint 路徑正確 preserve 換行;bash grep+awk fallback 對多行 msg 可能截斷至第一行(已知 limitation,建議裝 xmllint)。
+- **Multi-line commit message**: SVN 有一筆 commit message 含換行 → PS `XmlDocument` 與 bash awk parser 都正確 preserve 換行(bash 端 `RS="<"` 完整擷取 text node)。
 - **Trailer emission**: 顯示完所有 entry 後 stdout 末尾出現 `# LAST_SHOWN_REV=<最小 revision>` 行。
 - **Empty result**: `--revision 999999` 等指向不存在的 revision → stdout 空(無 trailer)、exit 0。
-- **bash xmllint fallback**: Git Bash 未裝 xmllint → 走 grep+awk fallback,輸出格式與 xmllint 路徑相同。
+- **XML entity decode**: commit message 或變更路徑含 `&` / `<` / `>` / `"` / `'` → svn `--xml` 會 escape 成 `&amp;` 等,parser 需 decode 回原字元(PS `XmlDocument` 自動;bash `svn_log_format_xml` 自己 decode 五個預定義實體、`&amp;` 最後)。
+- **無 xmllint 依賴**: bash 端純 awk tokenizer 解析 `svn log --xml`,Windows Git Bash 無需額外裝任何 XML 工具;`--verbose` 的變更路徑清單在所有平台一致列出。
 
 ### 分頁迴圈(AE8 / AE9 / AE10)
 

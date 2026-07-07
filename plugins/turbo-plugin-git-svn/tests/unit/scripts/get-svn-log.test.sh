@@ -64,5 +64,16 @@ test_skill_reinvoke() {
     echo "$out" | grep -Eq '# LAST_SHOWN_REV=15'; assertTrue 'case5: trailer still present' $?
 }
 
+# Case 6: --verbose lists changed paths (regression: the old xmllint-absent fallback
+# listed NO paths). r2 adds /trunk/README.txt, so `-r 2 --verbose` must show it.
+test_verbose_lists_changed_paths() {
+    gate
+    local out e
+    out="$(cd "$TEST_ROOT" && bash "$SCRIPT_UNDER_TEST" --revision 2 --verbose 2>/dev/null)"; e=$?
+    assertEquals 'case6: verbose exit 0' 0 "$e"
+    echo "$out" | grep -Eq '^r2 \|'; assertTrue 'case6: r2 row present' $?
+    echo "$out" | grep -Eq '^   A .*/trunk/README\.txt$'; assertTrue 'case6: verbose shows A /trunk/README.txt' $?
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

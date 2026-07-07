@@ -242,6 +242,87 @@ svn_status_xml() {
   done
 }
 
+# Format `svn log --xml` (read on stdin) into plain text -- one line per revision:
+#   r<rev> | <author> | <date> | <msg>
+# and, when verbose, an indented "   <action> <path>" line per changed path,
+# then a `# LAST_SHOWN_REV=<oldest rev shown>` pagination trailer.
+# Arg $1: "true" to include the per-path change list (svn log -v), else omit it.
+# Prints nothing (and no trailer) when the XML has no <logentry> (empty range).
+#
+# Why a self-contained awk tokenizer, not xmllint: xmllint is typically ABSENT in
+# Git Bash on Windows (the primary host), so a former xmllint-preferred path meant
+# the code that actually shipped to users was an untested fallback. This single awk
+# path runs everywhere, so the tests exercise the real thing.
+#
+# How it stays correct without a real XML parser: `svn log --xml` escapes every
+# literal '<' '>' '&' in text as &lt; &gt; &amp;, so those bytes only ever delimit
+# tags -- never appear inside author/msg/path text. With RS="<" awk tokenizes into
+# "TAGSPEC>CONTENT" records; a pretty-printed multi-line open tag (svn splits
+# attributes across lines) is whitespace-collapsed back to one token, and CONTENT
+# is the element's text node (a multi-line <msg> is preserved intact). We decode the
+# five predefined XML entities ourselves; &amp; is decoded LAST so a literal "&lt;"
+# in text is not double-decoded, and its gsub replacement is written "\\&" because a
+# bare '&' in an awk replacement means the whole match (the same trap as the ${//}
+# decode in svn_status_xml).
+#
+# Runs awk under LC_ALL=C so it processes bytes: UTF-8 never encodes '<' '>' '&' '"'
+# as a trailing byte of a multibyte char, so ASCII-delimiter matching is safe and
+# CJK (and even F-3 mojibake) bytes pass through untouched.
+#
+# Uses awk (not grep -oE like svn_status_xml): log XML is nested and ordered --
+# author/date/msg/paths must associate with their parent <logentry>, and a commit
+# may legitimately lack <author>, which a flat per-tag grep+zip would misalign.
+svn_log_format_xml() {
+  local verbose="${1:-false}"
+  LC_ALL=C awk -v verbose="$verbose" '
+    function decode(s) {
+      gsub(/\r/, "", s)
+      gsub(/&lt;/,   "<",    s)
+      gsub(/&gt;/,   ">",    s)
+      gsub(/&quot;/, "\"",   s)
+      gsub(/&apos;/, "\047", s)
+      gsub(/&amp;/,  "\\&",  s)
+      return s
+    }
+    BEGIN { RS = "<"; in_entry = 0; np = 0; min_rev = "" }
+    {
+      gt = index($0, ">")
+      if (gt == 0) next
+      tag = substr($0, 1, gt - 1)
+      content = substr($0, gt + 1)
+      gsub(/[[:space:]]+/, " ", tag)
+      sub(/^ +/, "", tag); sub(/ +$/, "", tag)
+
+      if (tag ~ /^logentry( |$)/) {
+        in_entry = 1; author = ""; date = ""; msg = ""; np = 0; rev = ""
+        if (match(tag, /revision="[0-9]+"/)) rev = substr(tag, RSTART + 10, RLENGTH - 11)
+        next
+      }
+      if (tag == "/logentry") {
+        printf "r%s | %s | %s | %s\n", rev, author, date, msg
+        if (verbose == "true") {
+          for (k = 1; k <= np; k++) printf "   %s %s\n", pact[k], ptext[k]
+        }
+        if (rev != "" && (min_rev == "" || rev + 0 < min_rev + 0)) min_rev = rev
+        in_entry = 0; next
+      }
+      if (!in_entry) next
+      if (tag == "author") { author = decode(content); next }
+      if (tag == "date")   { date   = decode(content); next }
+      if (tag == "msg")    { msg    = decode(content); next }
+      if (tag == "msg/")   { msg = ""; next }
+      if (tag ~ /^path( |$)/) {
+        np++
+        pact[np] = ""
+        if (match(tag, /action="[^"]*"/)) pact[np] = substr(tag, RSTART + 8, RLENGTH - 9)
+        ptext[np] = decode(content)
+        next
+      }
+    }
+    END { if (min_rev != "") printf "# LAST_SHOWN_REV=%s\n", min_rev }
+  '
+}
+
 # Build the LOCKED SVN commit body for a push range. The body is a deterministic, '- '-prefixed
 # list of EVERY non-merge commit subject (oldest first), one per line — git itself applies the
 # '- ' prefix and the ordering, so the same commit set always yields byte-identical output.

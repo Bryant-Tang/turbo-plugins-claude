@@ -131,6 +131,8 @@ BeforeAll {
         $script:r2 = Invoke-Script -WorkDir $script:TestRoot -ExtraArgs @('-Revision', '5')
         $script:r4 = Invoke-Script -WorkDir $script:TestRoot -ExtraArgs @('-Limit', '0')
         $script:r5 = Invoke-Script -WorkDir $script:TestRoot
+        # r2 adds /trunk/README.txt -> `-Revision 2 -VerboseOutput` must list it.
+        $script:r6 = Invoke-Script -WorkDir $script:TestRoot -ExtraArgs @('-Revision', '2', '-VerboseOutput')
 
         $svnRepo = [System.IO.Path]::Combine($script:PluginRoot, 'tests', '.sandbox', 'svn-repo')
         $script:SvnUri = 'file:///' + ($svnRepo -replace '\\', '/') + '/trunk'
@@ -172,5 +174,14 @@ Describe 'Get-SvnLog' {
     Context 'Case 5: SKILL entry — re-invoke happy → deterministic' {
         It 'SKILL-entry exit 0' { $script:r5.Exit | Should -Be 0 }
         It 'stdout 仍含 trailer' { $script:r5.Stdout | Should -Match '# LAST_SHOWN_REV=15' }
+    }
+
+    Context 'Case 6: --verbose 列出變更檔案清單' {
+        It 'verbose exit 0' { $script:r6.Exit | Should -Be 0 }
+        It 'stdout 含 r2 行' { $script:r6.Stdout | Should -Match '(?m)^r2 \|' }
+        # No `$` anchor: PowerShell stdout is CRLF, and .NET (?m)`$` sits before the \n
+        # (after the \r), so `README\.txt$` would miss on the trailing \r. Line-start anchor
+        # + the path literal is specific enough.
+        It 'stdout 含 A /trunk/README.txt' { $script:r6.Stdout | Should -Match '(?m)^   A .*/trunk/README\.txt' }
     }
 }
