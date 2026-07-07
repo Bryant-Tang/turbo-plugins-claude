@@ -243,3 +243,151 @@ function Get-SvnPushBody {
     return (@($lines) -join "`n")
 }
 
+# --- Per-revision SVN replay primitives (U1) ---------------------------------
+# PowerShell peers of svn_enumerate_revisions / svn_replay_commit / svn_floor_commit_for_rev
+# (common.sh). All three are pure git + XML (NO native svn call here — the caller captures the
+# svn log and passes the XML string in), so git output stays UTF-8 (Core.ps1 default) and no
+# ANSI OutputEncoding scoping is needed. Keep this block ASCII so the file's existing BOM is the
+# only reason it holds non-ASCII bytes.
+
+# Enumerate revisions from an `svn log --xml` document (passed as a Unicode string) into
+# per-revision objects { Rev; Author; Date; Message } in ASCENDING revision order. System.Xml
+# entity-decodes InnerText and preserves multi-line / CJK messages verbatim. Behavior-matched
+# to common.sh's svn_enumerate_revisions (shape differs: objects here vs a NUL record stream there).
+function Get-SvnRevisions {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$LogXml)
+
+    $result = @()
+    if ([string]::IsNullOrWhiteSpace($LogXml)) { return $result }
+
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.PreserveWhitespace = $true
+    $doc.LoadXml($LogXml)
+
+    $entries = $doc.SelectNodes('/log/logentry')
+    foreach ($e in $entries) {
+        $rev = [int]$e.GetAttribute('revision')
+        $authorNode = $e.SelectSingleNode('author')
+        $dateNode   = $e.SelectSingleNode('date')
+        $msgNode    = $e.SelectSingleNode('msg')
+        $author  = if ($authorNode) { $authorNode.InnerText } else { '' }
+        $date    = if ($dateNode)   { $dateNode.InnerText }   else { '' }
+        $message = if ($msgNode)    { $msgNode.InnerText }    else { '' }
+        $result += [pscustomobject]@{
+            Rev     = $rev
+            Author  = $author
+            Date    = $date
+            Message = $message
+        }
+    }
+    # Force array (a single-entry result would otherwise unwrap to a scalar and break .Count / indexing).
+    return @($result | Sort-Object -Property Rev)
+}
+
+# Replay one SVN revision as a git commit on the CURRENT HEAD of -RepoDir (in production the
+# remote-svn/<branch> worktree, already `svn update`d to this revision's tree). Returns a token:
+#   'SKIP:idempotent'  HEAD already carries a commit with this revision's `svn-revision:` trailer
+#                      (KTD4 idempotency — an interrupted-then-rerun pull mints no duplicate).
+#   'SKIP:empty'       `git add -A` left the index unchanged (tree identical to parent) → no commit.
+#   'COMMIT:<sha>'     committed. Author = "<svn-username> <>" (raw username, empty <> email; KTD2),
+#                      SVN date as the git AUTHOR-date (committer-date = replay moment; KTD6),
+#                      message = SVN message + blank line + `svn-revision: <rev>` trailer (KTD3).
+# commit.cleanup is pinned to 'whitespace' so a '#'-leading message line survives (default 'strip'
+# would delete it) while the trailer paragraph is still recognized.
+function Invoke-SvnReplayCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][int]$Rev,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Author,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Date,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message
+    )
+
+    # git warns on stderr (LF/CRLF etc); under EAP=Stop that throws NativeCommandError, so soften
+    # locally and drive control flow off $LASTEXITCODE (mind the PS5.1 EAP=Stop stderr-throw trap).
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        # Idempotency: exact `svn-revision: <rev>` trailer already on HEAD → skip. git log exits 0
+        # with empty output when nothing matches (only a bad ref errors, which we tolerate).
+        $pattern = '^svn-revision: ' + $Rev + '$'
+        $existing = & git -C $RepoDir log HEAD -n 1 -E --grep=$pattern --format='%H' 2>$null
+        if (-not [string]::IsNullOrWhiteSpace((@($existing) -join ''))) {
+            return 'SKIP:idempotent'
+        }
+
+        & git -C $RepoDir add -A 2>$null | Out-Null
+
+        # Empty index (tree identical to parent) → skip. --quiet writes nothing to stderr, so
+        # $LASTEXITCODE is reliable: 0 = no staged changes, 1 = staged changes.
+        & git -C $RepoDir diff --cached --quiet 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            return 'SKIP:empty'
+        }
+
+        # git dislikes the .000000Z microseconds svn emits; keep it to whole seconds.
+        $dateGit = $Date -replace '\.\d+Z$', 'Z'
+
+        $authorArg = @()
+        if (-not [string]::IsNullOrEmpty($Author)) {
+            $authorArg = @("--author=$Author <>")
+        }
+
+        & git -C $RepoDir -c commit.gpgsign=false commit --cleanup=whitespace @authorArg `
+            --date=$dateGit -m $Message -m ('svn-revision: ' + $Rev) 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Invoke-SvnReplayCommit: git commit failed for r$Rev (exit $LASTEXITCODE)."
+        }
+
+        $sha = (& git -C $RepoDir rev-parse HEAD 2>$null | Out-String).Trim()
+        return "COMMIT:$sha"
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# Floor revision->commit lookup (KTD3 floor semantics, R8/R14). Over `main` (STRICTLY main, never
+# HEAD), return the SHA of the newest commit whose `svn-revision:` trailer value is the GREATEST
+# value <= -TargetRev (SVN revisions are sparse, so an arbitrary target usually has no exact match).
+#   - Returns exactly ONE SHA on success.
+#   - Returns $null when no commit carries a value <= target (genuine "predates earliest").
+#   - THROWS when that greatest value <= target is carried by MORE THAN ONE commit — the ambiguous
+#     multi-match that reproduced the `not a valid object name` failure (6962db7 / 6f73114).
+function Get-SvnFloorCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][int]$TargetRev
+    )
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $shas = @(& git -C $RepoDir log main --format='%H' 2>$null)
+        $bestRev = $null; $bestSha = $null; $bestCount = 0
+        foreach ($sha in $shas) {
+            if ([string]::IsNullOrWhiteSpace($sha)) { continue }
+            # Parse the trailer straight out of the raw body (version-independent; avoids the
+            # %(trailers) newline quirks). Take the LAST svn-revision line if several appear.
+            $bodyLines = & git -C $RepoDir show -s --format='%B' $sha 2>$null
+            $body = (@($bodyLines) -join "`n")
+            $matched = [regex]::Matches($body, '(?m)^svn-revision:[ ]([0-9]+)[ ]*\r?$')
+            if ($matched.Count -eq 0) { continue }
+            $val = [int]$matched[$matched.Count - 1].Groups[1].Value
+            if ($val -gt $TargetRev) { continue }
+            if ($null -eq $bestRev -or $val -gt $bestRev) {
+                $bestRev = $val; $bestSha = $sha; $bestCount = 1
+            } elseif ($val -eq $bestRev) {
+                $bestCount++
+                $bestSha = $sha
+            }
+        }
+        if ($null -eq $bestRev) { return $null }
+        if ($bestCount -gt 1) {
+            throw "Get-SvnFloorCommit: revision r$bestRev is carried by $bestCount commits on 'main' (ambiguous floor for r$TargetRev). Refusing to return a non-unique base."
+        }
+        return $bestSha
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+

@@ -364,3 +364,154 @@ get_svn_push_body() {
   git -C "$repo_dir" log "$range" --no-merges --reverse --pretty=format:'- %s'
 }
 
+# ─── Per-revision SVN replay primitives (U1) ─────────────────────────────────
+# Shared building blocks for the per-revision pull replay (F1/KTD1-KTD3/KTD6). Three
+# helpers, all pure git + XML text (NO `svn` invocation here — the caller pipes svn output
+# in), so they run and test without svn. The PowerShell peers live in Common.ps1.
+
+# Enumerate revisions from `svn log --xml` (read on stdin) as machine-readable records,
+# one per revision in ASCENDING revision order. Each record is:
+#     <rev><US><author><US><date><US><message><NUL>
+# where <US> is 0x1F (unit separator) and <NUL> is 0x00. The message is emitted RAW
+# (XML-entity-decoded, may span multiple lines / contain CJK); svn escapes every literal
+# '<' '>' '&' in text, so the message can contain neither '<' nor US nor NUL — those
+# delimiters are collision-free. Consume with:
+#     while IFS=$'\037' read -r -d '' rev author date msg; do ...; done \
+#         < <(svn log --xml -r "$lo:$hi" "$url" | svn_enumerate_revisions)
+#
+# Reuses the SAME RS="<" awk tokenizer + five-entity decode as svn_log_format_xml (see the
+# long rationale there): under LC_ALL=C awk processes bytes, so ASCII-delimiter matching is
+# safe and CJK bytes pass through untouched. `svn log -r lo:hi` already emits ascending, but
+# we `sort -z` numerically so callers never depend on svn's ordering.
+svn_enumerate_revisions() {
+  LC_ALL=C awk '
+    function decode(s) {
+      gsub(/\r/, "", s)
+      gsub(/&lt;/,   "<",    s)
+      gsub(/&gt;/,   ">",    s)
+      gsub(/&quot;/, "\"",   s)
+      gsub(/&apos;/, "\047", s)
+      gsub(/&amp;/,  "\\&",  s)
+      return s
+    }
+    BEGIN { RS = "<"; in_entry = 0 }
+    {
+      gt = index($0, ">")
+      if (gt == 0) next
+      tag = substr($0, 1, gt - 1)
+      content = substr($0, gt + 1)
+      gsub(/[[:space:]]+/, " ", tag)
+      sub(/^ +/, "", tag); sub(/ +$/, "", tag)
+
+      if (tag ~ /^logentry( |$)/) {
+        in_entry = 1; author = ""; date = ""; msg = ""; rev = ""
+        if (match(tag, /revision="[0-9]+"/)) rev = substr(tag, RSTART + 10, RLENGTH - 11)
+        next
+      }
+      if (tag == "/logentry") {
+        printf "%s\037%s\037%s\037%s\000", rev, author, date, msg
+        in_entry = 0; next
+      }
+      if (!in_entry) next
+      if (tag == "author") { author = decode(content); next }
+      if (tag == "date")   { date   = decode(content); next }
+      if (tag == "msg")    { msg    = decode(content); next }
+      if (tag == "msg/")   { msg = ""; next }
+    }
+  ' | sort -z -t $'\037' -k1,1n
+}
+
+# Replay one SVN revision as a git commit on the CURRENT HEAD of <repo_dir> (in production the
+# remote-svn/<branch> worktree, already `svn update`d to this revision's tree).
+#   - Idempotent (KTD4): if HEAD already carries a commit whose message has the exact
+#     `svn-revision: <rev>` trailer line, print "SKIP:idempotent" and make NO commit — an
+#     interrupted-then-rerun pull cannot mint a duplicate.
+#   - Empty delta (KTD4): after `git add -A`, if the index is unchanged (tree identical to the
+#     parent), print "SKIP:empty" and make NO commit (never a no-op commit).
+#   - Otherwise commit and print "COMMIT:<sha>". Author = "<svn-username> <>" (raw username in
+#     the name slot, empty <> email — git --author needs a `Name <email>` shape; KTD2). SVN date
+#     becomes the git AUTHOR-date (committer-date stays the replay moment; KTD6). Message = the
+#     SVN message + a blank line + the `svn-revision: <rev>` trailer (KTD3).
+# Args: <repo_dir> <rev> <author> <date> <message>
+# commit.cleanup is pinned to 'whitespace' so a message line starting with '#' survives (the
+# default 'strip' would delete commentary) while the trailer paragraph is still recognized.
+svn_replay_commit() {
+  local repo_dir="$1" rev="$2" author="$3" date="$4" message="$5"
+
+  # Idempotency: a commit with this revision's trailer already on HEAD → skip (no dup).
+  local pat='^svn-revision: '"${rev}"'$'
+  if [[ -n "$(git -C "$repo_dir" log HEAD -n 1 -E --grep="$pat" --format='%H' 2>/dev/null)" ]]; then
+    echo "SKIP:idempotent"
+    return 0
+  fi
+
+  git -C "$repo_dir" add -A
+
+  # Empty index (tree identical to parent) → skip, never mint a no-op commit. The command sits
+  # in the `if` condition, so `set -e` does not trip on its non-zero (=has-changes) exit.
+  if git -C "$repo_dir" diff --cached --quiet; then
+    echo "SKIP:empty"
+    return 0
+  fi
+
+  # Normalize the SVN date to a git-friendly ISO form (drop fractional seconds: git's date
+  # parser dislikes the .000000Z microseconds svn emits).
+  local date_git
+  date_git="$(printf '%s' "$date" | sed -E 's/\.[0-9]+Z$/Z/')"
+
+  local -a author_arg=()
+  if [[ -n "$author" ]]; then
+    author_arg=(--author="$author <>")
+  fi
+
+  git -C "$repo_dir" -c commit.gpgsign=false commit --cleanup=whitespace \
+    "${author_arg[@]}" --date="$date_git" \
+    -m "$message" -m "svn-revision: $rev" >/dev/null
+
+  local sha
+  sha="$(git -C "$repo_dir" rev-parse HEAD)"
+  echo "COMMIT:$sha"
+}
+
+# Floor revision→commit lookup (KTD3 floor semantics, R8/R14). Over `main` (STRICTLY main,
+# never HEAD), return the SHA of the newest commit whose `svn-revision:` trailer value is the
+# GREATEST value <= <target_rev>. SVN revisions are repo-global/sparse, so an arbitrary target
+# (e.g. a branch copyfrom-rev) usually has no exact match — floor, not exact.
+#   - Prints exactly ONE SHA on success.
+#   - Prints NOTHING (returns 0) when no commit carries a value <= target (the genuine
+#     "predates earliest" case → checkout's R10 path).
+#   - FAILS LOUD (stderr + return 1) when that greatest value <= target is carried by MORE
+#     THAN ONE commit — the ambiguous multi-match that reproduced the `not a valid object name`
+#     failure (6962db7 / 6f73114). Refuses to guess a base.
+# Args: <repo_dir> <target_rev>
+svn_floor_commit_for_rev() {
+  local repo_dir="$1" target="$2"
+  local best_rev="" best_sha="" best_count=0
+  local record sha val
+  # `git log main -z`: NUL-separated commits, each formatted "<sha>\n<raw-body>". Parse the
+  # trailer straight out of the body (version-independent; also robust to the %(trailers)
+  # newline quirks). NEVER pass HEAD — the scope is strictly main.
+  while IFS= read -r -d '' record || [[ -n "$record" ]]; do
+    [[ -z "$record" ]] && continue
+    sha="${record%%$'\n'*}"
+    val="$(printf '%s\n' "$record" | grep -oE '^svn-revision: [0-9]+' | tail -n1 | grep -oE '[0-9]+$' || true)"
+    [[ -z "$val" ]] && continue
+    if (( val <= target )); then
+      if [[ -z "$best_rev" ]] || (( val > best_rev )); then
+        best_rev="$val"; best_sha="$sha"; best_count=1
+      elif (( val == best_rev )); then
+        best_count=$(( best_count + 1 )); best_sha="$sha"
+      fi
+    fi
+  done < <(git -C "$repo_dir" log main -z --format='%H%n%B' 2>/dev/null)
+
+  if [[ -z "$best_rev" ]]; then
+    return 0
+  fi
+  if (( best_count > 1 )); then
+    echo "Error: svn_floor_commit_for_rev: revision r$best_rev is carried by $best_count commits on 'main' (ambiguous floor for r$target). Refusing to return a non-unique base." >&2
+    return 1
+  fi
+  echo "$best_sha"
+}
+
