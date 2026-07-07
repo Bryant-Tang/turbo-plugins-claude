@@ -29,16 +29,21 @@ allowed-tools: Bash, Read
    - revision(svn 修訂號規格,直接透傳給 svn,可用格式如 `5` / `r5` / `3:10` / `HEAD` / `BASE` / `{2026-01-01}:{2026-05-26}` 等)
    - verbose(顯示變更檔案清單)
 
-2. **必須**把 script stdout 完整 echo 到對話訊息中,用 markdown code block 包起來,讓使用者直接讀到 log 內容:
+2. **必須**把 log 的每一筆 entry 完整 echo 到對話訊息中,用 markdown code block 包起來,讓使用者直接讀到 log 內容:
 
    ```
    r5 | bryant | 2026-05-26T12:34:56.000Z | 修正中文檔名
    r4 | alice  | 2026-05-25T...           | another commit
    ...
-   # LAST_SHOWN_REV=1
    ```
 
-   **不要** 只依賴 tool result UI(可能被折疊或截斷);使用者必須能直接從對話訊息讀到 log。`# LAST_SHOWN_REV=<n>` trailer 行也一起 echo,讓使用者也看到分頁狀態 — U11 pagination loop 也讀此 trailer 行決定下一頁起點。
+   **不要** 只依賴 tool result UI(可能被折疊或截斷);使用者必須能直接從對話訊息讀到 log。
+
+   **分頁游標(白話呈現,不裸露機器標記)**:script stdout 末尾有一行 `# LAST_SHOWN_REV=<n>`(`<n>` = 這頁最舊的修訂號),那是給 pagination loop 用的機器標記。**不要**把這行原樣 echo 給使用者。改在 code block 之後補一行白話,例如:
+
+   > 目前顯示到 r15(這頁最舊的一筆)。
+
+   agent 自己從 stdout 的 `# LAST_SHOWN_REV=<n>` 讀 `<n>` 當分頁游標(見 step 4);使用者只看到白話那行。
 
 3. **Emit 下一步選項(分頁互動)**
 
@@ -75,7 +80,7 @@ allowed-tools: Bash, Read
       - `^\{[\d-]+\}:\{[\d-]+\}$`(日期範圍,如 `{2026-01-01}:{2026-05-26}`)
       - `^HEAD$` / `^BASE$`
       - 以「2 」前綴帶上述任一 spec(如 `2 r5` / `2 3:10` — 對應選項清單的「2.」)
-      - 動作:若有「2 」前綴先剝掉,取 spec 值;呼叫 svn-log `--revision <spec>`(透傳給 svn,**separate arg invariant** per F10 與 U10 一致 — Bash tool call svn-log script 時 spec 必須當**獨立 argument** 傳,不字串拼接)。
+      - 動作:若有「2 」前綴先剝掉,取 spec 值;呼叫 svn-log `--revision <spec>`(透傳給 svn,**separate arg invariant** per F10 與 U10 一致 — Bash tool call svn-log script 時 spec 必須當**獨立 argument** 傳,不字串拼接)。**若 spec 是單一修訂(`^r?\d+$`)則一併加 `--verbose`**,直接帶出該筆變更檔案清單(見 Decision Rules「單一修訂自動帶變更清單」);範圍 / 日期範圍維持精簡。
       - 呼叫完回到 step 2 重新 echo log + 回到 step 3 emit 選項。
 
    3. **退出**(訊息明顯不屬於分頁互動):
@@ -95,6 +100,8 @@ allowed-tools: Bash, Read
 - `--limit` 必須是正整數,非法值 → script 拋錯。
 - `--revision` 的值不經 script validate,直接透傳給 svn — 由 svn 自己決定接受與否。**禁止** 在組指令時把多個 args 拼成單一字串(security invariant per F10);PS / bash script 內部都以 array splatting 傳值。
 - read-only 操作,**不會修改任何檔案 / branch / SVN state**,可安全在 agent 想對齊版本時自動執行。
+- **單一修訂自動帶變更清單(`--verbose`)**:當請求是**單一特定修訂**(`^r?\d+$`,如 `r5` / `5`;含首次呼叫與 pagination 迴圈裡跳到單筆)時,**預設加 `--verbose`** 一起列出該筆變更檔案清單——跳到某一筆通常就是想看細節。**範圍(`3:10`)/ 日期範圍 / 預設瀏覽最近 5 筆** 維持精簡(不加 `--verbose`),使用者要清單再加。使用者明講「不要清單 / 只看訊息」時關掉。
+- **分頁游標以白話呈現,不裸露機器標記**:script stdout 的 `# LAST_SHOWN_REV=<n>` 是 pagination 用的機器標記,**不要原樣 echo 給使用者**——echo log 後改補一行白話(如「目前顯示到 r15(這頁最舊的一筆)」)。agent 內部仍讀該 token(fallback 為 chat history 的 `r<n>` 取最小)當游標。
 - 分頁迴圈狀態 **不**寫檔、**不**靠 global var、**不**靠 AskUserQuestion modal — 完全從 script stdout 的 `# LAST_SHOWN_REV=<n>` trailer(主要路徑)與 chat history 的 `r<n>` headers(fallback)推算。
 - 一旦使用者退出分頁(回「3」/「其他」/「不要」/「換話題」/ 無關話題),SKILL **不**重啟分頁迴圈,除非使用者**再次明確**呼叫 `/tp-svn-log` 或請求 SVN log。
 - 「2 」前綴是 optional disambiguation — 使用者也可以直接打 spec(`r5` / `3:10` / `{2026-01-01}:{2026-05-26}`)不加前綴,只要符合 revision pattern 就視為「指定修訂」。
@@ -103,9 +110,10 @@ allowed-tools: Bash, Read
 ## Completion Checks
 
 - 輸出符合 `r<rev> | <author> | <date> | <msg>` 格式(每筆一行;`--verbose` 多印變更檔案清單)。
+- **單一特定修訂**(`^r?\d+$`)的請求預設**含變更檔案清單**(自動 `--verbose`);範圍 / 瀏覽維持精簡。
 - 中文 commit message 顯示為正確 UTF-8,**不變 `?`**。
-- 至少有一筆 entry 時 stdout 末尾出現 `# LAST_SHOWN_REV=<最小 revision>` trailer。
-- script stdout 已被完整 echo 到對話訊息(markdown code block)。
+- 至少有一筆 entry 時 script stdout 末尾仍有 `# LAST_SHOWN_REV=<最小 revision>`(pagination 機器標記,agent 內部用)。
+- log entries 已被完整 echo 到對話訊息(markdown code block);分頁游標以**白話一行**呈現(如「目前顯示到 r<n>(這頁最舊的一筆)」),**不裸露** `# LAST_SHOWN_REV` token。
 - echo log 之後在**同一則訊息結尾**附加 step 3 的三選一選項清單(plain text,**不**用 AskUserQuestion)。
 - 結束本輪 turn 等使用者下一輪訊息;**不**在本輪追問或自動續呼叫 script。
 
@@ -127,11 +135,11 @@ allowed-tools: Bash, Read
 
 ### 分頁迴圈(AE8 / AE9 / AE10)
 
-- **AE8 pagination forward**: SVN repo 有 r1-r20,跑 `/tp-svn-log`(顯示 r20-r16) → echo log + trailer `# LAST_SHOWN_REV=16` + emit 選項清單 → 使用者回「1」 → SKILL 從 trailer 讀 16,呼叫 svn-log `--revision 15:1 --limit 5` → 顯示 r15-r11 + trailer `# LAST_SHOWN_REV=11` + emit 選項;再回「1」 → `--revision 10:1 --limit 5` → 顯示 r10-r6。
-- **AE9 jump to revision (with r prefix)**: 使用者回「r5」 → SKILL 呼叫 `--revision r5` → 顯示單筆 r5 + emit 選項。
-- **AE9 jump to revision (numeric without prefix)**: 使用者回「5」 → 因匹配 `^r?\d+$` → 呼叫 `--revision 5` → 顯示單筆 r5。
-- **AE9 range**: 使用者回「3:10」 → 呼叫 `--revision 3:10` → 顯示 r3-r10 + emit 選項。
-- **AE9 with "2 " prefix**: 使用者回「2 r5」 → SKILL 剝掉「2 」前綴 → 呼叫 `--revision r5` → 顯示單筆 r5 + emit 選項。
+- **AE8 pagination forward**: SVN repo 有 r1-r20,跑 `/tp-svn-log`(顯示 r20-r16) → echo log + 白話游標「目前顯示到 r16」+ emit 選項清單(agent 內部從 stdout 的 `# LAST_SHOWN_REV=16` 讀游標,**不裸露** token) → 使用者回「1」 → 呼叫 svn-log `--revision 15:1 --limit 5` → 顯示 r15-r11 + 白話游標「目前顯示到 r11」+ emit 選項;再回「1」 → `--revision 10:1 --limit 5` → 顯示 r10-r6。
+- **AE9 jump to revision (with r prefix)**: 使用者回「r5」 → 因匹配 `^r?\d+$`(單一修訂)→ SKILL 呼叫 `--revision r5 --verbose` → 顯示單筆 r5 **+ 變更檔案清單** + emit 選項。
+- **AE9 jump to revision (numeric without prefix)**: 使用者回「5」 → 因匹配 `^r?\d+$` → 呼叫 `--revision 5 --verbose` → 顯示單筆 r5 + 變更檔案清單。
+- **AE9 range(維持精簡,不自動 --verbose)**: 使用者回「3:10」 → 呼叫 `--revision 3:10`(範圍不加 `--verbose`)→ 顯示 r3-r10 + emit 選項;想看清單再明講。
+- **AE9 with "2 " prefix**: 使用者回「2 r5」 → SKILL 剝掉「2 」前綴 → 因是單一修訂 → 呼叫 `--revision r5 --verbose` → 顯示單筆 r5 + 變更檔案清單 + emit 選項。
 - **AE9 date range**: 使用者回「{2026-01-01}:{2026-05-26}」 → 呼叫 `--revision {2026-01-01}:{2026-05-26}` → 顯示該日期區間內的 commits + emit 選項。
 - **AE10 escape via「其他」**: 使用者回「其他」 → SKILL 退出分頁迴圈,**不**再 emit 選項清單。
 - **AE10 escape via「3」**: 使用者回「3」 → 視為「其他」,退出。
