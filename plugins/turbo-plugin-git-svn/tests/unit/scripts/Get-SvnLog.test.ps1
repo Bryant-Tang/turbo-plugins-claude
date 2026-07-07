@@ -178,10 +178,13 @@ Describe 'Get-SvnLog' {
 
     Context 'Case 6: --verbose 列出變更檔案清單' {
         It 'verbose exit 0' { $script:r6.Exit | Should -Be 0 }
-        It 'stdout 含 r2 行' { $script:r6.Stdout | Should -Match '(?m)^r2 \|' }
-        # No `$` anchor: PowerShell stdout is CRLF, and .NET (?m)`$` sits before the \n
-        # (after the \r), so `README\.txt$` would miss on the trailing \r. Line-start anchor
-        # + the path literal is specific enough.
-        It 'stdout 含 A /trunk/README.txt' { $script:r6.Stdout | Should -Match '(?m)^   A .*/trunk/README\.txt' }
+        It 'stdout 含 r2 header 行' { $script:r6.Stdout | Should -Match '(?m)^r2 \|' }
+        # Assert the ASCII change line only. No `$` anchor: PowerShell stdout is CRLF,
+        # and .NET (?m)`$` sits before the \n (after the \r), so `README\.txt$` would
+        # miss on the trailing \r. The Chinese "變更:" label is NOT asserted here — its
+        # stdout encoding is console-codepage dependent under Start-Process redirect
+        # (same reason Case 2 re-decodes the msg from the repo instead of stdout);
+        # the .sh sibling asserts "變更:" where bash handles UTF-8 cleanly.
+        It 'stdout 含 "A  /trunk/README.txt"' { $script:r6.Stdout | Should -Match '(?m)^A  .*/trunk/README\.txt' }
     }
 }

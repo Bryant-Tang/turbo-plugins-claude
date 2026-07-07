@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Branch = 'main',
     [int]$Limit = 5,
@@ -66,7 +66,14 @@ try {
     $entries = @($logRoot.SelectNodes('logentry'))
     if ($entries.Count -eq 0) { return }
 
+    # Boxed report: each revision is wrapped by a 50-char '═' double rule (also the
+    # separator between adjacent revisions) with a 49-char '─' single rule fencing the
+    # header / message / 變更 sections so a multi-line commit message never bleeds into
+    # them. Mirrors svn_log_format_xml (lib/common.sh).
     $minRev = $null
+    $bound = [string]([char]0x2550) * 50   # ═ entry boundary (50)
+    $fence = [string]([char]0x2500) * 49   # ─ inner section fence (49)
+    $entryNum = 0
     foreach ($entry in $entries) {
         $revAttr = $entry.GetAttribute('revision')
         if ([string]::IsNullOrWhiteSpace($revAttr)) { continue }
@@ -83,20 +90,32 @@ try {
         # XML markup.
         $msg = if ($null -ne $msgNode) { $msgNode.InnerText } else { '' }
 
-        Write-Output ("r{0} | {1} | {2} | {3}" -f $rev, $author, $date, $msg)
+        Write-Output $bound
+        $entryNum++
+        Write-Output ("r{0} | {1} | {2}" -f $rev, $author, $date)
+        Write-Output $fence
+        Write-Output $msg
 
         if ($VerboseOutput) {
             $pathsNode = $entry.SelectSingleNode('paths')
-            if ($null -ne $pathsNode) {
-                foreach ($pathNode in @($pathsNode.SelectNodes('path'))) {
-                    $action = $pathNode.GetAttribute('action')
-                    Write-Output ("   {0} {1}" -f $action, $pathNode.InnerText)
+            # Force array at BOTH use sites: `$x = if (...) { @(...) }` re-collects the
+            # if-expression output and UNWRAPS a single-element array back to a scalar,
+            # so `$pathNodes.Count` would throw under StrictMode when exactly one path
+            # changed (five-taboo #5). @($pathNodes) restores array semantics.
+            $pathNodes = if ($null -ne $pathsNode) { @($pathsNode.SelectNodes('path')) } else { @() }
+            if (@($pathNodes).Count -gt 0) {
+                Write-Output $fence
+                Write-Output '變更:'
+                foreach ($pathNode in @($pathNodes)) {
+                    Write-Output ("{0}  {1}" -f $pathNode.GetAttribute('action'), $pathNode.InnerText)
                 }
             }
         }
 
         if ($null -eq $minRev -or $rev -lt $minRev) { $minRev = $rev }
     }
+    # Closing boundary after the last revision.
+    if ($entryNum -gt 0) { Write-Output $bound }
 
     # Trailer for pagination: U11 SKILL parses this line from stdout to know
     # the oldest revision currently displayed, so the next page request is

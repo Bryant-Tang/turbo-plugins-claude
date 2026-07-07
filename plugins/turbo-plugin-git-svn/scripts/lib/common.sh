@@ -242,11 +242,21 @@ svn_status_xml() {
   done
 }
 
-# Format `svn log --xml` (read on stdin) into plain text -- one line per revision:
-#   r<rev> | <author> | <date> | <msg>
-# and, when verbose, an indented "   <action> <path>" line per changed path,
-# then a `# LAST_SHOWN_REV=<oldest rev shown>` pagination trailer.
-# Arg $1: "true" to include the per-path change list (svn log -v), else omit it.
+# Format `svn log --xml` (read on stdin) into a boxed plain-text report: every
+# revision is wrapped by a fixed 50-char '═' double rule (which also separates
+# adjacent revisions), and a 49-char '─' single rule fences the header / message
+# / 變更 sections so a multi-line commit message never bleeds into them. Layout:
+#   ═══…  (50 '═')
+#   r<rev> | <author> | <date>
+#   ───…  (49 '─')
+#   <commit message, verbatim, may be multi-line>
+#   ───…  (49 '─')        <- emitted only for a verbose run with >=1 changed path
+#   變更:
+#   <action>  <path>
+#   ═══…  (next revision, or the closing rule after the last)
+# then a `# LAST_SHOWN_REV=<oldest rev shown>` pagination trailer -- a MACHINE
+# marker the tp-svn-log SKILL reads for paging and does NOT surface to the user.
+# Arg $1: "true" to include the 變更 (changed-path) section, else omit it.
 # Prints nothing (and no trailer) when the XML has no <logentry> (empty range).
 #
 # Why a self-contained awk tokenizer, not xmllint: xmllint is typically ABSENT in
@@ -284,7 +294,12 @@ svn_log_format_xml() {
       gsub(/&amp;/,  "\\&",  s)
       return s
     }
-    BEGIN { RS = "<"; in_entry = 0; np = 0; min_rev = "" }
+    BEGIN {
+      RS = "<"; in_entry = 0; np = 0; min_rev = ""; entry_num = 0
+      bound = ""; fence = ""
+      for (i = 0; i < 50; i++) bound = bound "═"     # entry boundary: 50 chars
+      for (i = 0; i < 49; i++) fence = fence "─"     # inner section fence: 49 chars
+    }
     {
       gt = index($0, ">")
       if (gt == 0) next
@@ -299,9 +314,15 @@ svn_log_format_xml() {
         next
       }
       if (tag == "/logentry") {
-        printf "r%s | %s | %s | %s\n", rev, author, date, msg
-        if (verbose == "true") {
-          for (k = 1; k <= np; k++) printf "   %s %s\n", pact[k], ptext[k]
+        print bound
+        entry_num++
+        printf "r%s | %s | %s\n", rev, author, date
+        print fence
+        printf "%s\n", msg
+        if (verbose == "true" && np > 0) {
+          print fence
+          print "變更:"
+          for (k = 1; k <= np; k++) printf "%s  %s\n", pact[k], ptext[k]
         }
         if (rev != "" && (min_rev == "" || rev + 0 < min_rev + 0)) min_rev = rev
         in_entry = 0; next
@@ -319,7 +340,10 @@ svn_log_format_xml() {
         next
       }
     }
-    END { if (min_rev != "") printf "# LAST_SHOWN_REV=%s\n", min_rev }
+    END {
+      if (entry_num > 0) print bound
+      if (min_rev != "") printf "# LAST_SHOWN_REV=%s\n", min_rev
+    }
   '
 }
 

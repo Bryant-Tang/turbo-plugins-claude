@@ -99,15 +99,13 @@ test_msg_entity_decode() {
     # r7 msg must be fully decoded: fix <tag> & "q" 'a'
     echo "$out" | grep -qF "fix <tag> & \"q\" 'a'"
     assertTrue 'r7 msg decodes & < > " and apostrophe' $?
-    # No raw entity may survive in the r7 line. (Scoped to r7: r5 intentionally
-    # produces a LITERAL "&lt;" to prove &amp; is decoded last, so a whole-output
-    # scan would false-positive on that.)
-    local r7line
-    r7line="$(printf '%s\n' "$out" | grep -E '^r7 \|')"
-    if printf '%s\n' "$r7line" | grep -q '&amp;\|&lt;\|&gt;\|&quot;\|&apos;'; then
-        fail 'raw XML entity survived in r7 formatted output'
+    # These four entities have no legitimate literal anywhere in the sample, so none
+    # may survive raw. (&lt; is NOT checked: r5 intentionally decodes &amp;lt; to a
+    # LITERAL "&lt;" to prove &amp; is decoded last.)
+    if printf '%s\n' "$out" | grep -q '&amp;\|&gt;\|&quot;\|&apos;'; then
+        fail 'raw XML entity (&amp;/&gt;/&quot;/&apos;) survived in output'
     else
-        assertTrue 'no raw XML entity in r7 output' 0
+        assertTrue 'no raw &amp;/&gt;/&quot;/&apos; in output' 0
     fi
 }
 
@@ -125,12 +123,15 @@ test_verbose_lists_decoded_paths() {
     _load_svn_log_format_xml || { fail 'svn_log_format_xml failed to load'; return 0; }
     local out
     out="$(_sample_xml | svn_log_format_xml true)"
-    # action extracted even though 'kind' precedes 'action' in the first <path>,
-    # and the '&' in the path name is decoded.
-    echo "$out" | grep -Eq '^   M /trunk/a & b\.txt$'
-    assertTrue 'verbose: "M /trunk/a & b.txt" (order-independent action + decoded &)' $?
-    echo "$out" | grep -Eq '^   A /trunk/plain\.txt$'
-    assertTrue 'verbose: "A /trunk/plain.txt"' $?
+    # 變更: section header present.
+    echo "$out" | grep -qF '變更:'
+    assertTrue 'verbose: 變更: section header present' $?
+    # "<action>  <path>" (action + 2 spaces). action extracted even though 'kind'
+    # precedes 'action' in the first <path>, and the '&' in the path name is decoded.
+    echo "$out" | grep -Eq '^M  /trunk/a & b\.txt$'
+    assertTrue 'verbose: "M  /trunk/a & b.txt" (order-independent action + decoded &)' $?
+    echo "$out" | grep -Eq '^A  /trunk/plain\.txt$'
+    assertTrue 'verbose: "A  /trunk/plain.txt"' $?
 }
 
 # ── Behavioral: non-verbose omits the per-path change lines ───────────────────
@@ -138,10 +139,12 @@ test_nonverbose_omits_paths() {
     _load_svn_log_format_xml || { fail 'svn_log_format_xml failed to load'; return 0; }
     local out
     out="$(_sample_xml | svn_log_format_xml false)"
-    if printf '%s\n' "$out" | grep -Eq '^   [AMDR] /trunk/'; then
+    if printf '%s\n' "$out" | grep -qF '變更:'; then
+        fail 'non-verbose output leaked the 變更: section'
+    elif printf '%s\n' "$out" | grep -Eq '^[AMDR]  /trunk/'; then
         fail 'non-verbose output leaked per-path change lines'
     else
-        assertTrue 'non-verbose omits per-path lines' 0
+        assertTrue 'non-verbose omits the 變更: section and per-path lines' 0
     fi
 }
 
@@ -150,10 +153,14 @@ test_multiline_msg_preserved() {
     _load_svn_log_format_xml || { fail 'svn_log_format_xml failed to load'; return 0; }
     local out
     out="$(_sample_xml | svn_log_format_xml false)"
-    echo "$out" | grep -Eq '^r3 \|.*\| line one$'
-    assertTrue 'r3 first msg line stays on the r3 header line' $?
+    # In the boxed format the message sits below its header, verbatim, so both
+    # lines of a multi-line <msg> survive on their own lines.
+    echo "$out" | grep -Eq '^r3 \| bob \|'
+    assertTrue 'r3 header line present' $?
+    echo "$out" | grep -Eq '^line one$'
+    assertTrue 'r3 msg first line preserved' $?
     echo "$out" | grep -Eq '^line two$'
-    assertTrue 'r3 second msg line survives on its own line' $?
+    assertTrue 'r3 msg second line preserved' $?
 }
 
 # ── Behavioral: LAST_SHOWN_REV trailer = smallest revision shown ──────────────
@@ -173,6 +180,25 @@ test_empty_log_no_output() {
 <log>
 </log>' | svn_log_format_xml false)"
     assertEquals 'empty <log> yields no output' '' "$out"
+}
+
+# ── Behavioral: boxed layout — 50-char ═ boundary + 49-char ─ fence ───────────
+test_boxed_layout_separators() {
+    _load_svn_log_format_xml || { fail 'svn_log_format_xml failed to load'; return 0; }
+    local out headers bounds BOUND FENCE
+    out="$(_sample_xml | svn_log_format_xml true)"
+    # Build the exact rule strings so the width check is a whole-line fixed-string
+    # match (locale-independent — no multibyte {N} regex counting). BOUND=50 ═, FENCE=49 ─.
+    BOUND="$(printf '═%.0s' {1..50})"
+    FENCE="$(printf '─%.0s' {1..49})"
+    printf '%s\n' "$out" | grep -qxF "$BOUND"
+    assertTrue '═ entry boundary is exactly 50 chars' $?
+    printf '%s\n' "$out" | grep -qxF "$FENCE"
+    assertTrue '─ section fence is exactly 49 chars' $?
+    # One ═ boundary before each entry + one closing boundary -> entries + 1.
+    headers="$(printf '%s\n' "$out" | grep -Ec '^r[0-9]+ \|')"
+    bounds="$(printf '%s\n' "$out" | grep -cxF "$BOUND")"
+    assertEquals '═ boundaries = entries + 1' "$((headers + 1))" "$bounds"
 }
 
 # shellcheck disable=SC1090

@@ -71,8 +71,9 @@ test_verbose_lists_changed_paths() {
     local out e
     out="$(cd "$TEST_ROOT" && bash "$SCRIPT_UNDER_TEST" --revision 2 --verbose 2>/dev/null)"; e=$?
     assertEquals 'case6: verbose exit 0' 0 "$e"
-    echo "$out" | grep -Eq '^r2 \|'; assertTrue 'case6: r2 row present' $?
-    echo "$out" | grep -Eq '^   A .*/trunk/README\.txt$'; assertTrue 'case6: verbose shows A /trunk/README.txt' $?
+    echo "$out" | grep -Eq '^r2 \|'; assertTrue 'case6: r2 header row present' $?
+    echo "$out" | grep -qF '變更:'; assertTrue 'case6: 變更 section present' $?
+    echo "$out" | grep -Eq '^A  .*/trunk/README\.txt$'; assertTrue 'case6: verbose shows "A  /trunk/README.txt"' $?
 }
 
 # shellcheck disable=SC1090
