@@ -272,7 +272,7 @@ function Get-SvnRevisions {
         $msgNode    = $e.SelectSingleNode('msg')
         $author  = if ($authorNode) { $authorNode.InnerText } else { '' }
         $date    = if ($dateNode)   { $dateNode.InnerText }   else { '' }
-        $message = if ($msgNode)    { $msgNode.InnerText }    else { '' }
+        $message = if ($msgNode)    { $msgNode.InnerText -replace "\r", '' } else { '' }
         $result += [pscustomobject]@{
             Rev     = $rev
             Author  = $author
