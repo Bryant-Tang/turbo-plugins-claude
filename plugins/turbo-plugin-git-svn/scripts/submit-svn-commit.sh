@@ -112,6 +112,22 @@ TITLE_LINE="$(printf '%s' "$TITLE" | tr '\r\n' '  ' | sed -e 's/^[[:space:]]*//'
 if [[ -z "$TITLE_LINE" ]]; then echo "Error: title is empty after removing line breaks." >&2; exit 1; fi
 FULL_MESSAGE="$(printf '%s\n\n%s' "$TITLE_LINE" "$SVN_BODY")"
 
+# U4/KTD5: decide whether this push ADVANCES tp:last-aligned-rev. It advances only when the branch
+# being pushed newly reaches a higher `svn-revision:` trailer than its stored alignment -- i.e. a
+# merge of `main` into the branch brought in newer trunk revisions. TP_NEW_ALIGNED = the highest
+# svn-revision trailer REACHABLE FROM THE BRANCH (NOT main's tip: a branch that merged an older main
+# must never over-advance, or U5 checkout mis-routes). Requiring a pre-existing tp:last-aligned-rev
+# (`-n "$TP_CUR_ALIGNED"`) keeps a `main`/trunk push (whose bridge has no tp props) and any pre-U4
+# bridge from being written -- initialization is New-RemoteBridge's job, not this advance. The write
+# is folded into the SAME content commit below (never a separate property commit) and is idempotent
+# (no-op when unchanged). `|| true` on the grep pipeline so an empty match under `set -e` is benign.
+TP_CUR_ALIGNED="$(get_tp_branch_prop last-aligned-rev "$REMOTE_PATH")"
+TP_NEW_ALIGNED="$(git -C "$MAIN_WORKTREE" log "$BRANCH" --format='%B' 2>/dev/null | grep -oE '^svn-revision: [0-9]+' | grep -oE '[0-9]+$' | sort -n | tail -1 || true)"
+TP_ADVANCE=0
+if [[ -n "$TP_CUR_ALIGNED" && -n "$TP_NEW_ALIGNED" && "$TP_NEW_ALIGNED" -gt "$TP_CUR_ALIGNED" ]]; then
+  TP_ADVANCE=1
+fi
+
 echo "Finalising merge commit..."
 if ! git -C "$REMOTE_PATH" commit --no-edit; then
   echo "Error: git commit failed when finalising the prepared merge." >&2
@@ -182,8 +198,21 @@ set +e
     exit 0
   fi
 
+  # U4/KTD5: fold the tp:last-aligned-rev advance into THIS content commit. Set the property on the
+  # branch root and add '.' as a --depth empty target so ONLY its property rides along (no recursion
+  # into descendants, no separate property revision). Explicit file targets still commit regardless
+  # of --depth (proven by the svn:ignore=.git + '.git' precedent in new-remote-bridge.sh). An
+  # ordinary feature push (TP_ADVANCE=0) leaves the commit byte-identical to before -- no '.', no
+  # --depth -- so it adds no property change.
+  DEPTH_ARGS=()
+  if [[ "$TP_ADVANCE" == 1 ]]; then
+    svn propset tp:last-aligned-rev "$TP_NEW_ALIGNED" '.' || exit 1
+    COMMIT_TARGETS+=('.')
+    DEPTH_ARGS=(--depth empty)
+  fi
+
   echo "Committing to SVN..."
-  COMMIT_OUT="$(svn commit --file "$MSG_FILE" --encoding UTF-8 -- "${COMMIT_TARGETS[@]}")" || exit 1
+  COMMIT_OUT="$(svn commit ${DEPTH_ARGS[@]+"${DEPTH_ARGS[@]}"} --file "$MSG_FILE" --encoding UTF-8 -- "${COMMIT_TARGETS[@]}")" || exit 1
   printf '%s\n' "$COMMIT_OUT"
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'

@@ -154,14 +154,30 @@ try {
         # changes"). Any real .gitignore change now reaches SVN through the normal (confirmed) push
         # that follows -- the branch is merged into the bridge and committed by submit-svn-commit.
 
+        # U4/KTD5: trunk copyfrom-rev (U2 reader) to INITIALIZE tp:last-aligned-rev -- the trunk
+        # revision this branch is aligned to at creation, NOT its own creation rev. Swallow a read
+        # failure to '' (property simply stays unset) rather than aborting the whole first push.
+        $branchCopyfromRev = ''
+        try { $branchCopyfromRev = Get-SvnBranchCopyfromRev -BranchUrl $SvnUrl } catch { $branchCopyfromRev = '' }
+
         Push-Location $remoteWorktreePath
         try {
             & svn propset svn:ignore $ignoreToApply '.'
             if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
-            # Commit ONLY '.' -- the svn:ignore property (--depth empty, so no descendant drift left
-            # by `svn checkout --force` is swept in) -- plus a real .git deletion if one was scheduled.
-            # When svn:ignore was inherited from the copy (the common case) this commits nothing: no
-            # infra revision is created, and the WC is already at HEAD from the checkout.
+            # U4/KTD5: fold the branch metadata into THIS same infra commit (no 2nd revision). Both
+            # properties ride on '.' -- already a --depth empty target -- so no extra commit is paid.
+            #   tp:branch-name      = ORIGINAL git branch name, raw (slashes preserved for R7 checkout).
+            #   tp:last-aligned-rev = the trunk copyfrom-rev (init alignment; advanced later on merge).
+            & svn propset tp:branch-name $Branch '.'
+            if ($LASTEXITCODE -ne 0) { throw 'svn propset tp:branch-name failed' }
+            if (-not [string]::IsNullOrWhiteSpace($branchCopyfromRev)) {
+                & svn propset tp:last-aligned-rev $branchCopyfromRev '.'
+                if ($LASTEXITCODE -ne 0) { throw 'svn propset tp:last-aligned-rev failed' }
+            }
+            # Commit ONLY '.' -- the svn:ignore + tp:* properties (--depth empty, so no descendant
+            # drift left by `svn checkout --force` is swept in) -- plus a real .git deletion if one
+            # was scheduled. The tp:* props are new (never inherited from the copy), so this is the
+            # ONE dedicated property commit first-push pays (bounded cost, KTD5).
             $commitTargets = @('.')
             # `svn status` may warn to stderr (unversioned/absent path); guard with EAP=Continue.
             $prevEAP2 = $ErrorActionPreference; $ErrorActionPreference = 'Continue'

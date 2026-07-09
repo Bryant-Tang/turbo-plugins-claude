@@ -118,6 +118,27 @@ try {
     if ([string]::IsNullOrWhiteSpace($titleLine)) { throw 'Title is empty after removing line breaks.' }
     $fullMessage = "$titleLine`n`n$svnBody"
 
+    # U4/KTD5: decide whether this push ADVANCES tp:last-aligned-rev (see submit-svn-commit.sh for
+    # the full rationale). $tpNewAligned = the highest svn-revision trailer REACHABLE FROM THE BRANCH
+    # (not main's tip, so a branch that merged an older main never over-advances). Advance only when
+    # it exceeds a PRE-EXISTING stored alignment -- that excludes a main/trunk push (bridge has no tp
+    # props) and any pre-U4 bridge. Folded into the content commit below; idempotent (no-op unchanged).
+    # Trailer values are ASCII digits, so the ANSI OutputEncoding region does not affect the scan.
+    $tpCurAligned = Get-TpBranchProp -Name 'last-aligned-rev' -Target $remote.Path
+    $tpNewAligned = $null
+    $prevEAPtp = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $branchBodies = (& git -C $mainWorktree log $Branch --format='%B' 2>$null | Out-String)
+    $ErrorActionPreference = $prevEAPtp
+    foreach ($m in [regex]::Matches($branchBodies, '(?m)^svn-revision:[ ]([0-9]+)[ ]*\r?$')) {
+        $v = [int]$m.Groups[1].Value
+        if ($null -eq $tpNewAligned -or $v -gt $tpNewAligned) { $tpNewAligned = $v }
+    }
+    $tpAdvance = $false
+    if (-not [string]::IsNullOrWhiteSpace($tpCurAligned) -and $null -ne $tpNewAligned) {
+        if ($tpNewAligned -gt [int]$tpCurAligned) { $tpAdvance = $true }
+    }
+
     Write-Output "Finalising merge commit..."
     & git -C $remote.Path commit --no-edit
     if ($LASTEXITCODE -ne 0) {
@@ -183,8 +204,20 @@ try {
             Write-Output "No changes to commit to SVN (all pending changes are git-ignored)"
             $noCommit = $true
         } else {
+            # U4/KTD5: fold the tp:last-aligned-rev advance into THIS content commit. Set the property
+            # on the branch root and add '.' as a --depth empty target so ONLY its property rides along
+            # (no recursion, no separate property revision). Explicit file targets still commit under
+            # --depth empty (proven by new-remote-bridge.sh's svn:ignore + '.git' commit). An ordinary
+            # feature push ($tpAdvance = $false) leaves the commit byte-identical -- no '.', no --depth.
+            $depthArgs = @()
+            if ($tpAdvance) {
+                & svn propset tp:last-aligned-rev $tpNewAligned '.'
+                if ($LASTEXITCODE -ne 0) { throw 'svn propset tp:last-aligned-rev failed' }
+                $commitTargets += '.'
+                $depthArgs = @('--depth', 'empty')
+            }
             Write-Output "Committing to SVN..."
-            $commitLines = & svn commit --file $msgFile --encoding UTF-8 -- $commitTargets
+            $commitLines = & svn commit @depthArgs --file $msgFile --encoding UTF-8 -- $commitTargets
             if ($LASTEXITCODE -ne 0) { throw 'svn commit failed' }
             $commitLines | ForEach-Object { Write-Output $_ }
             $newRevLine = $commitLines | Where-Object { $_ -match 'Committed revision (\d+)\.' } | Select-Object -Last 1

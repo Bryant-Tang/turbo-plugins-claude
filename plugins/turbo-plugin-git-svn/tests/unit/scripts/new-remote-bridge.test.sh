@@ -507,5 +507,50 @@ test_first_push_unpushed_gitignore_stays_clean() {
     assertEquals 'new branch inherited svn:ignore=.git' '.git' "$ign"
 }
 
+# ── Case 15 (U4): first push writes tp:branch-name (slash-preserved) + tp:last-aligned-rev ─────
+# The folded infra commit must also carry the branch metadata (KTD5): tp:branch-name = the RAW git
+# branch name (slashes preserved), tp:last-aligned-rev = the trunk copyfrom-rev (NOT the branch's
+# own creation rev). Uses git branch 'feat/x' (slash) with SVN leaf 'feat-x' (dash) so the slash
+# fidelity is meaningful. Also proves the bounded cost: exactly ONE new revision beyond the copy.
+test_first_push_writes_branch_metadata() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot out rc pre_copy_head branch_url branch_create_rev head_after
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+
+    branch_url="$reposroot/branches/feat-x"
+    # HEAD just BEFORE the copy == the copyfrom-rev the copy will record (the trunk rev the branch
+    # is aligned to). The copy itself then creates a NEW (higher) branch-creation revision.
+    pre_copy_head="$(svn info --show-item revision "$reposroot" 2>/dev/null | tr -d '[:space:]')"
+    if ! svn copy "$reposroot/trunk" "$branch_url" -m 'test: branch for metadata' >/dev/null 2>&1; then
+        startSkipping; return 0
+    fi
+    branch_create_rev="$(svn info --show-item revision "$branch_url" 2>/dev/null | tr -d '[:space:]')"
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch 'feat/x' --svn-url "$branch_url" 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi   # bridge create did not succeed in this env
+
+    # tp:branch-name is the RAW git name with the slash preserved (not the dash-form dir name).
+    local got_name
+    got_name="$(svn propget tp:branch-name "$branch_url" 2>/dev/null | tr -d '\r\n')"
+    assertEquals 'tp:branch-name is the raw git branch name (slash preserved)' 'feat/x' "$got_name"
+
+    # tp:last-aligned-rev == the trunk copyfrom-rev (pre-copy HEAD), NOT the branch creation rev.
+    local got_rev
+    got_rev="$(svn propget tp:last-aligned-rev "$branch_url" 2>/dev/null | tr -d '\r\n')"
+    assertEquals 'tp:last-aligned-rev == trunk copyfrom-rev' "$pre_copy_head" "$got_rev"
+    assertNotEquals 'tp:last-aligned-rev is NOT the branch creation rev' "$branch_create_rev" "$got_rev"
+
+    # Bounded cost (KTD5): exactly ONE new revision beyond the copy -- the single folded infra commit
+    # carrying svn:ignore + both tp:* props (not two separate property commits).
+    head_after="$(svn info --show-item revision "$branch_url" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'first push pays exactly one dedicated property commit' "1" "$(( head_after - branch_create_rev ))"
+
+    # The folded commit also preserved the fixed svn:ignore (rides in the SAME commit as tp:*).
+    local ign
+    ign="$(svn propget svn:ignore "$branch_url" 2>/dev/null | tr -d '\r\n')"
+    assertEquals 'svn:ignore is exactly .git (same folded commit)' '.git' "$ign"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

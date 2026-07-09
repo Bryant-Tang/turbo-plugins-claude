@@ -194,6 +194,31 @@ Describe 'Set-TpBranchProp / Get-TpBranchProp (svn)' {
             Remove-Item -LiteralPath $sb -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+    It 'round-trips a NON-ASCII tp:branch-name value (U4 fidelity; skips where host argv cannot carry it)' -Skip:(-not $SvnReady) {
+        $sb = New-SandboxDir
+        try {
+            $fx = New-CopiedBranchFixture -Sandbox $sb
+            if ($null -eq $fx) { Set-ItResult -Skipped -Because 'svn fixture build failed'; return }
+            # Build the value from CODE POINTS so THIS file stays pure ASCII (no BOM, PS 5.1 safe):
+            #   U+529F U+80FD U+002F(/) U+6E2C U+8A66 U+002D(-) U+0033(3)  == a CJK branch name w/ slash.
+            $name = -join @([char]0x529F, [char]0x80FD, [char]0x2F, [char]0x6E2C, [char]0x8A66, [char]0x2D, [char]0x33)
+            # Probe: can THIS host carry a non-ASCII argv through svn? The SVN property store is UTF-8
+            # clean; only the native-argv transport is codepage-bound. Skip if it cannot (real branch
+            # names are ASCII-only anyway -- the branch-name validator rejects non-ASCII).
+            Push-Location $fx.Wc
+            try {
+                Invoke-SvnFixture propset tp:probe $name '.' | Out-Null
+                $probe = Invoke-SvnFixture propget tp:probe '.'
+                Invoke-SvnFixture propdel tp:probe '.' | Out-Null
+            } finally { Pop-Location }
+            if ($probe -ne $name) { Set-ItResult -Skipped -Because 'host argv codepage cannot carry non-ASCII to svn'; return }
+
+            Set-TpBranchProp -Name 'branch-name' -Value $name -WorkingCopy $fx.Wc
+            (Get-TpBranchProp -Name 'branch-name' -Target $fx.Wc) | Should -Be $name
+        } finally {
+            Remove-Item -LiteralPath $sb -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
     It 'returns empty (not an error) for an absent property' -Skip:(-not $SvnReady) {
         $sb = New-SandboxDir
         try {

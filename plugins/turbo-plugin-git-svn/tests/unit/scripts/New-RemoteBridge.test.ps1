@@ -569,6 +569,54 @@ Describe 'New-RemoteBridge' {
         }
     }
 
+    Context 'Case 15 (U4): first push writes tp:branch-name (slash-preserved) + tp:last-aligned-rev' {
+        # The folded infra commit must also carry the branch metadata (KTD5): tp:branch-name = the
+        # RAW git branch name (slashes preserved), tp:last-aligned-rev = the trunk copyfrom-rev (NOT
+        # the branch's own creation rev). git branch 'feat/x' (slash) with SVN leaf 'feat-x' (dash)
+        # makes the slash fidelity meaningful; the rev delta proves the bounded one-commit cost.
+        It 'stores the raw branch name + trunk copyfrom-rev in a single folded commit' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-15'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'could not build remote-svn-main svn WC'; return }
+
+                $branchUrl = "$reposRoot/branches/feat-x"
+                # HEAD just BEFORE the copy == the copyfrom-rev the copy records; the copy then mints
+                # a NEW (higher) branch-creation revision.
+                $preCopy = (& svn info --show-item revision $reposRoot 2>$null | Out-String).Trim()
+                & svn copy "$reposRoot/trunk" $branchUrl -m 'test: branch for metadata' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'could not create the svn branch'; return }
+                $branchCreateRev = (& svn info --show-item revision $branchUrl 2>$null | Out-String).Trim()
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feat/x', '-SvnUrl', $branchUrl)
+                if ($res.ExitCode -ne 0) { Set-ItResult -Skipped -Because "bridge create did not succeed: $($res.Combined)"; return }
+
+                # tp:branch-name is the RAW git name with the slash preserved (not the dash dir name).
+                $gotName = (& svn propget tp:branch-name $branchUrl 2>$null | Out-String).Trim()
+                $gotName | Should -BeExactly 'feat/x'
+
+                # tp:last-aligned-rev == the trunk copyfrom-rev (pre-copy HEAD), NOT the creation rev.
+                $gotRev = (& svn propget tp:last-aligned-rev $branchUrl 2>$null | Out-String).Trim()
+                $gotRev | Should -BeExactly $preCopy
+                $gotRev | Should -Not -BeExactly $branchCreateRev
+
+                # Bounded cost (KTD5): exactly ONE new revision beyond the copy (svn:ignore + both
+                # tp:* props folded into a single commit, not two separate property commits).
+                $headAfter = (& svn info --show-item revision $branchUrl 2>$null | Out-String).Trim()
+                ([int]$headAfter - [int]$branchCreateRev) | Should -Be 1
+
+                # The folded commit also preserved the fixed svn:ignore (rides in the SAME commit).
+                $ignore = (& svn propget svn:ignore $branchUrl 2>$null | Out-String).Trim()
+                $ignore | Should -BeExactly '.git'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
     Context 'Case 14: first-push with an unpushed main .gitignore leaves the bridge git-clean (regression)' {
         # Bug: the old bootstrap synced main's .gitignore into the bridge worktree (cp) but did not
         # git commit it, so when main's .gitignore had diverged from SVN the bridge was left git-dirty

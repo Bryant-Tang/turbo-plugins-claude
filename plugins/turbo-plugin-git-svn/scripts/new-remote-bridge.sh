@@ -144,6 +144,13 @@ fi
 # inheritance from remote-svn-main -- a fixed value avoids inheriting a stale set that omits `.git`.
 IGNORE_TO_APPLY='.git'
 
+# U4/KTD5: read the trunk copyfrom-rev this branch was `svn copy`d from (U2 reader) to INITIALIZE
+# tp:last-aligned-rev. This is the trunk revision the branch is aligned to at creation -- NOT the
+# branch's own creation rev (which never touched trunk). `|| true` so a read failure leaves it empty
+# (tp:last-aligned-rev simply stays unset) rather than tripping the rollback trap; the branch is a
+# copy here (create path svn-copies it; re-entry finds the prior copy) so it is present in practice.
+BRANCH_COPYFROM_REV="$(get_svn_branch_copyfrom_rev "$SVN_URL" || true)"
+
 # Do NOT sync .gitignore here. `svn copy` already brought svn:ignore=.git onto the new branch
 # (properties copy with the tree), so the bridge excludes .git from the start. The old pre-sync
 # copied main's .gitignore into the worktree WITHOUT a git commit, leaving the bridge git-dirty
@@ -153,10 +160,18 @@ IGNORE_TO_APPLY='.git'
 (
   cd "$REMOTE_PATH"
   svn propset svn:ignore "$IGNORE_TO_APPLY" '.'
-  # Commit ONLY '.' -- the svn:ignore property (--depth empty, so no descendant drift left by
-  # `svn checkout --force` is swept in) -- plus a real .git deletion if one was scheduled. When
-  # svn:ignore was inherited from the copy (the common case) this commits nothing: no infra
-  # revision is created, and the WC is already at HEAD from the checkout (no mixed-revision lag).
+  # U4/KTD5: fold the branch metadata into THIS same infra commit (avoids a 2nd revision). Both
+  # properties ride on '.' -- already a --depth empty commit target -- so no extra commit is paid.
+  #   tp:branch-name       = the ORIGINAL git branch name, raw (slashes preserved for R7 checkout).
+  #   tp:last-aligned-rev  = the trunk copyfrom-rev (init alignment; advanced later on merge-main).
+  svn propset tp:branch-name "$BRANCH" '.'
+  if [[ -n "$BRANCH_COPYFROM_REV" ]]; then
+    svn propset tp:last-aligned-rev "$BRANCH_COPYFROM_REV" '.'
+  fi
+  # Commit ONLY '.' -- the svn:ignore + tp:* properties (--depth empty, so no descendant drift left
+  # by `svn checkout --force` is swept in) -- plus a real .git deletion if one was scheduled. The
+  # tp:* props are new (never inherited from the copy), so this is the ONE dedicated property commit
+  # first-push pays (bounded cost, KTD5); the trailing `svn update` clears the mixed-revision lag.
   COMMIT_TARGETS=('.')
   if svn status '.git' 2>/dev/null | grep -q '^D'; then
     COMMIT_TARGETS+=('.git')

@@ -182,6 +182,34 @@ test_property_commit_touches_only_property() {
     assertEquals 'the changed path is the branch root dir' '1' "$rootpaths"
 }
 
+# ── svn: a NON-ASCII branch-name value survives the property round-trip (U4 fidelity) ──────────
+# tp:branch-name must carry the value verbatim. On a UTF-8 host the round-trip is exact; on Windows
+# Git Bash a non-ASCII argv follows the console codepage and mangles (reference: the msys console
+# codepage vs svn argv note), which is a platform transport limit, not a helper bug -- so PROBE the
+# platform with a direct propset/propget first and SKIP when it cannot represent the value.
+test_set_get_non_ascii_value_roundtrip() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local uri cfg wc name probe got
+    uri="$(make_svn_repo)" || { startSkipping; return 0; }
+    cfg="$(CFG)"
+    svn --config-dir "$cfg" copy "$uri/trunk" "$uri/branches/feature-x" -m 'create branch' >/dev/null 2>&1 || { startSkipping; return 0; }
+    wc="$SB/wc"
+    svn --config-dir "$cfg" checkout "$uri/branches/feature-x" "$wc" >/dev/null 2>&1 || { startSkipping; return 0; }
+
+    name='功能/測試-3'
+    # Probe: can THIS host round-trip a non-ASCII argv through svn at all? If not (Windows Git Bash
+    # console codepage), skip -- the property store itself is UTF-8-clean; only the argv transport
+    # mangles, and real branch names are ASCII-only (the branch-name validator rejects non-ASCII).
+    ( cd "$wc" && svn --config-dir "$cfg" propset tp:probe "$name" '.' >/dev/null 2>&1 )
+    probe="$( cd "$wc" && svn --config-dir "$cfg" propget tp:probe '.' 2>/dev/null | tr -d '\r\n' )"
+    ( cd "$wc" && svn --config-dir "$cfg" propdel tp:probe '.' >/dev/null 2>&1 )
+    if [ "$probe" != "$name" ]; then startSkipping; return 0; fi
+
+    set_tp_branch_prop 'branch-name' "$name" "$wc" || fail 'set_tp_branch_prop failed'
+    got="$(get_tp_branch_prop 'branch-name' "$wc")"
+    assertEquals 'non-ASCII branch name round-trips exactly through the property value' "$name" "$got"
+}
+
 # ── svn: absent property -> getter returns empty, NOT an error ────────────────
 test_absent_property_returns_empty_not_error() {
     if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
