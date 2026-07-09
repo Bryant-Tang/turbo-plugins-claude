@@ -160,13 +160,18 @@ test_untrack_a_reconcile() {
     case "$tip" in sync:\ svn\ r[0-9]*) assertTrue 'remote-svn/main tip is a sync commit' 0 ;; *) fail "remote-svn/main tip not a sync commit: '$tip'" ;; esac
     main_tip="$(git -C "$ROOT" log -1 --pretty=%s)"
     assertEquals 'main tip is the canonical merge commit' "Merge branch 'remote-svn/main' into main" "$main_tip"
-    # every remote-svn/main subject is sync: or Merge branch
-    local bad=0 s
-    while IFS= read -r s; do
-        [ -n "$s" ] || continue
-        case "$s" in sync:\ svn\ r[0-9]*) : ;; "Merge branch "*) : ;; *) bad=1 ;; esac
-    done <<< "$(git -C "$BRIDGE" log --pretty=%s remote-svn/main)"
-    assertEquals 'remote-svn/main carries only sync + merge commits' 0 "$bad"
+    # every non-merge remote-svn/main commit is bridge-managed: a classic 'sync: svn r<N>' reconcile/
+    # boundary commit, or a per-revision replay carrying an 'svn-revision:' trailer (U7 made the first
+    # import per-revision). A stray bare commit matches neither.
+    local bad=0 sha subj
+    while IFS= read -r sha; do
+        [ -n "$sha" ] || continue
+        subj="$(git -C "$BRIDGE" show -s --format=%s "$sha")"
+        case "$subj" in sync:\ svn\ r[0-9]*) continue ;; esac
+        if git -C "$BRIDGE" show -s --format=%B "$sha" | grep -qE '^svn-revision: [0-9]+$'; then continue; fi
+        bad=1; echo "stray remote-svn/main commit: '$subj'" >&2
+    done <<< "$(git -C "$BRIDGE" log --no-merges --pretty=%H remote-svn/main)"
+    assertEquals 'remote-svn/main carries only bridge-managed commits (sync or replay-trailer)' 0 "$bad"
     # main keeps the disk file but no longer tracks it.
     assertTrue 'main keeps foo.csproj.user on disk' "[ -e '$ROOT/foo.csproj.user' ]"
     if git -C "$ROOT" ls-files foo.csproj.user | grep -q .; then fail 'main still tracks foo.csproj.user'; else assertTrue 'main untracks it' 0; fi

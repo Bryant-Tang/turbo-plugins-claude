@@ -183,10 +183,15 @@ Describe 'Remove-SvnFile' {
                 # remote-svn/main tip is a canonical sync commit; main tip is the canonical merge.
                 (Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('log', '-1', '--pretty=%s', 'remote-svn/main')) | Should -Match '^sync: svn r\d+$'
                 (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', '-1', '--pretty=%s')) | Should -BeExactly "Merge branch 'remote-svn/main' into main"
-                # remote-svn/main carries ONLY sync + merge commits (no stray/bare commit).
-                $subjects = Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('log', '--pretty=%s', 'remote-svn/main')
-                foreach ($s in ($subjects -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
-                    ($s -match '^sync: svn r\d+$' -or $s -match "^Merge branch ") | Should -BeTrue -Because "unexpected remote-svn/main commit subject: '$s'"
+                # Every non-merge remote-svn/main commit is bridge-managed: a classic 'sync: svn r<N>'
+                # reconcile/boundary commit, or a per-revision replay carrying an 'svn-revision:' trailer
+                # (U7 made the first import per-revision). A stray bare commit matches neither.
+                $shas = @((Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('log', '--no-merges', '--pretty=%H', 'remote-svn/main')) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                foreach ($sha in $shas) {
+                    $subj = Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('show', '-s', '--format=%s', $sha)
+                    if ($subj -match '^sync: svn r\d+$') { continue }
+                    $body = Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('show', '-s', '--format=%B', $sha)
+                    ($body -match '(?m)^svn-revision: \d+$') | Should -BeTrue -Because "unexpected remote-svn/main commit subject: '$subj'"
                 }
                 # main keeps the disk file but no longer tracks it.
                 [System.IO.File]::Exists([System.IO.Path]::Combine($ctx.Root, 'foo.csproj.user')) | Should -BeTrue
