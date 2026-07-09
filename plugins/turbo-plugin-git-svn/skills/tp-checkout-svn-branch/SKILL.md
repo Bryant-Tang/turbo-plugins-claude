@@ -51,8 +51,9 @@ Script 會(全部在任何 mutation 之前做完):
 - **R20**:本機已有同名工作分支 → 拒絕、零副作用。
 - **R18 信任檢查**:`Assert-TrustedSvnUrl`(錨 `remote-svn-main` repos-root-url),URL 不在受信任根下 → 拒絕、零副作用。
 - 確認該 SVN 分支**確實存在**(唯讀,不建立)。
+- **分支接點(fork-point)分級解析(唯讀,U5)**:讀分支的原始名稱與對齊資訊,把工作分支接到本機主線裡**正確的分出點**,而不是一律掛在主線最新處。若本機主線缺了接點所需的更新,script 會**在任何 mutation 之前停下並說明**(exit 1、零殘留),見下方 Decision Rules「分支接點分級處理」。
 
-通過後(rollback-guarded):建 `remote-svn/<branch>`(根於 repo init commit)→ 加 worktree → `svn checkout --force`(讀)→ `svn rm --keep-local .git` → 同步 main 的 `.gitignore` → `git add -A` + commit 匯入內容到 bridge → 開工作分支 `<branch>`(由 bridge ref 開出)。任一步失敗 → 回滾本機 git 三件,SVN 端無新 revision。
+通過後(rollback-guarded):建 `remote-svn/<branch>`(根於解析出的 fork-point commit)→ 加 worktree → 清空 worktree → `svn checkout`(讀,純 checkout 無 `--force`)→ `svn rm --keep-local .git` → 同步 main 的 `.gitignore` → `git add -A` + commit 匯入內容到 bridge(只搬 SVN 分支相對主線的差異,tree 就是 SVN 分支內容)→ 開工作分支 `<branch>`(由 bridge ref 開出)。任一步失敗 → 回滾本機 git 三件,SVN 端無新 revision。
 
 ### Step 3 — 回報
 
@@ -67,10 +68,21 @@ Script 會(全部在任何 mutation 之前做完):
 - **remote-svn-main 是前置、不自行 bootstrap**:缺 / 壞 → fail-closed 導向 git-svn `/tp-setup`。
 - **branch 名消毒走 `Resolve-RemoteWorktree`**:葉名衍生後若被 allowlist 拒,改要求 `--branch` 明確命名。
 
+### 分支接點(fork-point)分級處理
+
+Script 會把工作分支接到本機主線裡**正確的分出點**。若接不上,它會**停下並說明**(exit 1、零殘留),stderr 訊息是給 agent 讀的、**含 `r<n>` 等技術字眼**。呈現給使用者時**一律白話**,不要把 script 原文或 `svn-revision` / `remote-svn/main` / 「replayed revision」/ 「aligned rev」等內部字眼丟出去。三種停下情況與對應動作:
+
+- **(a) 缺的更新可以補**(stderr 類似 `... is newer than the newest replayed revision on local main ... Pull trunk first: run /tp-pull-from-svn --branch main`):分支是從主線後來的某個更新分出去的,而本機主線還沒拉到那個更新。**白話向使用者說明並主動提議**:「這個分支是從主線比較新的一次更新分出去的,你本機的主線還沒跟到那裡。要我先幫你把主線的 SVN 更新拉下來,再重試把這個分支拉進來嗎?」使用者同意 → 先跑 `/tp-pull-from-svn --branch main`(逐修訂拉齊)→ **再重跑本 checkout**。使用者拒絕 → 停在此,不建立任何東西。
+- **(b) 缺的更新補不回來**(stderr 類似 `... has no replayed commit on local main and cannot be pulled (it predates the earliest replayed revision, or its range was squashed away). Ask the branch author to merge main into the branch and push ...`):分支要接的那個主線版本在本機**找不到、也沒法用拉取補回來**(那段歷史在本機被壓成一顆 / 略過了)。**白話告訴使用者**:「這個分支要接上的主線版本,在你這邊的歷史裡已經被壓縮/略過、補不回來了。請**分支作者**把主線(main)併進這個分支後再 push 一次(這會把分支的接點更新到能對得上的版本),之後你再重試把它拉進來。」不自行猜一個接點、不硬掛。
+- **(c) 接點資料看起來過期/矛盾**(stderr 類似 `stored alignment r<R> is older than the branch's fork revision r<...>, so the branch metadata looks stale/contradictory`):分支記錄的接點比它當初分出去的版本還舊,資料自相矛盾。**白話**:「這個分支的接點資訊看起來怪怪的(可能過期了)。請分支作者把主線併進分支再 push 一次刷新接點,然後再重試。」同樣不硬掛。
+- 三種情況都**絕不**把工作分支掛在錯的/過期的接點上(R11);(a) 補齊後可續,(b)/(c) 需分支作者刷新後才可續。
+
 ## Completion Checks
 
 - `git branch --list <branch>` 出現工作分支;`git rev-parse <branch>` == `git rev-parse remote-svn/<branch>`(工作分支建立於 bridge tip)。
 - `git merge-base <branch> remote-svn/<branch>` 非空(首次 pull 不會 unrelated histories)。
+- 成功時工作分支接在**正確的分出點**:`git merge-base main <branch>` 解析到解析出的 fork-point commit(不是主線最新處)。
+- 分支接不上而停下時(上述 (a)/(b)/(c)):給使用者的說明是**白話**、不含 `svn-revision` / `remote-svn/main` / 「replayed / aligned revision」等內部字眼;(a) 有主動提議先 pull 再重試,(b)/(c) 有請分支作者刷新接點再重試;皆**零殘留**(無 bridge / worktree / 工作分支)。
 - bridge worktree(`remote-svn-<branch>`)存在且是該 SVN 分支的 working copy;其 `git status --porcelain` 乾淨(`.svn/` 已被 `.gitignore` 忽略)。
 - 被匯入的 SVN 分支**無新 revision**(`svn log` 末筆未變)。
 - 拒絕 / 失敗路徑:無殘留 bridge 分支 / worktree / 工作分支。
@@ -82,6 +94,10 @@ Script 會(全部在任何 mutation 之前做完):
 - Manual(無 remote-svn-main):未 setup 主 bridge → 跑本 skill → fail-closed,訊息導向先跑 git-svn `/tp-setup`,不建任何東西。
 - Manual(信任邊界):`--svn-url` 指向受信任根外(或 `..` traversal / `repos-evil`)→ 拒絕、零副作用。
 - Manual(自訂名):`--branch my-work` → 工作分支名用 `my-work`,worktree = `remote-svn-my-work`。
+- Manual(接點就在本機,靜默接上):本機主線已有分支對齊版本對應的 commit → checkout 不問、直接把工作分支接在正確分出點(`git merge-base main <branch>` == 該 fork commit)。
+- Manual(缺更新可補,path a):本機主線落後於分支對齊版本 → checkout **停下並白話說明**,主動提議先 `/tp-pull-from-svn --branch main` 再重試;同意並拉齊後重跑 → 接在正確分出點。零殘留。
+- Manual(補不回來,path b):分支對齊版本在本機被壓縮/略過、拉不回來 → checkout **停下並白話說明**,請分支作者把 main 併進分支再 push 刷新接點後重試;**不硬掛**、零殘留。
+- Manual(接點資料矛盾,path c):分支記錄的對齊版本比它 fork 版本還舊 → checkout **停下並白話說明**,請分支作者刷新接點後重試;**不硬掛**、零殘留。
 
 ## Tool Preference
 
