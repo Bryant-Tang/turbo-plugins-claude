@@ -211,8 +211,16 @@ foreach ($t in $shTests) {
         try { & $psExe -NoProfile -ExecutionPolicy Bypass -File $resetPs1 2>$null | Out-Null } catch { }
     }
     $bashFile = ([regex]::Replace($t.FullName, '^([A-Za-z]):', { param($m) '/' + $m.Groups[1].Value.ToLower() })) -replace '\\', '/'
+    # Local EAP=Continue around the native bash call: a .test.sh that legitimately writes to stderr
+    # (e.g. svn-status-xml-roundtrip's console-codepage self-SKIP WARNING) must NOT throw a terminating
+    # NativeCommandError under the script-level EAP=Stop and abort the whole run before the summary --
+    # pass/fail is decided by the shUnit2 exit code, not by whether the test printed to stderr. This is
+    # the documented PS5.1 EAP=Stop + native-stderr remedy (CLAUDE.md five-taboo #4).
+    $prevEAPsh = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     & $BashPath -c "'$bashFile'"
     $code = $LASTEXITCODE
+    $ErrorActionPreference = $prevEAPsh
     if ($code -eq 0) { $shPassed++ } else { $shFailed++; $failedFiles += $t.Name }
     Write-Output ''
 }
