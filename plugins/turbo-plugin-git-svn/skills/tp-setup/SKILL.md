@@ -130,6 +130,20 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      此時腳本已 `git init`,`--local` 有 repo 可寫)。**分兩步、禁 `&&` 串接**。
    - **重新呼叫**同一支腳本(乾淨重跑:`git init` no-op、仍無 root commit → 走 case (a) arm、不會重複建 bridge)。
 
+3b. **匯入歷史較深(`TP_TOKEN:GRANULARITY_REQUIRED count=<N> range=r<lo>:r<hi>`)→ 問粒度後重呼叫**。SVN URL
+   的既有歷史**超過 5 個修訂**且未指定粒度時,腳本印此 token 並 **exit 0、零 commit、bridge 未建**(乾淨可重跑;
+   身分階段在此之前,故此時身分已設)。agent:
+   - 用 `AskUserQuestion` 以**白話**問使用者要怎麼匯入這些歷史,三選一、預設「一顆一顆保留」。**不得**把 token /
+     `svn-revision` / 修訂號等內部語彙丟給使用者;用情境化描述(可用 `<N>` 個「更新紀錄」這類白話):
+     - **一顆一顆保留(建議)**——每筆更新各成一顆 commit,歷史與 blame 最完整。
+     - **壓成一顆**——只匯最新內容成一顆 commit(最快;適合歷史很深、不需逐筆歷史時)。
+     - **指定一段逐筆、其餘壓一顆**——請使用者給一段範圍(落在腳本回報的可選範圍內),範圍內逐筆、範圍外壓一顆。
+   - 依選擇**重新呼叫**同一支腳本並帶粒度參數(乾淨重跑;此時腳本走到粒度階段後直接匯入):
+     - 一顆一顆:PowerShell `-Granularity per-revision` / bash `--granularity per-revision`
+     - 壓成一顆:PowerShell `-Granularity squash` / bash `--granularity squash`
+     - 指定範圍:PowerShell `-Granularity range -Range <lo>:<hi>` / bash `--granularity range --range <lo>:<hi>`
+   - **≤5 個修訂**時腳本不發此 token(直接逐筆匯入),agent 無需處理。
+
 4. **腳本成功後 → base 骨架後置**(疊在 merge 進來的 SVN 內容上,全 idempotent):
    - **順序硬性要求:先 append `.gitignore` 的 git-svn patterns(4b),才做任何 `git add`(4d)**。否則巢狀
      bridge worktree(`.turbo-plugin/worktrees/`)與其 `.svn/` 在 main 尚未被 ignore,`git add -A` 會誤把 `.svn`
@@ -171,6 +185,7 @@ case (b) arm(不建空 commit、用當前分支、merge 進**有內容**的分�
    `Initialize-GitSvnBridge`)。腳本偵測**已有 root commit** → case (b) arm:不建空 commit、用當前分支,bridge
    bootstrap 後 `git merge --allow-unrelated-histories` 把 SVN 內容合進**當前分支**。身分未設一樣回
    `TP_TOKEN:IDENTITY_REQUIRED` → 同 case (a) sub-step 3 固定模板收身分 + `git config --local` + 重呼叫。
+   歷史 >5 修訂一樣回 `TP_TOKEN:GRANULARITY_REQUIRED` → 同 case (a) sub-step 3b 白話問粒度 + 帶粒度參數重呼叫。
 3. **merge 衝突(`TP_TOKEN:MERGE_CONFLICT <files>`)→ agent 端收尾,不重呼叫腳本**。populated git × populated
    SVN 有重疊檔(`CLAUDE.md` 等)時腳本印 `TP_TOKEN:MERGE_CONFLICT` + 非零 exit,**bridge 已建成且刻意不
    rollback、merge 留在進行中**。agent:
@@ -239,6 +254,10 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
   `git add`**,否則巢狀 bridge worktree 的 `.svn/` 會被誤 stage 進 main。case (c)/(d) 不跑 bootstrap、骨架時機不變。
 - **身分 throw 重呼叫迴圈(case (a)/(b))** — 腳本回 `TP_TOKEN:IDENTITY_REQUIRED` 時 agent 用固定模板收身分、
   `git config --local` 寫入(此時腳本已 `git init`,`--local` 可寫)、**重呼叫同一支腳本**(乾淨重跑、不重複建 bridge)。
+- **粒度選擇重呼叫迴圈(case (a)/(b),>5 修訂首匯)** — 腳本回 `TP_TOKEN:GRANULARITY_REQUIRED count=<N> range=r<lo>:r<hi>`
+  (exit 0、零 commit、bridge 未建)時,agent **白話**問粒度(一顆一顆/壓成一顆/指定範圍,預設一顆一顆;**不外洩** token /
+  `svn-revision` / 修訂號給使用者),再帶 `-Granularity`/`--granularity`(+ 範圍時 `-Range`/`--range`)**重呼叫同一支腳本**。
+  ≤5 修訂不發此 token。見 case (a) sub-step 3b。
 - **case (b) `TP_TOKEN:MERGE_CONFLICT` 由 agent 端收尾、不重呼叫腳本** — bridge 已建成且不 rollback;agent 列衝突檔、
   引導手動解 + commit merge(不自動 abort),再直接接「base 骨架後置」收尾。盲目重呼叫腳本會撞「bridge 已存在」死路。
 - **不自動代填使用者身分或設定** — git `user.name`/`user.email`、SVN URL 等缺漏一律先 `AskUserQuestion` 再做;

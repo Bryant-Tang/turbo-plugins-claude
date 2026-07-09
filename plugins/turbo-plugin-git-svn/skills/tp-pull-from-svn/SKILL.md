@@ -19,7 +19,7 @@ allowed-tools: Bash, Read
    - `Already up to date at SVN r<rev>` → 完成
    - `Replaying <n> SVN revision(s) ...` / `Pulled SVN r<lo>..r<hi> into <branch> (<n> revision(s), <mode>)` → 完成。逐修訂(per-revision)模式下**每個 SVN 修訂都變成一顆對應的 git commit**,保留原作者 / 訊息 / 時間;squash 模式則是壓成單一 `sync: svn r<rev>`。
    - `TP_TOKEN:GRANULARITY_REQUIRED count=<N> range=r<lo>:r<hi>` → 這次要拉的 SVN 修訂較多、需要先問使用者用哪種顆粒度保留歷史(此時 script 尚未建立任何 commit、也沒有落地任何變更)。**此行是給 agent 內部解析的機器標記,絕不可原樣丟給使用者** → 進入 step 3。
-   - `Merge conflict detected. Resolve the following files...` → 列出衝突檔給使用者,提示「請在主 worktree 解衝突後 `git merge --continue`;**不要自動 abort**」
+   - `Error: merge conflict detected. The merge has been aborted and main worktree restored ...` → **script 已自動 `git merge --abort` 並把主 worktree 還原到原分支**(零殘留、沒有進行中的 merge)。agent:把 token 後列出的衝突檔**白話**告訴使用者,說明「這次拉取與本機有衝突,已自動還原、沒有留下半成品」,請使用者在自己的流程裡調和這些檔案後**重跑 `/tp-pull-from-svn`**。**不要**叫使用者 `git merge --continue`(此時沒有進行中的 merge 可續)。若訊息是 `... automatic rollback failed ...`(回滾本身失敗)→ 工作樹處於不一致狀態,請使用者依訊息手動修復後再重跑。
 3. **粒度選擇(僅在 step 2 出現 `GRANULARITY_REQUIRED` 時做)**
 
    用**白話**把三個選項呈現給使用者(可以帶「這次有 <N> 個新的更新」這種白話說明,但**不要**露出 `TP_TOKEN` / `svn-revision` / `per-revision` / `squash` / `range` / worktree 名等內部字眼):
