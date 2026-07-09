@@ -317,6 +317,11 @@ function Invoke-SvnReplayCommit {
         }
 
         & git -C $RepoDir add -A 2>$null | Out-Null
+        # Guard the stage: a failed `git add -A` leaves the index unchanged, which the empty-delta
+        # check below would misread as "identical tree" → SKIP:empty, silently dropping this
+        # revision's commit + trailer (and corrupting the trailer-scan cur/floor lookups). The bash
+        # sibling fails loud here via `set -e`; mirror Invoke-SvnBoundaryCommit's own add-guard.
+        if ($LASTEXITCODE -ne 0) { throw "Invoke-SvnReplayCommit: git add -A failed for r$Rev (exit $LASTEXITCODE)." }
 
         # Empty index (tree identical to parent) → skip. --quiet writes nothing to stderr, so
         # $LASTEXITCODE is reliable: 0 = no staged changes, 1 = staged changes.
