@@ -100,7 +100,77 @@ BeforeAll {
         $s = Invoke-PsScript -ScriptPath $script:SubmitScript -Cwd $root -ScriptArgs @('-Branch', 'main', '-Title', 'sync main to svn')
         if ($s.ExitCode -ne 0) { return $null }
         $dash = 'main'
-        return @{ Root = $root; Bridge = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), "remote-svn-$dash") }
+        $bridge = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), "remote-svn-$dash")
+        # Normalize the bridge WC to SVN HEAD so the pull's `cur` (= WC revision floor) is a
+        # deterministic baseline for the new-revision tests below.
+        Push-Location $bridge
+        try { & svn update 2>$null | Out-Null } finally { Pop-Location }
+        return @{ Root = $root; Bridge = $bridge; Uri = $uri; Repo = $repo; Cfg = $cfg }
+    }
+
+    # Commit $Count new real trunk revisions to $Uri via a scratch WC. Each revision adds one file;
+    # the exact log message is forced with `svnadmin setlog` and the author with `svnadmin setrevprop`
+    # (both bypass hooks and write true UTF-8 bytes, so ASCII and CJK messages round-trip
+    # deterministically on Windows -- the seed builder's F-3 technique). Returns the new rev numbers.
+    function Add-SvnRevisions {
+        param(
+            [string]$Uri, [string]$Repo, [string]$Cfg, [string]$Sandbox,
+            [int]$Count,
+            [string[]]$Messages,
+            [string[]]$Authors
+        )
+        $token = [Guid]::NewGuid().ToString('N').Substring(0, 6)
+        $co = [System.IO.Path]::Combine($Sandbox, "co-$token")
+        & svn checkout $Uri $co --config-dir $Cfg 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $enc = New-Object Text.UTF8Encoding($false)
+        $revs = @()
+        for ($i = 0; $i -lt $Count; $i++) {
+            # File name carries the per-call token so successive Add-SvnRevisions calls on the same
+            # repo never collide on an already-versioned path.
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, "file-$token-$i.txt"), "content $i`n", $enc)
+            & svn add ([System.IO.Path]::Combine($co, "file-$token-$i.txt")) --config-dir $Cfg 2>$null | Out-Null
+            Push-Location $co
+            try { & svn commit -m "seed rev $i" --config-dir $Cfg 2>$null | Out-Null } finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) { return $null }
+            $rev = [int]((& svn info --show-item revision $Uri --config-dir $Cfg | Out-String).Trim())
+            if ($Messages -and $i -lt $Messages.Count) {
+                $mf = [System.IO.Path]::Combine($Sandbox, "msg-$rev.txt")
+                [System.IO.File]::WriteAllText($mf, $Messages[$i], $enc)
+                & svnadmin setlog $Repo -r $rev $mf --bypass-hooks 2>$null | Out-Null
+            }
+            if ($Authors -and $i -lt $Authors.Count) {
+                $af = [System.IO.Path]::Combine($Sandbox, "author-$rev.txt")
+                [System.IO.File]::WriteAllText($af, $Authors[$i], (New-Object Text.ASCIIEncoding))
+                & svnadmin setrevprop $Repo -r $rev svn:author $af 2>$null | Out-Null
+            }
+            $revs += $rev
+        }
+        return @($revs)
+    }
+
+    # One PROPERTY-ONLY revision (svn propset on app.txt) -- changes no tracked file content, so the
+    # bridge's `svn update -r R` yields an empty git delta (KTD4 skip). Returns the new rev number.
+    function Add-PropOnlyRevision {
+        param([string]$Uri, [string]$Cfg, [string]$Sandbox)
+        $co = [System.IO.Path]::Combine($Sandbox, "cop-$([Guid]::NewGuid().ToString('N').Substring(0, 6))")
+        & svn checkout $Uri $co --config-dir $Cfg 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        & svn propset 'testmarker' 'x' ([System.IO.Path]::Combine($co, 'app.txt')) --config-dir $Cfg 2>$null | Out-Null
+        Push-Location $co
+        try { & svn commit -m 'prop-only (no tree change)' --config-dir $Cfg 2>$null | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return [int]((& svn info --show-item revision $Uri --config-dir $Cfg | Out-String).Trim())
+    }
+
+    # Numeric svn-revision trailer values present on a branch (ascending), as an array of [int].
+    # Run-Git-Capture joins lines via Out-String (CRLF), so each split element is trimmed before the
+    # numeric match -- otherwise a trailing "`r" makes '^[0-9]+$' miss every line but the last.
+    function Get-TrailerRevs {
+        param([string]$Root, [string]$Ref)
+        $raw = Run-Git-Capture -Cwd $Root -GitArgs @('log', $Ref, '--format=%(trailers:key=svn-revision,valueonly)')
+        $vals = @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9]+$' } | ForEach-Object { [int]$_ })
+        return @($vals | Sort-Object)
     }
 }
 
@@ -250,6 +320,206 @@ Describe 'Sync-FromSvn' {
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
                 $res.ExitCode | Should -Not -Be 0
                 $res.Combined | Should -Match 'unmerged sync'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 8: AE1 -- 3 new revs, per-revision auto -> 3 commits (author/message/trailer each)' {
+        It 'replays 3 revisions as 3 distinct commits, not one squash' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-8'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $revs = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 3 `
+                    -Messages @('alpha change', 'beta change', 'gamma change') -Authors @('alice', 'bob', 'carol')
+                if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revisions'; return }
+
+                $before = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $res.Stdout | Should -Not -Match 'TP_TOKEN:GRANULARITY_REQUIRED'
+                $after = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                ($after - $before) | Should -Be 3
+
+                # Exactly the three new revisions are carried as trailers (not one squashed boundary).
+                (Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main') | Should -Be @($revs | Sort-Object)
+                # Three distinct subjects reached main.
+                $subjects = Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', 'main', '--format=%s')
+                $subjects | Should -Match 'alpha change'
+                $subjects | Should -Match 'beta change'
+                $subjects | Should -Match 'gamma change'
+                # Author fidelity: the 'alpha change' commit carries the raw SVN username 'alice'.
+                $an = Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', 'remote-svn/main', '--format=%an', '--grep=alpha change')
+                $an | Should -Match 'alice'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 9: 5-or-fewer new revs replay per-revision with NO -Granularity (R2)' {
+        It '5 revs -> 5 commits, no granularity signal' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-9'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $revs = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 5
+                if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revisions'; return }
+
+                $before = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $res.Stdout | Should -Not -Match 'TP_TOKEN:GRANULARITY_REQUIRED'
+                $after = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                ($after - $before) | Should -Be 5
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 10: >5 new revs, no -Granularity -> needs-choice signal, ZERO commits (R3)' {
+        It 'emits TP_TOKEN:GRANULARITY_REQUIRED count=6 and creates no commits' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-10'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $revs = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 6
+                if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revisions'; return }
+
+                $before = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $res.Stdout | Should -Match 'TP_TOKEN:GRANULARITY_REQUIRED count=6'
+                $after = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                ($after - $before) | Should -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 11: -Granularity squash -> ONE boundary commit with the HEAD trailer' {
+        It 'squash produces a single sync: svn rHEAD commit carrying the trailer' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-11'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $revs = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 6
+                if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revisions'; return }
+                $head = (@($revs) | Measure-Object -Maximum).Maximum
+
+                $before = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main', '-Granularity', 'squash')
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $after = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                ($after - $before) | Should -Be 1
+
+                $subj = Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', 'remote-svn/main', '-1', '--format=%s')
+                $subj | Should -Be "sync: svn r$head"
+                $trailer = (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', 'remote-svn/main', '-1', '--format=%(trailers:key=svn-revision,valueonly)')).Trim()
+                $trailer | Should -Be "$head"
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 12: -Granularity range -> per-revision inside, squash outside' {
+        It '8 revs, middle 3 per-revision -> leading+trailing squash boundaries, strictly ascending trailers' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-12'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $revs = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 8
+                if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revisions'; return }
+                $sorted = @($revs | Sort-Object)
+                $base = $sorted[0] - 1
+                $head = $sorted[-1]
+                $lo = $base + 3
+                $hi = $base + 5
+
+                $before = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main', '-Granularity', 'range', '-Range', "$lo`:$hi")
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $after = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                # leading squash (1) + per-revision [lo..hi] (3) + trailing squash (1) = 5.
+                ($after - $before) | Should -Be 5
+
+                $expected = @(($lo - 1)) + @($lo..$hi) + @($head) | Sort-Object
+                (Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main') | Should -Be $expected
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 13: empty-delta revision is skipped (no no-op commit)' {
+        It 'a prop-only revision between two file revs produces no commit for itself' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-13'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $ra = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 1
+                $rb = Add-PropOnlyRevision -Uri $ctx.Uri -Cfg $ctx.Cfg -Sandbox $sb
+                $rc = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 1
+                if ($null -eq $ra -or $null -eq $rb -or $null -eq $rc) { Set-ItResult -Skipped -Because 'could not build the mixed revision sequence'; return }
+
+                $before = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $after = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                # 3 revisions enumerated (A, prop-only B, C) but only the two file revs commit.
+                ($after - $before) | Should -Be 2
+
+                $trailers = Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main'
+                $trailers | Should -Contain @($ra)[0]
+                $trailers | Should -Contain @($rc)[0]
+                $trailers | Should -Not -Contain $rb
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 14: interrupted-then-rerun resumes at cur (no duplicate)' {
+        It 'a rerun after main was moved back replays only the new revision' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-14'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $revs = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 3
+                if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revisions'; return }
+
+                $res1 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res1.ExitCode | Should -Be 0 -Because $res1.Combined
+                @(Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main').Count | Should -Be 3
+
+                # Simulate an interrupted pull: move main back BEFORE the merge so the 3 trailer-bearing
+                # replay commits sit ahead of main (the resumable state).
+                $null = Run-Git -Cwd $ctx.Root -GitArgs @('reset', '--hard', 'HEAD^')
+                # One more SVN revision arrives.
+                $rev4 = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 1
+                if ($null -eq $rev4) { Set-ItResult -Skipped -Because 'could not add the 4th revision'; return }
+
+                $res2 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res2.ExitCode | Should -Be 0 -Because $res2.Combined
+                $res2.Combined | Should -Not -Match 'unmerged sync'
+                # Exactly 4 replay commits total on remote-svn/main -- the first 3 were NOT duplicated.
+                $trailers = @(Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main')
+                $trailers.Count | Should -Be 4
+                (@($trailers | Sort-Object -Unique)).Count | Should -Be 4
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'Case 15: a CJK SVN message round-trips into the replayed commit' {
+        It 'no mojibake in the replayed commit body' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-15'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $cjk = '修正中文訊息測試'
+                $revs = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 1 -Messages @($cjk)
+                if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revision'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+
+                # Read the replayed commit body as raw bytes (cmd redirect) so console codepage never
+                # mangles the capture; decode via the same round-trip helper Case 5 uses.
+                $mbFile = [System.IO.Path]::Combine($sb, 'msgout.txt')
+                & cmd.exe /c "git -C `"$($ctx.Root)`" log remote-svn/main -1 --format=%B > `"$mbFile`""
+                $bytes = if ([System.IO.File]::Exists($mbFile)) { [System.IO.File]::ReadAllBytes($mbFile) } else { @() }
+                (Test-SvnLogRoundTrip -RawBytes $bytes -ExpectedText $cjk) | Should -BeTrue
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
