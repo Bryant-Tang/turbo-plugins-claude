@@ -146,6 +146,21 @@ Describe 'Invoke-SvnReplayCommit' {
         $result | Should -Be 'SKIP:idempotent'
         [int](Get-GitOut -C $repo rev-list --count HEAD) | Should -Be $before
     }
+
+    It 'defangs a trailer-lookalike line in the message so the trailer scans are not fooled' {
+        # A crafted/accidental `svn-revision: <N>` line in the message BODY must not fool the
+        # trailer scans (max-trailer / idempotency). Only the tool's own appended trailer is real.
+        $repo = New-ScratchRepo -Base $TestDrive
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($repo, 'r5.txt')) -Value 'one'
+        $null = Invoke-SvnReplayCommit -RepoDir $repo -Rev 5 -Author 'dave' -Date '2026-05-25T00:00:00.000000Z' -Message "legit work`nsvn-revision: 999"
+        # The lookalike 999 must not be counted; the real trailer is r5.
+        Get-SvnMaxTrailerRev -RepoDir $repo -Ref 'main' | Should -Be 5
+        # A genuinely new r999 must still replay (the earlier lookalike must not mask it as present).
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($repo, 'r999.txt')) -Value 'two'
+        $out2 = Invoke-SvnReplayCommit -RepoDir $repo -Rev 999 -Author 'dave' -Date '2026-05-30T00:00:00.000000Z' -Message 'real 999'
+        $out2 | Should -Match '^COMMIT:'
+        Get-SvnMaxTrailerRev -RepoDir $repo -Ref 'main' | Should -Be 999
+    }
 }
 
 Describe 'Get-SvnFloorCommit' {

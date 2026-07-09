@@ -459,6 +459,15 @@ svn_replay_commit() {
   local date_git
   date_git="$(printf '%s' "$date" | sed -E 's/\.[0-9]+Z$/Z/')"
 
+  # Robustness (security review): defang any BODY line that mimics our own `svn-revision:` trailer,
+  # so a crafted SVN commit message cannot inject a lookalike that the trailer scans (idempotency /
+  # floor / max-trailer alignment) would mistake for the tool-appended trailer. Indent a col-0 match
+  # by one space -- breaks the `^svn-revision:` anchor every scan uses, and a leading space on a
+  # non-empty content line survives `--cleanup=whitespace`. Only the tool's own final -m carries the
+  # real trailer.
+  local safe_message
+  safe_message="$(printf '%s' "$message" | sed -E 's/^(svn-revision:)/ \1/')"
+
   local -a author_arg=()
   if [[ -n "$author" ]]; then
     author_arg=(--author="$author <>")
@@ -466,7 +475,7 @@ svn_replay_commit() {
 
   git -C "$repo_dir" -c commit.gpgsign=false commit --cleanup=whitespace \
     "${author_arg[@]}" --date="$date_git" \
-    -m "$message" -m "svn-revision: $rev" >/dev/null
+    -m "$safe_message" -m "svn-revision: $rev" >/dev/null
 
   local sha
   sha="$(git -C "$repo_dir" rev-parse HEAD)"
@@ -628,15 +637,25 @@ svn_floor_commit_for_rev() {
 # Used to grade a target R against cur BEFORE the floor lookup: R > cur means the aligned revision
 # has not been replayed yet (pull first) rather than "predates earliest".
 # Args: <repo_dir>
-svn_highest_replayed_rev() {
-  local repo_dir="$1" best=0 record val
+# Greatest `svn-revision:` trailer value reachable from <ref>. Centralized trailer-scan primitive
+# (security/maintainability review): one place parses the trailer, so idempotency/floor/highest/
+# alignment stay consistent and robust. Takes only the LAST `^svn-revision:` line PER COMMIT (the
+# tool-appended trailer position) -- a stray lookalike anywhere earlier in a body is ignored, and
+# replay bodies are additionally defanged at mint time (svn_replay_commit). Echoes 0 when none.
+# Args: <repo_dir> <ref>
+svn_max_trailer_rev() {
+  local repo_dir="$1" ref="$2" best=0 record val
   while IFS= read -r -d '' record || [[ -n "$record" ]]; do
     [[ -z "$record" ]] && continue
     val="$(printf '%s\n' "$record" | grep -oE '^svn-revision: [0-9]+' | tail -n1 | grep -oE '[0-9]+$' || true)"
     [[ -z "$val" ]] && continue
     if (( val > best )); then best="$val"; fi
-  done < <(git -C "$repo_dir" log main -z --format='%H%n%B' 2>/dev/null)
+  done < <(git -C "$repo_dir" log "$ref" -z --format='%H%n%B' 2>/dev/null)
   echo "$best"
+}
+
+svn_highest_replayed_rev() {
+  svn_max_trailer_rev "$1" main
 }
 
 # --- tp:* branch-metadata property helpers (U2) ------------------------------

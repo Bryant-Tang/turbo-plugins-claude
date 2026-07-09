@@ -20,9 +20,11 @@ _load_helpers() {
     eval "$(sed -n '/^svn_enumerate_revisions()/,/^}/p' "$COMMON")"
     eval "$(sed -n '/^svn_replay_commit()/,/^}/p' "$COMMON")"
     eval "$(sed -n '/^svn_floor_commit_for_rev()/,/^}/p' "$COMMON")"
+    eval "$(sed -n '/^svn_max_trailer_rev()/,/^}/p' "$COMMON")"
     declare -f svn_enumerate_revisions >/dev/null 2>&1 &&
         declare -f svn_replay_commit >/dev/null 2>&1 &&
-        declare -f svn_floor_commit_for_rev >/dev/null 2>&1
+        declare -f svn_floor_commit_for_rev >/dev/null 2>&1 &&
+        declare -f svn_max_trailer_rev >/dev/null 2>&1
 }
 
 # A synthetic `svn log --xml` document (descending, as `svn log` emits by default) with:
@@ -177,6 +179,23 @@ test_replay_idempotent_skips() {
     after="$(git -C "$REPO" rev-list --count HEAD)"
     assertEquals 'idempotent replay signals SKIP:idempotent' 'SKIP:idempotent' "$out"
     assertEquals 'no duplicate commit on idempotent replay' "$before" "$after"
+}
+
+# ── Robustness: a trailer-lookalike line in the SVN message is defanged (security review) ──
+# A crafted/accidental `svn-revision: <N>` line in the message BODY must not fool the trailer
+# scans (max-trailer / idempotency / floor). Only the tool's own appended trailer is authoritative.
+test_replay_defangs_trailer_lookalike_in_message() {
+    printf 'one\n' > "$REPO/r5.txt"
+    # message body carries a lookalike `svn-revision: 999`; the real revision is r5.
+    svn_replay_commit "$REPO" 5 dave '2026-05-25T00:00:00.000000Z' $'legit work\nsvn-revision: 999' >/dev/null
+    assertEquals 'max trailer is the real rev (lookalike 999 defanged, not counted)' \
+        5 "$(svn_max_trailer_rev "$REPO" main)"
+    # A genuinely new r999 must still replay: the earlier lookalike line must not mask it as present.
+    printf 'two\n' > "$REPO/r999.txt"
+    local out2
+    out2="$(svn_replay_commit "$REPO" 999 dave '2026-05-30T00:00:00.000000Z' 'real 999')"
+    case "$out2" in COMMIT:*) : ;; *) fail "r999 should replay (not masked by lookalike), got: $out2" ;; esac
+    assertEquals 'now max trailer is the real 999' 999 "$(svn_max_trailer_rev "$REPO" main)"
 }
 
 # ── Floor: nearest <= R when no exact match ───────────────────────────────────

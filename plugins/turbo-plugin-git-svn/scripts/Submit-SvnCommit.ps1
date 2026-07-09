@@ -125,18 +125,13 @@ try {
     # props) and any pre-U4 bridge. Folded into the content commit below; idempotent (no-op unchanged).
     # Trailer values are ASCII digits, so the ANSI OutputEncoding region does not affect the scan.
     $tpCurAligned = Get-TpBranchProp -Name 'last-aligned-rev' -Target $remote.Path
-    $tpNewAligned = $null
-    $prevEAPtp = $ErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-    $branchBodies = (& git -C $mainWorktree log $Branch --format='%B' 2>$null | Out-String)
-    $ErrorActionPreference = $prevEAPtp
-    foreach ($m in [regex]::Matches($branchBodies, '(?m)^svn-revision:[ ]([0-9]+)[ ]*\r?$')) {
-        $v = [int]$m.Groups[1].Value
-        if ($null -eq $tpNewAligned -or $v -gt $tpNewAligned) { $tpNewAligned = $v }
-    }
+    # Centralized, robust trailer scan (security review #5): per-commit LAST trailer, then max -- a
+    # lookalike svn-revision: line buried in a branch commit body cannot over-advance the alignment.
+    # Returns [int] 0 when the branch reaches no trailer; the guard then leaves $tpAdvance = $false.
+    $tpNewAligned = Get-SvnMaxTrailerRev -RepoDir $mainWorktree -Ref $Branch
     $tpAdvance = $false
-    if (-not [string]::IsNullOrWhiteSpace($tpCurAligned) -and $null -ne $tpNewAligned) {
-        if ($tpNewAligned -gt [int]$tpCurAligned) { $tpAdvance = $true }
+    if (-not [string]::IsNullOrWhiteSpace($tpCurAligned) -and $tpNewAligned -gt [int]$tpCurAligned) {
+        $tpAdvance = $true
     }
 
     Write-Output "Finalising merge commit..."

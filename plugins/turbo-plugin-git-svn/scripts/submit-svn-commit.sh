@@ -122,7 +122,10 @@ FULL_MESSAGE="$(printf '%s\n\n%s' "$TITLE_LINE" "$SVN_BODY")"
 # is folded into the SAME content commit below (never a separate property commit) and is idempotent
 # (no-op when unchanged). `|| true` on the grep pipeline so an empty match under `set -e` is benign.
 TP_CUR_ALIGNED="$(get_tp_branch_prop last-aligned-rev "$REMOTE_PATH")"
-TP_NEW_ALIGNED="$(git -C "$MAIN_WORKTREE" log "$BRANCH" --format='%B' 2>/dev/null | grep -oE '^svn-revision: [0-9]+' | grep -oE '[0-9]+$' | sort -n | tail -1 || true)"
+# Centralized, robust trailer scan (security review #5): per-commit LAST trailer, then max -- so a
+# lookalike `svn-revision:` line buried in a branch commit body cannot over-advance the alignment.
+# Echoes 0 when the branch reaches no trailer; the -gt guard below then keeps TP_ADVANCE=0.
+TP_NEW_ALIGNED="$(svn_max_trailer_rev "$MAIN_WORKTREE" "$BRANCH")"
 TP_ADVANCE=0
 if [[ -n "$TP_CUR_ALIGNED" && -n "$TP_NEW_ALIGNED" && "$TP_NEW_ALIGNED" -gt "$TP_CUR_ALIGNED" ]]; then
   TP_ADVANCE=1

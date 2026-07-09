@@ -333,13 +333,21 @@ function Invoke-SvnReplayCommit {
         # git dislikes the .000000Z microseconds svn emits; keep it to whole seconds.
         $dateGit = $Date -replace '\.\d+Z$', 'Z'
 
+        # Robustness (security review): defang any BODY line mimicking our own `svn-revision:` trailer
+        # so a crafted SVN message can't inject a lookalike the trailer scans would trust. Indent a
+        # col-0 match by one space (breaks the '^svn-revision:' anchor; survives --cleanup=whitespace).
+        # Mirror of the sed defang in svn_replay_commit (common.sh). Only the tool's final -m is real.
+        $safeMessage = (($Message -split "`n") | ForEach-Object {
+            if ($_ -match '^svn-revision:') { ' ' + $_ } else { $_ }
+        }) -join "`n"
+
         $authorArg = @()
         if (-not [string]::IsNullOrEmpty($Author)) {
             $authorArg = @("--author=$Author <>")
         }
 
         & git -C $RepoDir -c commit.gpgsign=false commit --cleanup=whitespace @authorArg `
-            --date=$dateGit -m $Message -m ('svn-revision: ' + $Rev) 2>$null | Out-Null
+            --date=$dateGit -m $safeMessage -m ('svn-revision: ' + $Rev) 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "Invoke-SvnReplayCommit: git commit failed for r$Rev (exit $LASTEXITCODE)."
         }
@@ -542,13 +550,21 @@ function Get-SvnFloorCommit {
 # Returns the GREATEST replayed revision value as [int], or 0 when `main` carries no replayed
 # revision. Used to grade a target R against cur BEFORE the floor lookup: R > cur means the aligned
 # revision has not been replayed yet (pull first) rather than "predates earliest".
-function Get-SvnHighestReplayedRev {
-    param([Parameter(Mandatory = $true)][string]$RepoDir)
+# Greatest `svn-revision:` trailer value reachable from -Ref. Centralized trailer-scan primitive
+# (security/maintainability review): one place parses the trailer, so idempotency/floor/highest/
+# alignment stay consistent and robust. Takes only the LAST `^svn-revision:` line PER COMMIT (the
+# tool-appended trailer position) -- a stray lookalike earlier in a body is ignored, and replay
+# bodies are additionally defanged at mint time (Invoke-SvnReplayCommit). Returns [int], 0 when none.
+function Get-SvnMaxTrailerRev {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][string]$Ref
+    )
 
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {
-        $shas = @(& git -C $RepoDir log main --format='%H' 2>$null)
+        $shas = @(& git -C $RepoDir log $Ref --format='%H' 2>$null)
         $best = 0
         foreach ($sha in $shas) {
             if ([string]::IsNullOrWhiteSpace($sha)) { continue }
@@ -563,6 +579,11 @@ function Get-SvnHighestReplayedRev {
     } finally {
         $ErrorActionPreference = $prevEAP
     }
+}
+
+function Get-SvnHighestReplayedRev {
+    param([Parameter(Mandatory = $true)][string]$RepoDir)
+    return (Get-SvnMaxTrailerRev -RepoDir $RepoDir -Ref 'main')
 }
 
 # --- tp:* branch-metadata property helpers (U2) ------------------------------
