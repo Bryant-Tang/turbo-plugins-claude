@@ -132,6 +132,46 @@ BeforeAll {
         if ([string]::IsNullOrWhiteSpace($raw)) { return 0 }
         return @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }).Count
     }
+
+    # The steady-state pull script (U7 scenario: a follow-up pull must find nothing new).
+    $script:SyncScript = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Sync-FromSvn.ps1')
+
+    # Build a small svn repo with -Total revisions at the ROOT (import=r1 + (Total-1) file commits).
+    # Returns the file:/// URI (root), or $null on failure. Client calls isolated via -ConfigDir.
+    function New-SmallSvnRepo {
+        param([string]$Sandbox, [string]$Name = 'svnrepo', [int]$Total = 3, [string]$ConfigDir)
+        $repo = [System.IO.Path]::Combine($Sandbox, $Name)
+        & svnadmin create $repo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($repo -replace '\\', '/')
+        $seed = [System.IO.Path]::Combine($Sandbox, "seed-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+        $null = New-Item -ItemType Directory -Path $seed -Force
+        $enc = New-Object Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($seed, 'app.txt'), "app`n", $enc)
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($seed, '.gitignore'), "*.log`n", $enc)
+        & svn import $seed $uri -m 'import 1' --no-auto-props --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        if ($Total -gt 1) {
+            $co = [System.IO.Path]::Combine($Sandbox, "co-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+            & svn checkout $uri $co --config-dir $ConfigDir 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { return $null }
+            for ($n = 2; $n -le $Total; $n++) {
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, "file$n.txt"), "content $n`n", $enc)
+                & svn add ([System.IO.Path]::Combine($co, "file$n.txt")) --config-dir $ConfigDir 2>$null | Out-Null
+                Push-Location $co
+                try { & svn commit -m "change $n" --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+                if ($LASTEXITCODE -ne 0) { return $null }
+            }
+        }
+        return $uri
+    }
+
+    # Count trailer-bearing replay commits on remote-svn/main (numeric svn-revision trailers).
+    function Get-BridgeTrailerCount {
+        param([string]$Root)
+        $raw = Run-Git-Capture -Cwd $Root -GitArgs @('log', 'remote-svn/main', '--format=%(trailers:key=svn-revision,valueonly)')
+        return @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9]+$' }).Count
+    }
 }
 
 AfterAll {
@@ -189,9 +229,12 @@ Describe 'Initialize-GitSvnBridge' {
                 $uri = New-SvnRepo -Sandbox $sb -Load
                 if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build seeded svn repo'; return }
 
-                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk")
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk", '-Granularity', 'squash')
                 $res.ExitCode | Should -Be 0
                 $res.Stdout | Should -Match 'SVN bridge connected\.'
+
+                # squash => exactly ONE replay commit on remote-svn/main (single lump).
+                [int](Run-Git-Capture -Cwd $root -GitArgs @('rev-list', '--count', 'remote-svn/main')) | Should -Be 1
 
                 # main carries the imported svn content.
                 $mainFiles = Run-Git-Capture -Cwd $root -GitArgs @('ls-files')
@@ -224,7 +267,7 @@ Describe 'Initialize-GitSvnBridge' {
                 $uri = New-SvnRepo -Sandbox $sb -Load
                 if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build seeded svn repo'; return }
 
-                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk")
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk", '-Granularity', 'squash')
                 $res.ExitCode | Should -Not -Be 0
                 $res.Combined | Should -Match 'TP_TOKEN:MERGE_CONFLICT'
                 $res.Combined | Should -Match 'README\.txt'
@@ -246,7 +289,7 @@ Describe 'Initialize-GitSvnBridge' {
                 $uri = New-SvnRepo -Sandbox $sb -Load
                 if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build seeded svn repo'; return }
 
-                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk")
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk", '-Granularity', 'squash')
                 $res.ExitCode | Should -Be 0
                 $res.Stdout | Should -Match 'SVN bridge connected\.'
 
@@ -350,14 +393,15 @@ Describe 'Initialize-GitSvnBridge' {
         }
     }
 
-    Context 'Scenario 8: mid-run failure after worktree creation -> rollback, no residue' {
-        It 'on failed svn checkout rolls back the bridge branch + worktree dir' -Skip:(-not $SvnAvailable) {
+    Context 'Scenario 8: unreachable (scheme-valid) SVN URL -> fail, no residue' {
+        It 'on an unreachable URL leaves no bridge branch + no worktree dir' -Skip:(-not $SvnAvailable) {
             $sb = New-Sandbox -Tag 'igsb-8'
             try {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-CaseBRepo -Root $root -Files @{ 'original.txt' = "git-only`n" }
                 # A scheme-valid file:// URL pointing at a non-existent repo -> passes URL validation,
-                # passes git init/identity/case-split, then svn checkout (step 8) fails -> rollback.
+                # passes git init/identity/case-split, then the U7 early granularity probe (svn info on
+                # the URL, BEFORE the worktree exists) fails -> clean exit, nothing created.
                 $bogus = [System.IO.Path]::Combine($sb, 'no-such-repo')
                 $bogusUri = 'file:///' + ($bogus -replace '\\', '/')
 
@@ -367,6 +411,108 @@ Describe 'Initialize-GitSvnBridge' {
                 # rollback removed both the bridge branch and the bridge worktree dir.
                 (Get-BridgeBranchCount -Root $root) | Should -Be 0
                 [System.IO.Directory]::Exists((Get-BridgePath -Root $root)) | Should -BeFalse
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 9 (U7): 5-or-fewer-revision URL -> per-revision auto import (trailer-greppable, not a lump)' {
+        It 'replays each revision as its own trailer-bearing commit; svn:ignore=.git and .svn untracked' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-9'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SmallSvnRepo -Sandbox $sb -Total 3 -ConfigDir $cfg
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the small svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $res.Stdout | Should -Match 'SVN bridge connected\.'
+                # No granularity prompt on a <=5 import (replays per-revision silently).
+                $res.Stdout | Should -Not -Match 'TP_TOKEN:GRANULARITY_REQUIRED'
+                # 3 revisions -> 3 trailer-bearing replay commits (NOT one squashed lump).
+                (Get-BridgeTrailerCount -Root $root) | Should -Be 3
+
+                # Setup invariants: svn:ignore is exactly .git; the .svn metadata dir is not git-tracked.
+                $bridge = Get-BridgePath -Root $root
+                (Get-SvnIgnore -WcPath $bridge -ConfigDir $cfg) | Should -BeExactly '.git'
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('ls-files')) | Should -Not -Match '(^|\n)\.svn'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 10 (U7): >5-revision URL, no -Granularity -> prompt token, ZERO residue' {
+        It 'emits TP_TOKEN:GRANULARITY_REQUIRED and creates no bridge' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-10'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SmallSvnRepo -Sandbox $sb -Total 7 -ConfigDir $cfg
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the small svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $res.Stdout | Should -Match 'TP_TOKEN:GRANULARITY_REQUIRED count=7'
+                # Residue-free: nothing created, so a re-run with a choice is clean.
+                (Get-BridgeBranchCount -Root $root) | Should -Be 0
+                [System.IO.Directory]::Exists((Get-BridgePath -Root $root)) | Should -BeFalse
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 11 (U7): >5-revision URL + -Granularity per-revision -> N replay commits' {
+        It 'per-revision imports all 7 revisions as 7 trailer-bearing commits' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-11'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SmallSvnRepo -Sandbox $sb -Total 7 -ConfigDir $cfg
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the small svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri, '-Granularity', 'per-revision')
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $res.Stdout | Should -Match 'SVN bridge connected\.'
+                (Get-BridgeTrailerCount -Root $root) | Should -Be 7
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario 12 (U7): after bootstrap, a subsequent tp-pull-from-svn finds nothing new' {
+        It 'the follow-up pull is a no-op (cur = HEAD, no double-import)' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-12'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SmallSvnRepo -Sandbox $sb -Total 3 -ConfigDir $cfg
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the small svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+
+                # Skeleton .gitignore (as tp-setup writes post-bootstrap) so the nested bridge worktree
+                # dir does not show as untracked and trip the pull's main-dirty guard.
+                $enc = New-Object Text.UTF8Encoding($false)
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, '.gitignore'), "/.turbo-plugin/worktrees/`n.svn/`n*.log`n", $enc)
+                $null = Run-Git -Cwd $root -GitArgs @('add', '.gitignore')
+                $null = Run-Git -Cwd $root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '-m', 'chore: skeleton gitignore')
+
+                $before = [int](Run-Git-Capture -Cwd $root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $pull = Invoke-PsScript -ScriptPath $script:SyncScript -Cwd $root -ScriptArgs @('-Branch', 'main')
+                $pull.ExitCode | Should -Be 0 -Because $pull.Combined
+                $pull.Stdout | Should -Match 'Already up to date'
+                $after = [int](Run-Git-Capture -Cwd $root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                ($after - $before) | Should -Be 0
             } finally {
                 Remove-Sandbox -Dir $sb
             }

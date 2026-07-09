@@ -154,11 +154,12 @@ test_granularity_value_accepted() {
 # ── Case 6: AE1 — 3 new revs, per-revision auto → 3 replay commits ──────────────
 test_ae1_per_revision_three_commits() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
-    local spec root uri repo cfg before after rc out
+    local spec root uri repo cfg before after rc out before_tr after_tr
     spec="$(build_pushed_bridge "$SB")" || { startSkipping; return 0; }
     root="${spec%%|*}"; uri="$(printf '%s' "$spec" | cut -d'|' -f2)"; cfg="${spec##*|}"
     add_svn_revisions "$uri" "$cfg" "$SB" 3 'change number' || { startSkipping; return 0; }
     before="$(git -C "$root" rev-list --count remote-svn/main)"
+    before_tr="$(count_trailer_commits "$root")"
     out="$(cd "$root" && bash "$SCRIPT" --branch main 2>&1)"; rc=$?
     assertEquals "per-revision pull exit 0 ($out)" 0 "$rc"
     after="$(git -C "$root" rev-list --count remote-svn/main)"
@@ -172,8 +173,10 @@ test_ae1_per_revision_three_commits() {
     local subj
     subj="$(git -C "$root" log main --format='%s' | grep -cE 'change number [123]$' || true)"
     assertEquals 'three per-revision subjects on main' 3 "$subj"
-    # Three svn-revision trailers newly present.
-    assertEquals 'three trailer-bearing replay commits' 3 "$(count_trailer_commits "$root")"
+    # Three svn-revision trailers NEWLY present (delta -- the bootstrap import commit already carries
+    # its own trailer now, so count the increase rather than the absolute total).
+    after_tr="$(count_trailer_commits "$root")"
+    assertEquals 'three new trailer-bearing replay commits' 3 "$((after_tr - before_tr))"
 }
 
 # ── Case 7: >5 new revs, no --granularity → structured signal, zero commits ─────

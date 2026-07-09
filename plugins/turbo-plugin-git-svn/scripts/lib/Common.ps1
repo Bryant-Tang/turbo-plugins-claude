@@ -346,6 +346,147 @@ function Invoke-SvnReplayCommit {
     }
 }
 
+# --- Shared per-revision replay loop (U3 pull + U7 first-import bootstrap) -----
+# One shared body so the steady-state pull (Sync-FromSvn) and the first-import bootstrap
+# (Initialize-GitSvnBridge) mint IDENTICAL commit shapes (author / date / trailer). Both callers own
+# their own >5 granularity GATE (the residue-free "needs choice" exit differs per caller); this code
+# only MATERIALISES an already-chosen mode against a bridge worktree at the resume baseline.
+
+# Replay ONE svn revision: svn update -r R in the bridge worktree, assert the WC is uniformly at R
+# (KTD4 sparse guard), then hand off to Invoke-SvnReplayCommit. Returns the U1 token.
+function Invoke-SvnOneReplay {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][int]$Rev,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Author,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Date,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message
+    )
+    Push-Location $RemotePath
+    try {
+        & svn update -r $Rev
+        if ($LASTEXITCODE -ne 0) { throw "svn update -r $Rev failed" }
+    } finally {
+        Pop-Location
+    }
+    $wc = [int]((& svn info --show-item revision $RemotePath | Out-String).Trim())
+    if ($wc -ne $Rev) { throw "Remote worktree not uniformly at r$Rev (got r$wc); refusing per-revision replay." }
+    return (Invoke-SvnReplayCommit -RepoDir $RemotePath -Rev $Rev -Author $Author -Date $Date -Message $Message)
+}
+
+# Squash the current SVN HEAD-of-range into ONE boundary commit on the bridge worktree's HEAD.
+# Subject `sync: svn r<rev>` (steady-state shape) + a second -m appending the `svn-revision: <rev>`
+# trailer so floor-lookup (U5) treats the squashed range as a single boundary. Skips an empty delta.
+function Invoke-SvnBoundaryCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][int]$Rev
+    )
+    & git -C $RemotePath add -A
+    if ($LASTEXITCODE -ne 0) { throw 'git add failed in remote worktree' }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        & git -C $RemotePath diff --cached --quiet 2>$null | Out-Null
+        $hasChanges = ($LASTEXITCODE -ne 0)
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if ($hasChanges) {
+        & git -C $RemotePath -c commit.gpgsign=false commit -m "sync: svn r$Rev" -m "svn-revision: $Rev"
+        if ($LASTEXITCODE -ne 0) { throw 'git commit failed in remote worktree' }
+    }
+}
+
+# Enumerate r(Cur+1)..HeadRev on the bridge worktree, then materialise commits per -Mode:
+#   per-revision : one replay commit per revision (empty deltas skipped)
+#   squash       : one boundary commit at HeadRev
+#   range        : per-revision inside <lo>:<hi> (from -Range), squash the leading + trailing rest
+# Re-enumerates from the WC so the caller only hands over the decided mode.
+function Invoke-SvnReplayDispatch {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][string]$RemoteName,
+        [Parameter(Mandatory = $true)][int]$Cur,
+        [Parameter(Mandatory = $true)][int]$HeadRev,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [string]$Range = ''
+    )
+    # KTD4 sparse guard: a full (infinite-depth) checkout is required so `svn update -r R` yields a
+    # uniform per-revision tree -- otherwise an empty post-update delta could mean "sparse update",
+    # not "identical tree". Assert once, before the loop.
+    $depth = (& svn info --show-item depth $RemotePath | Out-String).Trim()
+    if ($depth -ne 'infinity') {
+        throw "Remote worktree depth is '$depth', not 'infinity'; per-revision replay needs a full checkout."
+    }
+
+    $revs = @()
+    if ($Cur -lt $HeadRev) {
+        $logXml = (& svn log --xml -r "$($Cur + 1):$HeadRev" $RemotePath | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw "svn log failed for r$($Cur + 1):r$HeadRev" }
+        $revs = @(Get-SvnRevisions -LogXml $logXml)
+    }
+
+    if ($Mode -eq 'per-revision') {
+        Write-Output "Replaying $(@($revs).Count) SVN revision(s) r$($Cur + 1)..r$HeadRev into $RemoteName..."
+        foreach ($rec in $revs) {
+            $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message
+        }
+    }
+    elseif ($Mode -eq 'squash') {
+        Write-Output "Squashing SVN r$($Cur + 1)..r$HeadRev into one commit in $RemoteName..."
+        Push-Location $RemotePath
+        try {
+            & svn update
+            if ($LASTEXITCODE -ne 0) { throw 'svn update failed' }
+        } finally {
+            Pop-Location
+        }
+        Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev $HeadRev
+    }
+    elseif ($Mode -eq 'range') {
+        if ($Range -notmatch '^[0-9]+:[0-9]+$') {
+            throw "Granularity 'range' requires -Range <lo>:<hi> (got '$Range')."
+        }
+        $loRaw, $hiRaw = $Range -split ':', 2
+        $lo = [Math]::Max([int]$loRaw, $Cur + 1)
+        $hi = [Math]::Min([int]$hiRaw, $HeadRev)
+        if ($lo -gt $hi) { throw "Granularity range r$loRaw:r$hiRaw does not overlap the pending r$($Cur + 1):r$HeadRev." }
+        Write-Output "Replaying r$lo..r$hi per-revision, squashing the rest, into $RemoteName..."
+        # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
+        if (($lo - 1) -ge ($Cur + 1)) {
+            Push-Location $RemotePath
+            try {
+                & svn update -r ($lo - 1)
+                if ($LASTEXITCODE -ne 0) { throw "svn update -r $($lo - 1) failed" }
+            } finally {
+                Pop-Location
+            }
+            Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev ($lo - 1)
+        }
+        # Per-revision inside [lo,hi].
+        foreach ($rec in $revs) {
+            if ($rec.Rev -ge $lo -and $rec.Rev -le $hi) {
+                $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message
+            }
+        }
+        # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=HeadRev.
+        if ($hi -lt $HeadRev) {
+            Push-Location $RemotePath
+            try {
+                & svn update
+                if ($LASTEXITCODE -ne 0) { throw 'svn update failed' }
+            } finally {
+                Pop-Location
+            }
+            Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev $HeadRev
+        }
+    }
+    else {
+        throw "Unknown granularity '$Mode' (expected per-revision | squash | range)."
+    }
+}
+
 # Floor revision->commit lookup (KTD3 floor semantics, R8/R14). Over `main` (STRICTLY main, never
 # HEAD), return the SHA of the newest commit whose `svn-revision:` trailer value is the GREATEST
 # value <= -TargetRev (SVN revisions are sparse, so an arbitrary target usually has no exact match).

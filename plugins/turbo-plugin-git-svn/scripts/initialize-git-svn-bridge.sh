@@ -23,11 +23,15 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 SVN_URL=''
 BRANCH='main'
+GRANULARITY=''
+RANGE=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --svn-url) [[ $# -ge 2 ]] || { echo "Error: --svn-url requires a value" >&2; exit 1; }; SVN_URL="$2"; shift 2 ;;
-    --branch)  [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --svn-url)     [[ $# -ge 2 ]] || { echo "Error: --svn-url requires a value" >&2; exit 1; }; SVN_URL="$2"; shift 2 ;;
+    --branch)      [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --granularity) [[ $# -ge 2 ]] || { echo "Error: --granularity requires a value" >&2; exit 1; }; GRANULARITY="$2"; shift 2 ;;
+    --range)       [[ $# -ge 2 ]] || { echo "Error: --range requires a value" >&2; exit 1; }; RANGE="$2"; shift 2 ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -128,6 +132,37 @@ if [[ "$WT_EXISTS" == true ]]; then
   echo "Error: worktree '$REMOTE_NAME' already exists at: $REMOTE_PATH" >&2; exit 1
 fi
 
+# ---- step 6.5 (U7): decide the first-import granularity from the URL's history, BEFORE creating
+# the bridge worktree, so a ">5 needs choice" exit leaves ZERO residue (a clean re-run). ----
+# HEAD_REV=0 (empty repo) or an empty log => LEGACY single import commit (today's shape). <=5
+# revisions => per-revision (silent). >5 => needs a granularity choice; absent one, emit the
+# structured token + exit 0 with nothing created (so the SKILL can prompt, then re-invoke).
+HEAD_REV="$(svn info --show-item revision "$SVN_URL" 2>/dev/null | tr -d '[:space:]')" \
+  || { echo "Error: could not read SVN revision from '$SVN_URL'. Is the URL reachable?" >&2; exit 1; }
+
+FIRST_REV=0
+IMPORT_COUNT=0
+if [[ "$HEAD_REV" =~ ^[0-9]+$ ]] && (( HEAD_REV > 0 )); then
+  IMPORT_LOG_XML="$(svn log --xml -r "1:$HEAD_REV" "$SVN_URL" 2>/dev/null)" \
+    || { echo "Error: could not read SVN history from '$SVN_URL'." >&2; exit 1; }
+  # FIRST_REV = earliest revision touching the URL path; IMPORT_COUNT = total (U1 enumerator).
+  while IFS= read -r -d '' rec; do
+    IMPORT_COUNT=$((IMPORT_COUNT + 1))
+    if (( FIRST_REV == 0 )); then FIRST_REV="${rec%%$'\037'*}"; fi
+  done < <(printf '%s' "$IMPORT_LOG_XML" | svn_enumerate_revisions)
+fi
+
+MODE='per-revision'
+if (( IMPORT_COUNT == 0 )); then
+  MODE='legacy-empty'
+elif (( IMPORT_COUNT > 5 )); then
+  if [[ -z "$GRANULARITY" ]]; then
+    printf 'TP_TOKEN:GRANULARITY_REQUIRED count=%s range=r%s:r%s\n' "$IMPORT_COUNT" "$FIRST_REV" "$HEAD_REV"
+    exit 0
+  fi
+  MODE="$GRANULARITY"
+fi
+
 # The worktrees container does not exist yet on a first bootstrap; create it so `git worktree add`
 # has a parent. new-remote-bridge.sh can assume it exists (it runs post-setup); this script IS the
 # setup, so it must create it.
@@ -162,9 +197,15 @@ git -C "$REMOTE_PATH" checkout --orphan "$REMOTE_BRANCH"
 git -C "$REMOTE_PATH" rm -rf --cached . >/dev/null 2>&1 || true
 git -C "$REMOTE_PATH" clean -dffx
 
-# ---- step 8: PLAIN svn checkout (no --force; the worktree is empty except the .git pointer). ----
-echo "Running: svn checkout $SVN_URL $REMOTE_PATH"
-svn checkout "$SVN_URL" "$REMOTE_PATH"
+# ---- step 8 (U7): svn checkout (no --force; the worktree is empty except the .git pointer).
+# per-revision/range replay forward from the FIRST revision; squash/legacy start at HEAD. ----
+if [[ "$MODE" == "per-revision" || "$MODE" == "range" ]]; then
+  echo "Running: svn checkout -r $FIRST_REV $SVN_URL $REMOTE_PATH"
+  svn checkout -r "$FIRST_REV" "$SVN_URL" "$REMOTE_PATH"
+else
+  echo "Running: svn checkout $SVN_URL $REMOTE_PATH"
+  svn checkout "$SVN_URL" "$REMOTE_PATH"
+fi
 
 # ---- step 9: untrack .git from the svn working copy (tolerate "not tracked"). ----
 if [[ -e "$REMOTE_PATH/.git" ]]; then
@@ -178,21 +219,32 @@ if ! grep -qxF '.svn/' "$PEER_GI" 2>/dev/null; then
   printf '%s\n' '.svn/' >> "$PEER_GI"
 fi
 
-# ---- step 11: stage + commit the svn content onto the orphan bridge branch. ----
-git -C "$REMOTE_PATH" add -A
-SVN_REV="$(svn info --show-item revision "$REMOTE_PATH" 2>/dev/null || true)"
-if git -C "$REMOTE_PATH" diff --cached --quiet; then
-  git -C "$REMOTE_PATH" commit --allow-empty -m "init: remote-svn/$BRANCH branch"
+# ---- step 11 (U7): materialise the import commit(s) onto the orphan bridge branch. ----
+# legacy-empty (empty / no-content URL): today's single import commit. Otherwise reuse the shared
+# U3 enumerate+replay dispatch so the bootstrap and the steady-state pull mint IDENTICAL commit
+# shapes (author / date / svn-revision trailer). cur = FIRST_REV-1 so the loop starts at FIRST_REV.
+if [[ "$MODE" == "legacy-empty" ]]; then
+  git -C "$REMOTE_PATH" add -A
+  SVN_REV="$(svn info --show-item revision "$REMOTE_PATH" 2>/dev/null || true)"
+  if git -C "$REMOTE_PATH" diff --cached --quiet; then
+    git -C "$REMOTE_PATH" commit --allow-empty -m "init: remote-svn/$BRANCH branch"
+  else
+    git -C "$REMOTE_PATH" commit -m "sync: svn r$SVN_REV"
+  fi
 else
-  git -C "$REMOTE_PATH" commit -m "sync: svn r$SVN_REV"
+  svn_replay_dispatch "$REMOTE_PATH" "$REMOTE_NAME" "$((FIRST_REV - 1))" "$HEAD_REV" "$MODE" "$RANGE"
 fi
 
-# ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs). ----
+# ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs), then
+# `svn update` so the whole WC sits uniformly at SVN HEAD -- a subsequent tp-pull-from-svn then
+# resolves cur=HEAD and imports nothing (no double-import; KTD4 mixed-revision floor). ----
 (
   cd "$REMOTE_PATH"
   svn propset svn:ignore '.git' '.'
   svn commit -m 'svn:ignore=.git (turbo-plugin bridge)'
+  svn update
 )
+SVN_REV="$(svn info --show-item revision "$REMOTE_PATH" 2>/dev/null | tr -d '[:space:]' || true)"
 
 # All bridge-creation steps succeeded; disable the rollback trap before the merge.
 trap - ERR

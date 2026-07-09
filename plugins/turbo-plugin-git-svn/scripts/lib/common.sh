@@ -473,6 +473,113 @@ svn_replay_commit() {
   echo "COMMIT:$sha"
 }
 
+# ── Shared per-revision replay loop (U3 pull + U7 first-import bootstrap) ──────
+# One shared body so the steady-state pull (Sync-FromSvn) and the first-import bootstrap
+# (Initialize-GitSvnBridge) mint IDENTICAL commit shapes (author / date / trailer). Both callers
+# own their own >5 granularity GATE (the residue-free "needs choice" exit differs per caller); this
+# code only MATERIALISES an already-chosen mode against a bridge worktree positioned at the resume
+# baseline.
+
+# Replay ONE svn revision as a git commit: svn update -r R in the bridge worktree, assert the WC is
+# uniformly at R (KTD4 sparse guard -- an empty delta must mean "identical tree", never a partial
+# update), then hand off to svn_replay_commit (empty-delta + idempotent skips live there).
+# Args: <remote_path> <rev> <author> <date> <message>
+svn_replay_one_revision() {
+  local remote_path="$1" rev="$2" author="$3" date="$4" message="$5" wc
+  ( cd "$remote_path" && svn update -r "$rev" ) || { echo "Error: svn update -r $rev failed" >&2; return 1; }
+  wc="$(svn info --show-item revision "$remote_path" | tr -d '[:space:]')"
+  if [[ "$wc" != "$rev" ]]; then
+    echo "Error: remote worktree not uniformly at r$rev (got r$wc); refusing per-revision replay." >&2
+    return 1
+  fi
+  svn_replay_commit "$remote_path" "$rev" "$author" "$date" "$message" >/dev/null || return 1
+}
+
+# Squash the current SVN HEAD-of-range into ONE boundary commit on the bridge worktree's HEAD.
+# Subject stays `sync: svn r<rev>` (steady-state shape); a second -m appends the `svn-revision: <rev>`
+# trailer so floor-lookup (U5) treats the squashed range as a single boundary. Skips when
+# `git add -A` leaves the index unchanged (empty delta).
+# Args: <remote_path> <rev>
+svn_boundary_commit() {
+  local remote_path="$1" rev="$2"
+  git -C "$remote_path" add -A
+  if git -C "$remote_path" diff --cached --quiet; then
+    return 0
+  fi
+  git -C "$remote_path" -c commit.gpgsign=false commit -m "sync: svn r$rev" -m "svn-revision: $rev"
+}
+
+# Enumerate r(cur+1)..head_rev on the bridge worktree, then materialise commits per <mode>:
+#   per-revision : one replay commit per revision (empty deltas skipped)
+#   squash       : one boundary commit at head_rev
+#   range        : per-revision inside <lo>:<hi> (from <range>), squash the leading + trailing rest
+# Re-enumerates from the WC so the caller only has to hand over the decided mode (no array passing).
+# Args: <remote_path> <remote_name> <cur> <head_rev> <mode> [<range>]
+svn_replay_dispatch() {
+  local remote_path="$1" remote_name="$2" cur="$3" head_rev="$4" mode="$5" range="${6:-}"
+
+  # KTD4 sparse guard: a full (infinite-depth) checkout is required so `svn update -r R` yields a
+  # uniform per-revision tree; assert once before touching anything.
+  local depth
+  depth="$(svn info --show-item depth "$remote_path" | tr -d '[:space:]')"
+  if [[ "$depth" != "infinity" ]]; then
+    echo "Error: remote worktree depth is '$depth', not 'infinity'; per-revision replay needs a full checkout." >&2
+    return 1
+  fi
+
+  local -a REC_REV=() REC_AUTHOR=() REC_DATE=() REC_MSG=()
+  if (( cur < head_rev )); then
+    local log_xml
+    log_xml="$(svn log --xml -r "$((cur + 1)):$head_rev" "$remote_path")" \
+      || { echo "Error: svn log failed for r$((cur + 1)):r$head_rev" >&2; return 1; }
+    while IFS=$'\037' read -r -d '' _rev _author _date _msg; do
+      REC_REV+=("$_rev"); REC_AUTHOR+=("$_author"); REC_DATE+=("$_date"); REC_MSG+=("$_msg")
+    done < <(printf '%s' "$log_xml" | svn_enumerate_revisions)
+  fi
+
+  local i r lo hi
+  if [[ "$mode" == "per-revision" ]]; then
+    echo "Replaying ${#REC_REV[@]} SVN revision(s) r$((cur + 1))..r$head_rev into $remote_name..."
+    for i in "${!REC_REV[@]}"; do
+      svn_replay_one_revision "$remote_path" "${REC_REV[$i]}" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" || return 1
+    done
+  elif [[ "$mode" == "squash" ]]; then
+    echo "Squashing SVN r$((cur + 1))..r$head_rev into one commit in $remote_name..."
+    ( cd "$remote_path" && svn update ) || { echo "Error: svn update failed" >&2; return 1; }
+    svn_boundary_commit "$remote_path" "$head_rev" || return 1
+  elif [[ "$mode" == "range" ]]; then
+    if [[ ! "$range" =~ ^[0-9]+:[0-9]+$ ]]; then
+      echo "Error: granularity 'range' requires --range <lo>:<hi> (got '$range')" >&2; return 1
+    fi
+    lo="${range%%:*}"; hi="${range##*:}"
+    if (( lo < cur + 1 )); then lo=$((cur + 1)); fi
+    if (( hi > head_rev )); then hi=$head_rev; fi
+    if (( lo > hi )); then
+      echo "Error: granularity range does not overlap the pending r$((cur + 1)):r$head_rev." >&2; return 1
+    fi
+    echo "Replaying r$lo..r$hi per-revision, squashing the rest, into $remote_name..."
+    # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
+    if (( lo - 1 >= cur + 1 )); then
+      ( cd "$remote_path" && svn update -r "$((lo - 1))" ) || { echo "Error: svn update -r $((lo - 1)) failed" >&2; return 1; }
+      svn_boundary_commit "$remote_path" "$((lo - 1))" || return 1
+    fi
+    # Per-revision inside [lo,hi].
+    for i in "${!REC_REV[@]}"; do
+      r="${REC_REV[$i]}"
+      if (( r >= lo && r <= hi )); then
+        svn_replay_one_revision "$remote_path" "$r" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" || return 1
+      fi
+    done
+    # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=head_rev.
+    if (( hi < head_rev )); then
+      ( cd "$remote_path" && svn update ) || { echo "Error: svn update failed" >&2; return 1; }
+      svn_boundary_commit "$remote_path" "$head_rev" || return 1
+    fi
+  else
+    echo "Error: unknown granularity '$mode' (expected per-revision | squash | range)" >&2; return 1
+  fi
+}
+
 # Floor revision→commit lookup (KTD3 floor semantics, R8/R14). Over `main` (STRICTLY main,
 # never HEAD), return the SHA of the newest commit whose `svn-revision:` trailer value is the
 # GREATEST value <= <target_rev>. SVN revisions are repo-global/sparse, so an arbitrary target

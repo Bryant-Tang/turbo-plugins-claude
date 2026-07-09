@@ -335,6 +335,7 @@ Describe 'Sync-FromSvn' {
                 if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revisions'; return }
 
                 $before = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $trBefore = @(Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main')
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
                 $res.ExitCode | Should -Be 0 -Because $res.Combined
                 $res.Stdout | Should -Not -Match 'TP_TOKEN:GRANULARITY_REQUIRED'
@@ -342,7 +343,9 @@ Describe 'Sync-FromSvn' {
                 ($after - $before) | Should -Be 3
 
                 # Exactly the three new revisions are carried as trailers (not one squashed boundary).
-                (Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main') | Should -Be @($revs | Sort-Object)
+                # Delta over the pull: the bootstrap import commit already carries its own trailer now.
+                $newTrailers = @((Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main') | Where-Object { $_ -notin $trBefore } | Sort-Object)
+                $newTrailers | Should -Be @($revs | Sort-Object)
                 # Three distinct subjects reached main.
                 $subjects = Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', 'main', '--format=%s')
                 $subjects | Should -Match 'alpha change'
@@ -432,14 +435,17 @@ Describe 'Sync-FromSvn' {
                 $hi = $base + 5
 
                 $before = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
+                $trBefore = @(Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main')
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main', '-Granularity', 'range', '-Range', "$lo`:$hi")
                 $res.ExitCode | Should -Be 0 -Because $res.Combined
                 $after = [int](Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
                 # leading squash (1) + per-revision [lo..hi] (3) + trailing squash (1) = 5.
                 ($after - $before) | Should -Be 5
 
+                # Delta over the pull (the bootstrap import commit already carries its own trailer).
                 $expected = @(($lo - 1)) + @($lo..$hi) + @($head) | Sort-Object
-                (Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main') | Should -Be $expected
+                $newTrailers = @((Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main') | Where-Object { $_ -notin $trBefore } | Sort-Object)
+                $newTrailers | Should -Be $expected
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
@@ -476,12 +482,15 @@ Describe 'Sync-FromSvn' {
             try {
                 $ctx = New-PushedBridge -Sandbox $sb
                 if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                # Bootstrap import commit already carries its own trailer -- exclude that baseline so the
+                # counts below measure only the PULLED replay commits (delta).
+                $trBase = @(Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main')
                 $revs = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 3
                 if ($null -eq $revs) { Set-ItResult -Skipped -Because 'could not add svn revisions'; return }
 
                 $res1 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
                 $res1.ExitCode | Should -Be 0 -Because $res1.Combined
-                @(Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main').Count | Should -Be 3
+                @((Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main') | Where-Object { $_ -notin $trBase }).Count | Should -Be 3
 
                 # Simulate an interrupted pull: move main back BEFORE the merge so the 3 trailer-bearing
                 # replay commits sit ahead of main (the resumable state).
@@ -493,8 +502,8 @@ Describe 'Sync-FromSvn' {
                 $res2 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
                 $res2.ExitCode | Should -Be 0 -Because $res2.Combined
                 $res2.Combined | Should -Not -Match 'unmerged sync'
-                # Exactly 4 replay commits total on remote-svn/main -- the first 3 were NOT duplicated.
-                $trailers = @(Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main')
+                # Exactly 4 PULLED replay commits on remote-svn/main -- the first 3 were NOT duplicated.
+                $trailers = @((Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main') | Where-Object { $_ -notin $trBase })
                 $trailers.Count | Should -Be 4
                 (@($trailers | Sort-Object -Unique)).Count | Should -Be 4
             } finally { Remove-Sandbox -Dir $sb }

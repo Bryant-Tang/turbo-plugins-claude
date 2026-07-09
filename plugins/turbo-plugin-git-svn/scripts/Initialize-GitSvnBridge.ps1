@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$SvnUrl = '',
-    [string]$Branch = 'main'
+    [string]$Branch = 'main',
+    [string]$Granularity = '',
+    [string]$Range = ''
 )
 
 Set-StrictMode -Version Latest
@@ -125,6 +127,45 @@ try {
     if ($existingBridge) { throw "Bridge branch '$remoteBranch' already exists." }
     if ($worktreeExists) { throw "Worktree '$remoteWorktreeName' already exists at: $remoteWorktreePath" }
 
+    # ---- step 6.5 (U7): decide the first-import granularity from the URL's history, BEFORE creating
+    # the bridge worktree, so a ">5 needs choice" exit leaves ZERO residue (a clean re-run). ----
+    # headRev=0 (empty repo) or an empty log => LEGACY single import commit (today's shape). <=5
+    # revisions => per-revision (silent). >5 => needs a granularity choice; absent one, emit the
+    # structured token + exit 0 with nothing created (so the SKILL can prompt, then re-invoke).
+    $eaSvn = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $headRevRaw = & svn info --show-item revision $SvnUrl 2>$null
+    $svnInfoRc = $LASTEXITCODE
+    $ErrorActionPreference = $eaSvn
+    if ($svnInfoRc -ne 0) { throw "Could not read SVN revision from '$SvnUrl'. Is the URL reachable?" }
+    $headRev = [int](($headRevRaw | Out-String).Trim())
+
+    $firstRev = 0
+    $importCount = 0
+    if ($headRev -gt 0) {
+        $eaSvn = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        $importLogXml = (& svn log --xml -r "1:$headRev" $SvnUrl 2>$null | Out-String)
+        $svnLogRc = $LASTEXITCODE
+        $ErrorActionPreference = $eaSvn
+        if ($svnLogRc -ne 0) { throw "Could not read SVN history from '$SvnUrl'." }
+        $importRecs = @(Get-SvnRevisions -LogXml $importLogXml)
+        $importCount = @($importRecs).Count
+        if ($importCount -gt 0) { $firstRev = [int]$importRecs[0].Rev }
+    }
+
+    $mode = 'per-revision'
+    if ($importCount -eq 0) {
+        $mode = 'legacy-empty'
+    }
+    elseif ($importCount -gt 5) {
+        if ([string]::IsNullOrWhiteSpace($Granularity)) {
+            Write-Output "TP_TOKEN:GRANULARITY_REQUIRED count=$importCount range=r$firstRev:r$headRev"
+            exit 0
+        }
+        $mode = $Granularity
+    }
+
     # The worktrees container does not exist yet on a first bootstrap; create it so `git worktree
     # add` has a parent. New-RemoteBridge can assume it exists (it runs post-setup); this script IS
     # the setup, so it must create it.
@@ -153,9 +194,15 @@ try {
         & git -C $remoteWorktreePath clean -dffx
         if ($LASTEXITCODE -ne 0) { throw 'git clean -dffx failed in bridge worktree' }
 
-        # ---- step 8: PLAIN svn checkout (no --force; the worktree is empty except the .git pointer). ----
-        Write-Output "Running: svn checkout $SvnUrl $remoteWorktreePath"
-        & svn checkout $SvnUrl $remoteWorktreePath
+        # ---- step 8 (U7): svn checkout (no --force; worktree empty except the .git pointer).
+        # per-revision/range replay forward from the FIRST revision; squash/legacy start at HEAD. ----
+        if ($mode -eq 'per-revision' -or $mode -eq 'range') {
+            Write-Output "Running: svn checkout -r $firstRev $SvnUrl $remoteWorktreePath"
+            & svn checkout -r $firstRev $SvnUrl $remoteWorktreePath
+        } else {
+            Write-Output "Running: svn checkout $SvnUrl $remoteWorktreePath"
+            & svn checkout $SvnUrl $remoteWorktreePath
+        }
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
 
         # ---- step 9: untrack .git from the svn working copy (tolerate "not tracked"). ----
@@ -183,35 +230,51 @@ try {
         }
         [System.IO.File]::WriteAllLines($peerGitignore, $ignoreLines)
 
-        # ---- step 11: stage + commit the svn content onto the orphan bridge branch. ----
-        & git -C $remoteWorktreePath add -A
-        if ($LASTEXITCODE -ne 0) { throw 'git add -A failed in bridge worktree' }
+        # ---- step 11 (U7): materialise the import commit(s) onto the orphan bridge branch. ----
+        # legacy-empty (empty / no-content URL): today's single import commit. Otherwise reuse the
+        # shared U3 enumerate+replay dispatch so the bootstrap and the steady-state pull mint
+        # IDENTICAL commit shapes (author / date / trailer). cur = firstRev-1 so the loop starts at
+        # firstRev.
+        if ($mode -eq 'legacy-empty') {
+            & git -C $remoteWorktreePath add -A
+            if ($LASTEXITCODE -ne 0) { throw 'git add -A failed in bridge worktree' }
 
-        $eaInfo = $ErrorActionPreference
-        $ErrorActionPreference = 'SilentlyContinue'
-        $svnRev = (& svn info --show-item revision $remoteWorktreePath 2>$null | Out-String).Trim()
-        $ErrorActionPreference = $eaInfo
+            $eaInfo = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            $svnRev = (& svn info --show-item revision $remoteWorktreePath 2>$null | Out-String).Trim()
+            $ErrorActionPreference = $eaInfo
 
-        & git -C $remoteWorktreePath diff --cached --quiet
-        $hasStaged = ($LASTEXITCODE -ne 0)
-        if ($hasStaged) {
-            & git -C $remoteWorktreePath commit -m "sync: svn r$svnRev"
-            if ($LASTEXITCODE -ne 0) { throw 'git commit of svn content failed' }
+            & git -C $remoteWorktreePath diff --cached --quiet
+            $hasStaged = ($LASTEXITCODE -ne 0)
+            if ($hasStaged) {
+                & git -C $remoteWorktreePath commit -m "sync: svn r$svnRev"
+                if ($LASTEXITCODE -ne 0) { throw 'git commit of svn content failed' }
+            } else {
+                & git -C $remoteWorktreePath commit --allow-empty -m "init: remote-svn/$Branch branch"
+                if ($LASTEXITCODE -ne 0) { throw 'git commit (empty bridge init) failed' }
+            }
         } else {
-            & git -C $remoteWorktreePath commit --allow-empty -m "init: remote-svn/$Branch branch"
-            if ($LASTEXITCODE -ne 0) { throw 'git commit (empty bridge init) failed' }
+            Invoke-SvnReplayDispatch -RemotePath $remoteWorktreePath -RemoteName $remoteWorktreeName -Cur ($firstRev - 1) -HeadRev $headRev -Mode $mode -Range $Range
         }
 
-        # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs). ----
+        # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs),
+        # then `svn update` so the whole WC sits uniformly at SVN HEAD -- a subsequent
+        # tp-pull-from-svn then resolves cur=HEAD and imports nothing (no double-import). ----
         Push-Location $remoteWorktreePath
         try {
             & svn propset svn:ignore '.git' '.'
             if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
             & svn commit -m 'svn:ignore=.git (turbo-plugin bridge)'
             if ($LASTEXITCODE -ne 0) { throw 'svn commit (svn:ignore) failed' }
+            & svn update
+            if ($LASTEXITCODE -ne 0) { throw 'svn update (normalize to HEAD) failed' }
         } finally {
             Pop-Location
         }
+        $eaFinal = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        $svnRev = (& svn info --show-item revision $remoteWorktreePath 2>$null | Out-String).Trim()
+        $ErrorActionPreference = $eaFinal
     } catch {
         # Rollback the LOCAL git side only. An already-executed `svn commit` is permanent and is NOT
         # rolled back (a re-run absorbs it). FIRST clear the ReadOnly attribute recursively on the

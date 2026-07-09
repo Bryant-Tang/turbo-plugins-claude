@@ -91,6 +91,37 @@ init_repo_with_identity() {
     git -C "$root" init -b main >/dev/null 2>&1 || git -C "$root" init >/dev/null 2>&1
     git -C "$root" config user.email 'test@turbo-plugin' >/dev/null 2>&1
     git -C "$root" config user.name  'turbo-plugin-test' >/dev/null 2>&1
+    # Pin EOL handling so a replayed/merged tree never trips autocrlf normalisation mid-pull.
+    git -C "$root" config core.autocrlf false >/dev/null 2>&1
+}
+
+# Build a small svn repo with <total> revisions at the ROOT (import=r1 + (total-1) file commits).
+# Echoes the file:/// URI on success, nothing on failure. Client calls isolated via --config-dir.
+make_small_svn_repo() {
+    local repo="$1" total="$2" seed co n uri
+    svnadmin create "$repo" >/dev/null 2>&1 || return 1
+    uri="$(svn_uri "$repo")"
+    seed="$SB/seed-$RANDOM"
+    mkdir -p "$seed"
+    printf 'app\n'   > "$seed/app.txt"
+    printf '*.log\n' > "$seed/.gitignore"
+    svn import "$seed" "$uri" -m 'import 1' --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    if (( total > 1 )); then
+        co="$SB/co-$RANDOM"
+        svn checkout "$uri" "$co" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+        for (( n = 2; n <= total; n++ )); do
+            printf 'content %s\n' "$n" > "$co/file$n.txt"
+            svn add "$co/file$n.txt" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+            ( cd "$co" && svn commit -m "change $n" --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+        done
+    fi
+    printf '%s' "$uri"
+}
+
+# Count of trailer-bearing replay commits on remote-svn/main (numeric svn-revision trailers).
+count_trailer_commits() {
+    git -C "$1" log remote-svn/main --format='%(trailers:key=svn-revision,valueonly)' 2>/dev/null \
+        | grep -cE '^[0-9]+$' || true
 }
 
 # Echo the bridge worktree path for the default 'main' branch.
@@ -126,7 +157,9 @@ test_case_a_empty_svn() {
     assertEquals 'main has only .gitignore' '.gitignore' "$(git -C "$root" ls-files | tr -d '\r')"
 }
 
-# ── Scenario 2: case (a) + NON-EMPTY svn (/trunk) -> svn content on main ───────
+# ── Scenario 2: case (a) + NON-EMPTY svn (/trunk, >5 revs) + squash -> single lump on main ─────
+# The seed /trunk carries >5 revisions, so the first import needs a granularity choice; `squash`
+# reproduces today's single-commit shape (one lump). Also pins the setup invariants.
 test_case_a_nonempty_svn() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
     if [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
@@ -134,8 +167,10 @@ test_case_a_nonempty_svn() {
     root="$SB/test-turbo-plugin"
     init_repo_with_identity "$root"
     if ! make_svn_repo "$SB/svnrepo" 1; then startSkipping; return 0; fi
-    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")/trunk" 2>&1)"; rc=$?
-    assertEquals "case (a) trunk exits 0 (out: $out)" 0 "$rc"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")/trunk" --granularity squash 2>&1)"; rc=$?
+    assertEquals "case (a) trunk squash exits 0 (out: $out)" 0 "$rc"
+    # squash => exactly ONE replay commit on remote-svn/main (single lump, not per-revision).
+    assertEquals 'squash import is a single lump commit' 1 "$(git -C "$root" rev-list --count remote-svn/main)"
     case "$out" in *"SVN bridge connected."*) assertTrue 'reports connected' 0 ;; *) fail "no connect line: $out" ;; esac
 
     if git -C "$root" ls-files | grep -q 'README.txt'; then assertTrue 'main has svn content' 0; else fail 'main missing README.txt'; fi
@@ -157,7 +192,7 @@ test_case_b_conflict() {
     git -C "$root" add -A >/dev/null 2>&1
     git -C "$root" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
     if ! make_svn_repo "$SB/svnrepo" 1; then startSkipping; return 0; fi
-    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")/trunk" 2>&1)"; rc=$?
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")/trunk" --granularity squash 2>&1)"; rc=$?
     assertNotEquals "conflict exits non-zero (out: $out)" 0 "$rc"
     case "$out" in *"TP_TOKEN:MERGE_CONFLICT"*) assertTrue 'emits MERGE_CONFLICT token' 0 ;; *) fail "no MERGE_CONFLICT token: $out" ;; esac
     case "$out" in *"README.txt"*) assertTrue 'names the conflicted file' 0 ;; *) fail "conflict file not named: $out" ;; esac
@@ -176,7 +211,7 @@ test_case_b_no_overlap() {
     git -C "$root" add -A >/dev/null 2>&1
     git -C "$root" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
     if ! make_svn_repo "$SB/svnrepo" 1; then startSkipping; return 0; fi
-    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")/trunk" 2>&1)"; rc=$?
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")/trunk" --granularity squash 2>&1)"; rc=$?
     assertEquals "no-overlap exits 0 (out: $out)" 0 "$rc"
     case "$out" in *"SVN bridge connected."*) assertTrue 'reports connected' 0 ;; *) fail "no connect line: $out" ;; esac
     if git -C "$root" ls-files | grep -q 'original.txt'; then assertTrue 'main keeps original' 0; else fail 'main missing original.txt'; fi
@@ -248,7 +283,7 @@ test_invalid_url() {
     assertTrue 'no bridge dir created' "[ ! -d '$(bridge_path "$root")' ]"
 }
 
-# ── Scenario 8: mid-run failure after worktree creation -> rollback ───────────
+# ── Scenario 8: unreachable (scheme-valid) SVN URL -> fail with no residue ────
 test_rollback_on_checkout_failure() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
     local root out rc bogus
@@ -257,13 +292,88 @@ test_rollback_on_checkout_failure() {
     printf 'git-only\n' > "$root/original.txt"
     git -C "$root" add -A >/dev/null 2>&1
     git -C "$root" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
-    # Scheme-valid file:// URL at a non-existent repo: passes URL/identity/case-split, then the
-    # svn checkout (step 8) fails -> trap rollback removes the bridge branch + worktree dir.
+    # Scheme-valid file:// URL at a non-existent repo: passes URL/identity/case-split, then the U7
+    # early granularity probe (svn info on the URL, BEFORE the worktree exists) fails -> clean exit,
+    # nothing created. (The rollback trap still guards genuine mid-run failures past worktree add.)
     bogus="$(svn_uri "$SB/no-such-repo")"
     out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$bogus" 2>&1)"; rc=$?
     assertNotEquals "checkout failure exits non-zero (out: $out)" 0 "$rc"
     assertEquals 'rollback removed bridge branch' 0 "$(bridge_branch_count "$root")"
     assertTrue 'rollback removed bridge worktree dir' "[ ! -d '$(bridge_path "$root")' ]"
+}
+
+# ── Scenario 9 (U7): <=5-revision URL -> per-revision auto import, each commit trailer-greppable ─
+test_le5_per_revision_import() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root uri out rc ign
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    uri="$(make_small_svn_repo "$SB/svnrepo" 3)" || { startSkipping; return 0; }
+    [ -n "$uri" ] || { startSkipping; return 0; }
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$uri" 2>&1)"; rc=$?
+    assertEquals "<=5 import exits 0 (out: $out)" 0 "$rc"
+    case "$out" in *"SVN bridge connected."*) assertTrue 'reports connected' 0 ;; *) fail "no connect line: $out" ;; esac
+    # No granularity prompt on a <=5 import (replays per-revision silently).
+    case "$out" in *TP_TOKEN:GRANULARITY_REQUIRED*) fail "unexpected granularity prompt on <=5 import: $out" ;; *) assertTrue 'no prompt' 0 ;; esac
+    # 3 revisions -> 3 trailer-bearing replay commits (NOT one squashed lump).
+    assertEquals 'three per-revision replay commits (trailer-greppable)' 3 "$(count_trailer_commits "$root")"
+    # Setup invariant: svn:ignore is exactly .git; the .svn metadata dir is not tracked by git.
+    ign="$(svn propget --config-dir "$CFG" svn:ignore "$(bridge_path "$root")" 2>/dev/null | tr -d '\r\n')"
+    assertEquals 'bridge svn:ignore is exactly .git' '.git' "$ign"
+    if git -C "$(bridge_path "$root")" ls-files | grep -q '^\.svn'; then fail '.svn is tracked in git'; else assertTrue '.svn not tracked' 0; fi
+}
+
+# ── Scenario 10 (U7): >5-revision URL, no --granularity -> prompt token, ZERO residue ──────────
+test_over5_prompts_residue_free() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root uri out rc
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    uri="$(make_small_svn_repo "$SB/svnrepo" 7)" || { startSkipping; return 0; }
+    [ -n "$uri" ] || { startSkipping; return 0; }
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$uri" 2>&1)"; rc=$?
+    assertEquals "needs-choice exits 0 (not a failure) (out: $out)" 0 "$rc"
+    case "$out" in *"TP_TOKEN:GRANULARITY_REQUIRED count=7"*) assertTrue 'emits granularity token count=7' 0 ;; *) fail "no granularity token: $out" ;; esac
+    # Residue-free: nothing created, so a re-run (with a choice) is clean.
+    assertEquals 'no bridge branch created' 0 "$(bridge_branch_count "$root")"
+    assertTrue 'no bridge worktree dir' "[ ! -d '$(bridge_path "$root")' ]"
+}
+
+# ── Scenario 11 (U7): >5-revision URL + --granularity per-revision -> N replay commits ─────────
+test_over5_per_revision() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root uri out rc
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    uri="$(make_small_svn_repo "$SB/svnrepo" 7)" || { startSkipping; return 0; }
+    [ -n "$uri" ] || { startSkipping; return 0; }
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$uri" --granularity per-revision 2>&1)"; rc=$?
+    assertEquals ">5 per-revision exits 0 (out: $out)" 0 "$rc"
+    case "$out" in *"SVN bridge connected."*) assertTrue 'reports connected' 0 ;; *) fail "no connect line: $out" ;; esac
+    assertEquals 'seven per-revision replay commits' 7 "$(count_trailer_commits "$root")"
+}
+
+# ── Scenario 12 (U7): after bootstrap, a subsequent tp-pull-from-svn finds nothing new ─────────
+test_subsequent_pull_is_noop() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root uri out rc before pull_out pull_rc after
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    uri="$(make_small_svn_repo "$SB/svnrepo" 3)" || { startSkipping; return 0; }
+    [ -n "$uri" ] || { startSkipping; return 0; }
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$uri" 2>&1)"; rc=$?
+    assertEquals "bootstrap exits 0 (out: $out)" 0 "$rc"
+    # Skeleton .gitignore (as tp-setup writes post-bootstrap) so the nested bridge worktree dir does
+    # not show as untracked and trip the pull's main-dirty guard.
+    printf '%s\n' '/.turbo-plugin/worktrees/' '.svn/' '*.log' > "$root/.gitignore"
+    git -C "$root" add .gitignore >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m 'chore: skeleton gitignore' >/dev/null 2>&1
+    before="$(git -C "$root" rev-list --count remote-svn/main)"
+    pull_out="$(cd "$root" && bash "$PLUGIN_ROOT/scripts/sync-from-svn.sh" --branch main 2>&1)"; pull_rc=$?
+    assertEquals "subsequent pull exits 0 (out: $pull_out)" 0 "$pull_rc"
+    case "$pull_out" in *"Already up to date"*) assertTrue 'follow-up pull is a no-op' 0 ;; *) fail "pull found new work: $pull_out" ;; esac
+    after="$(git -C "$root" rev-list --count remote-svn/main)"
+    assertEquals 'no new commits from the follow-up pull' "$before" "$after"
 }
 
 # shellcheck disable=SC1090

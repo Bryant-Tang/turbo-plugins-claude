@@ -19,32 +19,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Replay one SVN revision (U3): svn update -r R in the bridge worktree, assert the WC is uniformly
-# at R (KTD4 sparse guard -- an empty delta must mean "identical tree", never a partial update),
-# then hand off to U1's svn_replay_commit (empty-delta + idempotent skips live there).
-replay_one_revision() {
-  local remote_path="$1" rev="$2" author="$3" date="$4" message="$5" wc
-  ( cd "$remote_path" && svn update -r "$rev" ) || { echo "Error: svn update -r $rev failed" >&2; exit 1; }
-  wc="$(svn info --show-item revision "$remote_path" | tr -d '[:space:]')"
-  if [[ "$wc" != "$rev" ]]; then
-    echo "Error: remote worktree not uniformly at r$rev (got r$wc); refusing per-revision replay." >&2
-    exit 1
-  fi
-  svn_replay_commit "$remote_path" "$rev" "$author" "$date" "$message" >/dev/null
-}
-
-# Squash the current WC HEAD-of-range into ONE boundary commit on the bridge worktree's HEAD.
-# Subject stays `sync: svn r<rev>` (steady-state shape) but a second -m appends the
-# `svn-revision: <rev>` trailer so floor-lookup (U5) treats the squashed range as a single boundary.
-# Skips when `git add -A` leaves the index unchanged (empty delta).
-boundary_commit() {
-  local remote_path="$1" rev="$2"
-  git -C "$remote_path" add -A
-  if git -C "$remote_path" diff --cached --quiet; then
-    return 0
-  fi
-  git -C "$remote_path" -c commit.gpgsign=false commit -m "sync: svn r$rev" -m "svn-revision: $rev"
-}
+# U3/U7: the per-revision replay loop (svn update -r R -> replay-commit, squash boundary commits,
+# granularity dispatch) now lives in lib/common.sh (svn_replay_one_revision / svn_boundary_commit /
+# svn_replay_dispatch), shared verbatim with the first-import bootstrap (Initialize-GitSvnBridge).
+# This script keeps only the resume-point (`cur`) derivation + the granularity GATE, then delegates.
 
 probe_git_version
 
@@ -115,18 +93,10 @@ SVN_URL="$(svn info --show-item url "$REMOTE_PATH" | tr -d '\r\n')"
 HEAD_REV="$(svn info --show-item revision "$SVN_URL" | tr -d '[:space:]')"
 WC_REV_START="$(svn info --show-item revision "$REMOTE_PATH" | tr -d '[:space:]')"
 
-# KTD4 sparse guard: a full (infinite-depth) checkout is required so `svn update -r R` yields a
-# uniform per-revision tree; assert once before the loop.
-DEPTH="$(svn info --show-item depth "$REMOTE_PATH" | tr -d '[:space:]')"
-if [[ "$DEPTH" != "infinity" ]]; then
-  echo "Error: remote worktree depth is '$DEPTH', not 'infinity'; per-revision replay needs a full checkout." >&2
-  exit 1
-fi
-
 # cur (resume point) = greatest already-replayed svn-revision trailer on the bridge branch, floored
 # by the WC's own revision (the legacy-lump / transition floor: a clean bridge WC guarantees its
 # content == git HEAD tree, so WC_REV_START is a valid "already in git" floor even when the baseline
-# lump commit carries no trailer). Forward-only; collapses to trailer-only intent once U7 lands.
+# lump commit carries no trailer). Forward-only.
 CUR="$WC_REV_START"
 TRAILER_VALS="$(git -C "$MAIN_WORKTREE" log "$REMOTE_BRANCH" --format='%(trailers:key=svn-revision,valueonly)' 2>/dev/null | grep -E '^[0-9]+$' || true)"
 if [[ -n "$TRAILER_VALS" ]]; then
@@ -134,16 +104,13 @@ if [[ -n "$TRAILER_VALS" ]]; then
   if (( MAX_TRAILER > CUR )); then CUR="$MAX_TRAILER"; fi
 fi
 
-# Enumerate r(cur+1)..headRev via U1. Guard the reversed/empty range so svn 1.14.x never sees lo>hi
-# (it errors "No such revision"). Records land in parallel arrays REC_REV/AUTHOR/DATE/MSG.
-REC_REV=(); REC_AUTHOR=(); REC_DATE=(); REC_MSG=()
+# Count pending revisions r(cur+1)..headRev for the granularity GATE. svn_replay_dispatch itself
+# re-enumerates the full records; here we only need the COUNT (one NUL per record from U1's
+# enumerator). Guard the reversed/empty range so svn 1.14.x never sees lo>hi ("No such revision").
+COUNT=0
 if (( CUR < HEAD_REV )); then
-  LOG_XML="$(svn log --xml -r "$((CUR + 1)):$HEAD_REV" "$REMOTE_PATH")"
-  while IFS=$'\037' read -r -d '' _rev _author _date _msg; do
-    REC_REV+=("$_rev"); REC_AUTHOR+=("$_author"); REC_DATE+=("$_date"); REC_MSG+=("$_msg")
-  done < <(printf '%s' "$LOG_XML" | svn_enumerate_revisions)
+  COUNT="$(svn log --xml -r "$((CUR + 1)):$HEAD_REV" "$REMOTE_PATH" | svn_enumerate_revisions | tr -cd '\000' | wc -c | tr -d '[:space:]')"
 fi
-COUNT="${#REC_REV[@]}"
 
 # Nothing new to replay and nothing resumable ahead -> up to date.
 if (( COUNT == 0 && AHEAD_COUNT == 0 )); then
@@ -163,46 +130,9 @@ if (( COUNT > 5 )); then
   MODE="$GRANULARITY"
 fi
 
-if [[ "$MODE" == "per-revision" ]]; then
-  echo "Replaying $COUNT SVN revision(s) r$((CUR + 1))..r$HEAD_REV into $REMOTE_NAME..."
-  for i in "${!REC_REV[@]}"; do
-    replay_one_revision "$REMOTE_PATH" "${REC_REV[$i]}" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}"
-  done
-elif [[ "$MODE" == "squash" ]]; then
-  echo "Squashing SVN r$((CUR + 1))..r$HEAD_REV into one commit in $REMOTE_NAME..."
-  ( cd "$REMOTE_PATH" && svn update ) || { echo "Error: svn update failed" >&2; exit 1; }
-  boundary_commit "$REMOTE_PATH" "$HEAD_REV"
-elif [[ "$MODE" == "range" ]]; then
-  if [[ ! "$RANGE" =~ ^[0-9]+:[0-9]+$ ]]; then
-    echo "Error: granularity 'range' requires --range <lo>:<hi> (got '$RANGE')" >&2; exit 1
-  fi
-  LO="${RANGE%%:*}"; HI="${RANGE##*:}"
-  if (( LO < CUR + 1 )); then LO=$((CUR + 1)); fi
-  if (( HI > HEAD_REV )); then HI=$HEAD_REV; fi
-  if (( LO > HI )); then
-    echo "Error: granularity range does not overlap the pending r$((CUR + 1)):r$HEAD_REV." >&2; exit 1
-  fi
-  echo "Replaying r$LO..r$HI per-revision, squashing the rest, into $REMOTE_NAME..."
-  # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
-  if (( LO - 1 >= CUR + 1 )); then
-    ( cd "$REMOTE_PATH" && svn update -r "$((LO - 1))" ) || { echo "Error: svn update -r $((LO - 1)) failed" >&2; exit 1; }
-    boundary_commit "$REMOTE_PATH" "$((LO - 1))"
-  fi
-  # Per-revision inside [lo,hi].
-  for i in "${!REC_REV[@]}"; do
-    r="${REC_REV[$i]}"
-    if (( r >= LO && r <= HI )); then
-      replay_one_revision "$REMOTE_PATH" "$r" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}"
-    fi
-  done
-  # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=headRev.
-  if (( HI < HEAD_REV )); then
-    ( cd "$REMOTE_PATH" && svn update ) || { echo "Error: svn update failed" >&2; exit 1; }
-    boundary_commit "$REMOTE_PATH" "$HEAD_REV"
-  fi
-else
-  echo "Error: unknown granularity '$GRANULARITY' (expected per-revision | squash | range)" >&2; exit 1
-fi
+# Materialise the chosen granularity via the shared enumerate+replay dispatch (lib/common.sh),
+# the same body the first-import bootstrap (Initialize-GitSvnBridge) uses.
+svn_replay_dispatch "$REMOTE_PATH" "$REMOTE_NAME" "$CUR" "$HEAD_REV" "$MODE" "$RANGE"
 
 SWITCHED=false
 if [[ "$ORIGINAL_BRANCH" != "$BRANCH" ]]; then
