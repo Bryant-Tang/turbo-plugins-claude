@@ -391,6 +391,34 @@ function Get-SvnFloorCommit {
     }
 }
 
+# Highest replayed revision on `main` (KTD4 resume point; the checkout grading bound `cur`, U5).
+# Scans the SAME `svn-revision:` trailer as Get-SvnFloorCommit, STRICTLY on `main` (never HEAD).
+# Returns the GREATEST replayed revision value as [int], or 0 when `main` carries no replayed
+# revision. Used to grade a target R against cur BEFORE the floor lookup: R > cur means the aligned
+# revision has not been replayed yet (pull first) rather than "predates earliest".
+function Get-SvnHighestReplayedRev {
+    param([Parameter(Mandatory = $true)][string]$RepoDir)
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $shas = @(& git -C $RepoDir log main --format='%H' 2>$null)
+        $best = 0
+        foreach ($sha in $shas) {
+            if ([string]::IsNullOrWhiteSpace($sha)) { continue }
+            $bodyLines = & git -C $RepoDir show -s --format='%B' $sha 2>$null
+            $body = (@($bodyLines) -join "`n")
+            $matched = [regex]::Matches($body, '(?m)^svn-revision:[ ]([0-9]+)[ ]*\r?$')
+            if ($matched.Count -eq 0) { continue }
+            $val = [int]$matched[$matched.Count - 1].Groups[1].Value
+            if ($val -gt $best) { $best = $val }
+        }
+        return $best
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
 # --- tp:* branch-metadata property helpers (U2) ------------------------------
 # PowerShell peers of svn_copyfrom_rev_xml / get_svn_branch_copyfrom_rev / get_tp_branch_prop /
 # set_tp_branch_prop (common.sh). Read/write the two branch-metadata SVN properties the bridge

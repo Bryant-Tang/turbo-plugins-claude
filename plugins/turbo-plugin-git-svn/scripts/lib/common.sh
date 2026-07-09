@@ -515,6 +515,23 @@ svn_floor_commit_for_rev() {
   echo "$best_sha"
 }
 
+# Highest replayed revision on `main` (KTD4 resume point; the checkout grading bound `cur`, U5).
+# Scans the SAME `svn-revision:` trailer as svn_floor_commit_for_rev, STRICTLY on `main` (never
+# HEAD). Echoes the GREATEST replayed revision value, or 0 when `main` carries no replayed revision.
+# Used to grade a target R against cur BEFORE the floor lookup: R > cur means the aligned revision
+# has not been replayed yet (pull first) rather than "predates earliest".
+# Args: <repo_dir>
+svn_highest_replayed_rev() {
+  local repo_dir="$1" best=0 record val
+  while IFS= read -r -d '' record || [[ -n "$record" ]]; do
+    [[ -z "$record" ]] && continue
+    val="$(printf '%s\n' "$record" | grep -oE '^svn-revision: [0-9]+' | tail -n1 | grep -oE '[0-9]+$' || true)"
+    [[ -z "$val" ]] && continue
+    if (( val > best )); then best="$val"; fi
+  done < <(git -C "$repo_dir" log main -z --format='%H%n%B' 2>/dev/null)
+  echo "$best"
+}
+
 # --- tp:* branch-metadata property helpers (U2) ------------------------------
 # Read/write the two branch-metadata SVN properties the bridge cannot otherwise share
 # (KTD5):  tp:branch-name (original git branch name, slashes preserved) and

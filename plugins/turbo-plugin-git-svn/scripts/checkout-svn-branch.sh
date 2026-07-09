@@ -62,43 +62,47 @@ REMOTE_BRANCH="${RESOLVED#*|}"; REMOTE_BRANCH="${REMOTE_BRANCH%%|*}"
 REMOTE_PATH="${RESOLVED##*|}"
 
 # ── Collision + partial-state guards (BEFORE any mutation; zero side effects on reject). ──
-EXISTING=()
-while IFS= read -r line; do
-  line="${line#\* }"
-  line="${line#"${line%%[![:space:]]*}"}"   # ltrim
-  [[ "$line" == remote-svn/* ]] || continue
-  EXISTING+=("${line#remote-svn/}")
-done < <(git -C "$MAIN_WORKTREE" branch --list 'remote-svn/*')
-COLLISION="$(find_remote_worktree_collision "$BRANCH" "${EXISTING[@]+"${EXISTING[@]}"}")"
-if [[ -n "$COLLISION" ]]; then
-  echo "Error: worktree name '$REMOTE_NAME' is already taken by branch '$COLLISION' (maps to the same directory). Pass --branch <name> with a different name." >&2
-  exit 1
-fi
+# Factored so it can run twice: once on the SVN-leaf-derived name (git-only early reject, no svn
+# needed) and again after R7 adopts the stored original branch name in the resolution block below.
+# Reads the globals BRANCH / REMOTE_NAME / REMOTE_BRANCH / REMOTE_PATH / MAIN_WORKTREE.
+assert_name_free() {
+  local EXISTING=() line COLLISION BRIDGE_EXISTS=false WT_EXISTS=false
+  while IFS= read -r line; do
+    line="${line#\* }"
+    line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+    [[ "$line" == remote-svn/* ]] || continue
+    EXISTING+=("${line#remote-svn/}")
+  done < <(git -C "$MAIN_WORKTREE" branch --list 'remote-svn/*')
+  COLLISION="$(find_remote_worktree_collision "$BRANCH" "${EXISTING[@]+"${EXISTING[@]}"}")"
+  if [[ -n "$COLLISION" ]]; then
+    echo "Error: worktree name '$REMOTE_NAME' is already taken by branch '$COLLISION' (maps to the same directory). Pass --branch <name> with a different name." >&2
+    exit 1
+  fi
+  if git -C "$MAIN_WORKTREE" branch --list "$REMOTE_BRANCH" | grep -q .; then BRIDGE_EXISTS=true; fi
+  if [[ -e "$REMOTE_PATH" ]]; then WT_EXISTS=true; fi
+  if [[ "$BRIDGE_EXISTS" == true && "$WT_EXISTS" == false ]]; then
+    echo "Error: inconsistent bridge state: branch '$REMOTE_BRANCH' exists but its worktree directory is missing ($REMOTE_PATH) -- likely a leftover from an interrupted run. To recover, run in the main worktree ($MAIN_WORKTREE): 'git worktree prune', then 'git branch -D $REMOTE_BRANCH'; then re-run." >&2
+    exit 1
+  fi
+  if [[ "$WT_EXISTS" == true && "$BRIDGE_EXISTS" == false ]]; then
+    echo "Error: inconsistent bridge state: the worktree directory exists ($REMOTE_PATH) but branch '$REMOTE_BRANCH' is missing -- likely a leftover from an interrupted run. To recover, delete that directory and run 'git worktree prune' in the main worktree ($MAIN_WORKTREE); then re-run." >&2
+    exit 1
+  fi
+  if [[ "$BRIDGE_EXISTS" == true ]]; then
+    echo "Error: bridge branch '$REMOTE_BRANCH' already exists. The SVN branch is already imported; use /tp-pull-from-svn --branch $BRANCH to sync." >&2; exit 1
+  fi
+  if [[ "$WT_EXISTS" == true ]]; then
+    echo "Error: worktree '$REMOTE_NAME' already exists at: $REMOTE_PATH" >&2; exit 1
+  fi
+  # R20: refuse to clobber an existing local working branch of the same name (zero side effects).
+  if git -C "$MAIN_WORKTREE" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null 2>&1; then
+    echo "Error: a local branch '$BRANCH' already exists. Refusing to overwrite it. Pass --branch <name> with a different name, or delete/rename the existing branch first." >&2
+    exit 1
+  fi
+}
 
-BRIDGE_EXISTS=false
-if git -C "$MAIN_WORKTREE" branch --list "$REMOTE_BRANCH" | grep -q .; then BRIDGE_EXISTS=true; fi
-WT_EXISTS=false
-if [[ -e "$REMOTE_PATH" ]]; then WT_EXISTS=true; fi
-if [[ "$BRIDGE_EXISTS" == true && "$WT_EXISTS" == false ]]; then
-  echo "Error: inconsistent bridge state: branch '$REMOTE_BRANCH' exists but its worktree directory is missing ($REMOTE_PATH) -- likely a leftover from an interrupted run. To recover, run in the main worktree ($MAIN_WORKTREE): 'git worktree prune', then 'git branch -D $REMOTE_BRANCH'; then re-run." >&2
-  exit 1
-fi
-if [[ "$WT_EXISTS" == true && "$BRIDGE_EXISTS" == false ]]; then
-  echo "Error: inconsistent bridge state: the worktree directory exists ($REMOTE_PATH) but branch '$REMOTE_BRANCH' is missing -- likely a leftover from an interrupted run. To recover, delete that directory and run 'git worktree prune' in the main worktree ($MAIN_WORKTREE); then re-run." >&2
-  exit 1
-fi
-if [[ "$BRIDGE_EXISTS" == true ]]; then
-  echo "Error: bridge branch '$REMOTE_BRANCH' already exists. The SVN branch is already imported; use /tp-pull-from-svn --branch $BRANCH to sync." >&2; exit 1
-fi
-if [[ "$WT_EXISTS" == true ]]; then
-  echo "Error: worktree '$REMOTE_NAME' already exists at: $REMOTE_PATH" >&2; exit 1
-fi
-
-# R20: refuse to clobber an existing local working branch of the same name (zero side effects).
-if git -C "$MAIN_WORKTREE" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null 2>&1; then
-  echo "Error: a local branch '$BRANCH' already exists. Refusing to overwrite it. Pass --branch <name> with a different name, or delete/rename the existing branch first." >&2
-  exit 1
-fi
+# First pass on the leaf-derived tentative name so the git-only rejects surface without svn.
+assert_name_free
 
 # ── Precondition: remote-svn-main must be a valid SVN working copy (the trust anchor). ──
 # Distinguish "directory missing" from "present but not a working copy" and carry svn's reason.
@@ -132,6 +136,76 @@ if ! git -C "$MAIN_WORKTREE" rev-parse --verify -q 'refs/heads/remote-svn/main' 
   exit 1
 fi
 
+# ── Graded fork-point resolution (U5, READ-ONLY: svn propget / svn log / git log). ──
+# Rewire the import base from "remote-svn/main tip" to the git commit replaying the branch's TRUE
+# fork revision (R8-R11), so a later merge-back is not spurious-conflict-ridden. Every step is
+# side-effect-free and runs BEFORE `trap _rollback ERR`, so each stop is a clean pre-mutation exit
+# that leaves NO bridge/worktree. remote-svn/main stays the trust anchor + SVN working copy; it is
+# just no longer the import base.
+
+# (a) Branch metadata (U2). Absent props read back empty (never an error).
+STORED_NAME="$(get_tp_branch_prop 'branch-name' "$SVN_URL")"
+STORED_REV="$(get_tp_branch_prop 'last-aligned-rev' "$SVN_URL")"
+if ! COPYFROM_RAW="$(get_svn_branch_copyfrom_rev "$SVN_URL")"; then
+  echo "Error: could not read the branch's copyfrom-rev from SVN (svn log --stop-on-copy failed): $SVN_URL." >&2
+  exit 1
+fi
+COPYFROM_REV=0
+if [[ "$COPYFROM_RAW" =~ ^[0-9]+$ ]]; then COPYFROM_REV="$COPYFROM_RAW"; fi
+
+# (b) R7: when --branch was not passed, prefer the stored ORIGINAL git branch name (slashes
+# preserved) over the dash-form SVN leaf. Re-resolve + re-run the name guards against the FINAL
+# name (still pre-mutation, zero side effects).
+if [[ "$DERIVED" == true && -n "$STORED_NAME" && "$STORED_NAME" != "$BRANCH" ]]; then
+  BRANCH="$STORED_NAME"
+  if ! RESOLVED="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR" 2>&1)"; then
+    echo "$RESOLVED" >&2; exit 1
+  fi
+  REMOTE_NAME="${RESOLVED%%|*}"
+  REMOTE_BRANCH="${RESOLVED#*|}"; REMOTE_BRANCH="${REMOTE_BRANCH%%|*}"
+  REMOTE_PATH="${RESOLVED##*|}"
+  assert_name_free
+fi
+
+# (c) Target revision R + stale cross-check (R11 "stale-but-present"). tp:last-aligned-rev is
+# initialized to the branch's trunk copyfrom-rev and only advances, so a stored value BELOW the
+# copyfrom-rev is a provable contradiction -> refuse (never attach to a stale/contradicted base).
+if [[ -n "$STORED_REV" ]]; then
+  if ! [[ "$STORED_REV" =~ ^[0-9]+$ ]]; then
+    echo "Error: branch metadata tp:last-aligned-rev on $SVN_URL is not a revision number ('$STORED_REV'). Refusing to guess a base; have the branch author repair it, then re-run this checkout." >&2
+    exit 1
+  fi
+  R="$STORED_REV"
+  if (( R < COPYFROM_REV )); then
+    echo "Error: cannot attach: stored alignment r$R is older than the branch's fork revision r$COPYFROM_REV, so the branch metadata looks stale/contradictory. Ask the branch author to refresh it (merge main into the branch and push), then re-run this checkout." >&2
+    exit 1
+  fi
+else
+  # Pre-feature branch (metadata backfill is a deferred follow-up): fall back to the trunk
+  # copyfrom-rev as the fork revision.
+  R="$COPYFROM_REV"
+fi
+
+# (d) Grade R against cur (highest replayed revision on main) FIRST, then floor-resolve inside the
+# R<=cur region. Grading before the floor is load-bearing: an R>cur target would otherwise silently
+# floor onto the STALE cur commit and hide un-replayed trunk revisions -- regressing AE3/R9.
+CUR="$(svn_highest_replayed_rev "$MAIN_WORKTREE")"
+if (( R > CUR )); then
+  echo "Error: cannot attach: the branch's aligned trunk revision r$R is newer than the newest replayed revision on local main (r$CUR). Pull trunk first: run /tp-pull-from-svn --branch main, then re-run this checkout." >&2
+  exit 1
+fi
+if ! FORK_COMMIT="$(svn_floor_commit_for_rev "$MAIN_WORKTREE" "$R")"; then
+  echo "Error: could not resolve a unique fork commit for r$R on local main (ambiguous replayed history). Refusing to guess a base." >&2
+  exit 1
+fi
+if [[ -z "$FORK_COMMIT" ]]; then
+  echo "Error: cannot attach: the branch's aligned trunk revision r$R has no replayed commit on local main and cannot be pulled (it predates the earliest replayed revision, or its range was squashed away). Ask the branch author to merge main into the branch and push, then re-run this checkout." >&2
+  exit 1
+fi
+# $FORK_COMMIT is the base ref for the bridge branch (replaces 'remote-svn/main' below): a real
+# ancestor on main carrying svn-revision <= R. The import machinery keeps the SVN branch tree; only
+# the import commit's PARENT moves to $FORK_COMMIT.
+
 echo "Importing SVN branch '$SVN_URL' into bridge '$REMOTE_BRANCH' and working branch '$BRANCH'..."
 
 # Rollback covers the LOCAL git side only. SVN was never written (read-only import), so the
@@ -152,14 +226,15 @@ _rollback() {
 }
 trap _rollback ERR
 
-# Base the bridge branch on remote-svn/main's tip (the trunk mirror) so the imported branch SHARES
-# HISTORY with this repo's main: an svn-copied branch descends from trunk, and this reconstructs
-# that link (git merge-base with main is non-empty; a later merge-back is not "unrelated histories"
-# and diffs/rebases against main behave). NOT an orphan (that produced a disconnected single-root
-# branch the user could not merge back) and NOT `rev-list --max-parents=0 HEAD` (multi-root repos
-# returned a multi-line value that broke `git branch`). remote-svn/main is a single commit and was
-# verified to exist above.
-git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" 'remote-svn/main'
+# Base the bridge branch on the FORK COMMIT resolved above (the replayed-trunk commit at the
+# branch's true fork revision, U5) so the imported branch shares history with this repo's main AT
+# the fork-point: a later merge-back is not spurious-conflict-ridden, and `git merge-base main
+# <branch>` resolves to $FORK_COMMIT. This is a base-ref SWAP only -- the import machinery below
+# (empty worktree -> svn checkout -> git add -A -> commit) captures the EXACT SVN branch tree
+# regardless of the base, so only the import commit's PARENT moves; a naive `git branch <name>
+# <forkCommit>` (trunk-at-fork content, no import commit) would be wrong. $FORK_COMMIT is an
+# ancestor on main and was verified non-empty above.
+git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$FORK_COMMIT"
 git -C "$MAIN_WORKTREE" worktree add "$REMOTE_PATH" "$REMOTE_BRANCH"
 # EMPTY the worktree (keep the .git pointer) so the plain `svn checkout` below yields the EXACT SVN
 # branch tree. `git add -A` then records precisely the branch's delta from trunk (adds/mods/deletes)

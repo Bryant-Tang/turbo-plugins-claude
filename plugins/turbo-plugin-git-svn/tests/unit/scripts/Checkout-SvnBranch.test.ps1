@@ -72,6 +72,47 @@ BeforeAll {
         $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $Root), "remote-svn-$dash")
         return (-not [System.IO.Directory]::Exists($wtPath))
     }
+
+    # -- U5 fixture helpers: seed replayed history + branch metadata --
+    # Seed --allow-empty svn-revision trailer commits on main for the given revs (PASS ASCENDING).
+    # Cheaply mirrors U3/U7 replay so the U5 floor lookup + cur bound have data to resolve against.
+    function Add-MainTrailers {
+        param([string]$Root, [int[]]$Revs)
+        foreach ($r in $Revs) {
+            $rc = Run-Git -Cwd $Root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', "sync: svn r$r", '-m', "svn-revision: $r")
+            if ($rc -ne 0) { return $false }
+        }
+        return $true
+    }
+
+    # SHA of the main commit carrying `svn-revision: <Rev>` (the floor target for assertions).
+    function Get-TrailerSha {
+        param([string]$Root, [int]$Rev)
+        $pattern = "^svn-revision: $Rev`$"
+        $out = Run-Git-Capture -Cwd $Root -GitArgs @('log', 'main', '-E', "--grep=$pattern", '--format=%H')
+        return ($out -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+    }
+
+    # Set one or more tp:* properties on an SVN branch URL (checkout once, propset each, one commit).
+    # $Props is an ordered pair list @('name','value',...). Returns $true on success.
+    function Set-TpProps {
+        param([string]$BranchUrl, [string[]]$Props, [string]$Sandbox)
+        $wc = [System.IO.Path]::Combine($Sandbox, "propwc-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+        & svn checkout $BranchUrl $wc > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $false }
+        Push-Location $wc
+        try {
+            for ($i = 0; $i -lt $Props.Count; $i += 2) {
+                & svn propset "tp:$($Props[$i])" $Props[$i + 1] '.' > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { return $false }
+            }
+            & svn commit --depth empty -m 'test: set tp props' '.' > $null 2>$null
+            if ($LASTEXITCODE -ne 0) { return $false }
+        } finally {
+            Pop-Location
+        }
+        return $true
+    }
 }
 
 Describe 'Checkout-SvnBranch' {
@@ -221,6 +262,11 @@ Describe 'Checkout-SvnBranch' {
                     Set-ItResult -Skipped -Because 'could not build remote-svn-main svn WC'
                     return
                 }
+                # U5: main must carry replayed svn-revision trailers so the branch's fork-point
+                # resolves. With NO tp:* props this exercises the copyfrom-rev fallback (r20 -> floor r20).
+                if (-not (Add-MainTrailers -Root $root -Revs @(1, 10, 19, 20))) {
+                    Set-ItResult -Skipped -Because 'could not seed main trailers'; return
+                }
                 # Create the EXISTING svn branch to import (the only svn write - done by the TEST).
                 & svn copy "$reposRoot/trunk" "$reposRoot/branches/feature-x" -m 'test: branch to import' --parents > $null 2>$null
                 if ($LASTEXITCODE -ne 0) {
@@ -272,6 +318,9 @@ Describe 'Checkout-SvnBranch' {
                 $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
                 if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'could not build remote-svn-main svn WC'; return }
 
+                # U5: seed replayed trailers so the copyfrom-rev fork-point (r20) resolves on the two-root repo.
+                if (-not (Add-MainTrailers -Root $root -Revs @(1, 10, 19, 20))) { Set-ItResult -Skipped -Because 'could not seed main trailers'; return }
+
                 # An svn branch 'other' that DIFFERS from trunk: drop Web.config, add only-branch.txt.
                 & svn copy "$reposRoot/trunk" "$reposRoot/branches/other" -m 'branch: other' --parents > $null 2>$null
                 if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'could not create svn branch'; return }
@@ -303,6 +352,203 @@ Describe 'Checkout-SvnBranch' {
                 $files | Should -Contain 'only-branch.txt'
                 $files | Should -Not -Contain 'Web.config'
                 ($files | Where-Object { $_ -like '*.turbo-plugin*' }) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    # == U5: graded fork-point resolution (AE2-AE5, R7-R11) ==
+
+    Context 'Case 10: Covers AE2/R8 -- exact floor re-bases onto r120 with no prompt' {
+        It 'attaches at the r120 commit; merge-base(main,branch) and branch^ both equal it' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-ae2'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feat-ae2" -m 'test: ae2' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                if (-not (Add-MainTrailers -Root $root -Revs @(90, 118, 120, 126))) { Set-ItResult -Skipped -Because 'seed'; return }
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feat-ae2" -Props @('last-aligned-rev', '120') -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+                $fork = Get-TrailerSha -Root $root -Rev 120
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-ae2", '-Branch', 'feat-ae2')
+                if ($res.ExitCode -ne 0) { Set-ItResult -Skipped -Because "import did not run in this env: $($res.Combined)"; return }
+                $res.Combined | Should -Not -Match 'Pull trunk first'
+                $res.Combined | Should -Not -Match 'Ask the branch author'
+                (Run-Git-Capture -Cwd $root -GitArgs @('merge-base', 'main', 'feat-ae2')) | Should -Be $fork
+                (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'feat-ae2^')) | Should -Be $fork
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 11: sparse floor -- no exact r120 but r118 present -> attach at r118' {
+        It 'attaches at the nearest <=R commit (r118), not a spurious stop' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-sparse'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feat-sparse" -m 'test: sparse' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                if (-not (Add-MainTrailers -Root $root -Revs @(90, 118, 126))) { Set-ItResult -Skipped -Because 'seed'; return }
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feat-sparse" -Props @('last-aligned-rev', '120') -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+                $fork = Get-TrailerSha -Root $root -Rev 118
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-sparse", '-Branch', 'feat-sparse')
+                $res.ExitCode | Should -Be 0
+                (Run-Git-Capture -Cwd $root -GitArgs @('merge-base', 'main', 'feat-sparse')) | Should -Be $fork
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 12: Covers AE3/R9 -- aligned rev newer than cur stops with a pull offer, then attaches after pull' {
+        It 'stops with the pull instruction (no orphan), then attaches at r120 after the pull' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-ae3'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feat-ae3" -m 'test: ae3' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                if (-not (Add-MainTrailers -Root $root -Revs @(90, 118))) { Set-ItResult -Skipped -Because 'seed'; return }   # cur=118 < R=120
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feat-ae3" -Props @('last-aligned-rev', '120') -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-ae3", '-Branch', 'feat-ae3')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'Pull trunk first'
+                (Test-NoBridgeOrphan -Root $root -Branch 'feat-ae3') | Should -BeTrue
+
+                # Simulate the pull bringing r119, r120; retry -> attach at r120.
+                if (-not (Add-MainTrailers -Root $root -Revs @(119, 120))) { Set-ItResult -Skipped -Because 'seed2'; return }
+                $fork = Get-TrailerSha -Root $root -Rev 120
+                $res2 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-ae3", '-Branch', 'feat-ae3')
+                $res2.ExitCode | Should -Be 0
+                (Run-Git-Capture -Cwd $root -GitArgs @('merge-base', 'main', 'feat-ae3')) | Should -Be $fork
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 13: Covers AE4/R10,R11 -- aligned rev with no floor commit stops with a refresh instruction (no wrong base)' {
+        It 'stops with the refresh instruction and leaves no orphan (does not attach)' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-ae4'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feat-ae4" -m 'test: ae4' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                if (-not (Add-MainTrailers -Root $root -Revs @(118, 120, 126))) { Set-ItResult -Skipped -Because 'seed'; return }   # earliest 118 > R=50
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feat-ae4" -Props @('last-aligned-rev', '50') -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-ae4", '-Branch', 'feat-ae4')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'has no replayed commit on local main'
+                $res.Combined | Should -Not -Match 'Pull trunk first'
+                (Test-NoBridgeOrphan -Root $root -Branch 'feat-ae4') | Should -BeTrue
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 14: base-ref swap keeps the SVN branch tree (not trunk-at-fork content)' {
+        It 'imports the SVN branch tree while re-parenting onto the fork commit' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-tree'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feat-div" -m 'branch: div' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                $co = [System.IO.Path]::Combine($sb, 'co-div')
+                & svn checkout "$reposRoot/branches/feat-div" $co > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no co'; return }
+                & svn delete ([System.IO.Path]::Combine($co, 'Web.config')) > $null 2>$null
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, 'only-branch.txt'), 'only in branch')
+                & svn add ([System.IO.Path]::Combine($co, 'only-branch.txt')) > $null 2>$null
+                & svn commit $co -m 'branch: drop Web.config, add only-branch.txt' > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no branch diff'; return }
+                if (-not (Add-MainTrailers -Root $root -Revs @(90, 118, 120, 126))) { Set-ItResult -Skipped -Because 'seed'; return }
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feat-div" -Props @('last-aligned-rev', '120') -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+                $fork = Get-TrailerSha -Root $root -Rev 120
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-div", '-Branch', 'feat-div')
+                if ($res.ExitCode -ne 0) { Set-ItResult -Skipped -Because "import did not run: $($res.Combined)"; return }
+                (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'feat-div^')) | Should -Be $fork
+                $files = @((Run-Git-Capture -Cwd $root -GitArgs @('ls-tree', '-r', '--name-only', 'feat-div')) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                $files | Should -Contain 'only-branch.txt'
+                $files | Should -Not -Contain 'Web.config'
+                # branch tree must DIFFER from the fork commit tree (proves the swap kept SVN content).
+                (Run-Git -Cwd $root -GitArgs @('diff', '--quiet', $fork, 'feat-div')) | Should -Not -Be 0
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 15: R11 stale-but-present -- stored alignment below copyfrom -> stop, no attach' {
+        It 'stops with the stale-contradiction message and leaves no orphan' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-stale'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feat-stale" -m 'test: stale' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                if (-not (Add-MainTrailers -Root $root -Revs @(10, 20))) { Set-ItResult -Skipped -Because 'seed'; return }
+                # copyfrom-rev is r20; a stored alignment of r5 is a provable contradiction (only advances).
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feat-stale" -Props @('last-aligned-rev', '5') -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-stale", '-Branch', 'feat-stale')
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match "older than the branch's fork revision"
+                (Test-NoBridgeOrphan -Root $root -Branch 'feat-stale') | Should -BeTrue
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 16: Covers AE5/R7 -- tp:branch-name drives a slash-preserving local branch' {
+        It 'imports without -Branch as the stored slash name (leaf feature-test-3-feature -> feature/test-3-feature)' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-ae5'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feature-test-3-feature" -m 'test: ae5' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                if (-not (Add-MainTrailers -Root $root -Revs @(10, 20))) { Set-ItResult -Skipped -Because 'seed'; return }
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feature-test-3-feature" -Props @('branch-name', 'feature/test-3-feature', 'last-aligned-rev', '20') -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+
+                # Invoke WITHOUT -Branch: the dash-form leaf must be overridden by the stored slash name.
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feature-test-3-feature")
+                # R7 core: the "Importing..." banner (emitted AFTER adoption, BEFORE any mutation) proves
+                # the stored slash name was adopted over the dash-form leaf -- deterministic even where the
+                # deep repo-relative sandbox trips git's '$GIT_DIR too big' worktree-path limit on this long name.
+                $res.Combined | Should -Match "working branch 'feature/test-3-feature'"
+                $res.Combined | Should -Not -Match "working branch 'feature-test-3-feature'"
+                if ($res.ExitCode -eq 0) {
+                    (Run-Git-Capture -Cwd $root -GitArgs @('branch', '--list', 'feature/test-3-feature')) | Should -Not -BeNullOrEmpty
+                    (Run-Git-Capture -Cwd $root -GitArgs @('branch', '--list', 'remote-svn/feature/test-3-feature')) | Should -Not -BeNullOrEmpty
+                    (Run-Git -Cwd $root -GitArgs @('show-ref', '--verify', '--quiet', 'refs/heads/feature-test-3-feature')) | Should -Not -Be 0
+                }
             } finally {
                 Remove-Sandbox -Dir $sb
             }

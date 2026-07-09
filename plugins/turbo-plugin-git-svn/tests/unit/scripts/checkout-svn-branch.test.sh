@@ -80,6 +80,40 @@ assert_no_orphan() {
     return 0
 }
 
+# ── U5 fixture helpers: seed replayed history + branch metadata ───────────────
+# Seed --allow-empty svn-revision trailer commits on main for the given revs (PASS ASCENDING).
+# Cheaply mirrors what U3/U7 replay produces so the U5 floor lookup (svn_floor_commit_for_rev) and
+# cur bound (svn_highest_replayed_rev) have data to resolve against.
+seed_main_trailers() {
+    local root="$1"; shift
+    local rev
+    for rev in "$@"; do
+        git -C "$root" -c commit.gpgsign=false commit --allow-empty \
+            -m "sync: svn r$rev" -m "svn-revision: $rev" >/dev/null 2>&1 || return 1
+    done
+    return 0
+}
+
+# SHA of the main commit carrying `svn-revision: <rev>` (the floor target for assertions).
+trailer_sha() {
+    local root="$1" rev="$2"
+    git -C "$root" log main -E --grep="^svn-revision: ${rev}$" --format='%H' 2>/dev/null | head -n1
+}
+
+# Set one or more tp:* properties on an SVN branch URL (checkout once, propset each, one commit).
+# csb_setprops <branch-url> <name1> <val1> [<name2> <val2> ...]
+csb_setprops() {
+    local branchurl="$1"; shift
+    local wc="$SB/propwc-$RANDOM$RANDOM"
+    svn checkout "$branchurl" "$wc" >/dev/null 2>&1 || return 1
+    while [[ $# -ge 2 ]]; do
+        ( cd "$wc" && svn propset "tp:$1" "$2" '.' >/dev/null 2>&1 ) || return 1
+        shift 2
+    done
+    ( cd "$wc" && svn commit --depth empty -m 'test: set tp props' '.' >/dev/null 2>&1 ) || return 1
+    return 0
+}
+
 # ── Case 1: file exists ────────────────────────────────────────────────────────
 test_script_exists() {
     [ -f "$SCRIPT_UNDER_TEST" ]; assertTrue 'checkout-svn-branch.sh exists' $?
@@ -209,6 +243,9 @@ test_happy_import_readonly() {
     local root reposroot out rc rev_before rev_after wt_branch work_tip bridge_tip mb
     root="$(make_main_repo "$SB")"
     if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    # U5: main must carry replayed svn-revision trailers so the branch's fork-point resolves. With
+    # NO tp:* props on the branch this exercises the copyfrom-rev fallback (copyfrom=r20 -> floor r20).
+    seed_main_trailers "$root" 1 10 19 20 || { startSkipping; return 0; }
     # Create the EXISTING svn branch to import (this is the only svn write; done by the TEST).
     if ! svn copy "$reposroot/trunk" "$reposroot/branches/feature-x" -m 'test: branch to import' --parents >/dev/null 2>&1; then
         startSkipping; return 0
@@ -267,6 +304,8 @@ test_two_root_import_no_contamination() {
     root="$(make_main_repo "$SB")"
     if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
     uri="$reposroot"
+    # U5: seed replayed trailers so the copyfrom-rev fork-point (r20) resolves on the two-root repo.
+    seed_main_trailers "$root" 1 10 19 20 || { startSkipping; return 0; }
     # An svn branch 'other' that DIFFERS from trunk: drop Web.config, add only-branch.txt.
     svn copy "$uri/trunk" "$uri/branches/other" -m 'branch: other' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
     co="$SB/co"
@@ -302,6 +341,149 @@ test_two_root_import_no_contamination() {
         fail 'contamination: .turbo-plugin leaked into the import'
     else
         assertTrue 'no .turbo-plugin contamination' 0
+    fi
+}
+
+# ══ U5: graded fork-point resolution (AE2-AE5, R7-R11) ═════════════════════════
+
+# ── Case 11 (Covers AE2/R8): exact floor -> re-base onto r120, no prompt ───────
+test_ae2_floor_resolve_exact() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot fork out rc mb
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    svn copy "$reposroot/trunk" "$reposroot/branches/feat-ae2" -m 'test: ae2' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    seed_main_trailers "$root" 90 118 120 126 || { startSkipping; return 0; }
+    csb_setprops "$reposroot/branches/feat-ae2" 'last-aligned-rev' '120' || { startSkipping; return 0; }
+    fork="$(trailer_sha "$root" 120)"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-ae2" --branch feat-ae2 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi
+    case "$out" in *"Pull trunk first"*|*"Ask the branch author"*) fail "AE2 must not stop: $out" ;; esac
+    mb="$(git -C "$root" merge-base main feat-ae2 2>/dev/null)"
+    assertEquals 'AE2 merge-base(main, branch) == the r120 commit' "$fork" "$mb"
+    assertEquals 'AE2 import-commit parent == the r120 commit' "$fork" "$(git -C "$root" rev-parse feat-ae2^ 2>/dev/null)"
+}
+
+# ── Case 12 (sparse floor): no exact r120 but r118 present -> attach at r118 ────
+test_sparse_floor_nearest() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot fork out rc mb
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    svn copy "$reposroot/trunk" "$reposroot/branches/feat-sparse" -m 'test: sparse' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    seed_main_trailers "$root" 90 118 126 || { startSkipping; return 0; }   # NO exact r120
+    csb_setprops "$reposroot/branches/feat-sparse" 'last-aligned-rev' '120' || { startSkipping; return 0; }
+    fork="$(trailer_sha "$root" 118)"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-sparse" --branch feat-sparse 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then fail "sparse floor should attach (not stop): $out"; return 0; fi
+    mb="$(git -C "$root" merge-base main feat-sparse 2>/dev/null)"
+    assertEquals 'sparse floor attaches at nearest <=R (r118)' "$fork" "$mb"
+}
+
+# ── Case 13 (Covers AE3/R9): no commit <=R & R>cur -> pull stop, then attach ───
+test_ae3_pull_stop_then_attach() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot out rc fork mb
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    svn copy "$reposroot/trunk" "$reposroot/branches/feat-ae3" -m 'test: ae3' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    seed_main_trailers "$root" 90 118 || { startSkipping; return 0; }        # cur=118 < R=120
+    csb_setprops "$reposroot/branches/feat-ae3" 'last-aligned-rev' '120' || { startSkipping; return 0; }
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-ae3" --branch feat-ae3 2>&1)"; rc=$?
+    assertNotEquals 'AE3 first run stops (R>cur)' 0 "$rc"
+    case "$out" in *"Pull trunk first"*) assertTrue 'AE3 offers to pull' 0 ;; *) fail "expected 'Pull trunk first', got: $out" ;; esac
+    assert_no_orphan "$root" 'feat-ae3'; assertTrue 'AE3 stop leaves no orphan' $?
+    # Simulate the pull bringing r119, r120; retry -> attach at r120.
+    seed_main_trailers "$root" 119 120 || { startSkipping; return 0; }
+    fork="$(trailer_sha "$root" 120)"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-ae3" --branch feat-ae3 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then fail "AE3 retry should attach: $out"; return 0; fi
+    mb="$(git -C "$root" merge-base main feat-ae3 2>/dev/null)"
+    assertEquals 'AE3 retry attaches at r120' "$fork" "$mb"
+}
+
+# ── Case 14 (Covers AE4/R10,R11): no commit <=R & R<=cur -> refresh stop ───────
+test_ae4_refresh_stop() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot out rc
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    svn copy "$reposroot/trunk" "$reposroot/branches/feat-ae4" -m 'test: ae4' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    seed_main_trailers "$root" 118 120 126 || { startSkipping; return 0; }   # earliest 118, all > R=50
+    csb_setprops "$reposroot/branches/feat-ae4" 'last-aligned-rev' '50' || { startSkipping; return 0; }
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-ae4" --branch feat-ae4 2>&1)"; rc=$?
+    assertNotEquals 'AE4 stops (no floor <= R, R <= cur)' 0 "$rc"
+    case "$out" in *"has no replayed commit on local main"*) assertTrue 'AE4 gives the refresh instruction' 0 ;; *) fail "expected the R10 refresh message, got: $out" ;; esac
+    case "$out" in *"Pull trunk first"*) fail "AE4 must be a refresh stop, not a pull stop: $out" ;; esac
+    assert_no_orphan "$root" 'feat-ae4'; assertTrue 'AE4 does not attach to a wrong base (no orphan)' $?
+}
+
+# ── Case 15 (base-ref swap keeps SVN tree): branch tree != trunk-at-fork ───────
+test_base_ref_swap_keeps_svn_tree() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot co fork out rc files
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    # Divergent branch: drop Web.config, add only-branch.txt (so its tree != trunk-at-fork).
+    svn copy "$reposroot/trunk" "$reposroot/branches/feat-div" -m 'branch: div' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    co="$SB/co-div"
+    svn checkout "$reposroot/branches/feat-div" "$co" >/dev/null 2>&1 || { startSkipping; return 0; }
+    svn delete "$co/Web.config" >/dev/null 2>&1
+    echo 'only in branch' > "$co/only-branch.txt"
+    svn add "$co/only-branch.txt" >/dev/null 2>&1
+    ( cd "$co" && svn commit -m 'branch: drop Web.config, add only-branch.txt' >/dev/null 2>&1 ) || { startSkipping; return 0; }
+    seed_main_trailers "$root" 90 118 120 126 || { startSkipping; return 0; }
+    csb_setprops "$reposroot/branches/feat-div" 'last-aligned-rev' '120' || { startSkipping; return 0; }
+    fork="$(trailer_sha "$root" 120)"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-div" --branch feat-div 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi
+    assertEquals 'import-commit parent == the r120 fork commit' "$fork" "$(git -C "$root" rev-parse feat-div^ 2>/dev/null)"
+    # The checked-out tree is the SVN BRANCH content, not the trunk-at-fork (forkCommit) tree.
+    files="$(git -C "$root" ls-tree -r --name-only feat-div 2>/dev/null)"
+    printf '%s\n' "$files" | grep -qx 'only-branch.txt'; assertTrue 'branch-only file present (SVN tree, not trunk-at-fork)' $?
+    if printf '%s\n' "$files" | grep -qx 'Web.config'; then fail 'trunk-at-fork content leaked (Web.config present)'; else assertTrue 'no trunk-at-fork Web.config' 0; fi
+    if git -C "$root" diff --quiet "$fork" feat-div 2>/dev/null; then fail 'branch tree must DIFFER from the fork commit tree'; else assertTrue 'branch tree != fork-commit tree' 0; fi
+}
+
+# ── Case 16 (R11 stale-but-present): stored R below copyfrom -> stop, no attach ─
+test_stale_alignment_stops() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot out rc
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    svn copy "$reposroot/trunk" "$reposroot/branches/feat-stale" -m 'test: stale' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    seed_main_trailers "$root" 10 20 || { startSkipping; return 0; }
+    # copyfrom-rev is r20; a stored alignment of r5 is a provable contradiction (only advances).
+    csb_setprops "$reposroot/branches/feat-stale" 'last-aligned-rev' '5' || { startSkipping; return 0; }
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-stale" --branch feat-stale 2>&1)"; rc=$?
+    assertNotEquals 'stale alignment stops' 0 "$rc"
+    case "$out" in *"older than the branch's fork revision"*) assertTrue 'stale contradiction reported' 0 ;; *) fail "expected the stale-contradiction message, got: $out" ;; esac
+    assert_no_orphan "$root" 'feat-stale'; assertTrue 'stale stop leaves no orphan' $?
+}
+
+# ── Case 17 (Covers AE5/R7): tp:branch-name drives a slash-preserving local branch ─
+test_ae5_slash_name_from_metadata() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot out rc
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    # SVN path leaf uses dashes; the stored original name has a slash.
+    svn copy "$reposroot/trunk" "$reposroot/branches/feature-test-3-feature" -m 'test: ae5' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    seed_main_trailers "$root" 10 20 || { startSkipping; return 0; }
+    csb_setprops "$reposroot/branches/feature-test-3-feature" 'branch-name' 'feature/test-3-feature' 'last-aligned-rev' '20' || { startSkipping; return 0; }
+    # Invoke WITHOUT --branch: the leaf-derived name (feature-test-3-feature) must be overridden by
+    # the stored slash-preserving name (feature/test-3-feature).
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feature-test-3-feature" 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi
+    git -C "$root" branch --list 'feature/test-3-feature' | grep -q .
+    assertTrue 'local working branch is the slash-preserving name' $?
+    git -C "$root" branch --list 'remote-svn/feature/test-3-feature' | grep -q .
+    assertTrue 'bridge ref preserves the slash' $?
+    # The dash-form leaf must NOT become a local working branch.
+    if git -C "$root" show-ref --verify --quiet 'refs/heads/feature-test-3-feature'; then
+        fail 'dash-form leaf must not be the working branch name'
+    else
+        assertTrue 'dash-form leaf is not a working branch' 0
     fi
 }
 
