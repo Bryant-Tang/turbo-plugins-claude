@@ -515,3 +515,90 @@ svn_floor_commit_for_rev() {
   echo "$best_sha"
 }
 
+# --- tp:* branch-metadata property helpers (U2) ------------------------------
+# Read/write the two branch-metadata SVN properties the bridge cannot otherwise share
+# (KTD5):  tp:branch-name (original git branch name, slashes preserved) and
+# tp:last-aligned-rev (the trunk revision the branch is aligned to). Plus a dedicated
+# reader for the trunk copyfrom-rev a branch was `svn copy`-ed from. The PowerShell peers
+# live in Common.ps1. Property + commit-message strings are ASCII on purpose.
+
+# Extract the trunk copyfrom-rev of a branch from an `svn log -v --stop-on-copy --xml`
+# document read on stdin. Under --stop-on-copy the OLDEST logentry (smallest revision) IS
+# the copy, whose branch-root <path> carries copyfrom-rev="N" (the TRUNK revision the branch
+# was copied from) -- NOT the branch's own creation revision (the logentry's revision=, which
+# never touched trunk and carries no svn-revision: trailer). Prints just the integer, or
+# nothing when the XML has no copyfrom path (not a copied branch).
+#
+# Reuses the RS="<" awk tokenizer of svn_log_format_xml / svn_enumerate_revisions: svn escapes
+# every literal '<' '>' '&' in text, so those bytes only delimit tags. Under LC_ALL=C awk works
+# on bytes (safe for CJK). The copyfrom-rev lives as an attribute inside the pretty-printed
+# multi-line <path ...> open tag; whitespace-collapsing the tag lets one match find it, exactly
+# like action="[^"]*" in svn_log_format_xml. Offsets verified against the shipped precedents:
+#   revision="       is 10 chars -> RSTART+10 / RLENGTH-11   (svn_log_format_xml line 313)
+#   copyfrom-rev="   is 14 chars -> RSTART+14 / RLENGTH-15
+# The closing `}` sits at column 0 so the test harness sed-extract captures the whole function.
+svn_copyfrom_rev_xml() {
+  LC_ALL=C awk '
+    BEGIN { RS = "<"; min_rev = ""; out = "" }
+    {
+      gt = index($0, ">")
+      if (gt == 0) next
+      tag = substr($0, 1, gt - 1)
+      gsub(/[[:space:]]+/, " ", tag)
+      sub(/^ +/, "", tag); sub(/ +$/, "", tag)
+
+      if (tag ~ /^logentry( |$)/) {
+        cur_rev = ""
+        if (match(tag, /revision="[0-9]+"/)) cur_rev = substr(tag, RSTART + 10, RLENGTH - 11)
+        next
+      }
+      if (tag ~ /^path( |$)/) {
+        if (match(tag, /copyfrom-rev="[0-9]+"/)) {
+          cfr = substr(tag, RSTART + 14, RLENGTH - 15)
+          # Keep the copyfrom-rev of the SMALLEST-revision entry that carries one -- under
+          # --stop-on-copy that is the branch-root copy, even if later within-branch copies exist.
+          if (min_rev == "" || cur_rev + 0 < min_rev + 0) { min_rev = cur_rev; out = cfr }
+        }
+        next
+      }
+    }
+    END { if (out != "") print out }
+  '
+}
+
+# Thin wrapper: run svn for a branch URL, pipe its XML into the pure parser. Returns non-zero
+# (propagated) when the svn log itself fails, so callers never treat empty as "not a copy".
+# Args: <branch_url>
+get_svn_branch_copyfrom_rev() {
+  local branch_url="$1" xml
+  xml="$(svn log -v --stop-on-copy --xml "$branch_url")" || return 1
+  printf '%s' "$xml" | svn_copyfrom_rev_xml
+}
+
+# Getter: echo the value of tp:<name> on <target> (a branch URL or a working-copy path), or
+# nothing when the property is absent. `svn propget` on a missing custom property exits NON-ZERO
+# with empty output (observed rc=1 on 1.14), so we tolerate the exit code and never treat absence
+# as an error. Command substitution already strips trailing newlines; the ${val%...} is a belt.
+# Args: <name> <target>   (name in {branch-name, last-aligned-rev})
+get_tp_branch_prop() {
+  local name="$1" target="$2" val
+  val="$(svn propget "tp:$name" "$target" 2>/dev/null || true)"
+  printf '%s' "${val%$'\n'}"
+}
+
+# Setter: in the branch working copy set tp:<name>=<value>, then a SCOPED property commit and an
+# `svn update`. `--depth empty` + the explicit '.' target is load-bearing -- it is the fb42a63 fix
+# that stops `svn checkout --force` overlay drift being swept into the commit; the trailing
+# `svn update` clears the mixed-revision lag so the next build-svn-commit does not falsely demand a
+# pull. Mirrors the svn:ignore=.git bootstrap shape in new-remote-bridge.sh. Fixed ASCII message.
+# Args: <name> <value> <working_copy>
+set_tp_branch_prop() {
+  local name="$1" value="$2" wc="$3"
+  (
+    cd "$wc" || exit 1
+    svn propset "tp:$name" "$value" '.' || exit 1
+    svn commit --depth empty -m "set tp:$name (turbo-plugin metadata)" '.' || exit 1
+    svn update >/dev/null || exit 1
+  )
+}
+

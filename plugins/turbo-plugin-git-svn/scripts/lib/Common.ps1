@@ -391,3 +391,105 @@ function Get-SvnFloorCommit {
     }
 }
 
+# --- tp:* branch-metadata property helpers (U2) ------------------------------
+# PowerShell peers of svn_copyfrom_rev_xml / get_svn_branch_copyfrom_rev / get_tp_branch_prop /
+# set_tp_branch_prop (common.sh). Read/write the two branch-metadata SVN properties the bridge
+# cannot otherwise share (KTD5) plus the trunk copyfrom-rev a branch was `svn copy`-ed from. Keep
+# this block ASCII so the file's existing BOM is the only reason it holds non-ASCII bytes.
+
+# Extract the trunk copyfrom-rev of a branch from an `svn log -v --stop-on-copy --xml` document
+# (passed as a string). Under --stop-on-copy the OLDEST logentry (smallest revision) IS the copy,
+# whose branch-root path carries copyfrom-rev="N" (the TRUNK revision the branch was copied from) --
+# NOT the branch's own creation revision (the logentry's revision, which never touched trunk and
+# carries no svn-revision: trailer). Returns the value as a string, or '' when the XML has no
+# copyfrom path. Reuses XmlDocument.LoadXml + SelectNodes (mirrors Get-SvnLog.ps1); GetAttribute
+# returns '' for a missing attribute, so the IsNullOrWhiteSpace guard is correct.
+function Get-SvnCopyfromRevFromXml {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Xml)
+
+    if ([string]::IsNullOrWhiteSpace($Xml)) { return '' }
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.LoadXml($Xml)
+    $logRoot = $doc.SelectSingleNode('/log')
+    if ($null -eq $logRoot) { return '' }
+    # @()-wrap so a single logentry does not unwrap to a scalar (five-taboo #5).
+    $entries = @($logRoot.SelectNodes('logentry'))
+    if ($entries.Count -eq 0) { return '' }
+
+    $minRev = $null; $minEntry = $null
+    foreach ($e in $entries) {
+        $r = $e.GetAttribute('revision')
+        if ([string]::IsNullOrWhiteSpace($r)) { continue }
+        $ri = [int]$r
+        if ($null -eq $minRev -or $ri -lt $minRev) { $minRev = $ri; $minEntry = $e }
+    }
+    if ($null -eq $minEntry) { return '' }
+    foreach ($p in @($minEntry.SelectNodes('paths/path'))) {
+        $cfr = $p.GetAttribute('copyfrom-rev')
+        if (-not [string]::IsNullOrWhiteSpace($cfr)) { return $cfr }
+    }
+    return ''
+}
+
+# Thin wrapper: run svn for a branch URL, feed its XML to the pure parser. Softens EAP so a native
+# stderr write cannot throw a NativeCommandError under EAP=Stop; throws on a genuine non-zero exit
+# so callers never treat empty as "not a copy".
+function Get-SvnBranchCopyfromRev {
+    param([Parameter(Mandatory = $true)][string]$BranchUrl)
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $xml = (& svn log -v --stop-on-copy --xml $BranchUrl 2>$null | Out-String)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($LASTEXITCODE -ne 0) { throw "svn log --stop-on-copy failed for $BranchUrl" }
+    return (Get-SvnCopyfromRevFromXml -Xml $xml)
+}
+
+# Getter: return the value of tp:<Name> on -Target (a branch URL or a working-copy path), or ''
+# when the property is absent. `svn propget` on a missing custom property exits NON-ZERO with empty
+# output (observed rc=1 on 1.14), so we suppress stderr, soften EAP (so a stderr write cannot throw
+# under EAP=Stop -- precedent: Assert-TrustedSvnUrl), and do NOT trust the exit code. Trim the
+# trailing CR/LF propget + Out-String append.
+function Get-TpBranchProp {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $val = (& svn propget "tp:$Name" $Target 2>$null | Out-String)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($null -eq $val) { return '' }
+    return ($val -replace '(\r?\n)+$', '')
+}
+
+# Setter: in the branch working copy set tp:<Name>=<Value>, then a SCOPED property commit and an
+# `svn update`. `--depth empty` + the explicit '.' target is load-bearing -- the fb42a63 fix that
+# stops `svn checkout --force` overlay drift being swept into the commit; the trailing `svn update`
+# clears the mixed-revision lag so the next build falsely-demand-a-pull check passes. Push-Location
+# + explicit $LASTEXITCODE checks after each native call mirror New-RemoteBridge.ps1. Fixed ASCII msg.
+function Set-TpBranchProp {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)][string]$WorkingCopy
+    )
+    Push-Location -LiteralPath $WorkingCopy
+    try {
+        & svn propset "tp:$Name" $Value '.'
+        if ($LASTEXITCODE -ne 0) { throw "svn propset tp:$Name failed" }
+        & svn commit --depth empty -m "set tp:$Name (turbo-plugin metadata)" '.'
+        if ($LASTEXITCODE -ne 0) { throw "svn commit tp:$Name failed" }
+        & svn update | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "svn update after tp:$Name commit failed" }
+    } finally {
+        Pop-Location
+    }
+}
+
