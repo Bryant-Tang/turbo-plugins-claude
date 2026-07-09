@@ -493,19 +493,25 @@ Describe 'Write-Utf8NoBom' {
 
 Describe 'Get-SvnPushBody' {
 
-    It 'lists every non-merge subject (- prefixed, no hash) and excludes the merge commit' {
+    It 'groups every non-merge subject by source branch and excludes the merge commit' {
+        # Fixture = main's own feat/fix + a merged-in `side` branch -> two source branches, so the
+        # body groups under 【main】 / 【side】 headers (current branch first). #4 review change.
         $repo = New-PushBodyRepo 'pb-nomerge'
         try {
             $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
             # Measure-Object — .Count on a raw collection is unreliable under Set-StrictMode Latest.
             $allLines = @($body -split "`n")
-            ($allLines | Measure-Object).Count | Should -Be 3
+            ($allLines | Measure-Object).Count | Should -Be 5   # 2 group headers + 3 bullets
             $bullets = @($allLines | Where-Object { $_ -match '^- ' })
             ($bullets | Measure-Object).Count | Should -Be 3
+            $body | Should -Match '(?m)^【main】$'
+            $body | Should -Match '(?m)^【side】$'
             $body | Should -Match '(?m)^- feat: add A$'
             $body | Should -Match '(?m)^- fix: fix B$'
             $body | Should -Match '(?m)^- refactor: tidy C$'
             $body | Should -Not -Match 'Merge branch'
+            # current branch (main) group precedes the merged-in (side) group.
+            ($body.IndexOf('【main】')) | Should -BeLessThan ($body.IndexOf('【side】'))
         } finally {
             Remove-IsolatedRepoRoot -Dir $repo
         }
@@ -524,6 +530,34 @@ Describe 'Get-SvnPushBody' {
             $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
             $body | Should -Match '(?m)^- docs: update README$'
             $body | Should -Match '(?m)^- chore: bump version$'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'groups a feature push that merged main: own commits under 【feat/x】 before merged-in 【main】 (#4)' {
+        $repo = New-IsolatedRepoRoot 'pb-group-merged'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Invoke-GitSilent $repo config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $repo config user.name 'turbo-plugin-test'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'base'
+            Invoke-GitSilent $repo branch svnbase                       # bridge tip = feature start
+            Invoke-GitSilent $repo checkout -q -b 'feat/x'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'feat: feature one'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'feat: feature two'
+            Invoke-GitSilent $repo checkout -q main
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'chore: main one'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'chore: main two'
+            Invoke-GitSilent $repo checkout -q 'feat/x'
+            Invoke-GitSilent $repo merge -q --no-ff -m 'Merge main into feat/x' main
+            $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..feat/x'
+            $body | Should -Match '(?m)^【feat/x】$'
+            $body | Should -Match '(?m)^【main】$'
+            # current branch group precedes the merged-in main group
+            ($body.IndexOf('【feat/x】')) | Should -BeLessThan ($body.IndexOf('【main】'))
+            $body | Should -Match '(?m)^- feat: feature one$'
+            $body | Should -Match '(?m)^- chore: main two$'
         } finally {
             Remove-IsolatedRepoRoot -Dir $repo
         }

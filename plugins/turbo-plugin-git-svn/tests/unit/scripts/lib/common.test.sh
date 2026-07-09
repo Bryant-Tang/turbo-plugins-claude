@@ -527,6 +527,15 @@ test_get_svn_push_body_excludes_merge_and_prefixes() {
     rm -rf "$repo" 2>/dev/null || true
     line_count="$(printf '%s\n' "$body" | grep -c '^- ')"
     assertEquals 'body has exactly 3 "- " bullet lines (merge excluded)' '3' "$line_count"
+    # Two source branches (main's own + merged-in `side`) -> grouped under 【main】/【side】 (#4).
+    case "$body" in
+        *"【main】"*) assertTrue '【main】 group header present' 0 ;;
+        *) fail "【main】 header missing: $body" ;;
+    esac
+    case "$body" in
+        *"【side】"*) assertTrue '【side】 group header present' 0 ;;
+        *) fail "【side】 header missing: $body" ;;
+    esac
     case "$body" in
         *"- feat: add A"*) assertTrue 'feat subject present' 0 ;;
         *) fail "feat missing: $body" ;;
@@ -617,6 +626,38 @@ test_get_svn_push_body_only_merge_empty() {
     body="$(get_svn_push_body "$repo" 'startref..main')"
     rm -rf "$repo" 2>/dev/null || true
     assertEquals 'only-merge range yields empty body' '' "$body"
+}
+
+# #4: a feature push that merged main groups the branch's OWN commits under 【<branch>】 and the
+# merged-in trunk commits under 【main】, current branch first (was: one flat list mixing both).
+test_get_svn_push_body_groups_merged_main() {
+    local repo body before_main
+    repo="$(mktemp -d -t turbo-common-group-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1                       # bridge tip = feature start
+    git -C "$repo" checkout -q -b 'feat/x' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: feature one' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: feature two' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'chore: main one' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'chore: main two' >/dev/null 2>&1
+    git -C "$repo" checkout -q 'feat/x' >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m 'Merge main into feat/x' main >/dev/null 2>&1
+    body="$(get_svn_push_body "$repo" 'svnbase..feat/x')"
+    rm -rf "$repo" 2>/dev/null || true
+    case "$body" in *"【feat/x】"*) assertTrue '【feat/x】 header present' 0 ;; *) fail "feat/x header missing: $body" ;; esac
+    case "$body" in *"【main】"*) assertTrue '【main】 header present' 0 ;; *) fail "main header missing: $body" ;; esac
+    # current-branch group precedes the merged-in main group (byte-safe prefix check, no grep)
+    before_main="${body%%【main】*}"
+    case "$before_main" in
+        *"【feat/x】"*) assertTrue 'current-branch group precedes merged-in main group' 0 ;;
+        *) fail "ordering wrong (feat/x should precede main): $body" ;;
+    esac
+    case "$body" in *"- feat: feature one"*) assertTrue 'own commit present' 0 ;; *) fail "f1 missing: $body" ;; esac
+    case "$body" in *"- chore: main two"*) assertTrue 'merged-in trunk commit present' 0 ;; *) fail "m2 missing: $body" ;; esac
 }
 
 # shellcheck disable=SC1090

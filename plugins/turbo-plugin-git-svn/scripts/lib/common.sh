@@ -367,7 +367,60 @@ svn_log_format_xml() {
 # git exit code, so a genuine git failure propagates under `set -e`.
 get_svn_push_body() {
   local repo_dir="$1" range="$2"
-  git -C "$repo_dir" log "$range" --no-merges --reverse --pretty=format:'- %s'
+  local tip="${range##*..}"
+  local own sha name branch subj i found
+  # The current branch's OWN commits = its first-parent mainline (non-merge). Everything else in
+  # range arrived via a merge and is attributed to its SOURCE branch below. Deciding "own" by
+  # topology (not name-rev) keeps a commit that the current branch and a sibling share from being
+  # mis-attributed to the sibling.
+  own=" $(git -C "$repo_dir" rev-list --first-parent --no-merges "$range" 2>/dev/null | tr '\n' ' ') "
+  # Parallel arrays (no `declare -A` -- macOS bash 3.2 has none): g_name[i] -> source branch,
+  # g_body[i] -> its accumulated "- <subject>" block. First-appearance order.
+  local -a g_name=() g_body=()
+  while IFS= read -r sha; do
+    [[ -z "$sha" ]] && continue
+    if [[ "$own" == *" $sha "* ]]; then
+      branch="$tip"
+    else
+      # Attribute a merged-in commit to the LOCAL branch it most directly came from (merge
+      # topology). Restrict to local heads; strip the ~N/^N locator; strip the bridge-ref prefix so
+      # the internal `remote-svn/*` name never surfaces (a trunk-replay resolves to `main`).
+      # Undefined (e.g. the source branch was deleted) falls back to the current branch.
+      name="$(git -C "$repo_dir" name-rev --name-only --refs='refs/heads/*' "$sha" 2>/dev/null || true)"
+      branch="${name%%[~^]*}"
+      branch="${branch#remote-svn/}"
+      [[ -z "$branch" || "$branch" == "undefined" ]] && branch="$tip"
+    fi
+    subj="$(git -C "$repo_dir" log -1 --format='%s' "$sha" 2>/dev/null)"
+    found=-1
+    for ((i = 0; i < ${#g_name[@]}; i++)); do
+      if [[ "${g_name[$i]}" == "$branch" ]]; then found=$i; break; fi
+    done
+    if (( found < 0 )); then
+      g_name+=("$branch"); g_body+=("- $subj")
+    else
+      g_body[$found]="${g_body[$found]}"$'\n'"- $subj"
+    fi
+  done < <(git -C "$repo_dir" rev-list --no-merges --reverse "$range" 2>/dev/null)
+
+  local n=${#g_name[@]}
+  (( n == 0 )) && return 0
+  # ONE source branch -> flat "- <subject>" list (backward compatible; no group header).
+  if (( n == 1 )); then
+    printf '%s\n' "${g_body[0]}"
+    return 0
+  fi
+  # 2+ source branches -> group by branch, current branch first, others in first-appearance order.
+  # Each group: 【<branch>】 header then its bullets. Groups joined by a single newline.
+  local -a order=()
+  for ((i = 0; i < n; i++)); do [[ "${g_name[$i]}" == "$tip" ]] && order+=("$i"); done
+  for ((i = 0; i < n; i++)); do [[ "${g_name[$i]}" != "$tip" ]] && order+=("$i"); done
+  local out="" first=1 idx
+  for idx in "${order[@]}"; do
+    if (( first )); then first=0; else out="$out"$'\n'; fi
+    out="$out【${g_name[$idx]}】"$'\n'"${g_body[$idx]}"
+  done
+  printf '%s\n' "$out"
 }
 
 # ─── Per-revision SVN replay primitives (U1) ─────────────────────────────────

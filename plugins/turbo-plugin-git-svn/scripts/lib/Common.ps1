@@ -235,17 +235,55 @@ function Get-SvnPushBody {
         [Parameter(Mandatory = $true)][string]$RepoDir,
         [Parameter(Mandatory = $true)][string]$Range
     )
+    $tip = ($Range -split '\.\.')[-1]
     # git may warn on stderr; under EAP=Stop that throws NativeCommandError, so soften locally.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
+    $gName = New-Object System.Collections.ArrayList
+    $gBody = New-Object System.Collections.ArrayList
     try {
-        $lines = & git -C $RepoDir log $Range --no-merges --reverse --pretty=format:'- %s' 2>$null
+        # OWN commits = the current branch's first-parent mainline (non-merge); everything else in
+        # range arrived via a merge. Deciding "own" by topology (not name-rev) stops a commit the
+        # current branch shares with a sibling from being mis-attributed to the sibling.
+        $own = @{}
+        foreach ($o in @(& git -C $RepoDir rev-list --first-parent --no-merges $Range 2>$null)) {
+            if (-not [string]::IsNullOrWhiteSpace($o)) { $own[$o] = $true }
+        }
+        $shas = @(& git -C $RepoDir rev-list --no-merges --reverse $Range 2>$null)
+        foreach ($sha in $shas) {
+            if ([string]::IsNullOrWhiteSpace($sha)) { continue }
+            if ($own.ContainsKey($sha)) {
+                $branch = $tip
+            } else {
+                # Attribute a merged-in commit to the LOCAL branch it most directly came from;
+                # strip the ~N/^N locator and the internal remote-svn/ prefix (trunk-replay -> `main`).
+                # Undefined (source branch deleted) falls back to the current branch.
+                $name = "$(& git -C $RepoDir name-rev --name-only --refs='refs/heads/*' $sha 2>$null)"
+                $branch = ($name -split '[~^]')[0]
+                if ($branch -like 'remote-svn/*') { $branch = $branch.Substring('remote-svn/'.Length) }
+                if ([string]::IsNullOrWhiteSpace($branch) -or $branch -eq 'undefined') { $branch = $tip }
+            }
+            $subj = "$(& git -C $RepoDir log -1 --format='%s' $sha 2>$null)"
+            $idx = $gName.IndexOf($branch)
+            if ($idx -lt 0) {
+                [void]$gName.Add($branch); [void]$gBody.Add("- $subj")
+            } else {
+                $gBody[$idx] = $gBody[$idx] + "`n- $subj"
+            }
+        }
     } finally {
         $ErrorActionPreference = $prevEAP
     }
-    if ($null -eq $lines) { return '' }
-    # Force array so a single-commit result still joins as a line (PS unwraps scalars).
-    return (@($lines) -join "`n")
+    $n = $gName.Count
+    if ($n -eq 0) { return '' }
+    # ONE source branch -> flat "- <subject>" list (backward compatible; no group header).
+    if ($n -eq 1) { return [string]$gBody[0] }
+    # 2+ source branches -> group by branch, current branch first, others in first-appearance order.
+    $order = New-Object System.Collections.ArrayList
+    for ($i = 0; $i -lt $n; $i++) { if ($gName[$i] -eq $tip) { [void]$order.Add($i) } }
+    for ($i = 0; $i -lt $n; $i++) { if ($gName[$i] -ne $tip) { [void]$order.Add($i) } }
+    $parts = foreach ($idx in $order) { "【" + [string]$gName[$idx] + "】`n" + [string]$gBody[$idx] }
+    return ($parts -join "`n")
 }
 
 # --- Per-revision SVN replay primitives (U1) ---------------------------------
