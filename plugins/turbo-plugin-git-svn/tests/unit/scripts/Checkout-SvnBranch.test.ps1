@@ -375,7 +375,7 @@ Describe 'Checkout-SvnBranch' {
                 $fork = Get-TrailerSha -Root $root -Rev 120
 
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-ae2", '-Branch', 'feat-ae2')
-                if ($res.ExitCode -ne 0) { Set-ItResult -Skipped -Because "import did not run in this env: $($res.Combined)"; return }
+                $res.ExitCode | Should -Be 0 -Because "AE2 happy path: script under test must exit 0. $($res.Combined)"
                 $res.Combined | Should -Not -Match 'Pull trunk first'
                 $res.Combined | Should -Not -Match 'Ask the branch author'
                 (Run-Git-Capture -Cwd $root -GitArgs @('merge-base', 'main', 'feat-ae2')) | Should -Be $fork
@@ -487,7 +487,7 @@ Describe 'Checkout-SvnBranch' {
                 $fork = Get-TrailerSha -Root $root -Rev 120
 
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-div", '-Branch', 'feat-div')
-                if ($res.ExitCode -ne 0) { Set-ItResult -Skipped -Because "import did not run: $($res.Combined)"; return }
+                $res.ExitCode | Should -Be 0 -Because "base-ref-swap happy path: script under test must exit 0. $($res.Combined)"
                 (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'feat-div^')) | Should -Be $fork
                 $files = @((Run-Git-Capture -Cwd $root -GitArgs @('ls-tree', '-r', '--name-only', 'feat-div')) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
                 $files | Should -Contain 'only-branch.txt'

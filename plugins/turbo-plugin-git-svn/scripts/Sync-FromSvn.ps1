@@ -119,7 +119,7 @@ try {
     # explicit choice -> emit a structured signal and exit 0 (NO commits, residue-free) so the SKILL
     # can prompt; distinct from the merge-conflict path which exits 1.
     $mode = 'per-revision'
-    if ($count -gt 5) {
+    if ($count -gt $TpGranularityThreshold) {
         if ([string]::IsNullOrWhiteSpace($Granularity)) {
             Write-Output "TP_TOKEN:GRANULARITY_REQUIRED count=$count range=r$($cur + 1):r$headRev"
             exit 0

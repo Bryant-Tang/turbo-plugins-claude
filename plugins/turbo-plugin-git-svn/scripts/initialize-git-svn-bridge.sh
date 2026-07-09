@@ -155,7 +155,7 @@ fi
 MODE='per-revision'
 if (( IMPORT_COUNT == 0 )); then
   MODE='legacy-empty'
-elif (( IMPORT_COUNT > 5 )); then
+elif (( IMPORT_COUNT > TP_GRANULARITY_THRESHOLD )); then
   if [[ -z "$GRANULARITY" ]]; then
     printf 'TP_TOKEN:GRANULARITY_REQUIRED count=%s range=r%s:r%s\n' "$IMPORT_COUNT" "$FIRST_REV" "$HEAD_REV"
     exit 0

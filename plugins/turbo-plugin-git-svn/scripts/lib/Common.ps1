@@ -4,6 +4,11 @@
 # in Core.ps1 from the same lib/ directory.
 . ([System.IO.Path]::Combine($PSScriptRoot, 'Core.ps1'))
 
+# Granularity gate threshold (KTD7/R2/R3): per-revision SILENTLY at or below this many new
+# revisions; ABOVE it the granularity choice is offered. One shared definition for Sync-FromSvn.ps1
+# and Initialize-GitSvnBridge.ps1 (dot-sourced into their scope) so the two never drift.
+$script:TpGranularityThreshold = 5
+
 
 # Return the worktree container directory: <mainWorktree>/.turbo-plugin/worktrees.
 # git-svn concern (the SVN remote worktree container) -- the SVN script pairs call this

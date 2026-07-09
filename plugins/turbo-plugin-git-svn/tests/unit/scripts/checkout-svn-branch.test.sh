@@ -357,7 +357,7 @@ test_ae2_floor_resolve_exact() {
     csb_setprops "$reposroot/branches/feat-ae2" 'last-aligned-rev' '120' || { startSkipping; return 0; }
     fork="$(trailer_sha "$root" 120)"
     out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-ae2" --branch feat-ae2 2>&1)"; rc=$?
-    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi
+    if [ "$rc" -ne 0 ]; then fail "script under test must exit 0 on this happy path, got rc=$rc: $out"; return 1; fi
     case "$out" in *"Pull trunk first"*|*"Ask the branch author"*) fail "AE2 must not stop: $out" ;; esac
     mb="$(git -C "$root" merge-base main feat-ae2 2>/dev/null)"
     assertEquals 'AE2 merge-base(main, branch) == the r120 commit' "$fork" "$mb"
@@ -436,7 +436,7 @@ test_base_ref_swap_keeps_svn_tree() {
     csb_setprops "$reposroot/branches/feat-div" 'last-aligned-rev' '120' || { startSkipping; return 0; }
     fork="$(trailer_sha "$root" 120)"
     out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-div" --branch feat-div 2>&1)"; rc=$?
-    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi
+    if [ "$rc" -ne 0 ]; then fail "script under test must exit 0 on this happy path, got rc=$rc: $out"; return 1; fi
     assertEquals 'import-commit parent == the r120 fork commit' "$fork" "$(git -C "$root" rev-parse feat-div^ 2>/dev/null)"
     # The checked-out tree is the SVN BRANCH content, not the trunk-at-fork (forkCommit) tree.
     files="$(git -C "$root" ls-tree -r --name-only feat-div 2>/dev/null)"
@@ -474,7 +474,7 @@ test_ae5_slash_name_from_metadata() {
     # Invoke WITHOUT --branch: the leaf-derived name (feature-test-3-feature) must be overridden by
     # the stored slash-preserving name (feature/test-3-feature).
     out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feature-test-3-feature" 2>&1)"; rc=$?
-    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi
+    if [ "$rc" -ne 0 ]; then fail "script under test must exit 0 on this happy path, got rc=$rc: $out"; return 1; fi
     git -C "$root" branch --list 'feature/test-3-feature' | grep -q .
     assertTrue 'local working branch is the slash-preserving name' $?
     git -C "$root" branch --list 'remote-svn/feature/test-3-feature' | grep -q .

@@ -5,6 +5,12 @@
 # first; this concern lib must NOT weaken those (KTD2a).
 source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
 
+# Granularity gate threshold (KTD7/R2/R3): a pull or first import replays per-revision SILENTLY at
+# or below this many new revisions; ABOVE it, the granularity choice is offered. One shared
+# definition for the pull loop (sync-from-svn.sh) and the first-import bootstrap
+# (initialize-git-svn-bridge.sh) so the two never drift. `:=` leaves an override in place.
+: "${TP_GRANULARITY_THRESHOLD:=5}"
+
 # Echo the worktree container directory: <main_worktree>/.turbo-plugin/worktrees.
 # git-svn concern (the SVN remote worktree container) -- the SVN scripts call this instead
 # of each hardcoding a sibling path. Optional arg $1: a pre-resolved main worktree path;

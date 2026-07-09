@@ -216,5 +216,31 @@ test_squash_single_boundary_commit() {
     assertEquals 'squash commit carries the HEAD svn-revision trailer' "$head_rev" "$trailer"
 }
 
+# ── Case 12 (range): per-revision inside <lo>:<hi>, squash the leading + trailing rest ─────────
+# Mirrors Sync-FromSvn.test.ps1 Case 12 so the bash `range` dispatch arm is covered on ubuntu too
+# (it was previously exercised only by the Windows Pester suite).
+test_range_per_revision_inside_squash_outside() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root uri cfg before after head lo hi expected got tr_before
+    spec="$(build_pushed_bridge "$SB")" || { startSkipping; return 0; }
+    root="${spec%%|*}"; uri="$(printf '%s' "$spec" | cut -d'|' -f2)"; cfg="${spec##*|}"
+    add_svn_revisions "$uri" "$cfg" "$SB" 8 'rev' || { startSkipping; return 0; }
+    head="$(svn info --show-item revision "$uri" --config-dir "$cfg" | tr -d '[:space:]')"
+    # 8 consecutive revs = (head-7)..head. Take the middle 3 per-revision: [head-5 .. head-3].
+    lo=$((head - 5)); hi=$((head - 3))
+    tr_before="$(git -C "$root" log remote-svn/main --format='%(trailers:key=svn-revision,valueonly)' | grep -oE '^[0-9]+$' | sort -n | tr '\n' ' ')"
+    before="$(git -C "$root" rev-list --count remote-svn/main)"
+    ( cd "$root" && bash "$SCRIPT" --branch main --granularity range --range "$lo:$hi" >/dev/null 2>&1 )
+    assertEquals 'range pull exit 0' 0 $?
+    after="$(git -C "$root" rev-list --count remote-svn/main)"
+    # leading squash (1) + per-revision [lo..hi] (3) + trailing squash (1) = 5 new commits.
+    assertEquals 'range: leading-squash + 3 per-rev + trailing-squash = 5 new commits' 5 "$((after - before))"
+    # new trailers (delta over the pull) = {lo-1} u [lo..hi] u {head}, ascending.
+    expected="$(printf '%s\n' "$((lo - 1))" "$lo" "$((lo + 1))" "$hi" "$head" | sort -n | tr '\n' ' ')"
+    got="$(git -C "$root" log remote-svn/main --format='%(trailers:key=svn-revision,valueonly)' | grep -oE '^[0-9]+$' | sort -n \
+        | while read -r v; do case " $tr_before " in *" $v "*) : ;; *) printf '%s ' "$v" ;; esac; done)"
+    assertEquals 'new trailers = leading boundary(lo-1), per-rev [lo..hi], trailing boundary(head)' "$expected" "$got"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

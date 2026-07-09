@@ -158,7 +158,7 @@ try {
     if ($importCount -eq 0) {
         $mode = 'legacy-empty'
     }
-    elseif ($importCount -gt 5) {
+    elseif ($importCount -gt $TpGranularityThreshold) {
         if ([string]::IsNullOrWhiteSpace($Granularity)) {
             Write-Output "TP_TOKEN:GRANULARITY_REQUIRED count=$importCount range=r$firstRev:r$headRev"
             exit 0

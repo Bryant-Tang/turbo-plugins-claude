@@ -122,7 +122,7 @@ fi
 # explicit choice -> emit a structured signal and exit 0 (NO commits, residue-free) so the SKILL can
 # prompt; distinct from the merge-conflict path which exits 1.
 MODE='per-revision'
-if (( COUNT > 5 )); then
+if (( COUNT > TP_GRANULARITY_THRESHOLD )); then
   if [[ -z "$GRANULARITY" ]]; then
     printf 'TP_TOKEN:GRANULARITY_REQUIRED count=%s range=r%s:r%s\n' "$COUNT" "$((CUR + 1))" "$HEAD_REV"
     exit 0
