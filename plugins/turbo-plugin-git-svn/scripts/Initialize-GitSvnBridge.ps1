@@ -205,6 +205,30 @@ try {
         }
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
 
+        # ---- step 9b: keep svn metadata out of git for the WHOLE import, independent of .gitignore.
+        # The bridge .gitignore can only be written AFTER the import (step 10 below explains why), so
+        # `git add -A` needs a different ignore source while the replay runs. info/exclude is
+        # repo-local, unversioned and idempotent -- and '.svn/' should never be tracked in this repo
+        # anyway. Must be the repo's COMMON git dir: git reads info/exclude from there, not from a
+        # linked worktree's own gitdir.
+        $gitCommonDir = (& git -C $mainWorktree rev-parse --git-common-dir 2>$null | Out-String).Trim()
+        if (-not [System.IO.Path]::IsPathRooted($gitCommonDir)) {
+            $gitCommonDir = [System.IO.Path]::Combine($mainWorktree, $gitCommonDir)
+        }
+        $excludeDir = [System.IO.Path]::Combine($gitCommonDir, 'info')
+        if (-not (Test-Path -LiteralPath $excludeDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $excludeDir -Force | Out-Null
+        }
+        $excludeFile = [System.IO.Path]::Combine($excludeDir, 'exclude')
+        $excludeLines = @()
+        if (Test-Path -LiteralPath $excludeFile -PathType Leaf) {
+            $excludeLines = @([System.IO.File]::ReadAllLines($excludeFile))
+        }
+        if (-not ($excludeLines | Where-Object { $_.Trim() -eq '.svn/' })) {
+            $excludeLines += '.svn/'
+            [System.IO.File]::WriteAllLines($excludeFile, $excludeLines)
+        }
+
         # ---- step 9: untrack .git from the svn working copy (tolerate "not tracked"). ----
         Push-Location $remoteWorktreePath
         try {
@@ -217,18 +241,6 @@ try {
         } finally {
             Pop-Location
         }
-
-        # ---- step 10: ensure .svn/ is in the bridge .gitignore (read what came from SVN; append if absent). ----
-        # Runs BEFORE `git add -A` so the svn metadata dir never enters the import commit.
-        $peerGitignore = Join-Path $remoteWorktreePath '.gitignore'
-        $ignoreLines = @()
-        if (Test-Path -LiteralPath $peerGitignore -PathType Leaf) {
-            $ignoreLines = @([System.IO.File]::ReadAllLines($peerGitignore))
-        }
-        if (-not ($ignoreLines | Where-Object { $_.Trim() -eq '.svn/' })) {
-            $ignoreLines += '.svn/'
-        }
-        [System.IO.File]::WriteAllLines($peerGitignore, $ignoreLines)
 
         # ---- step 11 (U7): materialise the import commit(s) onto the orphan bridge branch. ----
         # legacy-empty (empty / no-content URL): today's single import commit. Otherwise reuse the
@@ -255,6 +267,44 @@ try {
             }
         } else {
             Invoke-SvnReplayDispatch -RemotePath $remoteWorktreePath -RemoteName $remoteWorktreeName -Cur ($firstRev - 1) -HeadRev $headRev -Mode $mode -Range $Range
+        }
+
+        # ---- step 10 (was BEFORE the import; moved AFTER it): ensure '.svn/' is in the bridge
+        # .gitignore. Ordering is load-bearing. Writing this file while the WC sat at the OLDEST
+        # revision created an UNVERSIONED .gitignore, and the replay then hit a tree conflict the
+        # moment a later revision added its own ("An unversioned file was found in the working
+        # copy") -- which used to HANG on svn's interactive conflict prompt. Done here the WC is
+        # already at HEAD, so this is a plain modification (or a create SVN will never collide
+        # with). Keeping '.svn/' out of the import commits no longer depends on this file -- the
+        # replay helpers exclude it at `git add` time.
+        $peerGitignore = Join-Path $remoteWorktreePath '.gitignore'
+        $ignoreLines = @()
+        if (Test-Path -LiteralPath $peerGitignore -PathType Leaf) {
+            $ignoreLines = @([System.IO.File]::ReadAllLines($peerGitignore))
+        }
+        if (-not ($ignoreLines | Where-Object { $_.Trim() -eq '.svn/' })) {
+            $ignoreLines += '.svn/'
+            [System.IO.File]::WriteAllLines($peerGitignore, $ignoreLines)
+        }
+        # Fold it into the LAST import commit rather than adding one of its own: an extra non-merge
+        # bridge commit with no 'svn-revision:' trailer is exactly the shape the pull path treats as
+        # an orphaned sync, and a second commit carrying the HEAD trailer would break the floor
+        # lookup's fail-loud-on-duplicate rule. Amending keeps message (trailer), author and date, so
+        # the end state matches the squash path: the import commit at HEAD carries the .gitignore.
+        $eaStatus = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        $dirty = (& git -C $remoteWorktreePath status --porcelain 2>$null | Out-String).Trim()
+        $ErrorActionPreference = $eaStatus
+        if (-not [string]::IsNullOrWhiteSpace($dirty)) {
+            & git -C $remoteWorktreePath add -A
+            if ($LASTEXITCODE -ne 0) { throw 'git add of bridge .gitignore failed' }
+            & git -C $remoteWorktreePath rev-parse --verify --quiet HEAD 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                & git -C $remoteWorktreePath -c commit.gpgsign=false commit --amend --no-edit
+            } else {
+                & git -C $remoteWorktreePath -c commit.gpgsign=false commit -m "init: remote-svn/$Branch branch"
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'git commit of bridge .gitignore failed' }
         }
 
         # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs),

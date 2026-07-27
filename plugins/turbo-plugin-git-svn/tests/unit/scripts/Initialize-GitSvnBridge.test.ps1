@@ -166,6 +166,40 @@ BeforeAll {
         return $uri
     }
 
+    # Build an svn repo whose FIRST revision has NO .gitignore and where a LATER revision ADDS one.
+    # This is the shape that used to deadlock a per-revision bootstrap: the bridge .gitignore was
+    # written while the WC sat at r1, so the incoming add at r3 raised a tree conflict and svn sat on
+    # its interactive prompt forever. Returns the file:/// URI, or $null on failure.
+    function New-SvnRepoGitignoreAddedLater {
+        param([string]$Sandbox, [string]$Name = 'svnrepo', [string]$ConfigDir)
+        $repo = [System.IO.Path]::Combine($Sandbox, $Name)
+        & svnadmin create $repo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($repo -replace '\\', '/')
+        $enc = New-Object Text.UTF8Encoding($false)
+        $seed = [System.IO.Path]::Combine($Sandbox, "seedgi-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+        $null = New-Item -ItemType Directory -Path $seed -Force
+        # r1: deliberately NO .gitignore
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($seed, 'app.txt'), "app`n", $enc)
+        & svn import $seed $uri -m 'import 1' --no-auto-props --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $co = [System.IO.Path]::Combine($Sandbox, "cogi-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+        & svn checkout $uri $co --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, 'file2.txt'), "two`n", $enc)
+        & svn add ([System.IO.Path]::Combine($co, 'file2.txt')) --config-dir $ConfigDir 2>$null | Out-Null
+        Push-Location $co
+        try { & svn commit -m 'change 2' --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { return $null }
+        # r3: SVN adds its own .gitignore
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, '.gitignore'), "*.log`n", $enc)
+        & svn add ([System.IO.Path]::Combine($co, '.gitignore')) --config-dir $ConfigDir 2>$null | Out-Null
+        Push-Location $co
+        try { & svn commit -m 'add gitignore' --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return $uri
+    }
+
     # Count trailer-bearing replay commits on remote-svn/main (numeric svn-revision trailers).
     function Get-BridgeTrailerCount {
         param([string]$Root)
@@ -439,6 +473,39 @@ Describe 'Initialize-GitSvnBridge' {
                 $bridge = Get-BridgePath -Root $root
                 (Get-SvnIgnore -WcPath $bridge -ConfigDir $cfg) | Should -BeExactly '.git'
                 (Run-Git-Capture -Cwd $bridge -GitArgs @('ls-files')) | Should -Not -Match '(^|\n)\.svn'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Regression: a LATER revision adding .gitignore must not conflict/deadlock the import' {
+        # Real-world failure: the bootstrap wrote the bridge .gitignore while the WC was at r1, so
+        # replaying forward to the revision that ADDS .gitignore raised "An unversioned file was found
+        # in the working copy" and svn blocked on its interactive conflict prompt (looked frozen).
+        It 'imports per-revision over a later-added .gitignore, keeps svn content, leaves the bridge clean' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-gi'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SvnRepoGitignoreAddedLater -Sandbox $sb -ConfigDir $cfg
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                $res.Combined | Should -Not -Match 'Tree conflict'
+                $res.Combined | Should -Not -Match 'remains in conflict'
+                (Get-BridgeTrailerCount -Root $root) | Should -Be 3
+
+                $bridge = Get-BridgePath -Root $root
+                $gi = @([System.IO.File]::ReadAllLines([System.IO.Path]::Combine($bridge, '.gitignore')))
+                # End state matches the squash path: .svn/ present AND svn's own content preserved.
+                @($gi | Where-Object { $_.Trim() -eq '.svn/' }).Count | Should -BeGreaterThan 0
+                @($gi | Where-Object { $_.Trim() -eq '*.log' }).Count | Should -BeGreaterThan 0
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('ls-files')) | Should -Not -Match '(^|\n)\.svn'
+                # A dirty bridge breaks the next push, so the .gitignore edit must be committed.
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
             } finally {
                 Remove-Sandbox -Dir $sb
             }

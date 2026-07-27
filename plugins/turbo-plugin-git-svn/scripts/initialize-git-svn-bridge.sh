@@ -207,16 +207,24 @@ else
   svn checkout "$SVN_URL" "$REMOTE_PATH"
 fi
 
+# ---- step 9b: keep svn metadata out of git for the WHOLE import, independent of .gitignore. ----
+# The bridge .gitignore can only be written AFTER the import (step 10 below explains why), so
+# `git add -A` needs a different ignore source while the replay runs. info/exclude is repo-local,
+# unversioned and idempotent -- and `.svn/` should never be tracked in this repo anyway. Must be the
+# repo's COMMON git dir: git reads info/exclude from there, not from a linked worktree's own gitdir.
+GIT_COMMON_DIR="$(git -C "$MAIN_WORKTREE" rev-parse --git-common-dir)"
+case "$GIT_COMMON_DIR" in
+  /*|[A-Za-z]:[/\\]*) : ;;
+  *) GIT_COMMON_DIR="$MAIN_WORKTREE/$GIT_COMMON_DIR" ;;
+esac
+mkdir -p "$GIT_COMMON_DIR/info"
+if ! grep -qxF '.svn/' "$GIT_COMMON_DIR/info/exclude" 2>/dev/null; then
+  printf '%s\n' '.svn/' >> "$GIT_COMMON_DIR/info/exclude"
+fi
+
 # ---- step 9: untrack .git from the svn working copy (tolerate "not tracked"). ----
 if [[ -e "$REMOTE_PATH/.git" ]]; then
   (cd "$REMOTE_PATH" && svn rm --keep-local '.git' 2>/dev/null || true)
-fi
-
-# ---- step 10: ensure .svn/ is in the bridge .gitignore (read what came from SVN; append if absent). ----
-# Runs BEFORE `git add -A` so the svn metadata dir never enters the import commit.
-PEER_GI="$REMOTE_PATH/.gitignore"
-if ! grep -qxF '.svn/' "$PEER_GI" 2>/dev/null; then
-  printf '%s\n' '.svn/' >> "$PEER_GI"
 fi
 
 # ---- step 11 (U7): materialise the import commit(s) onto the orphan bridge branch. ----
@@ -233,6 +241,32 @@ if [[ "$MODE" == "legacy-empty" ]]; then
   fi
 else
   svn_replay_dispatch "$REMOTE_PATH" "$REMOTE_NAME" "$((FIRST_REV - 1))" "$HEAD_REV" "$MODE" "$RANGE"
+fi
+
+# ---- step 10 (was BEFORE the import; moved AFTER it): ensure `.svn/` is in the bridge .gitignore.
+# Ordering is load-bearing. Writing this file while the WC sat at the OLDEST revision created an
+# UNVERSIONED .gitignore, and the replay then hit a tree conflict the moment a later revision added
+# its own .gitignore ("An unversioned file was found in the working copy") -- which used to HANG on
+# svn's interactive conflict prompt. Done here the WC is already at HEAD, so this is a plain
+# modification (or a create SVN will never collide with). `.svn/` staying out of the import commits
+# no longer depends on this file at all -- the replay helpers exclude it at `git add` time.
+PEER_GI="$REMOTE_PATH/.gitignore"
+if ! grep -qxF '.svn/' "$PEER_GI" 2>/dev/null; then
+  printf '%s\n' '.svn/' >> "$PEER_GI"
+fi
+# Fold it into the LAST import commit rather than adding a commit of its own: an extra non-merge
+# bridge commit with no `svn-revision:` trailer is exactly the shape the pull path treats as an
+# orphaned sync, and a second commit carrying the HEAD trailer would break the floor lookup's
+# fail-loud-on-duplicate rule. Amending keeps the message (trailer), author and date intact, so the
+# end state matches the squash path: the import commit at HEAD contains the bridge .gitignore.
+if [[ -n "$(git -C "$REMOTE_PATH" status --porcelain)" ]]; then
+  git -C "$REMOTE_PATH" add -A
+  if git -C "$REMOTE_PATH" rev-parse --verify --quiet HEAD >/dev/null; then
+    git -C "$REMOTE_PATH" -c commit.gpgsign=false commit --amend --no-edit
+  else
+    # No import commit exists (empty/no-content URL never reaches here, but stay fail-safe).
+    git -C "$REMOTE_PATH" -c commit.gpgsign=false commit -m "init: remote-svn/$BRANCH branch"
+  fi
 fi
 
 # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs), then

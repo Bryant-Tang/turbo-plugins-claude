@@ -118,6 +118,29 @@ make_small_svn_repo() {
     printf '%s' "$uri"
 }
 
+# Build an svn repo whose FIRST revision has NO .gitignore and where a LATER revision ADDS one.
+# This is the shape that used to deadlock a per-revision bootstrap: the bridge .gitignore was
+# written while the WC sat at r1, so the incoming add at r3 hit a tree conflict and svn sat on its
+# interactive prompt forever. Echoes the file:/// URI on success, nothing on failure.
+make_svn_repo_gitignore_added_later() {
+    local repo="$1" seed co uri
+    svnadmin create "$repo" >/dev/null 2>&1 || return 1
+    uri="$(svn_uri "$repo")"
+    seed="$SB/seedgi-$RANDOM"
+    mkdir -p "$seed"
+    printf 'app\n' > "$seed/app.txt"                       # r1: deliberately NO .gitignore
+    svn import "$seed" "$uri" -m 'import 1' --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    co="$SB/cogi-$RANDOM"
+    svn checkout "$uri" "$co" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    printf 'two\n' > "$co/file2.txt"
+    svn add "$co/file2.txt" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    ( cd "$co" && svn commit -m 'change 2' --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+    printf '*.log\n' > "$co/.gitignore"                    # r3: SVN adds its own .gitignore
+    svn add "$co/.gitignore" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    ( cd "$co" && svn commit -m 'add gitignore' --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+    printf '%s' "$uri"
+}
+
 # Count of trailer-bearing replay commits on remote-svn/main (numeric svn-revision trailers).
 count_trailer_commits() {
     git -C "$1" log remote-svn/main --format='%(trailers:key=svn-revision,valueonly)' 2>/dev/null \
@@ -321,6 +344,33 @@ test_le5_per_revision_import() {
     ign="$(svn propget --config-dir "$CFG" svn:ignore "$(bridge_path "$root")" 2>/dev/null | tr -d '\r\n')"
     assertEquals 'bridge svn:ignore is exactly .git' '.git' "$ign"
     if git -C "$(bridge_path "$root")" ls-files | grep -q '^\.svn'; then fail '.svn is tracked in git'; else assertTrue '.svn not tracked' 0; fi
+}
+
+# ── Regression: a LATER revision adding .gitignore must not conflict/deadlock the import ───────
+# Real-world failure: the bootstrap wrote the bridge .gitignore while the WC was at r1, so replaying
+# forward to the revision that ADDS .gitignore raised "An unversioned file was found in the working
+# copy" and svn blocked on its interactive conflict prompt (looked like the script had frozen).
+test_gitignore_added_later_does_not_conflict() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root uri out rc bridge
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    uri="$(make_svn_repo_gitignore_added_later "$SB/svnrepo")" || { startSkipping; return 0; }
+    [ -n "$uri" ] || { startSkipping; return 0; }
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$uri" 2>&1)"; rc=$?
+    assertEquals "per-revision import over a later-added .gitignore exits 0 (out: $out)" 0 "$rc"
+    case "$out" in
+        *"Tree conflict"*|*"unversioned file"*) fail "svn tree conflict during import: $out" ;;
+        *) assertTrue 'no tree conflict' 0 ;;
+    esac
+    assertEquals 'three per-revision replay commits' 3 "$(count_trailer_commits "$root")"
+    bridge="$(bridge_path "$root")"
+    # End state matches the squash path: bridge .gitignore carries .svn/ AND svn's own content.
+    if grep -qxF '.svn/' "$bridge/.gitignore" 2>/dev/null; then assertTrue 'bridge .gitignore has .svn/' 0; else fail 'bridge .gitignore missing .svn/'; fi
+    if grep -qxF '*.log' "$bridge/.gitignore" 2>/dev/null; then assertTrue "svn's own .gitignore content preserved" 0; else fail "svn .gitignore content clobbered"; fi
+    if git -C "$bridge" ls-files | grep -q '^\.svn'; then fail '.svn tracked in git'; else assertTrue '.svn not tracked' 0; fi
+    # A dirty bridge breaks the next push (regression e2ad936), so the .gitignore edit must be committed.
+    assertEquals 'bridge worktree is git-clean' '' "$(git -C "$bridge" status --porcelain)"
 }
 
 # ── Scenario 10 (U7): >5-revision URL, no --granularity -> prompt token, ZERO residue ──────────

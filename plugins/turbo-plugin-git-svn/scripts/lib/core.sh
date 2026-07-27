@@ -21,6 +21,24 @@ if ! printf '%s' "${LC_ALL:-${LANG:-}}" | grep -qiE 'utf-?8'; then
   unset _tp_loc
 fi
 
+# --- svn must NEVER prompt (single choke point) -------------------------------
+# These scripts are driven by an agent / CI with no usable stdin. A prompting `svn`
+# (conflict resolution, credential request, cert acceptance) does not fail -- it blocks
+# FOREVER, which reads as "the script hung" and cannot be recovered or rolled back.
+# Real incident: a bootstrap replay hit a tree conflict on `.gitignore` and sat in svn's
+# interactive conflict prompt indefinitely.
+#
+# Shadowing `svn` here (rather than adding the flag at ~19 call sites) makes the invariant
+# global and future-proof: every svn invocation in every script that sources this lib gets
+# it, including ones added later. `command svn` bypasses this function, so no recursion.
+# With --non-interactive svn returns a non-zero exit instead of prompting, so the existing
+# `|| exit 1` / `$LASTEXITCODE` guards and rollback traps do their job.
+# NOTE: credentials must therefore already be cached (or supplied in the URL) -- an
+# uncached password now fails loudly rather than waiting on a prompt nobody can answer.
+svn() {
+  command svn --non-interactive "$@"
+}
+
 probe_git_version() {
   local raw major minor
   raw="$(git --version 2>/dev/null || true)"
