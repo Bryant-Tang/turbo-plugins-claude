@@ -189,8 +189,26 @@ fi
 # (d) Grade R against cur (highest replayed revision on main) FIRST, then floor-resolve inside the
 # R<=cur region. Grading before the floor is load-bearing: an R>cur target would otherwise silently
 # floor onto the STALE cur commit and hide un-replayed trunk revisions -- regressing AE3/R9.
+#
+# BUT grade on the EFFECTIVE revision, not on R itself. SVN revision numbers are repository-global:
+# r(cur+1)..R may consist entirely of commits to OTHER paths, in which case trunk@R is byte-identical
+# to trunk@cur and there is nothing to pull. Comparing R directly then produced an UNBREAKABLE
+# deadlock -- checkout demanded a pull, and the pull correctly reported "already up to date" because
+# trunk had no new revision, so every retry failed the same way. Real case: a branch copied from
+# main@r52 while main's last actual change was r46.
+# R_EFF = the newest revision <= R in which the trunk path ITSELF changed (`svn info` on a pegged
+# URL; read-only, one call). R_EFF > CUR is then the genuine "trunk really has un-replayed
+# revisions" case that AE3/R9 is about, and R_EFF <= CUR correctly falls through to the floor
+# lookup, which lands on the commit for r46 and attaches. Fail-safe: if the probe cannot be
+# resolved, fall back to R (the previous, conservative behavior).
 CUR="$(svn_highest_replayed_rev "$MAIN_WORKTREE")"
-if (( R > CUR )); then
+MAIN_SVN_URL="$(svn info --show-item url "$REMOTE_MAIN_PATH" 2>/dev/null | tr -d '[:space:]' || true)"
+R_EFF="$R"
+if [[ -n "$MAIN_SVN_URL" ]]; then
+  PROBE="$(svn info --show-item last-changed-revision "${MAIN_SVN_URL}@${R}" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "$PROBE" =~ ^[0-9]+$ ]]; then R_EFF="$PROBE"; fi
+fi
+if (( R_EFF > CUR )); then
   echo "Error: cannot attach: the branch's aligned trunk revision r$R is newer than the newest replayed revision on local main (r$CUR). Pull trunk first: run /tp-pull-from-svn --branch main, then re-run this checkout." >&2
   exit 1
 fi

@@ -409,6 +409,44 @@ Describe 'Checkout-SvnBranch' {
         }
     }
 
+    Context 'Regression: R>cur but trunk unchanged in (cur..R] must attach, not deadlock' {
+        # SVN revision numbers are repository-global. A branch copied from trunk@R where r(cur+1)..R
+        # only touched OTHER paths leaves trunk@R identical to trunk@cur -- nothing to pull. Grading
+        # on R itself wedged the tool: checkout demanded a pull, the pull answered "already up to
+        # date", every retry failed the same way. Real case: branch copied from main@r52 while
+        # trunk's last actual change was r46.
+        It 'attaches at the trunk last-changed commit instead of demanding an impossible pull' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-gap'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+                # Trunk's last REAL change; nothing after this touches trunk.
+                $trunkLast = (& svn info --show-item last-changed-revision "$reposRoot/trunk" 2>$null | Out-String).Trim()
+                if ($trunkLast -notmatch '^[0-9]+$') { Set-ItResult -Skipped -Because 'no trunk rev'; return }
+                # These bump the repo-global counter WITHOUT touching trunk.
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feat-gap" -m 'test: gap branch' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                & svn mkdir "$reposRoot/unrelated" -m 'test: unrelated path' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no unrelated path'; return }
+                $laterRev = (& svn info --show-item revision "$reposRoot/unrelated" 2>$null | Out-String).Trim()
+                if ($laterRev -notmatch '^[0-9]+$') { Set-ItResult -Skipped -Because 'no later rev'; return }
+                # Branch aligned to that LATER global revision; local main replayed only to trunkLast.
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feat-gap" -Props @('last-aligned-rev', $laterRev) -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+                if (-not (Add-MainTrailers -Root $root -Revs @([int]$trunkLast))) { Set-ItResult -Skipped -Because 'seed'; return }
+                $fork = Get-TrailerSha -Root $root -Rev ([int]$trunkLast)
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-gap", '-Branch', 'feat-gap')
+                $res.Combined | Should -Not -Match 'Pull trunk first' -Because "trunk did not change in (r$trunkLast..r$laterRev] so there is nothing to pull"
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+                (Run-Git-Capture -Cwd $root -GitArgs @('merge-base', 'main', 'feat-gap')) | Should -Be $fork
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
     Context 'Case 12: Covers AE3/R9 -- aligned rev newer than cur stops with a pull offer, then attaches after pull' {
         It 'stops with the pull instruction (no orphan), then attaches at r120 after the pull' -Skip:(-not $SvnReady) {
             $sb = New-Sandbox -Tag 'csb-ae3'

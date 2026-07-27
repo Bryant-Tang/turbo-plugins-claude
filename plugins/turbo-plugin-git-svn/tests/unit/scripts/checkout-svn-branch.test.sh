@@ -381,6 +381,39 @@ test_sparse_floor_nearest() {
 }
 
 # ── Case 13 (Covers AE3/R9): no commit <=R & R>cur -> pull stop, then attach ───
+# ── Regression: R>cur but trunk did NOT change in (cur..R] must ATTACH, not deadlock ───────────
+# SVN revision numbers are repository-global. A branch copied from trunk@R where r(cur+1)..R only
+# touched OTHER paths leaves trunk@R identical to trunk@cur -- there is nothing to pull. Grading on
+# R itself then wedged the tool: checkout demanded a pull, the pull correctly answered "already up
+# to date", and every retry failed the same way. Real case: branch copied from main@r52 while
+# trunk's last actual change was r46.
+test_r_gt_cur_but_trunk_unchanged_attaches() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot trunk_last copy_rev fork out rc mb
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    # Trunk's last REAL change (nothing after this touches trunk).
+    trunk_last="$(svn info --show-item last-changed-revision "$reposroot/trunk" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$trunk_last" ] || { startSkipping; return 0; }
+    # These revisions bump the repo-global counter WITHOUT touching trunk.
+    svn copy "$reposroot/trunk" "$reposroot/branches/feat-gap" -m 'test: gap branch' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    svn mkdir "$reposroot/unrelated" -m 'test: unrelated path' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    copy_rev="$(svn info --show-item revision "$reposroot/unrelated" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$copy_rev" ] || { startSkipping; return 0; }
+    # Align the branch to that LATER global revision, while local main only replayed up to trunk_last.
+    csb_setprops "$reposroot/branches/feat-gap" 'last-aligned-rev' "$copy_rev" || { startSkipping; return 0; }
+    seed_main_trailers "$root" "$trunk_last" || { startSkipping; return 0; }
+    fork="$(trailer_sha "$root" "$trunk_last")"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-gap" --branch feat-gap 2>&1)"; rc=$?
+    case "$out" in
+        *"Pull trunk first"*) fail "deadlock: trunk did not change in (r$trunk_last..r$copy_rev] so there is nothing to pull: $out" ;;
+        *) assertTrue 'no spurious pull-first stop' 0 ;;
+    esac
+    assertEquals "attaches despite R>cur (out: $out)" 0 "$rc"
+    mb="$(git -C "$root" merge-base main feat-gap 2>/dev/null)"
+    assertEquals 'attaches at the trunk last-changed commit' "$fork" "$mb"
+}
+
 test_ae3_pull_stop_then_attach() {
     if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
     local root reposroot out rc fork mb

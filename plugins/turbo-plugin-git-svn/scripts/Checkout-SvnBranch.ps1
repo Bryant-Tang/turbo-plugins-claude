@@ -202,8 +202,28 @@ try {
     # the R<=cur region. Grading before the floor is load-bearing: under pure floor semantics an
     # R>cur target would silently floor onto the STALE cur commit and hide un-replayed trunk
     # revisions that may hold the true nearer fork (would regress AE3/R9).
+    #
+    # BUT grade on the EFFECTIVE revision, not on R itself. SVN revision numbers are
+    # repository-global: r(cur+1)..R may consist entirely of commits to OTHER paths, in which case
+    # trunk@R is byte-identical to trunk@cur and there is nothing to pull. Comparing R directly then
+    # produced an UNBREAKABLE deadlock -- checkout demanded a pull, and the pull correctly reported
+    # "already up to date" because trunk had no new revision, so every retry failed identically.
+    # Real case: a branch copied from main@r52 while main's last actual change was r46.
+    # $rEff = the newest revision <= R in which the trunk path ITSELF changed (`svn info` on a pegged
+    # URL; read-only, one call). $rEff -gt $cur is then the genuine "trunk really has un-replayed
+    # revisions" case AE3/R9 is about, and $rEff -le $cur correctly falls through to the floor
+    # lookup. Fail-safe: if the probe cannot be resolved, fall back to R (previous behavior).
     $cur = Get-SvnHighestReplayedRev -RepoDir $mainWorktree
-    if ($R -gt $cur) {
+    $rEff = $R
+    $prevEAPprobe = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $mainSvnUrl = (& svn info --show-item url $remotemainPath 2>$null | Out-String).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($mainSvnUrl)) {
+        $probe = (& svn info --show-item last-changed-revision "$mainSvnUrl@$R" 2>$null | Out-String).Trim()
+        if ($probe -match '^[0-9]+$') { $rEff = [int]$probe }
+    }
+    $ErrorActionPreference = $prevEAPprobe
+    if ($rEff -gt $cur) {
         throw "Cannot attach: the branch's aligned trunk revision r$R is newer than the newest replayed revision on local main (r$cur). Pull trunk first: run /tp-pull-from-svn --branch main, then re-run this checkout."
     }
     $forkCommit = Get-SvnFloorCommit -RepoDir $mainWorktree -TargetRev $R
