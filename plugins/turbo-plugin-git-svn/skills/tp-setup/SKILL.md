@@ -134,7 +134,7 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
    的既有歷史**超過 5 個修訂**且未指定粒度時,腳本印此 token 並 **exit 0、零 commit、bridge 未建**(乾淨可重跑;
    身分階段在此之前,故此時身分已設)。agent:
    - 用 `AskUserQuestion` 以**白話**問使用者要怎麼匯入這些歷史,三選一、預設「一顆一顆保留」。**不得**把 token /
-     `svn-revision` / 修訂號等內部語彙丟給使用者;用情境化描述(可用 `<N>` 個「更新紀錄」這類白話):
+     `refs/tp/svn/<n>` / 修訂號等內部語彙丟給使用者;用情境化描述(可用 `<N>` 個「更新紀錄」這類白話):
      - **一顆一顆保留(建議)**——每筆更新各成一顆 commit,歷史與 blame 最完整。
      - **壓成一顆**——只匯最新內容成一顆 commit(最快;適合歷史很深、不需逐筆歷史時)。
      - **指定一段逐筆、其餘壓一顆**——請使用者給一段範圍(落在腳本回報的可選範圍內),範圍內逐筆、範圍外壓一顆。
@@ -256,7 +256,7 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
   `git config --local` 寫入(此時腳本已 `git init`,`--local` 可寫)、**重呼叫同一支腳本**(乾淨重跑、不重複建 bridge)。
 - **粒度選擇重呼叫迴圈(case (a)/(b),>5 修訂首匯)** — 腳本回 `TP_TOKEN:GRANULARITY_REQUIRED count=<N> range=r<lo>:r<hi>`
   (exit 0、零 commit、bridge 未建)時,agent **白話**問粒度(一顆一顆/壓成一顆/指定範圍,預設一顆一顆;**不外洩** token /
-  `svn-revision` / 修訂號給使用者),再帶 `-Granularity`/`--granularity`(+ 範圍時 `-Range`/`--range`)**重呼叫同一支腳本**。
+  `refs/tp/svn/<n>` / 修訂號給使用者),再帶 `-Granularity`/`--granularity`(+ 範圍時 `-Range`/`--range`)**重呼叫同一支腳本**。
   ≤5 修訂不發此 token。見 case (a) sub-step 3b。
 - **case (b) `TP_TOKEN:MERGE_CONFLICT` 由 agent 端收尾、不重呼叫腳本** — bridge 已建成且不 rollback;agent 列衝突檔、
   引導手動解 + commit merge(不自動 abort),再直接接「base 骨架後置」收尾。盲目重呼叫腳本會撞「bridge 已存在」死路。

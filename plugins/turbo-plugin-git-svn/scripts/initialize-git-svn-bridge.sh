@@ -260,9 +260,20 @@ fi
 # fail-loud-on-duplicate rule. Amending keeps the message (trailer), author and date intact, so the
 # end state matches the squash path: the import commit at HEAD contains the bridge .gitignore.
 if [[ -n "$(git -C "$REMOTE_PATH" status --porcelain)" ]]; then
+  PRE_AMEND_SHA="$(git -C "$REMOTE_PATH" rev-parse --verify --quiet HEAD || true)"
   git -C "$REMOTE_PATH" add -A
-  if git -C "$REMOTE_PATH" rev-parse --verify --quiet HEAD >/dev/null; then
+  if [[ -n "$PRE_AMEND_SHA" ]]; then
     git -C "$REMOTE_PATH" -c commit.gpgsign=false commit --amend --no-edit
+    # The amend REWROTE that commit, so any refs/tp/svn/<N> still pointing at the pre-amend SHA now
+    # references an object no longer on the branch (it would read as an unmarked, orphan-shaped
+    # commit). Move those markers onto the rewritten commit.
+    AMEND_NEW_SHA="$(git -C "$REMOTE_PATH" rev-parse HEAD)"
+    while read -r _mrev _msha; do
+      [[ -z "$_mrev" ]] && continue
+      if [[ "$_msha" == "$PRE_AMEND_SHA" ]]; then
+        svn_rev_mark_set "$REMOTE_PATH" "$_mrev" "$AMEND_NEW_SHA"
+      fi
+    done < <(svn_rev_marks "$REMOTE_PATH")
   else
     # No import commit exists (empty/no-content URL never reaches here, but stay fail-safe).
     git -C "$REMOTE_PATH" -c commit.gpgsign=false commit -m "init: remote-svn/$BRANCH branch"

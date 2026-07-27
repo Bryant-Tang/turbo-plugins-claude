@@ -141,9 +141,9 @@ make_svn_repo_gitignore_added_later() {
     printf '%s' "$uri"
 }
 
-# Count of trailer-bearing replay commits on remote-svn/main (numeric svn-revision trailers).
+# Count of MARKED revisions (refs/tp/svn/<N>) -- one per replayed revision.
 count_trailer_commits() {
-    git -C "$1" log remote-svn/main --format='%(trailers:key=svn-revision,valueonly)' 2>/dev/null \
+    git -C "$1" for-each-ref --format='%(refname:lstrip=3)' 'refs/tp/svn/*' 2>/dev/null \
         | grep -cE '^[0-9]+$' || true
 }
 

@@ -50,11 +50,13 @@ BeforeAll {
         Invoke-GitQuiet -C $repo -c commit.gpgsign=false commit -q -m 'seed'
         return $repo
     }
+    # Commit, then MARK it refs/tp/svn/<Rev> (the revision->commit map the primitives read).
     function Commit-WithTrailer {
         param([string]$Repo, [string]$File, [string]$Content, [string]$Subject, [int]$Rev)
         Set-Content -LiteralPath ([System.IO.Path]::Combine($Repo, $File)) -Value $Content
         Invoke-GitQuiet -C $Repo add -A
-        Invoke-GitQuiet -C $Repo -c commit.gpgsign=false commit -q -m $Subject -m ("svn-revision: " + $Rev)
+        Invoke-GitQuiet -C $Repo -c commit.gpgsign=false commit -q -m $Subject
+        Set-SvnRevMark -RepoDir $Repo -Rev $Rev -Sha (Get-GitOut -C $Repo rev-parse HEAD)
     }
 
     # CJK sample built from code points (keeps this file ASCII): U+4FEE U+6B63 U+4E2D U+6587 U+8A0A U+606F
@@ -111,7 +113,7 @@ Describe 'Invoke-SvnReplayCommit' {
         (Get-GitOut -C $repo log -1 --format='%an') | Should -Be 'alice'
         (Get-GitOut -C $repo log -1 --format='%ae') | Should -Be ''
         (Get-GitOut -C $repo log -1 --format='%aI') | Should -Match '^2026-05-26T12:00:00'
-        (Get-GitOut -C $repo log -1 --format='%(trailers:key=svn-revision,valueonly)') | Should -Be '7'
+        (Get-SvnRevMark -RepoDir $repo -Rev 7) | Should -Be (Get-GitOut -C $repo rev-parse HEAD)
         (Get-GitOut -C $repo log -1 --format='%s') | Should -Be 'add feature'
     }
     It 'commits a CJK message without mojibake' {
@@ -129,14 +131,18 @@ Describe 'Invoke-SvnReplayCommit' {
         # no-blank-line paragraph onto one line.
         (Get-GitOut -C $repo log -1 --format='%B') | Should -Match '#42 hotfix'
     }
-    It 'signals SKIP:empty and mints no commit on an empty delta' {
+    It 'signals SKIP:empty, mints no commit, but still MARKS the revision on HEAD' {
+        # Marking on an empty delta is load-bearing: it is what makes a revision whose content is
+        # already present (notably one this repo pushed itself) resolvable by the floor lookup.
         $repo = New-ScratchRepo -Base $TestDrive
         $before = [int](Get-GitOut -C $repo rev-list --count HEAD)
         $result = Invoke-SvnReplayCommit -RepoDir $repo -Rev 9 -Author 'bob' -Date '2026-05-28T00:00:00.000000Z' -Message 'no change'
         $result | Should -Be 'SKIP:empty'
         [int](Get-GitOut -C $repo rev-list --count HEAD) | Should -Be $before
+        (Get-SvnRevMark -RepoDir $repo -Rev 9) | Should -Be (Get-GitOut -C $repo rev-parse HEAD)
+        (Get-SvnMaxRevReachable -RepoDir $repo -Ref 'main') | Should -Be 9
     }
-    It 'signals SKIP:idempotent and mints no duplicate when the trailer already exists' {
+    It 'signals SKIP:idempotent and mints no duplicate when the revision is already marked on HEAD' {
         $repo = New-ScratchRepo -Base $TestDrive
         Set-Content -LiteralPath ([System.IO.Path]::Combine($repo, 'r11.txt')) -Value 'one'
         $null = Invoke-SvnReplayCommit -RepoDir $repo -Rev 11 -Author 'carol' -Date '2026-05-29T00:00:00.000000Z' -Message 'rev eleven'
@@ -147,19 +153,20 @@ Describe 'Invoke-SvnReplayCommit' {
         [int](Get-GitOut -C $repo rev-list --count HEAD) | Should -Be $before
     }
 
-    It 'defangs a trailer-lookalike line in the message so the trailer scans are not fooled' {
-        # A crafted/accidental `svn-revision: <N>` line in the message BODY must not fool the
-        # trailer scans (max-trailer / idempotency). Only the tool's own appended trailer is real.
+    It 'commits the SVN message VERBATIM (nothing appended, no line has special meaning)' {
+        # With the revision in refs/tp/svn/<N>, a line that merely LOOKS like the old trailer is
+        # just text -- it is neither stripped nor treated as a marker.
         $repo = New-ScratchRepo -Base $TestDrive
         Set-Content -LiteralPath ([System.IO.Path]::Combine($repo, 'r5.txt')) -Value 'one'
-        $null = Invoke-SvnReplayCommit -RepoDir $repo -Rev 5 -Author 'dave' -Date '2026-05-25T00:00:00.000000Z' -Message "legit work`nsvn-revision: 999"
-        # The lookalike 999 must not be counted; the real trailer is r5.
-        Get-SvnMaxTrailerRev -RepoDir $repo -Ref 'main' | Should -Be 5
-        # A genuinely new r999 must still replay (the earlier lookalike must not mask it as present).
+        $msg = "legit work`nsvn-revision: 999"
+        $null = Invoke-SvnReplayCommit -RepoDir $repo -Rev 5 -Author 'dave' -Date '2026-05-25T00:00:00.000000Z' -Message $msg
+        ((Get-GitOut -C $repo log -1 --format='%B') -replace "`r", '').TrimEnd("`n") | Should -Be $msg
+        (Get-SvnMaxRevReachable -RepoDir $repo -Ref 'main') | Should -Be 5
+        # A genuinely new r999 must still replay (nothing about the text can mask it as present).
         Set-Content -LiteralPath ([System.IO.Path]::Combine($repo, 'r999.txt')) -Value 'two'
         $out2 = Invoke-SvnReplayCommit -RepoDir $repo -Rev 999 -Author 'dave' -Date '2026-05-30T00:00:00.000000Z' -Message 'real 999'
         $out2 | Should -Match '^COMMIT:'
-        Get-SvnMaxTrailerRev -RepoDir $repo -Ref 'main' | Should -Be 999
+        (Get-SvnMaxRevReachable -RepoDir $repo -Ref 'main') | Should -Be 999
     }
 }
 
@@ -168,8 +175,8 @@ Describe 'Get-SvnFloorCommit' {
         $repo = New-ScratchRepo -Base $TestDrive
         Commit-WithTrailer -Repo $repo -File 'a.txt' -Content 'aa' -Subject 'trunk five' -Rev 5
         Commit-WithTrailer -Repo $repo -File 'b.txt' -Content 'bb' -Subject 'trunk ten' -Rev 10
-        $sha5 = Get-GitOut -C $repo log --grep='^svn-revision: 5$' -E --format='%H' main
-        $sha10 = Get-GitOut -C $repo log --grep='^svn-revision: 10$' -E --format='%H' main
+        $sha5 = Get-SvnRevMark -RepoDir $repo -Rev 5
+        $sha10 = Get-SvnRevMark -RepoDir $repo -Rev 10
         (Get-SvnFloorCommit -RepoDir $repo -TargetRev 7)  | Should -Be $sha5
         (Get-SvnFloorCommit -RepoDir $repo -TargetRev 10) | Should -Be $sha10
         (Get-SvnFloorCommit -RepoDir $repo -TargetRev 20) | Should -Be $sha10
@@ -179,19 +186,26 @@ Describe 'Get-SvnFloorCommit' {
         Commit-WithTrailer -Repo $repo -File 'a.txt' -Content 'aa' -Subject 'trunk five' -Rev 5
         Get-SvnFloorCommit -RepoDir $repo -TargetRev 3 | Should -BeNullOrEmpty
     }
-    It 'throws (fails loud) when the chosen value is carried by two commits' {
+    It 'keeps ONE marker per revision: re-marking moves it instead of duplicating' {
+        # The old trailer design could put the same revision on two commits (an ambiguity that had
+        # to fail loud). A ref name holds exactly one value, so re-marking just re-points it.
         $repo = New-ScratchRepo -Base $TestDrive
-        Commit-WithTrailer -Repo $repo -File 'a.txt' -Content 'aa' -Subject 'dup one' -Rev 4
-        Commit-WithTrailer -Repo $repo -File 'b.txt' -Content 'bb' -Subject 'dup two' -Rev 4
-        { Get-SvnFloorCommit -RepoDir $repo -TargetRev 6 } | Should -Throw -ExpectedMessage '*ambiguous*'
+        Commit-WithTrailer -Repo $repo -File 'a.txt' -Content 'aa' -Subject 'first for r4' -Rev 4
+        $first = Get-SvnRevMark -RepoDir $repo -Rev 4
+        Commit-WithTrailer -Repo $repo -File 'b.txt' -Content 'bb' -Subject 'second for r4' -Rev 4
+        $second = Get-SvnRevMark -RepoDir $repo -Rev 4
+        $second | Should -Not -Be $first
+        @((Get-SvnRevMarks -RepoDir $repo) | Where-Object { $_.Rev -eq 4 }).Count | Should -Be 1
+        (Get-SvnFloorCommit -RepoDir $repo -TargetRev 6) | Should -Be $second
     }
-    It 'is scoped to main and ignores a trailer that lives only off-main' {
+    It 'is scoped to main and ignores a marker that lives only off-main' {
         $repo = New-ScratchRepo -Base $TestDrive
         Commit-WithTrailer -Repo $repo -File 'a.txt' -Content 'aa' -Subject 'trunk five' -Rev 5
         Invoke-GitQuiet -C $repo checkout -q -b side
         Commit-WithTrailer -Repo $repo -File 'side.txt' -Content 'ss' -Subject 'side ninety-nine' -Rev 99
         Invoke-GitQuiet -C $repo checkout -q main
-        $sha5 = Get-GitOut -C $repo log --grep='^svn-revision: 5$' -E --format='%H' main
+        $sha5 = Get-SvnRevMark -RepoDir $repo -Rev 5
         (Get-SvnFloorCommit -RepoDir $repo -TargetRev 99) | Should -Be $sha5
+        (Get-SvnMaxRevReachable -RepoDir $repo -Ref 'main') | Should -Be 5
     }
 }

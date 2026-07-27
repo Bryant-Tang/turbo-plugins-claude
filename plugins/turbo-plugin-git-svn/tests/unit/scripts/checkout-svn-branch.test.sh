@@ -81,7 +81,7 @@ assert_no_orphan() {
 }
 
 # ── U5 fixture helpers: seed replayed history + branch metadata ───────────────
-# Seed --allow-empty svn-revision trailer commits on main for the given revs (PASS ASCENDING).
+# Seed one --allow-empty commit per rev on main and MARK it refs/tp/svn/<rev> (PASS ASCENDING).
 # Cheaply mirrors what U3/U7 replay produces so the U5 floor lookup (svn_floor_commit_for_rev) and
 # cur bound (svn_highest_replayed_rev) have data to resolve against.
 seed_main_trailers() {
@@ -89,15 +89,16 @@ seed_main_trailers() {
     local rev
     for rev in "$@"; do
         git -C "$root" -c commit.gpgsign=false commit --allow-empty \
-            -m "sync: svn r$rev" -m "svn-revision: $rev" >/dev/null 2>&1 || return 1
+            -m "sync: svn r$rev" >/dev/null 2>&1 || return 1
+        git -C "$root" update-ref "refs/tp/svn/$rev" "$(git -C "$root" rev-parse HEAD)" || return 1
     done
     return 0
 }
 
-# SHA of the main commit carrying `svn-revision: <rev>` (the floor target for assertions).
+# SHA marked as <rev> via refs/tp/svn/<rev> (the floor target for assertions).
 trailer_sha() {
     local root="$1" rev="$2"
-    git -C "$root" log main -E --grep="^svn-revision: ${rev}$" --format='%H' 2>/dev/null | head -n1
+    git -C "$root" rev-parse --verify --quiet "refs/tp/svn/${rev}^{commit}" 2>/dev/null || true
 }
 
 # Set one or more tp:* properties on an SVN branch URL (checkout once, propset each, one commit).

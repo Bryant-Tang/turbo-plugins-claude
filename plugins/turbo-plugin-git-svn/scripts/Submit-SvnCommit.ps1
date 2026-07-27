@@ -125,10 +125,11 @@ try {
     # props) and any pre-U4 bridge. Folded into the content commit below; idempotent (no-op unchanged).
     # Trailer values are ASCII digits, so the ANSI OutputEncoding region does not affect the scan.
     $tpCurAligned = Get-TpBranchProp -Name 'last-aligned-rev' -Target $remote.Path
-    # Centralized, robust trailer scan (security review #5): per-commit LAST trailer, then max -- a
-    # lookalike svn-revision: line buried in a branch commit body cannot over-advance the alignment.
-    # Returns [int] 0 when the branch reaches no trailer; the guard then leaves $tpAdvance = $false.
-    $tpNewAligned = Get-SvnMaxTrailerRev -RepoDir $mainWorktree -Ref $Branch
+    # Greatest marked trunk revision reachable from the branch (refs/tp/svn/<N>). Because a `main`
+    # push now marks the revision it created, a branch that merged main sees it here -- which the
+    # trailer scan could not do (trailers existed only for PULLED revisions, so a repo that pushed
+    # trunk itself never advanced its branches' alignment). 0 when the branch reaches no marker.
+    $tpNewAligned = Get-SvnMaxRevReachable -RepoDir $mainWorktree -Ref $Branch
     $tpAdvance = $false
     if (-not [string]::IsNullOrWhiteSpace($tpCurAligned) -and $tpNewAligned -gt [int]$tpCurAligned) {
         $tpAdvance = $true
@@ -218,6 +219,17 @@ try {
             $newRevLine = $commitLines | Where-Object { $_ -match 'Committed revision (\d+)\.' } | Select-Object -Last 1
             if ($newRevLine -and $newRevLine -match 'Committed revision (\d+)\.') {
                 $newRev = $Matches[1]
+            }
+            # R14 marker for a TRUNK push: this push CREATED revision $newRev, and the commit whose
+            # tree is that revision is the branch tip just pushed. Recording it is what makes a
+            # locally PUSHED revision resolvable -- pulls mark what they replay, pushes mark what
+            # they create. Only the trunk branch is marked (refs/tp/svn/* maps TRUNK revisions; a
+            # feature push creates a revision on the branch path, not on trunk).
+            if ($Branch -eq 'main' -and $newRev -match '^[0-9]+$') {
+                $pushedSha = (& git -C $mainWorktree rev-parse $Branch 2>$null | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($pushedSha)) {
+                    Set-SvnRevMark -RepoDir $mainWorktree -Rev ([int]$newRev) -Sha $pushedSha
+                }
             }
         }
         # svn update is a post-commit resync; the SVN commit already succeeded above. Soften EAP so a

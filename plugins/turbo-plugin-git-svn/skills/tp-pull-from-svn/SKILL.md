@@ -22,7 +22,7 @@ allowed-tools: Bash, Read
    - `Error: merge conflict detected. The merge has been aborted and main worktree restored ...` → **script 已自動 `git merge --abort` 並把主 worktree 還原到原分支**(零殘留、沒有進行中的 merge)。agent:把 token 後列出的衝突檔**白話**告訴使用者,說明「這次拉取與本機有衝突,已自動還原、沒有留下半成品」,請使用者在自己的流程裡調和這些檔案後**重跑 `/tp-pull-from-svn`**。**不要**叫使用者 `git merge --continue`(此時沒有進行中的 merge 可續)。若訊息是 `... automatic rollback failed ...`(回滾本身失敗)→ 工作樹處於不一致狀態,請使用者依訊息手動修復後再重跑。
 3. **粒度選擇(僅在 step 2 出現 `GRANULARITY_REQUIRED` 時做)**
 
-   用**白話**把三個選項呈現給使用者(可以帶「這次有 <N> 個新的更新」這種白話說明,但**不要**露出 `TP_TOKEN` / `svn-revision` / `per-revision` / `squash` / `range` / worktree 名等內部字眼):
+   用**白話**把三個選項呈現給使用者(可以帶「這次有 <N> 個新的更新」這種白話說明,但**不要**露出 `TP_TOKEN` / `refs/tp/svn/<n>` / `per-revision` / `squash` / `range` / worktree 名等內部字眼):
 
    ```
    這次要從 SVN 拉的更新比較多(<N> 個更新)。你想怎麼保留這段歷史?
@@ -53,7 +53,7 @@ allowed-tools: Bash, Read
 - 跑兩次無 SVN 新 commit → 第二次回 "Already up to date" 不重做。
 - **粒度只在更新數 > 5 時才問**:5 個(含)以內,script 直接一顆一顆保留、**不打擾使用者**;超過 5 個且未帶粒度參數時,script 才回報 `GRANULARITY_REQUIRED` 讓 agent 去問(此時零 commit、零落地,可安全重跑)。
 - **預設推薦「一顆一顆保留」**:使用者沒特別偏好時建議選 1(逐修訂),因為它讓日後 `/tp-checkout-svn-branch` 對齊分支接點(fork-point)最準;要最精簡歷史才選壓成一顆。
-- **粒度選項一律白話**:呈現給使用者時只講「一顆一顆保留 / 壓成一顆 / 挑一段保留」與白話理由,**不要**出現 `TP_TOKEN` / `svn-revision` / `per-revision` / `squash` / `range` 這些內部參數名或 worktree 名;內部參數只在你**重跑 script** 時用。
+- **粒度選項一律白話**:呈現給使用者時只講「一顆一顆保留 / 壓成一顆 / 挑一段保留」與白話理由,**不要**出現 `TP_TOKEN` / `refs/tp/svn/<n>` / `per-revision` / `squash` / `range` 這些內部參數名或 worktree 名;內部參數只在你**重跑 script** 時用。
 
 ## Completion Checks
 

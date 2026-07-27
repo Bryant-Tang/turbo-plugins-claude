@@ -136,9 +136,9 @@ test_legacy_message_rejected() {
 }
 
 # ── Case 5 (U4): a push that newly merges main into the branch ADVANCES tp:last-aligned-rev ─────
-# A commit reachable from feat-x carries a HIGHER `svn-revision:` trailer than the branch's stored
-# alignment (simulating a merge of a newer main). The advance must land IN THE SAME content commit
-# (folded, not a separate property revision): exactly ONE new svn revision, tp:last-aligned-rev == HIGH.
+# A commit reachable from feat-x is MARKED with a HIGHER revision than the branch's stored alignment
+# (simulating a merge of a newer main). The advance must land IN THE SAME content commit (folded,
+# not a separate property revision): exactly ONE new svn revision, tp:last-aligned-rev == HIGH.
 test_advance_on_merge_main() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
     if ! build_feature_bridge; then startSkipping; return 0; fi
@@ -148,13 +148,14 @@ test_advance_on_merge_main() {
     git -C "$ROOT" checkout feat-x >/dev/null 2>&1
     printf 'app-v2\n' > "$ROOT/app.txt"
     git -C "$ROOT" add app.txt >/dev/null 2>&1
-    # A commit that BOTH changes a file (content to push) AND carries the trailer (newer trunk rev
-    # now reachable from feat-x). Two -m paragraphs => subject + `svn-revision:` trailer line.
-    git -C "$ROOT" -c commit.gpgsign=false commit -m "sync: svn r$high" -m "svn-revision: $high" >/dev/null 2>&1
+    # A commit that BOTH changes a file (content to push) AND is marked as the newer trunk revision
+    # now reachable from feat-x.
+    git -C "$ROOT" -c commit.gpgsign=false commit -m "sync: svn r$high" >/dev/null 2>&1
+    git -C "$ROOT" update-ref "refs/tp/svn/$high" "$(git -C "$ROOT" rev-parse HEAD)"
     if ! push_feat 'push feat-x with merged main'; then startSkipping; return 0; fi
 
     got="$(svn propget tp:last-aligned-rev "$BRANCH_URL" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
-    assertEquals "tp:last-aligned-rev advanced to the newest reachable trailer (r$high)" "$high" "$got"
+    assertEquals "tp:last-aligned-rev advanced to the newest reachable marker (r$high)" "$high" "$got"
     rev_after="$(branch_rev)"
     # Folded, not separate: the advance rode in the ONE content commit (delta 1, not 2).
     assertEquals 'advance folded into the content commit (exactly one new revision)' "1" "$(( rev_after - rev_before ))"

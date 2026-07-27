@@ -20,11 +20,16 @@ _load_helpers() {
     eval "$(sed -n '/^svn_enumerate_revisions()/,/^}/p' "$COMMON")"
     eval "$(sed -n '/^svn_replay_commit()/,/^}/p' "$COMMON")"
     eval "$(sed -n '/^svn_floor_commit_for_rev()/,/^}/p' "$COMMON")"
-    eval "$(sed -n '/^svn_max_trailer_rev()/,/^}/p' "$COMMON")"
+    eval "$(sed -n '/^svn_max_rev_reachable()/,/^}/p' "$COMMON")"
+    eval "$(sed -n '/^svn_rev_mark_set()/,/^}/p' "$COMMON")"
+    eval "$(sed -n '/^svn_rev_mark_get()/,/^}/p' "$COMMON")"
+    eval "$(sed -n '/^svn_rev_marks()/,/^}/p' "$COMMON")"
     declare -f svn_enumerate_revisions >/dev/null 2>&1 &&
         declare -f svn_replay_commit >/dev/null 2>&1 &&
         declare -f svn_floor_commit_for_rev >/dev/null 2>&1 &&
-        declare -f svn_max_trailer_rev >/dev/null 2>&1
+        declare -f svn_max_rev_reachable >/dev/null 2>&1 &&
+        declare -f svn_rev_mark_set >/dev/null 2>&1 &&
+        declare -f svn_rev_marks >/dev/null 2>&1
 }
 
 # A synthetic `svn log --xml` document (descending, as `svn log` emits by default) with:
@@ -53,12 +58,16 @@ _enumerate_into_arrays() {
     done < <(printf '%s' "$xml" | svn_enumerate_revisions)
 }
 
-_commit_with_trailer() {  # <repo> <file> <content> <subject> <rev>
+_commit_with_mark() {  # <repo> <file> <content> <subject> <rev>  -- commit, then mark it as <rev>
     local repo="$1" file="$2" content="$3" subject="$4" rev="$5"
     printf '%s\n' "$content" > "$repo/$file"
     git -C "$repo" add -A >/dev/null 2>&1
-    git -C "$repo" -c commit.gpgsign=false commit -q -m "$subject" -m "svn-revision: $rev" >/dev/null 2>&1
+    git -C "$repo" -c commit.gpgsign=false commit -q -m "$subject" >/dev/null 2>&1
+    svn_rev_mark_set "$repo" "$rev" "$(git -C "$repo" rev-parse HEAD)"
 }
+
+# SHA marked for <rev> (assertion helper).
+_mark_sha() { svn_rev_mark_get "$1" "$2"; }
 
 setUp() {
     _load_helpers || fail 'U1 helpers failed to sed-load from common.sh'
@@ -139,7 +148,7 @@ test_replay_author_date_trailer() {
         2026-05-26T12:00:00*) assertTrue 'author-date = SVN date' 0 ;;
         *) fail "author-date not the SVN date: $aiso" ;;
     esac
-    assertEquals 'svn-revision trailer = 7' '7' "$(git -C "$REPO" log -1 --format='%(trailers:key=svn-revision,valueonly)' | tr -d '[:space:]')"
+    assertEquals 'refs/tp/svn/7 marks the replayed commit' "$(git -C "$REPO" rev-parse HEAD)" "$(_mark_sha "$REPO" 7)"
     # committer-date is the replay moment (>= author date), not the SVN date (KTD6). Just assert
     # the subject is the SVN message so message wiring is confirmed too.
     assertEquals 'commit subject = SVN message' 'add feature' "$(git -C "$REPO" log -1 --format='%s')"
@@ -157,17 +166,21 @@ test_replay_hash_line_survives() {
     esac
 }
 
-# ── Replay: empty delta -> SKIP:empty, no commit minted ───────────────────────
-test_replay_empty_delta_skips() {
+# ── Replay: empty delta -> SKIP:empty, no commit, but the revision IS marked ──
+# Marking on an empty delta is load-bearing: it is what makes a revision whose content is already
+# present (notably one this repo pushed itself) resolvable by the floor lookup.
+test_replay_empty_delta_marks_head_without_commit() {
     local before after out
     before="$(git -C "$REPO" rev-list --count HEAD)"
     out="$(svn_replay_commit "$REPO" 9 bob '2026-05-28T00:00:00.000000Z' 'no tree change')"
     after="$(git -C "$REPO" rev-list --count HEAD)"
     assertEquals 'empty delta signals SKIP:empty' 'SKIP:empty' "$out"
     assertEquals 'no commit minted on empty delta' "$before" "$after"
+    assertEquals 'empty delta still marks HEAD as that revision' "$(git -C "$REPO" rev-parse HEAD)" "$(_mark_sha "$REPO" 9)"
+    assertEquals 'and the marker is visible to the max-reachable lookup' 9 "$(svn_max_rev_reachable "$REPO" main)"
 }
 
-# ── Replay: idempotent -> SKIP:idempotent when trailer already on HEAD ─────────
+# ── Replay: idempotent -> SKIP:idempotent when the revision is already marked on HEAD ──
 test_replay_idempotent_skips() {
     printf 'one\n' > "$REPO/r11.txt"
     svn_replay_commit "$REPO" 11 carol '2026-05-29T00:00:00.000000Z' 'rev eleven' >/dev/null
@@ -181,30 +194,31 @@ test_replay_idempotent_skips() {
     assertEquals 'no duplicate commit on idempotent replay' "$before" "$after"
 }
 
-# ── Robustness: a trailer-lookalike line in the SVN message is defanged (security review) ──
-# A crafted/accidental `svn-revision: <N>` line in the message BODY must not fool the trailer
-# scans (max-trailer / idempotency / floor). Only the tool's own appended trailer is authoritative.
-test_replay_defangs_trailer_lookalike_in_message() {
+# ── Fidelity: the SVN message is committed VERBATIM (no marker appended/stripped) ──
+# With the revision recorded in refs/tp/svn/<N>, nothing is added to the author's text -- including
+# a line that LOOKS like the old `svn-revision:` trailer, which now has no special meaning at all.
+test_replay_message_is_verbatim() {
     printf 'one\n' > "$REPO/r5.txt"
-    # message body carries a lookalike `svn-revision: 999`; the real revision is r5.
-    svn_replay_commit "$REPO" 5 dave '2026-05-25T00:00:00.000000Z' $'legit work\nsvn-revision: 999' >/dev/null
-    assertEquals 'max trailer is the real rev (lookalike 999 defanged, not counted)' \
-        5 "$(svn_max_trailer_rev "$REPO" main)"
-    # A genuinely new r999 must still replay: the earlier lookalike line must not mask it as present.
+    local msg
+    msg=$'legit work\nsvn-revision: 999'
+    svn_replay_commit "$REPO" 5 dave '2026-05-25T00:00:00.000000Z' "$msg" >/dev/null
+    assertEquals 'message round-trips byte-exact' "$msg" "$(git -C "$REPO" log -1 --format='%B' | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba')"
+    assertEquals 'the lookalike line does not become a marker' 5 "$(svn_max_rev_reachable "$REPO" main)"
+    # A genuinely new r999 must still replay: nothing about the text can mask it as present.
     printf 'two\n' > "$REPO/r999.txt"
     local out2
     out2="$(svn_replay_commit "$REPO" 999 dave '2026-05-30T00:00:00.000000Z' 'real 999')"
-    case "$out2" in COMMIT:*) : ;; *) fail "r999 should replay (not masked by lookalike), got: $out2" ;; esac
-    assertEquals 'now max trailer is the real 999' 999 "$(svn_max_trailer_rev "$REPO" main)"
+    case "$out2" in COMMIT:*) : ;; *) fail "r999 should replay, got: $out2" ;; esac
+    assertEquals 'now the greatest marked revision is 999' 999 "$(svn_max_rev_reachable "$REPO" main)"
 }
 
 # ── Floor: nearest <= R when no exact match ───────────────────────────────────
 test_floor_nearest_below() {
-    _commit_with_trailer "$REPO" a.txt aa 'trunk five' 5
-    _commit_with_trailer "$REPO" b.txt bb 'trunk ten' 10
+    _commit_with_mark "$REPO" a.txt aa 'trunk five' 5
+    _commit_with_mark "$REPO" b.txt bb 'trunk ten' 10
     local sha5 sha10 got
-    sha5="$(git -C "$REPO" log --grep='^svn-revision: 5$' -E --format='%H' main)"
-    sha10="$(git -C "$REPO" log --grep='^svn-revision: 10$' -E --format='%H' main)"
+    sha5="$(_mark_sha "$REPO" 5)"
+    sha10="$(_mark_sha "$REPO" 10)"
     got="$(svn_floor_commit_for_rev "$REPO" 7)"
     assertEquals 'floor(7) = the r5 commit (nearest <= 7)' "$sha5" "$got"
     got="$(svn_floor_commit_for_rev "$REPO" 10)"
@@ -213,39 +227,41 @@ test_floor_nearest_below() {
     assertEquals 'floor(20) = the r10 commit (highest <= 20)' "$sha10" "$got"
 }
 
-# ── Floor: empty when no commit <= R exists ───────────────────────────────────
+# ── Floor: empty when no marker <= R exists ───────────────────────────────────
 test_floor_empty_when_none_below() {
-    _commit_with_trailer "$REPO" a.txt aa 'trunk five' 5
+    _commit_with_mark "$REPO" a.txt aa 'trunk five' 5
     local got
     got="$(svn_floor_commit_for_rev "$REPO" 3)"
     assertEquals 'floor(3) empty when nothing <= 3' '' "$got"
 }
 
-# ── Floor: fail-loud when the chosen value is carried by two commits ──────────
-test_floor_fail_loud_on_duplicate() {
-    _commit_with_trailer "$REPO" a.txt aa 'dup one' 4
-    _commit_with_trailer "$REPO" b.txt bb 'dup two' 4
-    local out rc
-    out="$(svn_floor_commit_for_rev "$REPO" 6 2>&1)"; rc=$?
-    assertNotEquals 'duplicate trailer value fails loud (non-zero)' 0 "$rc"
-    case "$out" in
-        *ambiguous*|*'non-unique'*) assertTrue 'duplicate error message explains ambiguity' 0 ;;
-        *) fail "duplicate error message unexpected: $out" ;;
-    esac
+# ── Marker moves rather than duplicating: one ref per revision, by construction ──
+# The old trailer design could put the same revision on two commits (an ambiguity that had to fail
+# loud). A ref name holds exactly one value, so re-marking simply re-points it.
+test_mark_is_unique_per_revision() {
+    _commit_with_mark "$REPO" a.txt aa 'first for r4' 4
+    local first second
+    first="$(_mark_sha "$REPO" 4)"
+    _commit_with_mark "$REPO" b.txt bb 'second for r4' 4
+    second="$(_mark_sha "$REPO" 4)"
+    assertNotEquals 'the marker moved to the newer commit' "$first" "$second"
+    assertEquals 'exactly one marker exists for r4' 1 "$(svn_rev_marks "$REPO" | awk '$1 == 4' | grep -c .)"
+    assertEquals 'floor(6) resolves to that single marker' "$second" "$(svn_floor_commit_for_rev "$REPO" 6)"
 }
 
-# ── Floor: scoped to main, never HEAD ─────────────────────────────────────────
+# ── Floor: scoped to main -- a marker off main is ignored ─────────────────────
 test_floor_scoped_to_main_not_head() {
-    _commit_with_trailer "$REPO" a.txt aa 'trunk five' 5
-    # A commit carrying r99 exists ONLY on a side branch (reachable from HEAD if checked out,
-    # but NOT from main). Floor must ignore it.
+    _commit_with_mark "$REPO" a.txt aa 'trunk five' 5
+    # r99 is marked on a commit that lives ONLY on a side branch (reachable from HEAD while that
+    # branch is checked out, but NOT from main). Floor must ignore it.
     git -C "$REPO" checkout -q -b side
-    _commit_with_trailer "$REPO" side.txt ss 'side ninety-nine' 99
+    _commit_with_mark "$REPO" side.txt ss 'side ninety-nine' 99
     git -C "$REPO" checkout -q main
     local got sha5
-    sha5="$(git -C "$REPO" log --grep='^svn-revision: 5$' -E --format='%H' main)"
+    sha5="$(_mark_sha "$REPO" 5)"
     got="$(svn_floor_commit_for_rev "$REPO" 99)"
-    assertEquals 'floor ignores r99 that is off-main' "$sha5" "$got"
+    assertEquals 'floor ignores the r99 marker that is off-main' "$sha5" "$got"
+    assertEquals 'max-reachable on main ignores it too' 5 "$(svn_max_rev_reachable "$REPO" main)"
 }
 
 # shellcheck disable=SC1090

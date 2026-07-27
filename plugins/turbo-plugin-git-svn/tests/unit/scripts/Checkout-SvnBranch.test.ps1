@@ -79,18 +79,17 @@ BeforeAll {
     function Add-MainTrailers {
         param([string]$Root, [int[]]$Revs)
         foreach ($r in $Revs) {
-            $rc = Run-Git -Cwd $Root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', "sync: svn r$r", '-m', "svn-revision: $r")
+            $rc = Run-Git -Cwd $Root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', "sync: svn r$r")
+            if ($rc -eq 0) { $rc = Run-Git -Cwd $Root -GitArgs @('update-ref', "refs/tp/svn/$r", (Run-Git-Capture -Cwd $Root -GitArgs @('rev-parse', 'HEAD'))) }
             if ($rc -ne 0) { return $false }
         }
         return $true
     }
 
-    # SHA of the main commit carrying `svn-revision: <Rev>` (the floor target for assertions).
+    # SHA marked as <Rev> via refs/tp/svn/<Rev> (the floor target for assertions).
     function Get-TrailerSha {
         param([string]$Root, [int]$Rev)
-        $pattern = "^svn-revision: $Rev`$"
-        $out = Run-Git-Capture -Cwd $Root -GitArgs @('log', 'main', '-E', "--grep=$pattern", '--format=%H')
-        return ($out -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+        return (Run-Git-Capture -Cwd $Root -GitArgs @('rev-parse', '--verify', '--quiet', "refs/tp/svn/$Rev^{commit}"))
     }
 
     # Set one or more tp:* properties on an SVN branch URL (checkout once, propset each, one commit).

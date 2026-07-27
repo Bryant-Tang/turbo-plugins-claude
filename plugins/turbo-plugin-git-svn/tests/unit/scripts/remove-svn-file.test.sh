@@ -168,7 +168,7 @@ test_untrack_a_reconcile() {
         [ -n "$sha" ] || continue
         subj="$(git -C "$BRIDGE" show -s --format=%s "$sha")"
         case "$subj" in sync:\ svn\ r[0-9]*) continue ;; esac
-        if git -C "$BRIDGE" show -s --format=%B "$sha" | grep -qE '^svn-revision: [0-9]+$'; then continue; fi
+        if git -C "$BRIDGE" for-each-ref --format='%(objectname)' 'refs/tp/svn/*' | grep -qxF "$sha"; then continue; fi
         bad=1; echo "stray remote-svn/main commit: '$subj'" >&2
     done <<< "$(git -C "$BRIDGE" log --no-merges --pretty=%H remote-svn/main)"
     assertEquals 'remote-svn/main carries only bridge-managed commits (sync or replay-trailer)' 0 "$bad"

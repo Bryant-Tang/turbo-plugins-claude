@@ -58,18 +58,18 @@ try {
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {
-        $aheadRaw = & git -C $mainWorktree log --no-merges --format='%H%x09%(trailers:key=svn-revision,valueonly)' "$Branch..$($remote.Branch)" 2>$null
+        $aheadRaw = & git -C $mainWorktree log --no-merges --format='%H' "$Branch..$($remote.Branch)" 2>$null
     } finally {
         $ErrorActionPreference = $prevEAP
     }
-    $aheadLines = @($aheadRaw | Where-Object { $_ })
-    $orphans = @($aheadLines | Where-Object {
-        $parts = $_ -split "`t", 2
-        $trailer = if ($parts.Count -ge 2) { $parts[1].Trim() } else { '' }
-        [string]::IsNullOrEmpty($trailer)
-    })
+    # Marker-aware: a replay commit is MARKED by refs/tp/svn/<N> and is resumable state, not an
+    # orphan. Only an UNMARKED non-merge commit ahead is a real orphan.
+    $markedShas = @{}
+    foreach ($m in (Get-SvnRevMarks -RepoDir $mainWorktree)) { $markedShas[$m.Sha] = $true }
+    $aheadLines = @($aheadRaw | Where-Object { $_ } | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9a-f]{40}$' })
+    $orphans = @($aheadLines | Where-Object { -not $markedShas.ContainsKey($_) })
     if (@($orphans).Count -gt 0) {
-        $orphanDisplay = @($orphans | ForEach-Object { ($_ -split "`t", 2)[0] }) -join "`n"
+        $orphanDisplay = $orphans -join "`n"
         throw "remote/$($remote.Branch) has $(@($orphans).Count) unmerged sync commit(s) ahead of '$Branch':`n$orphanDisplay`n`nResolve via manual merge (git -C $mainWorktree merge $($remote.Branch)) or rerun /tp-pull-from-svn after the conflict is committed."
     }
 
@@ -84,19 +84,11 @@ try {
     $headRev = [int]((& svn info --show-item revision $svnUrl | Out-String).Trim())
     $wcRevStart = [int]((& svn info --show-item revision $remote.Path | Out-String).Trim())
 
-    # cur (resume point) = the greatest already-replayed `svn-revision:` trailer on the bridge branch,
-    # floored by the WC's own revision. The wcRevStart term is the legacy-lump / transition floor:
-    # a clean bridge WC guarantees its content == git HEAD tree, so wcRevStart is a valid
-    # "already in git" floor even when the baseline lump commit carries no trailer. Forward-only.
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-    try {
-        $trailerRaw = & git -C $mainWorktree log $remote.Branch --format='%(trailers:key=svn-revision,valueonly)' 2>$null
-    } finally {
-        $ErrorActionPreference = $prevEAP
-    }
-    $trailerVals = @($trailerRaw | Where-Object { $_ -match '^[0-9]+$' } | ForEach-Object { [int]$_ })
-    $cur = (@($trailerVals) + @($wcRevStart) | Measure-Object -Maximum).Maximum
+    # cur (resume point) = the greatest MARKED revision reachable from the bridge branch, floored by
+    # the WC's own revision (a clean bridge WC guarantees its content == git HEAD tree, so
+    # wcRevStart is a valid "already in git" floor even for a baseline predating any marker).
+    $maxMark = Get-SvnMaxRevReachable -RepoDir $mainWorktree -Ref $remote.Branch
+    $cur = (@([int]$maxMark) + @($wcRevStart) | Measure-Object -Maximum).Maximum
 
     # Count pending revisions r(cur+1)..headRev for the granularity GATE. Invoke-SvnReplayDispatch
     # re-enumerates the full records; here we only need the COUNT. Guard the reversed/empty range so

@@ -497,18 +497,28 @@ svn_enumerate_revisions() {
 svn_replay_commit() {
   local repo_dir="$1" rev="$2" author="$3" date="$4" message="$5"
 
-  # Idempotency: a commit with this revision's trailer already on HEAD → skip (no dup).
-  local pat='^svn-revision: '"${rev}"'$'
-  if [[ -n "$(git -C "$repo_dir" log HEAD -n 1 -E --grep="$pat" --format='%H' 2>/dev/null)" ]]; then
+  # Idempotency: this revision is already marked AND that marker is on HEAD → nothing to do. A
+  # marker left by a rolled-back attempt is not an ancestor of HEAD, so it does not block a re-run.
+  local marked
+  marked="$(svn_rev_mark_get "$repo_dir" "$rev")"
+  if [[ -n "$marked" ]] && git -C "$repo_dir" merge-base --is-ancestor "$marked" HEAD 2>/dev/null; then
     echo "SKIP:idempotent"
     return 0
   fi
 
   git -C "$repo_dir" add -A
 
-  # Empty index (tree identical to parent) → skip, never mint a no-op commit. The command sits
-  # in the `if` condition, so `set -e` does not trip on its non-zero (=has-changes) exit.
+  # Empty index (tree identical to parent) → this revision changed nothing we track, so HEAD ALREADY
+  # carries its content: mark HEAD and make no commit. Marking (rather than skipping outright) is
+  # what lets a revision whose content arrived some other way -- notably one this repo pushed
+  # itself -- still be resolvable by the floor lookup. The command sits in the `if` condition so
+  # `set -e` does not trip on its non-zero (= has-changes) exit.
   if git -C "$repo_dir" diff --cached --quiet; then
+    local head_sha
+    head_sha="$(git -C "$repo_dir" rev-parse --verify --quiet HEAD || true)"
+    if [[ -n "$head_sha" ]]; then
+      svn_rev_mark_set "$repo_dir" "$rev" "$head_sha"
+    fi
     echo "SKIP:empty"
     return 0
   fi
@@ -518,26 +528,20 @@ svn_replay_commit() {
   local date_git
   date_git="$(printf '%s' "$date" | sed -E 's/\.[0-9]+Z$/Z/')"
 
-  # Robustness (security review): defang any BODY line that mimics our own `svn-revision:` trailer,
-  # so a crafted SVN commit message cannot inject a lookalike that the trailer scans (idempotency /
-  # floor / max-trailer alignment) would mistake for the tool-appended trailer. Indent a col-0 match
-  # by one space -- breaks the `^svn-revision:` anchor every scan uses, and a leading space on a
-  # non-empty content line survives `--cleanup=whitespace`. Only the tool's own final -m carries the
-  # real trailer.
-  local safe_message
-  safe_message="$(printf '%s' "$message" | sed -E 's/^(svn-revision:)/ \1/')"
-
   local -a author_arg=()
   if [[ -n "$author" ]]; then
     author_arg=(--author="$author <>")
   fi
 
+  # The SVN message is committed VERBATIM -- the revision number lives in refs/tp/svn/<rev>, so
+  # nothing is appended to (or stripped from) what the author wrote.
   git -C "$repo_dir" -c commit.gpgsign=false commit --cleanup=whitespace \
     "${author_arg[@]}" --date="$date_git" \
-    -m "$safe_message" -m "svn-revision: $rev" >/dev/null
+    -m "$message" >/dev/null
 
   local sha
   sha="$(git -C "$repo_dir" rev-parse HEAD)"
+  svn_rev_mark_set "$repo_dir" "$rev" "$sha"
   echo "COMMIT:$sha"
 }
 
@@ -564,17 +568,22 @@ svn_replay_one_revision() {
 }
 
 # Squash the current SVN HEAD-of-range into ONE boundary commit on the bridge worktree's HEAD.
-# Subject stays `sync: svn r<rev>` (steady-state shape); a second -m appends the `svn-revision: <rev>`
-# trailer so floor-lookup (U5) treats the squashed range as a single boundary. Skips when
-# `git add -A` leaves the index unchanged (empty delta).
+# Subject stays `sync: svn r<rev>` (steady-state shape) and refs/tp/svn/<rev> marks it, so the floor
+# lookup (U5) treats the squashed range as a single boundary. An empty delta mints no commit but
+# still marks HEAD -- the revision is materialised there either way.
 # Args: <remote_path> <rev>
 svn_boundary_commit() {
-  local remote_path="$1" rev="$2"
+  local remote_path="$1" rev="$2" sha
   git -C "$remote_path" add -A
   if git -C "$remote_path" diff --cached --quiet; then
+    sha="$(git -C "$remote_path" rev-parse --verify --quiet HEAD || true)"
+    if [[ -n "$sha" ]]; then
+      svn_rev_mark_set "$remote_path" "$rev" "$sha"
+    fi
     return 0
   fi
-  git -C "$remote_path" -c commit.gpgsign=false commit -m "sync: svn r$rev" -m "svn-revision: $rev"
+  git -C "$remote_path" -c commit.gpgsign=false commit -m "sync: svn r$rev"
+  svn_rev_mark_set "$remote_path" "$rev" "$(git -C "$remote_path" rev-parse HEAD)"
 }
 
 # Enumerate r(cur+1)..head_rev on the bridge worktree, then materialise commits per <mode>:
@@ -648,73 +657,88 @@ svn_replay_dispatch() {
   fi
 }
 
-# Floor revision→commit lookup (KTD3 floor semantics, R8/R14). Over `main` (STRICTLY main,
-# never HEAD), return the SHA of the newest commit whose `svn-revision:` trailer value is the
-# GREATEST value <= <target_rev>. SVN revisions are repo-global/sparse, so an arbitrary target
-# (e.g. a branch copyfrom-rev) usually has no exact match — floor, not exact.
+# ── Revision markers: refs/tp/svn/<N> (R14) ───────────────────────────────────
+# The revision→commit map lives in a dedicated ref namespace, NOT in commit messages.
+#
+# Invariant: for every TRUNK revision N this repo knows about there is exactly ONE ref
+# `refs/tp/svn/<N>` pointing at the git commit whose tree is trunk@N. Both directions record it:
+# a pull points the marker at the commit its replay just made (or, when the revision changed
+# nothing, at the tip that already carries that content), and a `main` push points it at the commit
+# it just pushed. That closes the hole the message-trailer design had -- a revision this repo
+# CREATED by pushing never got a marker, so alignment and fork-point lookups silently saw stale
+# state -- and it makes both paths use one mechanism.
+#
+# Why refs rather than a `svn-revision:` message trailer:
+#   - the marker is written by us, never mixed into an SVN author's message (no spoofing surface,
+#     no defanging, and replayed messages round-trip byte-exact);
+#   - no marker commits, so `git log` and the locked SVN push body stay clean;
+#   - lookup is O(markers) via for-each-ref instead of walking every commit body;
+#   - `refs/tp/*` is outside `refs/tags/`, so it never pollutes `git tag` (this plugin's release
+#     tags live there) or `git describe`.
+# The tradeoff accepted: refs are not part of the commit object, so a user who deletes them loses
+# the map. That fails LOUD (checkout stops, "cannot attach") and is rebuilt by a fresh re-import.
+# Markers are per-repo by design -- history does not travel between engineers here; each repo
+# replays from SVN itself and writes its own markers.
+
+# Point refs/tp/svn/<rev> at <sha> (create or move). Args: <repo_dir> <rev> <sha>
+svn_rev_mark_set() {
+  git -C "$1" update-ref "refs/tp/svn/$2" "$3"
+}
+
+# Echo the SHA marked for <rev>, or nothing. Args: <repo_dir> <rev>
+svn_rev_mark_get() {
+  git -C "$1" rev-parse --verify --quiet "refs/tp/svn/$2^{commit}" 2>/dev/null || true
+}
+
+# Echo "<rev> <sha>" per marker, DESCENDING by revision (numeric). Args: <repo_dir>
+svn_rev_marks() {
+  git -C "$1" for-each-ref --format='%(refname:lstrip=3) %(objectname)' 'refs/tp/svn/*' 2>/dev/null \
+    | awk 'NF==2 && $1 ~ /^[0-9]+$/' | sort -rn -k1,1
+}
+
+# Floor revision→commit lookup (KTD3 floor semantics, R8/R14): the marker with the GREATEST
+# revision <= <target_rev> whose commit is REACHABLE FROM `main`. SVN revisions are repo-global and
+# sparse, so an arbitrary target (a branch's copyfrom-rev, say) usually has no exact marker.
 #   - Prints exactly ONE SHA on success.
-#   - Prints NOTHING (returns 0) when no commit carries a value <= target (the genuine
+#   - Prints NOTHING (returns 0) when no marker <= target is reachable from main (the genuine
 #     "predates earliest" case → checkout's R10 path).
-#   - FAILS LOUD (stderr + return 1) when that greatest value <= target is carried by MORE
-#     THAN ONE commit — the ambiguous multi-match that reproduced the `not a valid object name`
-#     failure (6962db7 / 6f73114). Refuses to guess a base.
+# Ambiguity is impossible by construction (a ref name holds one revision), so the old
+# fail-loud-on-duplicate branch is gone; markers left behind by a rolled-back import are simply
+# unreachable from main and skipped here.
 # Args: <repo_dir> <target_rev>
 svn_floor_commit_for_rev() {
-  local repo_dir="$1" target="$2"
-  local best_rev="" best_sha="" best_count=0
-  local record sha val
-  # `git log main -z`: NUL-separated commits, each formatted "<sha>\n<raw-body>". Parse the
-  # trailer straight out of the body (version-independent; also robust to the %(trailers)
-  # newline quirks). NEVER pass HEAD — the scope is strictly main.
-  while IFS= read -r -d '' record || [[ -n "$record" ]]; do
-    [[ -z "$record" ]] && continue
-    sha="${record%%$'\n'*}"
-    val="$(printf '%s\n' "$record" | grep -oE '^svn-revision: [0-9]+' | tail -n1 | grep -oE '[0-9]+$' || true)"
-    [[ -z "$val" ]] && continue
-    if (( val <= target )); then
-      if [[ -z "$best_rev" ]] || (( val > best_rev )); then
-        best_rev="$val"; best_sha="$sha"; best_count=1
-      elif (( val == best_rev )); then
-        best_count=$(( best_count + 1 )); best_sha="$sha"
-      fi
+  local repo_dir="$1" target="$2" rev sha
+  while read -r rev sha; do
+    [[ -z "$rev" ]] && continue
+    (( rev > target )) && continue
+    if git -C "$repo_dir" merge-base --is-ancestor "$sha" main 2>/dev/null; then
+      echo "$sha"
+      return 0
     fi
-  done < <(git -C "$repo_dir" log main -z --format='%H%n%B' 2>/dev/null)
-
-  if [[ -z "$best_rev" ]]; then
-    return 0
-  fi
-  if (( best_count > 1 )); then
-    echo "Error: svn_floor_commit_for_rev: revision r$best_rev is carried by $best_count commits on 'main' (ambiguous floor for r$target). Refusing to return a non-unique base." >&2
-    return 1
-  fi
-  echo "$best_sha"
+  done < <(svn_rev_marks "$repo_dir")
+  return 0
 }
 
-# Highest replayed revision on `main` (KTD4 resume point; the checkout grading bound `cur`, U5).
-# Scans the SAME `svn-revision:` trailer as svn_floor_commit_for_rev, STRICTLY on `main` (never
-# HEAD). Echoes the GREATEST replayed revision value, or 0 when `main` carries no replayed revision.
-# Used to grade a target R against cur BEFORE the floor lookup: R > cur means the aligned revision
-# has not been replayed yet (pull first) rather than "predates earliest".
-# Args: <repo_dir>
-# Greatest `svn-revision:` trailer value reachable from <ref>. Centralized trailer-scan primitive
-# (security/maintainability review): one place parses the trailer, so idempotency/floor/highest/
-# alignment stay consistent and robust. Takes only the LAST `^svn-revision:` line PER COMMIT (the
-# tool-appended trailer position) -- a stray lookalike anywhere earlier in a body is ignored, and
-# replay bodies are additionally defanged at mint time (svn_replay_commit). Echoes 0 when none.
-# Args: <repo_dir> <ref>
-svn_max_trailer_rev() {
-  local repo_dir="$1" ref="$2" best=0 record val
-  while IFS= read -r -d '' record || [[ -n "$record" ]]; do
-    [[ -z "$record" ]] && continue
-    val="$(printf '%s\n' "$record" | grep -oE '^svn-revision: [0-9]+' | tail -n1 | grep -oE '[0-9]+$' || true)"
-    [[ -z "$val" ]] && continue
-    if (( val > best )); then best="$val"; fi
-  done < <(git -C "$repo_dir" log "$ref" -z --format='%H%n%B' 2>/dev/null)
-  echo "$best"
+# Greatest marked revision REACHABLE FROM <ref>; 0 when none. This is the single "where are we"
+# answer shared by the pull resume point, the checkout grading bound and the push alignment
+# advance, so those three can no longer disagree (they used to: the pull read the working-copy
+# revision while checkout read message trailers, which deadlocked a checkout behind a pull that
+# had nothing to do). Args: <repo_dir> <ref>
+svn_max_rev_reachable() {
+  local repo_dir="$1" ref="$2" rev sha
+  while read -r rev sha; do
+    [[ -z "$rev" ]] && continue
+    if git -C "$repo_dir" merge-base --is-ancestor "$sha" "$ref" 2>/dev/null; then
+      echo "$rev"
+      return 0
+    fi
+  done < <(svn_rev_marks "$repo_dir")
+  echo 0
 }
 
+# The checkout grading bound `cur` = greatest marked revision reachable from `main`.
 svn_highest_replayed_rev() {
-  svn_max_trailer_rev "$1" main
+  svn_max_rev_reachable "$1" main
 }
 
 # --- tp:* branch-metadata property helpers (U2) ------------------------------

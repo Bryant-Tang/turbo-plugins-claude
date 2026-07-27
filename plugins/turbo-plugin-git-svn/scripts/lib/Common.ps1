@@ -351,51 +351,52 @@ function Invoke-SvnReplayCommit {
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {
-        # Idempotency: exact `svn-revision: <rev>` trailer already on HEAD → skip. git log exits 0
-        # with empty output when nothing matches (only a bad ref errors, which we tolerate).
-        $pattern = '^svn-revision: ' + $Rev + '$'
-        $existing = & git -C $RepoDir log HEAD -n 1 -E --grep=$pattern --format='%H' 2>$null
-        if (-not [string]::IsNullOrWhiteSpace((@($existing) -join ''))) {
-            return 'SKIP:idempotent'
+        # Idempotency: this revision is already marked AND that marker is on HEAD → nothing to do.
+        # A marker left by a rolled-back attempt is not an ancestor of HEAD, so it never blocks a re-run.
+        $marked = Get-SvnRevMark -RepoDir $RepoDir -Rev $Rev
+        if (-not [string]::IsNullOrWhiteSpace($marked)) {
+            & git -C $RepoDir merge-base --is-ancestor $marked HEAD 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return 'SKIP:idempotent' }
         }
 
         & git -C $RepoDir add -A 2>$null | Out-Null
         # Guard the stage: a failed `git add -A` leaves the index unchanged, which the empty-delta
-        # check below would misread as "identical tree" → SKIP:empty, silently dropping this
-        # revision's commit + trailer (and corrupting the trailer-scan cur/floor lookups). The bash
-        # sibling fails loud here via `set -e`; mirror Invoke-SvnBoundaryCommit's own add-guard.
+        # check below would misread as "identical tree", silently dropping this revision's commit
+        # (and its marker). The bash sibling fails loud here via `set -e`.
         if ($LASTEXITCODE -ne 0) { throw "Invoke-SvnReplayCommit: git add -A failed for r$Rev (exit $LASTEXITCODE)." }
 
-        # Empty index (tree identical to parent) → skip. --quiet writes nothing to stderr, so
-        # $LASTEXITCODE is reliable: 0 = no staged changes, 1 = staged changes.
+        # Empty index (tree identical to parent) → this revision changed nothing we track, so HEAD
+        # ALREADY carries its content: mark HEAD, mint no commit. Marking (rather than skipping
+        # outright) is what lets a revision whose content arrived some other way -- notably one this
+        # repo pushed itself -- still be resolvable by the floor lookup. --quiet writes nothing to
+        # stderr, so $LASTEXITCODE is reliable: 0 = no staged changes, 1 = staged changes.
         & git -C $RepoDir diff --cached --quiet 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) {
+            $headSha = (& git -C $RepoDir rev-parse --verify --quiet HEAD 2>$null | Out-String).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($headSha)) {
+                Set-SvnRevMark -RepoDir $RepoDir -Rev $Rev -Sha $headSha
+            }
             return 'SKIP:empty'
         }
 
         # git dislikes the .000000Z microseconds svn emits; keep it to whole seconds.
         $dateGit = $Date -replace '\.\d+Z$', 'Z'
 
-        # Robustness (security review): defang any BODY line mimicking our own `svn-revision:` trailer
-        # so a crafted SVN message can't inject a lookalike the trailer scans would trust. Indent a
-        # col-0 match by one space (breaks the '^svn-revision:' anchor; survives --cleanup=whitespace).
-        # Mirror of the sed defang in svn_replay_commit (common.sh). Only the tool's final -m is real.
-        $safeMessage = (($Message -split "`n") | ForEach-Object {
-            if ($_ -match '^svn-revision:') { ' ' + $_ } else { $_ }
-        }) -join "`n"
-
         $authorArg = @()
         if (-not [string]::IsNullOrEmpty($Author)) {
             $authorArg = @("--author=$Author <>")
         }
 
+        # The SVN message is committed VERBATIM -- the revision number lives in refs/tp/svn/<rev>,
+        # so nothing is appended to (or stripped from) what the author wrote.
         & git -C $RepoDir -c commit.gpgsign=false commit --cleanup=whitespace @authorArg `
-            --date=$dateGit -m $safeMessage -m ('svn-revision: ' + $Rev) 2>$null | Out-Null
+            --date=$dateGit -m $Message 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "Invoke-SvnReplayCommit: git commit failed for r$Rev (exit $LASTEXITCODE)."
         }
 
         $sha = (& git -C $RepoDir rev-parse HEAD 2>$null | Out-String).Trim()
+        Set-SvnRevMark -RepoDir $RepoDir -Rev $Rev -Sha $sha
         return "COMMIT:$sha"
     } finally {
         $ErrorActionPreference = $prevEAP
@@ -449,8 +450,14 @@ function Invoke-SvnBoundaryCommit {
         $ErrorActionPreference = $prev
     }
     if ($hasChanges) {
-        & git -C $RemotePath -c commit.gpgsign=false commit -m "sync: svn r$Rev" -m "svn-revision: $Rev"
+        & git -C $RemotePath -c commit.gpgsign=false commit -m "sync: svn r$Rev"
         if ($LASTEXITCODE -ne 0) { throw 'git commit failed in remote worktree' }
+    }
+    # Mark the boundary either way: with or without a new commit, HEAD is where revision $Rev is
+    # materialised, and the floor lookup needs that mapping.
+    $sha = (& git -C $RemotePath rev-parse --verify --quiet HEAD 2>$null | Out-String).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($sha)) {
+        Set-SvnRevMark -RepoDir $RemotePath -Rev $Rev -Sha $sha
     }
 }
 
@@ -543,90 +550,114 @@ function Invoke-SvnReplayDispatch {
     }
 }
 
-# Floor revision->commit lookup (KTD3 floor semantics, R8/R14). Over `main` (STRICTLY main, never
-# HEAD), return the SHA of the newest commit whose `svn-revision:` trailer value is the GREATEST
-# value <= -TargetRev (SVN revisions are sparse, so an arbitrary target usually has no exact match).
-#   - Returns exactly ONE SHA on success.
-#   - Returns $null when no commit carries a value <= target (genuine "predates earliest").
-#   - THROWS when that greatest value <= target is carried by MORE THAN ONE commit — the ambiguous
-#     multi-match that reproduced the `not a valid object name` failure (6962db7 / 6f73114).
+# --- Revision markers: refs/tp/svn/<N> (R14) ----------------------------------
+# PowerShell peers of svn_rev_mark_set / svn_rev_mark_get / svn_rev_marks / floor / max
+# (common.sh). See that file for the full rationale; in short, the revision->commit map lives in a
+# dedicated ref namespace rather than in commit messages, both pull and push write it, and that is
+# what lets a revision this repo PUSHED still be resolvable by the floor lookup.
+
+# Point refs/tp/svn/<Rev> at <Sha> (create or move).
+function Set-SvnRevMark {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][int]$Rev,
+        [Parameter(Mandatory = $true)][string]$Sha
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        & git -C $RepoDir update-ref "refs/tp/svn/$Rev" $Sha 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Set-SvnRevMark: update-ref refs/tp/svn/$Rev failed (exit $LASTEXITCODE)." }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# SHA marked for <Rev>, or '' when unmarked.
+function Get-SvnRevMark {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][int]$Rev
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $sha = (& git -C $RepoDir rev-parse --verify --quiet "refs/tp/svn/$Rev^{commit}" 2>$null | Out-String).Trim()
+        return $sha
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# All markers as [pscustomobject]@{Rev;Sha}, DESCENDING by revision (numeric).
+function Get-SvnRevMarks {
+    param([Parameter(Mandatory = $true)][string]$RepoDir)
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $lines = @(& git -C $RepoDir for-each-ref --format='%(refname:lstrip=3) %(objectname)' 'refs/tp/svn/*' 2>$null)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    $out = foreach ($line in $lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $parts = $line.Trim() -split '\s+'
+        if ($parts.Count -ne 2 -or $parts[0] -notmatch '^[0-9]+$') { continue }
+        [pscustomobject]@{ Rev = [int]$parts[0]; Sha = $parts[1] }
+    }
+    return @($out | Sort-Object -Property Rev -Descending)
+}
+
+# Floor revision->commit lookup (KTD3 floor semantics, R8/R14): the marker with the GREATEST
+# revision <= -TargetRev whose commit is REACHABLE FROM `main`. Returns one SHA, or $null when no
+# marker <= target is reachable (the genuine "predates earliest" case -> checkout's R10 path).
+# Ambiguity is impossible by construction (one ref per revision), so there is no duplicate branch;
+# markers left by a rolled-back import are simply unreachable from main and skipped.
 function Get-SvnFloorCommit {
     param(
         [Parameter(Mandatory = $true)][string]$RepoDir,
         [Parameter(Mandatory = $true)][int]$TargetRev
     )
-
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {
-        $shas = @(& git -C $RepoDir log main --format='%H' 2>$null)
-        $bestRev = $null; $bestSha = $null; $bestCount = 0
-        foreach ($sha in $shas) {
-            if ([string]::IsNullOrWhiteSpace($sha)) { continue }
-            # Parse the trailer straight out of the raw body (version-independent; avoids the
-            # %(trailers) newline quirks). Take the LAST svn-revision line if several appear.
-            $bodyLines = & git -C $RepoDir show -s --format='%B' $sha 2>$null
-            $body = (@($bodyLines) -join "`n")
-            $matched = [regex]::Matches($body, '(?m)^svn-revision:[ ]([0-9]+)[ ]*\r?$')
-            if ($matched.Count -eq 0) { continue }
-            $val = [int]$matched[$matched.Count - 1].Groups[1].Value
-            if ($val -gt $TargetRev) { continue }
-            if ($null -eq $bestRev -or $val -gt $bestRev) {
-                $bestRev = $val; $bestSha = $sha; $bestCount = 1
-            } elseif ($val -eq $bestRev) {
-                $bestCount++
-                $bestSha = $sha
-            }
+        foreach ($m in (Get-SvnRevMarks -RepoDir $RepoDir)) {
+            if ($m.Rev -gt $TargetRev) { continue }
+            & git -C $RepoDir merge-base --is-ancestor $m.Sha main 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $m.Sha }
         }
-        if ($null -eq $bestRev) { return $null }
-        if ($bestCount -gt 1) {
-            throw "Get-SvnFloorCommit: revision r$bestRev is carried by $bestCount commits on 'main' (ambiguous floor for r$TargetRev). Refusing to return a non-unique base."
-        }
-        return $bestSha
+        return $null
     } finally {
         $ErrorActionPreference = $prevEAP
     }
 }
 
-# Highest replayed revision on `main` (KTD4 resume point; the checkout grading bound `cur`, U5).
-# Scans the SAME `svn-revision:` trailer as Get-SvnFloorCommit, STRICTLY on `main` (never HEAD).
-# Returns the GREATEST replayed revision value as [int], or 0 when `main` carries no replayed
-# revision. Used to grade a target R against cur BEFORE the floor lookup: R > cur means the aligned
-# revision has not been replayed yet (pull first) rather than "predates earliest".
-# Greatest `svn-revision:` trailer value reachable from -Ref. Centralized trailer-scan primitive
-# (security/maintainability review): one place parses the trailer, so idempotency/floor/highest/
-# alignment stay consistent and robust. Takes only the LAST `^svn-revision:` line PER COMMIT (the
-# tool-appended trailer position) -- a stray lookalike earlier in a body is ignored, and replay
-# bodies are additionally defanged at mint time (Invoke-SvnReplayCommit). Returns [int], 0 when none.
-function Get-SvnMaxTrailerRev {
+# Greatest marked revision REACHABLE FROM -Ref; 0 when none. Single "where are we" answer shared by
+# the pull resume point, the checkout grading bound and the push alignment advance, so those three
+# can no longer disagree (they used to: the pull read the working-copy revision while checkout read
+# message trailers, which deadlocked a checkout behind a pull that had nothing to do).
+function Get-SvnMaxRevReachable {
     param(
         [Parameter(Mandatory = $true)][string]$RepoDir,
         [Parameter(Mandatory = $true)][string]$Ref
     )
-
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {
-        $shas = @(& git -C $RepoDir log $Ref --format='%H' 2>$null)
-        $best = 0
-        foreach ($sha in $shas) {
-            if ([string]::IsNullOrWhiteSpace($sha)) { continue }
-            $bodyLines = & git -C $RepoDir show -s --format='%B' $sha 2>$null
-            $body = (@($bodyLines) -join "`n")
-            $matched = [regex]::Matches($body, '(?m)^svn-revision:[ ]([0-9]+)[ ]*\r?$')
-            if ($matched.Count -eq 0) { continue }
-            $val = [int]$matched[$matched.Count - 1].Groups[1].Value
-            if ($val -gt $best) { $best = $val }
+        foreach ($m in (Get-SvnRevMarks -RepoDir $RepoDir)) {
+            & git -C $RepoDir merge-base --is-ancestor $m.Sha $Ref 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $m.Rev }
         }
-        return $best
+        return 0
     } finally {
         $ErrorActionPreference = $prevEAP
     }
 }
 
+# The checkout grading bound `cur` = greatest marked revision reachable from `main`.
 function Get-SvnHighestReplayedRev {
     param([Parameter(Mandatory = $true)][string]$RepoDir)
-    return (Get-SvnMaxTrailerRev -RepoDir $RepoDir -Ref 'main')
+    return (Get-SvnMaxRevReachable -RepoDir $RepoDir -Ref 'main')
 }
 
 # --- tp:* branch-metadata property helpers (U2) ------------------------------

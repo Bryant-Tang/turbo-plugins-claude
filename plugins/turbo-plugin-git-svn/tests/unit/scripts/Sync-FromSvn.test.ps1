@@ -163,13 +163,19 @@ BeforeAll {
         return [int]((& svn info --show-item revision $Uri --config-dir $Cfg | Out-String).Trim())
     }
 
-    # Numeric svn-revision trailer values present on a branch (ascending), as an array of [int].
+    # Marked revisions (refs/tp/svn/<N>) whose commit is reachable from <Ref>, ascending, as [int].
     # Run-Git-Capture joins lines via Out-String (CRLF), so each split element is trimmed before the
     # numeric match -- otherwise a trailing "`r" makes '^[0-9]+$' miss every line but the last.
     function Get-TrailerRevs {
         param([string]$Root, [string]$Ref)
-        $raw = Run-Git-Capture -Cwd $Root -GitArgs @('log', $Ref, '--format=%(trailers:key=svn-revision,valueonly)')
-        $vals = @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9]+$' } | ForEach-Object { [int]$_ })
+        $raw = Run-Git-Capture -Cwd $Root -GitArgs @('for-each-ref', '--format=%(refname:lstrip=3) %(objectname)', 'refs/tp/svn/*')
+        $vals = @()
+        foreach ($line in ($raw -split "`n")) {
+            $parts = $line.Trim() -split '\s+'
+            if ($parts.Count -ne 2 -or $parts[0] -notmatch '^[0-9]+$') { continue }
+            $null = Run-Git -Cwd $Root -GitArgs @('merge-base', '--is-ancestor', $parts[1], $Ref)
+            if ($LASTEXITCODE -eq 0) { $vals += [int]$parts[0] }
+        }
         return @($vals | Sort-Object)
     }
 }
@@ -414,8 +420,8 @@ Describe 'Sync-FromSvn' {
 
                 $subj = Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', 'remote-svn/main', '-1', '--format=%s')
                 $subj | Should -Be "sync: svn r$head"
-                $trailer = (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('log', 'remote-svn/main', '-1', '--format=%(trailers:key=svn-revision,valueonly)')).Trim()
-                $trailer | Should -Be "$head"
+                $marked = (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-parse', '--verify', '--quiet', "refs/tp/svn/$head^{commit}")).Trim()
+                $marked | Should -Be (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-parse', 'remote-svn/main'))
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
@@ -451,7 +457,7 @@ Describe 'Sync-FromSvn' {
     }
 
     Context 'Case 13: empty-delta revision is skipped (no no-op commit)' {
-        It 'a prop-only revision between two file revs produces no commit for itself' -Skip:(-not $script:HasSvn) {
+        It 'a prop-only revision between two file revs mints no commit but is still marked' -Skip:(-not $script:HasSvn) {
             $sb = New-Sandbox -Tag 'pfs-13'
             try {
                 $ctx = New-PushedBridge -Sandbox $sb
@@ -471,7 +477,14 @@ Describe 'Sync-FromSvn' {
                 $trailers = Get-TrailerRevs -Root $ctx.Root -Ref 'remote-svn/main'
                 $trailers | Should -Contain @($ra)[0]
                 $trailers | Should -Contain @($rc)[0]
-                $trailers | Should -Not -Contain $rb
+                # The prop-only revision mints NO commit of its own (asserted by the count above) but
+                # IS marked -- onto the commit that already carries its content. Marking every
+                # enumerated revision, commit or not, is what keeps a revision resolvable when its
+                # content arrived some other way (notably one this repo pushed itself).
+                $trailers | Should -Contain $rb
+                $markB = (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-parse', '--verify', '--quiet', "refs/tp/svn/$rb^{commit}")).Trim()
+                $markA = (Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-parse', '--verify', '--quiet', "refs/tp/svn/$(@($ra)[0])^{commit}")).Trim()
+                $markB | Should -Be $markA -Because 'a prop-only revision marks the commit that already holds its content'
             } finally { Remove-Sandbox -Dir $sb }
         }
     }

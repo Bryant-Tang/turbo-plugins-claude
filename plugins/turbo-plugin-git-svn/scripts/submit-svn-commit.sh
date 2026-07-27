@@ -122,10 +122,12 @@ FULL_MESSAGE="$(printf '%s\n\n%s' "$TITLE_LINE" "$SVN_BODY")"
 # is folded into the SAME content commit below (never a separate property commit) and is idempotent
 # (no-op when unchanged). `|| true` on the grep pipeline so an empty match under `set -e` is benign.
 TP_CUR_ALIGNED="$(get_tp_branch_prop last-aligned-rev "$REMOTE_PATH")"
-# Centralized, robust trailer scan (security review #5): per-commit LAST trailer, then max -- so a
-# lookalike `svn-revision:` line buried in a branch commit body cannot over-advance the alignment.
-# Echoes 0 when the branch reaches no trailer; the -gt guard below then keeps TP_ADVANCE=0.
-TP_NEW_ALIGNED="$(svn_max_trailer_rev "$MAIN_WORKTREE" "$BRANCH")"
+# Greatest marked trunk revision reachable from the branch (refs/tp/svn/<N>). Because a `main` push
+# now marks the revision it created, a branch that merged main sees that revision here -- which is
+# what the trailer-based scan could not do (trailers only ever existed for PULLED revisions, so a
+# repo that pushed trunk itself never advanced its branches' alignment). Echoes 0 when the branch
+# reaches no marker; the -gt guard below then keeps TP_ADVANCE=0.
+TP_NEW_ALIGNED="$(svn_max_rev_reachable "$MAIN_WORKTREE" "$BRANCH")"
 TP_ADVANCE=0
 if [[ -n "$TP_CUR_ALIGNED" && -n "$TP_NEW_ALIGNED" && "$TP_NEW_ALIGNED" -gt "$TP_CUR_ALIGNED" ]]; then
   TP_ADVANCE=1
@@ -219,6 +221,15 @@ set +e
   printf '%s\n' "$COMMIT_OUT"
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'
+  # R14 marker for a TRUNK push: this push CREATED revision $NEW_REV, and the commit whose tree is
+  # that revision is the branch tip we just pushed. Recording it here is what makes a locally
+  # PUSHED revision resolvable at all -- pulls mark the revisions they replay, pushes mark the ones
+  # they create, and the floor lookup / alignment advance no longer care which direction it came
+  # from. Only the trunk branch is marked: refs/tp/svn/* maps TRUNK revisions, and a feature push
+  # creates a revision on the branch path, not on trunk.
+  if [[ "$BRANCH" == "main" && "$NEW_REV" =~ ^[0-9]+$ ]]; then
+    svn_rev_mark_set "$MAIN_WORKTREE" "$NEW_REV" "$(git -C "$MAIN_WORKTREE" rev-parse "$BRANCH")"
+  fi
   svn update > /dev/null || echo 'Warning: svn update after commit failed. Remote worktree may be stale.' >&2
   echo "Pushed to SVN r$NEW_REV"
 )

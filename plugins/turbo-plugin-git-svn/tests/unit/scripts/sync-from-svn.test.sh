@@ -86,10 +86,10 @@ add_svn_revisions() {
     return 0
 }
 
-# Count commits on remote-svn/main carrying a numeric svn-revision trailer.
+# Count of MARKED revisions (refs/tp/svn/<N>).
 count_trailer_commits() {
     local root="$1"
-    git -C "$root" log remote-svn/main --format='%(trailers:key=svn-revision,valueonly)' 2>/dev/null \
+    git -C "$root" for-each-ref --format='%(refname:lstrip=3)' 'refs/tp/svn/*' 2>/dev/null \
         | grep -cE '^[0-9]+$' || true
 }
 
@@ -212,8 +212,8 @@ test_squash_single_boundary_commit() {
     assertEquals 'squash creates exactly ONE new commit' 1 "$((after - before))"
     subj="$(git -C "$root" log remote-svn/main -1 --format='%s')"
     assertEquals 'squash subject is sync: svn r<HEAD>' "sync: svn r$head_rev" "$subj"
-    trailer="$(git -C "$root" log remote-svn/main -1 --format='%(trailers:key=svn-revision,valueonly)' | tr -d '[:space:]')"
-    assertEquals 'squash commit carries the HEAD svn-revision trailer' "$head_rev" "$trailer"
+    trailer="$(git -C "$root" rev-parse --verify --quiet "refs/tp/svn/${head_rev}^{commit}")"
+    assertEquals 'refs/tp/svn/<HEAD> marks the squash commit' "$(git -C "$root" rev-parse remote-svn/main)" "$trailer"
 }
 
 # ── Case 12 (range): per-revision inside <lo>:<hi>, squash the leading + trailing rest ─────────
@@ -228,18 +228,18 @@ test_range_per_revision_inside_squash_outside() {
     head="$(svn info --show-item revision "$uri" --config-dir "$cfg" | tr -d '[:space:]')"
     # 8 consecutive revs = (head-7)..head. Take the middle 3 per-revision: [head-5 .. head-3].
     lo=$((head - 5)); hi=$((head - 3))
-    tr_before="$(git -C "$root" log remote-svn/main --format='%(trailers:key=svn-revision,valueonly)' | grep -oE '^[0-9]+$' | sort -n | tr '\n' ' ')"
+    tr_before="$(git -C "$root" for-each-ref --format='%(refname:lstrip=3)' 'refs/tp/svn/*' | grep -oE '^[0-9]+$' | sort -n | tr '\n' ' ')"
     before="$(git -C "$root" rev-list --count remote-svn/main)"
     ( cd "$root" && bash "$SCRIPT" --branch main --granularity range --range "$lo:$hi" >/dev/null 2>&1 )
     assertEquals 'range pull exit 0' 0 $?
     after="$(git -C "$root" rev-list --count remote-svn/main)"
     # leading squash (1) + per-revision [lo..hi] (3) + trailing squash (1) = 5 new commits.
     assertEquals 'range: leading-squash + 3 per-rev + trailing-squash = 5 new commits' 5 "$((after - before))"
-    # new trailers (delta over the pull) = {lo-1} u [lo..hi] u {head}, ascending.
+    # new markers (delta over the pull) = {lo-1} u [lo..hi] u {head}, ascending.
     expected="$(printf '%s\n' "$((lo - 1))" "$lo" "$((lo + 1))" "$hi" "$head" | sort -n | tr '\n' ' ')"
-    got="$(git -C "$root" log remote-svn/main --format='%(trailers:key=svn-revision,valueonly)' | grep -oE '^[0-9]+$' | sort -n \
+    got="$(git -C "$root" for-each-ref --format='%(refname:lstrip=3)' 'refs/tp/svn/*' | grep -oE '^[0-9]+$' | sort -n \
         | while read -r v; do case " $tr_before " in *" $v "*) : ;; *) printf '%s ' "$v" ;; esac; done)"
-    assertEquals 'new trailers = leading boundary(lo-1), per-rev [lo..hi], trailing boundary(head)' "$expected" "$got"
+    assertEquals 'new markers = leading boundary(lo-1), per-rev [lo..hi], trailing boundary(head)' "$expected" "$got"
 }
 
 # shellcheck disable=SC1090

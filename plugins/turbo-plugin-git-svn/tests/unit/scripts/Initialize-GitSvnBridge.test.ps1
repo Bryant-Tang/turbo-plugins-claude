@@ -203,7 +203,7 @@ BeforeAll {
     # Count trailer-bearing replay commits on remote-svn/main (numeric svn-revision trailers).
     function Get-BridgeTrailerCount {
         param([string]$Root)
-        $raw = Run-Git-Capture -Cwd $Root -GitArgs @('log', 'remote-svn/main', '--format=%(trailers:key=svn-revision,valueonly)')
+        $raw = Run-Git-Capture -Cwd $Root -GitArgs @('for-each-ref', '--format=%(refname:lstrip=3)', 'refs/tp/svn/*')
         return @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9]+$' }).Count
     }
 }

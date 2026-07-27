@@ -67,16 +67,16 @@ fi
 # `--no-merges` is load-bearing: a normal push leaves a benign `Merge branch '<branch>' into
 # remote-svn/<branch>` MERGE commit ahead of $BRANCH (content already in $BRANCH); that steady
 # state must NOT trip this guard.
-# U3 REFINEMENT (trailer-aware): the per-revision model's own replay commits carry an
-# `svn-revision:` trailer and ARE the resumable state -- an interrupted per-revision pull re-runs
-# and continues them, so those must NOT be treated as orphans. Only a non-merge commit ahead that
-# carries NO svn-revision trailer (a legacy `sync:` lump, or a genuinely orphaned aborted merge)
-# is a real orphan. This single refinement lets "resume" and "orphan still fires" coexist.
-# (`%(trailers:valueonly)` appends a trailing blank line for trailer-bearing commits; the awk
-# `$1 !~ 40-hex` filter drops those, so the ahead-count and orphan-scan both stay accurate.)
-AHEAD_RAW="$(git -C "$MAIN_WORKTREE" log --no-merges --format='%H%x09%(trailers:key=svn-revision,valueonly)' "${BRANCH}..${REMOTE_BRANCH}" 2>/dev/null || true)"
-AHEAD_COUNT="$(printf '%s\n' "$AHEAD_RAW" | awk -F'\t' '$1 ~ /^[0-9a-f]{40}$/ {c++} END{print c+0}')"
-ORPHAN_SHAS="$(printf '%s\n' "$AHEAD_RAW" | awk -F'\t' '$1 !~ /^[0-9a-f]{40}$/ {next} {tr=$2; gsub(/[[:space:]]/,"",tr); if (tr=="") print $1}')"
+# U3 REFINEMENT (marker-aware): the per-revision model's own replay commits are MARKED by a
+# refs/tp/svn/<N> ref and ARE the resumable state -- an interrupted per-revision pull re-runs and
+# continues them, so those must NOT be treated as orphans. Only an UNMARKED non-merge commit ahead
+# (a legacy lump, or a genuinely orphaned aborted merge) is a real orphan.
+MARKED_SHAS="$(svn_rev_marks "$MAIN_WORKTREE" | awk '{print $2}')"
+AHEAD_RAW="$(git -C "$MAIN_WORKTREE" log --no-merges --format='%H' "${BRANCH}..${REMOTE_BRANCH}" 2>/dev/null || true)"
+AHEAD_COUNT="$(printf '%s\n' "$AHEAD_RAW" | awk '$1 ~ /^[0-9a-f]{40}$/ {c++} END{print c+0}')"
+ORPHAN_SHAS="$(printf '%s\n' "$AHEAD_RAW" | awk -v marked="$MARKED_SHAS" '
+  BEGIN { n = split(marked, m, /[[:space:]]+/); for (i = 1; i <= n; i++) if (m[i] != "") seen[m[i]] = 1 }
+  $1 ~ /^[0-9a-f]{40}$/ && !($1 in seen) { print $1 }')"
 if [[ -n "$ORPHAN_SHAS" ]]; then
   ORPHAN_COUNT="$(printf '%s\n' "$ORPHAN_SHAS" | grep -c . | tr -d '[:space:]')"
   echo "Error: remote/${REMOTE_BRANCH} has $ORPHAN_COUNT unmerged sync commit(s) ahead of '${BRANCH}':" >&2
@@ -93,16 +93,12 @@ SVN_URL="$(svn info --show-item url "$REMOTE_PATH" | tr -d '\r\n')"
 HEAD_REV="$(svn info --show-item revision "$SVN_URL" | tr -d '[:space:]')"
 WC_REV_START="$(svn info --show-item revision "$REMOTE_PATH" | tr -d '[:space:]')"
 
-# cur (resume point) = greatest already-replayed svn-revision trailer on the bridge branch, floored
-# by the WC's own revision (the legacy-lump / transition floor: a clean bridge WC guarantees its
-# content == git HEAD tree, so WC_REV_START is a valid "already in git" floor even when the baseline
-# lump commit carries no trailer). Forward-only.
+# cur (resume point) = greatest MARKED revision reachable from the bridge branch, floored by the
+# WC's own revision (a clean bridge WC guarantees its content == git HEAD tree, so WC_REV_START is a
+# valid "already in git" floor even for a baseline commit that predates any marker). Forward-only.
 CUR="$WC_REV_START"
-TRAILER_VALS="$(git -C "$MAIN_WORKTREE" log "$REMOTE_BRANCH" --format='%(trailers:key=svn-revision,valueonly)' 2>/dev/null | grep -E '^[0-9]+$' || true)"
-if [[ -n "$TRAILER_VALS" ]]; then
-  MAX_TRAILER="$(printf '%s\n' "$TRAILER_VALS" | sort -n | tail -n1)"
-  if (( MAX_TRAILER > CUR )); then CUR="$MAX_TRAILER"; fi
-fi
+MAX_MARK="$(svn_max_rev_reachable "$MAIN_WORKTREE" "$REMOTE_BRANCH")"
+if (( MAX_MARK > CUR )); then CUR="$MAX_MARK"; fi
 
 # Count pending revisions r(cur+1)..headRev for the granularity GATE. svn_replay_dispatch itself
 # re-enumerates the full records; here we only need the COUNT (one NUL per record from U1's

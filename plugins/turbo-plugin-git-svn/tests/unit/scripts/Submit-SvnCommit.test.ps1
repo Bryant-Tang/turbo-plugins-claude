@@ -188,7 +188,7 @@ Describe 'Submit-SvnCommit' {
     }
 
     Context 'Case 5 (U4): a push that newly merges main into the branch ADVANCES tp:last-aligned-rev' {
-        # A commit reachable from feat-x carries a HIGHER svn-revision trailer than the branch's
+        # A commit reachable from feat-x is MARKED with a HIGHER revision than the branch's
         # stored alignment (simulating a merge of a newer main). The advance lands IN THE SAME
         # content commit (folded, not a separate property revision): one new rev, tp == HIGH.
         It 'advances tp:last-aligned-rev, folded into the content commit' -Skip:(-not $script:SvnReady) {
@@ -202,7 +202,8 @@ Describe 'Submit-SvnCommit' {
                 Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'app.txt')) -Value 'app-v2' -NoNewline
                 $null = Run-Git -Cwd $fx.Root -GitArgs @('add', 'app.txt')
                 # A commit that BOTH changes a file (content to push) AND carries the trailer.
-                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', "sync: svn r$high", '-m', "svn-revision: $high")
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', "sync: svn r$high")
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('update-ref', "refs/tp/svn/$high", (Run-Git-Capture -Cwd $fx.Root -GitArgs @('rev-parse', 'HEAD')))
                 if (-not (Invoke-FeatPush -Root $fx.Root -Title 'push feat-x with merged main')) {
                     Set-ItResult -Skipped -Because 'the feature push did not succeed in this env'; return
                 }

@@ -296,15 +296,28 @@ try {
         $dirty = (& git -C $remoteWorktreePath status --porcelain 2>$null | Out-String).Trim()
         $ErrorActionPreference = $eaStatus
         if (-not [string]::IsNullOrWhiteSpace($dirty)) {
+            $eaPre = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            $preAmendSha = (& git -C $remoteWorktreePath rev-parse --verify --quiet HEAD 2>$null | Out-String).Trim()
+            $ErrorActionPreference = $eaPre
             & git -C $remoteWorktreePath add -A
             if ($LASTEXITCODE -ne 0) { throw 'git add of bridge .gitignore failed' }
-            & git -C $remoteWorktreePath rev-parse --verify --quiet HEAD 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) {
+            if (-not [string]::IsNullOrWhiteSpace($preAmendSha)) {
                 & git -C $remoteWorktreePath -c commit.gpgsign=false commit --amend --no-edit
+                if ($LASTEXITCODE -ne 0) { throw 'git commit of bridge .gitignore failed' }
+                # The amend REWROTE that commit, so any refs/tp/svn/<N> still pointing at the
+                # pre-amend SHA references an object no longer on the branch (it would read as an
+                # unmarked, orphan-shaped commit). Move those markers onto the rewritten commit.
+                $amendNewSha = (& git -C $remoteWorktreePath rev-parse HEAD 2>$null | Out-String).Trim()
+                foreach ($m in (Get-SvnRevMarks -RepoDir $remoteWorktreePath)) {
+                    if ($m.Sha -eq $preAmendSha) {
+                        Set-SvnRevMark -RepoDir $remoteWorktreePath -Rev $m.Rev -Sha $amendNewSha
+                    }
+                }
             } else {
                 & git -C $remoteWorktreePath -c commit.gpgsign=false commit -m "init: remote-svn/$Branch branch"
+                if ($LASTEXITCODE -ne 0) { throw 'git commit of bridge .gitignore failed' }
             }
-            if ($LASTEXITCODE -ne 0) { throw 'git commit of bridge .gitignore failed' }
         }
 
         # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs),
