@@ -9,8 +9,8 @@
 ### Added
 
 - 初版:git↔SVN bridge 與 setup 的獨立可安裝 plugin。
-- 9 支 skill(保 `tp-*` 前綴):`tp-setup`、`tp-pull-from-svn`、`tp-push-to-svn`、`tp-checkout-svn-branch`、`tp-svn-log`、`tp-reset-branch-to-main`、`tp-merge-main-into-branches`、`tp-suggest-ignore`、`tp-commit-msg`。
-- SVN bridge 腳本對(`.ps1` + `.sh`):Build-SvnCommit / Submit-SvnCommit / Sync-FromSvn / Get-SvnLog / Get-PushPreflight / Initialize-GitSvnBridge / New-RemoteBridge / Checkout-SvnBranch / Remove-SvnFile / Merge-MainIntoBranches / Reset-BranchToMain / Tag-Release / Test-EncodingSupport。
+- 8 支 skill(保 `tp-*` 前綴):`tp-setup`、`tp-pull-from-svn`、`tp-push-to-svn`、`tp-checkout-svn-branch`、`tp-svn-log`、`tp-merge-main-into-branches`、`tp-suggest-ignore`、`tp-commit-msg`。
+- SVN bridge 腳本對(`.ps1` + `.sh`):Build-SvnCommit / Submit-SvnCommit / Sync-FromSvn / Get-SvnLog / Get-PushPreflight / Initialize-GitSvnBridge / New-RemoteBridge / Checkout-SvnBranch / Remove-SvnFile / Merge-MainIntoBranches / Tag-Release / Test-EncodingSupport。
 - `lib`:`Core.{ps1,sh}` 複本 + SVN concern `Common.ps1` / `common.sh`(branch 名消毒、remote worktree 解析、SVN URL trust 邊界檢查、`svn status --xml` 解析;去除 dotnet concern)+ `ps1-delegate.sh`。
 - `SessionStart` advisory hook(marker 缺失時提示 `/tp-setup`;dbhub / IIS 分支已移至 sibling plugin)。
 - `default-files/.turbo-plugin/`:`config.toml` 範本,引入 marker scaffolding(config.toml 用 `# >>> turbo-plugin:<concern> >>>` TOML 註解標記),讓各 plugin 的 setup 只寫自己的標記區塊、彼此不覆蓋(已驗證 `Read-TurboPluginConfig` 略過 `#` marker 行)。
