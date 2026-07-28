@@ -330,6 +330,39 @@ Describe 'Sync-FromSvn' {
         }
     }
 
+    # The complement of Case 7. A sync commit ahead of main that IS marked (refs/tp/svn/<N>) is
+    # RESUMABLE state, not debris: the pull replays each revision onto remote-svn/main and only THEN
+    # merges into main, so a merge that never landed (an aborted conflict, or the run dying between
+    # the two steps) leaves exactly this shape. A plain re-run must retry the merge. Simulated by
+    # rewinding main after a successful pull. The paired checkout half (such a commit must not
+    # become a fork point) lives in Checkout-SvnBranch.test.ps1.
+    Context 'Case 7b: a MARKED but unmerged replay commit is resumable, not an orphan' {
+        It 're-running the pull retries the merge into main' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-7b'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+                $null = Add-SvnRevisions -Uri $ctx.Uri -Repo $ctx.Repo -Cfg $ctx.Cfg -Sandbox $sb -Count 1
+                $before = Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-parse', 'main')
+
+                $first = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                if ($first.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'the seeding pull did not succeed'; return }
+                $bridgeTip = Run-Git-Capture -Cwd $ctx.Root -GitArgs @('rev-parse', 'remote-svn/main')
+
+                # Rewind main only: the replay commit and its marker stay on the bridge, unmerged.
+                $null = Run-Git -Cwd $ctx.Root -GitArgs @('reset', '--hard', $before)
+                (Run-Git -Cwd $ctx.Root -GitArgs @('merge-base', '--is-ancestor', $bridgeTip, 'main')) |
+                    Should -Not -Be 0 -Because 'fixture: the replayed commit must be unreachable from main'
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $res.ExitCode | Should -Be 0 -Because "a marked replay commit is resumable. $($res.Combined)"
+                $res.Combined | Should -Not -Match 'unmerged sync'
+                (Run-Git -Cwd $ctx.Root -GitArgs @('merge-base', '--is-ancestor', $bridgeTip, 'main')) |
+                    Should -Be 0 -Because 'the re-run must retry the merge into main'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
     Context 'Case 8: AE1 -- 3 new revs, per-revision auto -> 3 commits (author/message/trailer each)' {
         It 'replays 3 revisions as 3 distinct commits, not one squash' -Skip:(-not $script:HasSvn) {
             $sb = New-Sandbox -Tag 'pfs-8'

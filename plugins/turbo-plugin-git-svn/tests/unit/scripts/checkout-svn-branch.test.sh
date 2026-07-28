@@ -365,6 +365,47 @@ test_ae2_floor_resolve_exact() {
     assertEquals 'AE2 import-commit parent == the r120 commit' "$fork" "$(git -C "$root" rev-parse feat-ae2^ 2>/dev/null)"
 }
 
+# ── Regression: a MARKED but UNMERGED replay commit must not become a fork point ────────────────
+# The pull replays each revision onto remote-svn/main and only THEN merges into main. When that
+# merge has not landed, the marker for that revision points at a commit main does not contain.
+# Parenting an imported branch there would base it on history main may never acquire, so the floor
+# lookup skips it, `cur` stays behind, and checkout STOPS asking for a pull. The paired recovery
+# half (a re-run of the pull retries the merge) lives in sync-from-svn.test.sh.
+test_marked_but_unmerged_replay_is_not_a_fork_point() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root reposroot trunk_last r_new base tree unmerged out rc
+    root="$(make_main_repo "$SB")"
+    if ! reposroot="$(make_remote_main_wc "$SB" "$root")"; then startSkipping; return 0; fi
+    trunk_last="$(svn info --show-item last-changed-revision "$reposroot/trunk" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$trunk_last" ] || { startSkipping; return 0; }
+    # A REAL trunk change after trunk_last, so grading cannot take the "trunk unchanged" shortcut.
+    svn mkdir "$reposroot/trunk/late-dir" -m 'test: late trunk change' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    r_new="$(svn info --show-item revision "$reposroot/trunk/late-dir" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$r_new" ] || { startSkipping; return 0; }
+
+    # main replayed only up to trunk_last ...
+    seed_main_trailers "$root" "$trunk_last" || { startSkipping; return 0; }
+    # ... while r_new sits MARKED on the bridge, unmerged into main. Reusing the bridge tree keeps
+    # the bridge working copy clean, so nothing else in the run notices the synthetic commit.
+    base="$(git -C "$root" rev-parse remote-svn/main)"
+    tree="$(git -C "$root" rev-parse 'remote-svn/main^{tree}')"
+    unmerged="$(git -C "$root" -c commit.gpgsign=false commit-tree "$tree" -p "$base" -m "sync: svn r$r_new" 2>/dev/null)" || { startSkipping; return 0; }
+    git -C "$root" update-ref refs/heads/remote-svn/main "$unmerged" || { startSkipping; return 0; }
+    git -C "$root" update-ref "refs/tp/svn/$r_new" "$unmerged" || { startSkipping; return 0; }
+    if git -C "$root" merge-base --is-ancestor "$unmerged" main 2>/dev/null; then
+        fail 'fixture broken: the marked commit IS reachable from main'; return 1
+    fi
+
+    svn copy "$reposroot/trunk" "$reposroot/branches/feat-unmerged" -m 'test: unmerged' --parents >/dev/null 2>&1 || { startSkipping; return 0; }
+    csb_setprops "$reposroot/branches/feat-unmerged" 'last-aligned-rev' "$r_new" || { startSkipping; return 0; }
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$reposroot/branches/feat-unmerged" --branch feat-unmerged 2>&1)"; rc=$?
+    assertNotEquals "must stop rather than attach to the unmerged replay commit (out: $out)" 0 "$rc"
+    case "$out" in *"Pull trunk first"*) assertTrue 'asks for a pull' 0 ;; *) fail "expected a pull stop, got: $out" ;; esac
+    assert_no_orphan "$root" feat-unmerged
+    assertTrue 'the stop left no partial branch/worktree behind' $?
+}
+
 # ── Case 12 (sparse floor): no exact r120 but r118 present -> attach at r118 ────
 test_sparse_floor_nearest() {
     if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi

@@ -242,5 +242,39 @@ test_range_per_revision_inside_squash_outside() {
     assertEquals 'new markers = leading boundary(lo-1), per-rev [lo..hi], trailing boundary(head)' "$expected" "$got"
 }
 
+# ── Regression: "replayed onto the bridge but NOT merged into main" is RESUMABLE state ─────────
+# The pull replays each revision onto remote-svn/main and only THEN merges the bridge into main.
+# When that merge does not land (an aborted conflict, or the run dying between the two steps), the
+# marker exists on a commit main does not contain. Those commits are MARKED, so the orphan guard
+# (which only fires on UNMARKED commits ahead of the branch) must not treat them as debris: a plain
+# re-run has to retry the merge. Simulated by rewinding main after a successful pull, which leaves
+# exactly that state.
+test_marked_but_unmerged_replay_is_resumable() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root uri cfg before bridge_tip out rc
+    spec="$(build_pushed_bridge "$SB")" || { startSkipping; return 0; }
+    root="${spec%%|*}"; uri="$(printf '%s' "$spec" | cut -d'|' -f2)"; cfg="${spec##*|}"
+    add_svn_revisions "$uri" "$cfg" "$SB" 1 'late change' || { startSkipping; return 0; }
+
+    before="$(git -C "$root" rev-parse main)"
+    ( cd "$root" && bash "$SCRIPT" --branch main >/dev/null 2>&1 ) || { startSkipping; return 0; }
+    bridge_tip="$(git -C "$root" rev-parse remote-svn/main)"
+
+    # Rewind main only: the replay commit + its marker stay on the bridge, unmerged.
+    git -C "$root" reset --hard "$before" >/dev/null 2>&1 || { startSkipping; return 0; }
+    if git -C "$root" merge-base --is-ancestor "$bridge_tip" main 2>/dev/null; then
+        fail 'fixture broken: the replayed commit is still reachable from main'; return 1
+    fi
+
+    out="$(cd "$root" && bash "$SCRIPT" --branch main 2>&1)"; rc=$?
+    assertEquals "re-running the pull must succeed (out: $out)" 0 "$rc"
+    case "$out" in *[Oo]rphan*) fail "marked replay commits must not be reported as orphans: $out" ;; esac
+    if git -C "$root" merge-base --is-ancestor "$bridge_tip" main 2>/dev/null; then
+        assertTrue 'the re-run retried the merge into main' 0
+    else
+        fail "the replayed commit is STILL not in main after a re-run: $out"
+    fi
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

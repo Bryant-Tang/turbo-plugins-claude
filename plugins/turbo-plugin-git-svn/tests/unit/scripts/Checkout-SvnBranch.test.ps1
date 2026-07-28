@@ -385,6 +385,56 @@ Describe 'Checkout-SvnBranch' {
         }
     }
 
+    # Regression: the pull replays each revision onto remote-svn/main and only THEN merges into
+    # main. When that merge has not landed, the marker for that revision points at a commit main
+    # does not contain. Parenting an imported branch there would base it on history main may never
+    # acquire, so the floor lookup skips it, `cur` stays behind, and checkout STOPS asking for a
+    # pull. The paired recovery half (a re-run of the pull retries the merge) lives in
+    # Sync-FromSvn.test.ps1.
+    Context 'Regression: a MARKED but unmerged replay commit must not become a fork point' {
+        It 'stops with a pull offer instead of attaching, and leaves no partial state' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'csb-unmerged'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
+                if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'no svn WC'; return }
+
+                $trunkLast = (& svn info --show-item last-changed-revision "$reposRoot/trunk" 2>$null | Out-String).Trim()
+                if ([string]::IsNullOrWhiteSpace($trunkLast)) { Set-ItResult -Skipped -Because 'no trunk rev'; return }
+                # A REAL trunk change after $trunkLast, so grading cannot take the "trunk unchanged" shortcut.
+                & svn mkdir "$reposRoot/trunk/late-dir" -m 'test: late trunk change' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no late trunk change'; return }
+                $rNew = (& svn info --show-item revision "$reposRoot/trunk/late-dir" 2>$null | Out-String).Trim()
+                if ([string]::IsNullOrWhiteSpace($rNew)) { Set-ItResult -Skipped -Because 'no new rev'; return }
+
+                # main replayed only up to $trunkLast ...
+                if (-not (Add-MainTrailers -Root $root -Revs @([int]$trunkLast))) { Set-ItResult -Skipped -Because 'seed'; return }
+                # ... while $rNew sits MARKED on the bridge, unmerged into main. Reusing the bridge
+                # tree keeps the bridge working copy clean, so nothing else notices the fixture commit.
+                $base = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'remote-svn/main')
+                $tree = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'remote-svn/main^{tree}')
+                $unmerged = Run-Git-Capture -Cwd $root -GitArgs @('-c', 'commit.gpgsign=false', 'commit-tree', $tree, '-p', $base, '-m', "sync: svn r$rNew")
+                if ([string]::IsNullOrWhiteSpace($unmerged)) { Set-ItResult -Skipped -Because 'commit-tree'; return }
+                $null = Run-Git -Cwd $root -GitArgs @('update-ref', 'refs/heads/remote-svn/main', $unmerged)
+                $null = Run-Git -Cwd $root -GitArgs @('update-ref', "refs/tp/svn/$rNew", $unmerged)
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', $unmerged, 'main')) |
+                    Should -Not -Be 0 -Because 'fixture: the marked commit must be unreachable from main'
+
+                & svn copy "$reposRoot/trunk" "$reposRoot/branches/feat-unmerged" -m 'test: unmerged' --parents > $null 2>$null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'no svn branch'; return }
+                if (-not (Set-TpProps -BranchUrl "$reposRoot/branches/feat-unmerged" -Props @('last-aligned-rev', $rNew) -Sandbox $sb)) { Set-ItResult -Skipped -Because 'props'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$reposRoot/branches/feat-unmerged", '-Branch', 'feat-unmerged')
+                $res.ExitCode | Should -Not -Be 0 -Because "must stop rather than attach to the unmerged replay commit. $($res.Combined)"
+                $res.Combined | Should -Match 'Pull trunk first'
+                (Test-NoBridgeOrphan -Root $root -Branch 'feat-unmerged') | Should -BeTrue
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
     Context 'Case 11: sparse floor -- no exact r120 but r118 present -> attach at r118' {
         It 'attaches at the nearest <=R commit (r118), not a spurious stop' -Skip:(-not $SvnReady) {
             $sb = New-Sandbox -Tag 'csb-sparse'
