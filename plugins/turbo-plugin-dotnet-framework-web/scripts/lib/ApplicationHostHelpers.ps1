@@ -66,6 +66,45 @@ function Save-ApplicationhostConfigAtomically {
 # Atomically + idempotently update <virtualDirectory physicalPath> (and
 # <application physicalPath> when present) for a named site in applicationhost.config.
 # Returns @{ Updated = <bool>; SiteName = <string>; OldPaths = <array>; NewPath = <string> }.
+# Rename a <site> entry in place. This is what keeps the project-identity hash OUT of the
+# shared, version-controlled canonical config: the canonical file carries the plain csproj-stem
+# name (exactly what Visual Studio writes), and Start-Iis renames it to the hashed runtime name
+# only in the per-launch temp copy. The running iisexpress therefore still advertises the identity
+# on its command line -- which is how Stop-Iis and Remove-OrphanIis find it -- while nothing
+# machine-specific ever reaches git.
+# Returns $true when a rename happened, $false when FromName was not found. Renaming onto a name
+# that already exists is refused: two sites sharing a name is not a state IIS Express can serve.
+function Rename-ApplicationhostSite {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$FromName,
+        [Parameter(Mandatory = $true)][string]$ToName
+    )
+
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+        throw "applicationhost.config not found: $ConfigPath"
+    }
+    if ([string]::IsNullOrWhiteSpace($FromName) -or [string]::IsNullOrWhiteSpace($ToName)) {
+        throw 'Rename-ApplicationhostSite: FromName and ToName are required.'
+    }
+    if ($FromName -ieq $ToName) { return $false }
+
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.PreserveWhitespace = $true
+    $xml.Load($ConfigPath)
+
+    $site = Find-ApplicationhostSite -Xml $xml -SiteName $FromName
+    if ($null -eq $site) { return $false }
+
+    if ($null -ne (Find-ApplicationhostSite -Xml $xml -SiteName $ToName)) {
+        throw "Rename-ApplicationhostSite: a site named '$ToName' already exists in $ConfigPath."
+    }
+
+    $site.SetAttribute('name', $ToName)
+    Save-ApplicationhostConfigAtomically -Xml $xml -ConfigPath $ConfigPath
+    return $true
+}
+
 function Update-ApplicationhostConfig {
     param(
         [Parameter(Mandatory = $true)][string]$ConfigPath,

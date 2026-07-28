@@ -180,4 +180,60 @@ Describe 'Start-Iis' {
         It 'case3: no csproj exit ≠ 0' { ($script:r3.Exit -ne 0) | Should -BeTrue }
         It 'case3: 訊息提及 .csproj' { $script:combined3 | Should -Match '\.csproj' }
     }
+
+    # Regression locks for the two defects that made /tp-run fail on every freshly set-up project:
+    #   1. Start-Iis demanded the identity-hashed site name inside the SHARED canonical config -- a
+    #      name Visual Studio never writes -- so the launch always failed, and the error told users
+    #      to re-copy from VS, which could never produce that name. Canonical now carries the plain
+    #      project name and the hash is applied to the per-launch temp copy only (the rename itself
+    #      is covered behaviourally in ApplicationHostHelpers.test.ps1).
+    #   2. IIS Express was started with -WindowStyle Hidden, which makes it exit immediately with
+    #      code 0 before it ever binds the port.
+    # These are source-level assertions deliberately: actually launching IIS Express depends on the
+    # machine, but neither defect may silently return.
+    Context 'Case 5: canonical site naming + launch window regression locks' {
+        BeforeAll {
+            $script:startIisText = [System.IO.File]::ReadAllText($script:ScriptUnderTest, [System.Text.Encoding]::UTF8)
+            # Comment lines are stripped before asserting on what the script DOES: the comments
+            # deliberately name the rejected approach ("NOT -WindowStyle Hidden, because ...") and
+            # a naive whole-file match would flag the very note that documents the fix.
+            $script:startIisCode = (($script:startIisText -split "`r?`n") |
+                Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        }
+
+        It 'case5: 不再以 -WindowStyle Hidden 啟動 IIS Express' {
+            $script:startIisCode | Should -Not -Match '-WindowStyle\s+Hidden'
+        }
+        It 'case5: canonical 站台以專案名查找(CanonicalSiteName)' {
+            $script:startIisCode | Should -Match 'CanonicalSiteName'
+        }
+        It 'case5: 啟動前把 temp 設定檔的站台改名為帶 hash 的執行期名稱' {
+            $script:startIisCode | Should -Match 'Rename-ApplicationhostSite'
+        }
+        It 'case5: 站台缺漏的訊息不再指向「開 VS 後重跑 setup」這條死路' {
+            # Naming Visual Studio as the ORIGIN of the site name is fine and useful; what must
+            # never come back is instructing the user to open VS and re-run /tp-setup as the FIX,
+            # because re-copying from VS could never produce the name the old code demanded.
+            $script:startIisText | Should -Not -Match '請先用 Visual Studio 開'
+        }
+    }
+
+    Context 'Case 6: canonical 缺專案站台時 fail loudly,且不指向 VS 死路' {
+        BeforeAll {
+            Set-IisEnabled -Enabled $true
+            $script:apphostBackup6 = [System.IO.File]::ReadAllText($script:apphostPath, [System.Text.Encoding]::UTF8)
+            # Rename the canonical site to something neither the plain nor the hashed name matches.
+            $broken6 = $script:apphostBackup6.Replace('name="HelloApp"', 'name="SomethingElse"')
+            [System.IO.File]::WriteAllText($script:apphostPath, $broken6, (New-Object System.Text.UTF8Encoding($false)))
+            $script:r6 = Invoke-Script -WorkDir $script:testRoot -ExtraArgs @('-Project', 'HelloApp.csproj')
+            $script:combined6 = "$($script:r6.Stdout)`n$($script:r6.Stderr)"
+            [System.IO.File]::WriteAllText($script:apphostPath, $script:apphostBackup6, (New-Object System.Text.UTF8Encoding($false)))
+        }
+
+        It 'case6: exit ≠ 0' { ($script:r6.Exit -ne 0) | Should -BeTrue }
+        It 'case6: 訊息點名缺的是以專案名命名的站台' { $script:combined6 | Should -Match 'HelloApp' }
+        It 'case6: 訊息不再指向「開 VS 後重跑 setup」這條死路' {
+            $script:combined6 | Should -Not -Match '請先用 Visual Studio 開'
+        }
+    }
 }

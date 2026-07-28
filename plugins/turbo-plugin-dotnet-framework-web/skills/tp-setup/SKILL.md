@@ -118,7 +118,10 @@ elif test -f <repo>/.vs/<sln>/config/applicationhost.config:
      2. XML parse + 把每個 <site>/<application>/<virtualDirectory> 的 physicalPath 屬性值
         替換為 "__TURBO_PLUGIN_PHYSICAL_PATH__"
      3. 避免機器-specific 絕對路徑進版控;runtime 由 start-iis 在 temp file 替換為實際 worktree 路徑
-     4. Phase 4 報告「已從 VS 複製 apphost.config」
+     4. **站台名原封不動**(VS 寫的就是專案名 `<csproj-stem>`,canonical 要的正是這個名字)。
+        `tp-run` 需要的帶 identity hash 名稱是**執行期**才套用在 temp 檔上的,**不要**在這裡改名——
+        hash 由本機 `.git` 絕對路徑算出,寫進共享檔會讓同事 clone 後對不上、也違反「不得提交僅限本機之物」。
+     5. Phase 4 報告「已從 VS 複製 apphost.config」
 else:
   → AskUserQuestion 三選一:
     (1) 暫停 setup:請使用者開 Visual Studio 載入 .sln 一次(VS 會把 applicationhost.config 寫到

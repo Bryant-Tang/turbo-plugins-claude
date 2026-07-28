@@ -139,6 +139,15 @@ function Resolve-IisSettings {
     $projectAbs = Get-NormalizedAbsolutePath -Path $projectFile
     $relPath = (Get-RelativePathSafe -From $topLevel -To $projectAbs) -replace '\\', '/'
     $identityHash = Get-ProjectIdentityHash -RepoPath $topLevel -CsprojRelPath $relPath
+    # Two site names, deliberately different (see Start-Iis for the full rationale):
+    #   CanonicalSiteName -- the name as it appears in the SHARED, version-controlled
+    #     .turbo-plugin/applicationhost.config. It is the csproj stem, which is exactly what
+    #     Visual Studio writes, so a config copied from VS works unchanged and carries nothing
+    #     machine-specific into git.
+    #   IisConfigSiteName -- the RUNTIME name, carrying the project-identity hash. It only ever
+    #     appears in the per-launch temp config and on the iisexpress command line, which is where
+    #     Stop-Iis / Remove-OrphanIis read it back from.
+    $canonicalSiteName = [System.IO.Path]::GetFileNameWithoutExtension($projectFile)
     $siteName = Format-IisExpressSiteName -CsprojPath $projectFile -IdentityHash $identityHash
 
     $apphostTarget = Find-ApplicationhostTarget -RepoRoot $repoRoot -ProjectFile $projectFile
@@ -153,6 +162,7 @@ function Resolve-IisSettings {
         IisExpressPath = $iisExpressPath
         ApplicationhostConfigFile = $apphostTarget
         IisConfigSiteName = $siteName
+        CanonicalSiteName = $canonicalSiteName
         IdentityHash = $identityHash
     }
 }

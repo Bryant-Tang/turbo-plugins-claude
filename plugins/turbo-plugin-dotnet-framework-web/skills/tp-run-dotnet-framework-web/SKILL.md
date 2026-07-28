@@ -43,12 +43,18 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Start-Iis.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/start-iis.sh`)帶 `-Project <csproj>`、(可選)`-Timeout <seconds>`。Script 流程:
 
 - 解析 target(CLI → `[run].project` → fallback `[build].project` → 清楚報錯;**收到 `.sln` 報錯**)
-- parse `<IISUrl>` 取 port / scheme;計算 project identity hash + site name(`<csproj-stem>-<sha256前8字元>`)
+- parse `<IISUrl>` 取 port / scheme;算出**兩個**站台名——**canonical 名**(就是專案名 `<csproj-stem>`,也就是
+  Visual Studio 寫進 `applicationhost.config` 的名字)與**執行期名**(`<csproj-stem>-<sha256前8字元>`,帶 project
+  identity hash)。canonical 檔只用前者(可進版控、換機器不會對不上);hash 只出現在 per-launch temp 檔與
+  iisexpress 命令列上,供 stop / orphan 清理辨識是哪個專案
 - 找已執行的 iisexpress.exe instance:
   - **同 port + site name 也 match(同 project,可能在別 worktree 啟)** → 自動 `Stop-Process` 舊 instance,繼續啟新
   - **同 port + site name 不 match(別 project 撞 port)** → fail loudly,提示停掉別 project 的 instance 或改 port
   - **無佔用** → 直接啟
-- 渲染 per-launch temp applicationhost.config(canonical 不變,替換 physicalPath 為當前 worktree)、`Start-Process iisexpress.exe`、polling `netstat` 直到 port LISTENING 或超時(`-Timeout` → `[run].listening_timeout_seconds` → default 30)
+- 渲染 per-launch temp applicationhost.config(canonical 不變,替換 physicalPath 為當前 worktree,並把站台改名成
+  帶 hash 的執行期名)、`Start-Process iisexpress.exe`(**不可用 `-WindowStyle Hidden`**:IIS Express 沒有 console
+  會立刻以 exit code 0 自行結束、根本沒綁到 port)、polling `netstat` 直到 port LISTENING 或超時(`-Timeout` →
+  `[run].listening_timeout_seconds` → default 30)
 
 ### Step 3 — 回報結果模板
 

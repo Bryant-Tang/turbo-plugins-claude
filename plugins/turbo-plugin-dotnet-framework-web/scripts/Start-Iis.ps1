@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'IisHelpers.ps1'))
 
 function Find-IisInstanceByPort {
-    param([string]$Port, [string]$ApphostConfigFile)
+    param([string]$Port, [string]$ApphostConfigFile, [string]$RuntimeSiteName = '')
     $processes = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'iisexpress.exe'" -ErrorAction SilentlyContinue)
     $matched = @()
 
@@ -37,6 +37,16 @@ function Find-IisInstanceByPort {
                 }
             }
         } catch { <# ignore parse errors; fall back to commandLine only #> }
+    }
+
+    # Our own instance runs against a TEMP copy of canonical whose site was renamed to the
+    # identity-hashed runtime name, so the canonical-derived set never contains it. Register it
+    # explicitly -- otherwise "same project already on this port" could never match and we would
+    # launch a second instance onto an occupied port. Only when the set is non-empty: an empty set
+    # is the "canonical unreadable / no site on this port" fallback that matches every instance,
+    # and seeding one name into it would silently narrow that fallback.
+    if (-not [string]::IsNullOrWhiteSpace($RuntimeSiteName) -and $apphostSiteNames.Count -gt 0) {
+        $apphostSiteNames[$RuntimeSiteName] = $true
     }
 
     foreach ($p in $processes) {
@@ -102,17 +112,33 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     }
 
     # Pre-validate: the site entry must exist in canonical applicationhost.config before launching.
+    # Canonical carries the PLAIN csproj-stem name -- exactly what Visual Studio writes -- so a
+    # config copied from VS works unchanged and the shared file stays free of machine-specific
+    # data. The identity-hashed runtime name is applied to the per-launch temp copy further down.
+    # A canonical that already uses the hashed name is still accepted: repos set up before this
+    # split have one, and forcing a migration would buy nothing.
     $apphostXml = New-Object System.Xml.XmlDocument
     $apphostXml.PreserveWhitespace = $true
     $apphostXml.Load($settings.ApplicationhostConfigFile)
-    $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $settings.IisConfigSiteName
+    $canonicalSiteInFile = $settings.CanonicalSiteName
+    $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $canonicalSiteInFile
     if ($null -eq $siteEntry) {
-        throw "applicationhost.config 缺對應 site '$($settings.IisConfigSiteName)'。請先用 Visual Studio 開 .sln 一次讓 VS 自動建立 site 條目,然後執行 /tp-setup 重新從 VS 複製到 .turbo-plugin/applicationhost.config。"
+        $canonicalSiteInFile = $settings.IisConfigSiteName
+        $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $canonicalSiteInFile
+    }
+    if ($null -eq $siteEntry) {
+        throw @"
+applicationhost.config 裡找不到名為 '$($settings.CanonicalSiteName)' 的站台。
+  設定檔:$($settings.ApplicationhostConfigFile)
+這個檔應該含一個以專案名命名的站台(Visual Studio 載入方案時就是這樣寫的)。請確認它是從該專案的
+.vs/<sln>/config/applicationhost.config 複製過來的,或在其 <sites> 底下手動補一個
+name="$($settings.CanonicalSiteName)" 的站台。
+"@
     }
 
     # Existing instance on the same port? (port check still uses the canonical config —
     # site name + binding info come from canonical, both unchanged at runtime).
-    $occupants = Find-IisInstanceByPort -Port $settings.IisPort -ApphostConfigFile $settings.ApplicationhostConfigFile
+    $occupants = Find-IisInstanceByPort -Port $settings.IisPort -ApphostConfigFile $settings.ApplicationhostConfigFile -RuntimeSiteName $settings.IisConfigSiteName
     if ($occupants.Count -gt 0) {
         $sameProject = @($occupants | Where-Object { $_.SiteName -ieq $settings.IisConfigSiteName })
         if ($sameProject.Count -gt 0) {
@@ -174,13 +200,25 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         # No placeholder — canonical likely came from VS with concrete absolute path(s).
         # Use Update-ApplicationhostConfig on the temp file (canonical untouched).
         try {
-            Update-ApplicationhostConfig -ConfigPath $tempApphost -SiteName $settings.IisConfigSiteName -NewPhysicalPath $settings.SiteRoot | Out-Null
+            Update-ApplicationhostConfig -ConfigPath $tempApphost -SiteName $canonicalSiteInFile -NewPhysicalPath $settings.SiteRoot | Out-Null
         } catch {
             Write-Output "Note: failed to patch physicalPath in temp apphost '$tempApphost': $($_.Exception.Message)"
         }
     }
 
-    $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList @("/config:$tempApphost", "/site:$($settings.IisConfigSiteName)") -WindowStyle Hidden -PassThru
+    # Apply the identity-hashed RUNTIME site name to the temp copy ONLY. This is what puts the
+    # project identity onto the iisexpress command line -- how Stop-Iis / Remove-OrphanIis find
+    # this instance, and how a sibling worktree's instance is recognised as "the same project"
+    # rather than an unrelated one squatting the port -- while the shared canonical file keeps the
+    # plain project name and stays portable across machines and clones.
+    if ($canonicalSiteInFile -ine $settings.IisConfigSiteName) {
+        $null = Rename-ApplicationhostSite -ConfigPath $tempApphost -FromName $canonicalSiteInFile -ToName $settings.IisConfigSiteName
+    }
+
+    # NOT -WindowStyle Hidden: IIS Express wants a console, and started hidden it exits immediately
+    # with code 0 -- before ever binding the port -- which surfaced as a bogus "exited prematurely"
+    # failure on every single run. Minimized keeps it out of the way while letting it live.
+    $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList @("/config:$tempApphost", "/site:$($settings.IisConfigSiteName)") -WindowStyle Minimized -PassThru
     Write-Output "Started IIS Express (site: $($settings.IisConfigSiteName), PID: $($process.Id), config: $tempApphost)"
 
     $repoRoot = $settings.RepoRoot

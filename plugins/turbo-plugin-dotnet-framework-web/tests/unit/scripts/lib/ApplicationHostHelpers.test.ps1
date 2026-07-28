@@ -128,4 +128,52 @@ Describe 'ApplicationHostHelpers' {
             [bool]$r2.Updated | Should -BeFalse
         }
     }
+
+    # Rename-ApplicationhostSite is what keeps the project-identity hash out of the shared,
+    # version-controlled canonical config: canonical holds the plain project name (what Visual
+    # Studio writes) and Start-Iis renames it to the hashed runtime name in the per-launch temp
+    # copy only. Each case works on its own file so the shared fixture above stays untouched.
+    Context 'Case 5: Rename-ApplicationhostSite' {
+        BeforeEach {
+            $script:renamePath = [System.IO.Path]::Combine($script:sb, "rename-$([Guid]::NewGuid().ToString('N').Substring(0,8)).config")
+            [System.IO.File]::WriteAllText($script:renamePath, $script:apphostXml, [System.Text.UTF8Encoding]::new($false))
+        }
+
+        It 'renames an existing site and reports true' {
+            $r = Rename-ApplicationhostSite -ConfigPath $script:renamePath -FromName 'HelloApp-deadbeef' -ToName 'HelloApp'
+            [bool]$r | Should -BeTrue
+            $x = New-Object System.Xml.XmlDocument
+            $x.Load($script:renamePath)
+            (Find-ApplicationhostSite -Xml $x -SiteName 'HelloApp') | Should -Not -BeNullOrEmpty
+            (Find-ApplicationhostSite -Xml $x -SiteName 'HelloApp-deadbeef') | Should -BeNullOrEmpty
+        }
+
+        It 'keeps the rest of the site intact (bindings and physicalPath survive)' {
+            $null = Rename-ApplicationhostSite -ConfigPath $script:renamePath -FromName 'HelloApp-deadbeef' -ToName 'HelloApp-cafebabe'
+            $x = New-Object System.Xml.XmlDocument
+            $x.Load($script:renamePath)
+            $site = Find-ApplicationhostSite -Xml $x -SiteName 'HelloApp-cafebabe'
+            $site.SelectSingleNode('bindings/binding').GetAttribute('bindingInformation') | Should -Be '*:5000:localhost'
+            $site.SelectSingleNode('application/virtualDirectory').GetAttribute('physicalPath') | Should -Be 'C:\old\path'
+        }
+
+        It 'reports false when the source site is absent (caller decides, no throw)' {
+            $r = Rename-ApplicationhostSite -ConfigPath $script:renamePath -FromName 'NoSuchSite' -ToName 'HelloApp'
+            [bool]$r | Should -BeFalse
+        }
+
+        It 'reports false and rewrites nothing when the names are equal' {
+            $before = [System.IO.File]::ReadAllText($script:renamePath, [System.Text.Encoding]::UTF8)
+            $r = Rename-ApplicationhostSite -ConfigPath $script:renamePath -FromName 'HelloApp-deadbeef' -ToName 'HelloApp-DEADBEEF'
+            [bool]$r | Should -BeFalse
+            [System.IO.File]::ReadAllText($script:renamePath, [System.Text.Encoding]::UTF8) | Should -Be $before
+        }
+
+        It 'refuses to collide with an existing site name' {
+            # Two sites sharing a name is not a state IIS Express can serve, so this must fail loudly.
+            $twoSites = $script:apphostXml.Replace('</sites>', "  <site name=`"Other`" id=`"2`" />`n    </sites>")
+            [System.IO.File]::WriteAllText($script:renamePath, $twoSites, [System.Text.UTF8Encoding]::new($false))
+            { Rename-ApplicationhostSite -ConfigPath $script:renamePath -FromName 'HelloApp-deadbeef' -ToName 'Other' } | Should -Throw
+        }
+    }
 }
