@@ -92,6 +92,58 @@ function Find-ApplicationhostTarget {
     return $canonical
 }
 
+# Parse the IIS Express wiring out of a .csproj. Every input Visual Studio uses to synthesise its
+# <site> entry lives in these elements, which is what lets New-ApphostConfig reproduce VS's output
+# instead of requiring the user to open VS once just to generate a config file.
+# Returns: Url / Uri / Port / SslPort ('' when absent) / ClassicPipeline (bool).
+# Throws when none of the three port-bearing elements is present -- deliberately, because Visual
+# Studio can be configured to keep them in the (gitignored) .csproj.user instead, and silently
+# guessing a port would produce a site that binds the wrong thing.
+function Get-IisProjectBinding {
+    param([Parameter(Mandatory = $true)][string]$ProjectFile)
+
+    $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $projectContent = Get-Content -LiteralPath $ProjectFile -Raw
+
+    $sslPort = ''
+    $sslPortMatch = [regex]::Match($projectContent, '<IISExpressSSLPort>([^<]+)</IISExpressSSLPort>', $ic)
+    if ($sslPortMatch.Success) { $sslPort = $sslPortMatch.Groups[1].Value.Trim() }
+
+    $iisUrlMatch = [regex]::Match($projectContent, '<IISUrl>([^<]+)</IISUrl>', $ic)
+    if ($iisUrlMatch.Success) {
+        $iisUrl = $iisUrlMatch.Groups[1].Value.Trim()
+    } elseif (-not [string]::IsNullOrWhiteSpace($sslPort)) {
+        # Fallback 1: IISExpressSSLPort → https://localhost:<port>
+        $iisUrl = "https://localhost:$sslPort"
+    } else {
+        # Fallback 2: DevelopmentServerPort → http://localhost:<port>
+        $devPortMatch = [regex]::Match($projectContent, '<DevelopmentServerPort>([^<]+)</DevelopmentServerPort>', $ic)
+        if ($devPortMatch.Success) {
+            $iisUrl = "http://localhost:$($devPortMatch.Groups[1].Value.Trim())"
+        } else {
+            throw "Missing <IISUrl>, <IISExpressSSLPort>, and <DevelopmentServerPort> in project file: $ProjectFile. Ensure VS has saved IIS settings; or add manually."
+        }
+    }
+
+    $iisUri = $null
+    if (-not [System.Uri]::TryCreate($iisUrl, [System.UriKind]::Absolute, [ref]$iisUri)) {
+        throw "Invalid <IISUrl>: $iisUrl"
+    }
+    if ($iisUri.Port -lt 1 -or $iisUri.Port -gt 65535) {
+        throw "Unable to parse port from <IISUrl>: $iisUrl"
+    }
+
+    $classic = [regex]::IsMatch($projectContent, '<IISExpressUseClassicPipelineMode>\s*true\s*</IISExpressUseClassicPipelineMode>', $ic)
+
+    return [pscustomobject]@{
+        Url             = $iisUrl
+        Uri             = $iisUri
+        Port            = $iisUri.Port.ToString()
+        SslPort         = $sslPort
+        ClassicPipeline = $classic
+    }
+}
+
 function Resolve-IisSettings {
     param(
         [string]$Project = ''
@@ -104,32 +156,9 @@ function Resolve-IisSettings {
     $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'run' -CliProjectValue $Project
     $projectFile = $target.Path
 
-    $projectContent = Get-Content -LiteralPath $projectFile -Raw
-    $iisUrlMatch = [regex]::Match($projectContent, '<IISUrl>([^<]+)</IISUrl>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    if ($iisUrlMatch.Success) {
-        $iisUrl = $iisUrlMatch.Groups[1].Value.Trim()
-    } else {
-        # Fallback 1: IISExpressSSLPort → https://localhost:<port>
-        $sslPortMatch = [regex]::Match($projectContent, '<IISExpressSSLPort>([^<]+)</IISExpressSSLPort>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        if ($sslPortMatch.Success) {
-            $iisUrl = "https://localhost:$($sslPortMatch.Groups[1].Value.Trim())"
-        } else {
-            # Fallback 2: DevelopmentServerPort → http://localhost:<port>
-            $devPortMatch = [regex]::Match($projectContent, '<DevelopmentServerPort>([^<]+)</DevelopmentServerPort>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            if ($devPortMatch.Success) {
-                $iisUrl = "http://localhost:$($devPortMatch.Groups[1].Value.Trim())"
-            } else {
-                throw "Missing <IISUrl>, <IISExpressSSLPort>, and <DevelopmentServerPort> in project file: $projectFile. Ensure VS has saved IIS settings; or add manually."
-            }
-        }
-    }
-    $iisUri = $null
-    if (-not [System.Uri]::TryCreate($iisUrl, [System.UriKind]::Absolute, [ref]$iisUri)) {
-        throw "Invalid <IISUrl>: $iisUrl"
-    }
-    if ($iisUri.Port -lt 1 -or $iisUri.Port -gt 65535) {
-        throw "Unable to parse port from <IISUrl>: $iisUrl"
-    }
+    $binding = Get-IisProjectBinding -ProjectFile $projectFile
+    $iisUrl = $binding.Url
+    $iisUri = $binding.Uri
 
     $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot
 

@@ -123,13 +123,18 @@ elif test -f <repo>/.vs/<sln>/config/applicationhost.config:
         hash 由本機 `.git` 絕對路徑算出,寫進共享檔會讓同事 clone 後對不上、也違反「不得提交僅限本機之物」。
      5. Phase 4 報告「已從 VS 複製 apphost.config」
 else:
-  → AskUserQuestion 三選一:
-    (1) 暫停 setup:請使用者開 Visual Studio 載入 .sln 一次(VS 會把 applicationhost.config 寫到
-        .vs/<sln>/config/),完成後重跑 /tp-setup → setup 走上面 from-VS 分支。
-        (preview:無外部動作 — 只是請你開 VS 後重跑)
-    (2) 在 .turbo-plugin/config.toml 的 dotnet 區塊寫 [iis] enabled = false,跳過 IIS skill。
-        (preview:無外部動作 — 只是寫設定)
-    (3) 取消 setup。(preview:取消,不做後續)
+  → **直接產生,不需要 Visual Studio**。跑 New-ApphostConfig(路由規則同下方 Decision Rules):
+       powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/New-ApphostConfig.ps1" -Project <csproj>
+       bash "${CLAUDE_PLUGIN_ROOT}/scripts/new-apphost-config.sh" -Project <csproj>
+     腳本讀 csproj 的 <IISUrl> / <IISExpressSSLPort> / <DevelopmentServerPort> /
+     <IISExpressUseClassicPipelineMode>(VS 合成 site 用的就是這幾個),依範本骨架產出 canonical:
+     站台名 = 專案名、physicalPath = 佔位符、binding 依 csproj 的 port 與 scheme。
+     輸出 `APPHOST_OUTPUT` 區段(含 https 憑證現況診斷),**逐字轉述**給使用者。
+     - 專案有多個 web csproj 而無從判斷要產哪一個 → 先 `AskUserQuestion` 列候選請使用者選。
+     - 腳本回報 csproj 缺 IIS 設定(三個元素都沒有)→ 那些值可能被 VS 存進 `.csproj.user`
+       (不進版控)。此時 `AskUserQuestion` 二選一:
+       (1) 請使用者把 IIS 設定補進 `.csproj`(或開一次 VS 讓它寫出設定)後重跑。
+       (2) 在 `.turbo-plugin/config.toml` 的 dotnet 區塊寫 `[iis] enabled = false`,跳過 IIS skill。
 ```
 
 ### Phase 4 — 完成報告
