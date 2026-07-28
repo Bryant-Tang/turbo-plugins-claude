@@ -427,6 +427,67 @@ Describe 'Initialize-GitSvnBridge' {
         }
     }
 
+    # Regression for a real incident: the script resolves its target from the AMBIENT cwd, so an
+    # invocation made inside a linked worktree bootstrapped a bridge into a DIFFERENT checkout (the
+    # repo's main worktree) and merged SVN content into ITS current branch. No svn needed -- the
+    # guard fires before any svn call.
+    Context 'Scenario 7b: wrong-repo guard 1 -- refuse to bootstrap from a LINKED worktree' {
+        It 'exits non-zero and leaves the OTHER checkout untouched' {
+            $sb = New-Sandbox -Tag 'igsb-7b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseBRepo -Root $root -Files @{ 'seed.txt' = "seed`n" }
+                $peer = [System.IO.Path]::Combine($sb, 'peer-worktree')
+                $rc = Run-Git -Cwd $root -GitArgs @('worktree', 'add', '-b', 'peer-branch', $peer)
+                if ($rc -ne 0) { Set-ItResult -Skipped -Because 'could not create a linked worktree'; return }
+
+                $svnUri = 'file:///' + ([System.IO.Path]::Combine($sb, 'svnrepo') -replace '\\', '/')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $peer -ScriptArgs @('-SvnUrl', $svnUri)
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'linked worktree'
+
+                # the OTHER checkout must be untouched.
+                (Get-BridgeBranchCount -Root $root) | Should -Be 0
+                [System.IO.Directory]::Exists((Get-BridgePath -Root $root)) | Should -BeFalse
+                (Run-Git-Capture -Cwd $root -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    # A repo that already has a git remote already has a git server, which is not what this plugin
+    # bridges; overwhelmingly it means the cwd was wrong. Token + zero changes, overridable by flag.
+    Context 'Scenario 7c: wrong-repo guard 2 -- existing git remote gates on confirmation' {
+        It 'emits the token, changes nothing, and -AllowExistingRemote takes the gate down' {
+            $sb = New-Sandbox -Tag 'igsb-7c'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseBRepo -Root $root -Files @{ 'seed.txt' = "seed`n" }
+                $null = Run-Git -Cwd $root -GitArgs @('remote', 'add', 'origin', 'https://example.invalid/some/repo.git')
+
+                $svnUri = 'file:///' + ([System.IO.Path]::Combine($sb, 'svnrepo') -replace '\\', '/')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $svnUri)
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'TP_TOKEN:EXISTING_GIT_REMOTE'
+                $res.Combined | Should -Match 'remotes=origin'
+
+                # the gate changed nothing.
+                (Get-BridgeBranchCount -Root $root) | Should -Be 0
+                [System.IO.Directory]::Exists((Get-BridgePath -Root $root)) | Should -BeFalse
+                (Run-Git-Capture -Cwd $root -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+
+                # -AllowExistingRemote takes the gate down. The run still fails later on the
+                # unreachable URL; assert only that the gate itself no longer fires.
+                $bogusUri = 'file:///' + ([System.IO.Path]::Combine($sb, 'no-such-repo') -replace '\\', '/')
+                $res2 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $bogusUri, '-AllowExistingRemote')
+                $res2.Combined | Should -Not -Match 'TP_TOKEN:EXISTING_GIT_REMOTE'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
     Context 'Scenario 8: unreachable (scheme-valid) SVN URL -> fail, no residue' {
         It 'on an unreachable URL leaves no bridge branch + no worktree dir' -Skip:(-not $SvnAvailable) {
             $sb = New-Sandbox -Tag 'igsb-8'

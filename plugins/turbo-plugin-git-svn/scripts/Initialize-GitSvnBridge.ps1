@@ -3,7 +3,8 @@ param(
     [string]$SvnUrl = '',
     [string]$Branch = 'main',
     [string]$Granularity = '',
-    [string]$Range = ''
+    [string]$Range = '',
+    [switch]$AllowExistingRemote
 )
 
 Set-StrictMode -Version Latest
@@ -43,17 +44,60 @@ try {
         throw "Invalid SVN URL '$SvnUrl': only http(s)://, svn://, or file:// URLs are accepted."
     }
 
-    # ---- step 3: git init -b main (idempotent; no identity needed). ----
-    # MUST run before the identity check so a later `git config --local` has a repo to write to.
-    # Only init when NOT already a repo: `git init -b main` on an existing repo prints
+    # ---- step 3: wrong-repo guards, then git init -b main (idempotent; no identity needed). ----
+    # `git init` MUST run before the identity check so a later `git config --local` has a repo to
+    # write to. Only init when NOT already a repo: `git init -b main` on an existing repo prints
     # "warning: re-init: ignored --initial-branch" to STDERR, which throws under EAP=Stop (PS 5.1).
     # Skipping it on re-invoke / case (b) keeps the re-run clean and is still idempotent.
+    #
+    # When we ARE already in a repo, two guards run FIRST, before anything is mutated, so a refusal
+    # leaves the repo byte-identical. Both exist because this script resolves its target from the
+    # AMBIENT cwd (Get-MainWorktree walks up from wherever it was invoked), so an invocation made in
+    # the wrong directory silently bootstraps a bridge into a repo the caller never named.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     & git rev-parse --git-dir 2>$null | Out-Null
     $alreadyRepo = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = $prevEAP
-    if (-not $alreadyRepo) {
+    if ($alreadyRepo) {
+        # Guard 1 -- must be the MAIN worktree. From a linked worktree Get-MainWorktree resolves to
+        # a DIFFERENT checkout, so we would create the bridge branch/worktree there and merge SVN
+        # content into ITS current branch -- not the branch the caller is standing on. tp-setup
+        # already routes peer worktrees to its "verify config only" case; this enforces the same
+        # rule for callers that reach the script directly.
+        if (-not (Test-IsMainWorktree)) {
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            $here = (& git rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
+            $ErrorActionPreference = $prevEAP
+            if ([string]::IsNullOrWhiteSpace($here)) { $here = '<unknown>' }
+            $msg = "Refusing to bootstrap an SVN bridge from a linked worktree.`n"
+            $msg += "  you are in:    $here`n"
+            $msg += "  would act on:  $(Get-MainWorktree)`n"
+            $msg += 'Bootstrapping here would create the bridge branch and worktree in that OTHER checkout and merge SVN content into its current branch. Re-run from the main worktree instead.'
+            throw $msg
+        }
+
+        # Guard 2 -- an existing git remote means this repo already has a git server, which is the
+        # exact situation this plugin does NOT bridge (it exists for SVN-only teams). Far more often
+        # than not it means the cwd was wrong. Not a hard refusal: emit a token so the agent can
+        # confirm with the user in plain language and re-invoke with -AllowExistingRemote.
+        if (-not $AllowExistingRemote) {
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            $remoteNames = @(& git remote 2>$null)
+            $ErrorActionPreference = $prevEAP
+            $remoteNames = @($remoteNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            if ($remoteNames.Count -gt 0) {
+                $joined = ($remoteNames -join ' ')
+                Write-Output "TP_TOKEN:EXISTING_GIT_REMOTE remotes=$joined"
+                Write-Output "This repository already has git remote(s): $joined"
+                Write-Output 'turbo-plugin bridges projects whose only shared server is SVN, so this is usually the wrong directory.'
+                Write-Output 'Nothing was changed. Confirm with the user, then re-run with -AllowExistingRemote to proceed anyway.'
+                exit 1
+            }
+        }
+    } else {
         & git init -b main
         if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
     }

@@ -306,6 +306,59 @@ test_invalid_url() {
     assertTrue 'no bridge dir created' "[ ! -d '$(bridge_path "$root")' ]"
 }
 
+# ── Scenario 7b: wrong-repo guard 1 -- refuse to bootstrap from a LINKED worktree ─
+# Regression for a real incident: the script resolves its target from the AMBIENT cwd, so an
+# invocation made inside a linked worktree bootstrapped a bridge into a DIFFERENT checkout (the
+# repo's main worktree) and merged SVN content into ITS current branch. No svn needed -- the guard
+# fires before any svn call.
+test_refuses_linked_worktree() {
+    local root peer out rc
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    printf 'seed\n' > "$root/seed.txt"
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
+    peer="$SB/peer-worktree"
+    git -C "$root" worktree add -b peer-branch "$peer" >/dev/null 2>&1 || { startSkipping; return 0; }
+
+    out="$(cd "$peer" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")" 2>&1)"; rc=$?
+    assertNotEquals "linked-worktree bootstrap exits non-zero (out: $out)" 0 "$rc"
+    case "$out" in *"linked worktree"*) assertTrue 'reports the linked-worktree refusal' 0 ;; *) fail "no linked-worktree wording: $out" ;; esac
+    # The OTHER checkout must be untouched.
+    assertEquals 'no bridge branch created in the main worktree' 0 "$(bridge_branch_count "$root")"
+    assertTrue 'no bridge worktree dir created' "[ ! -d '$(bridge_path "$root")' ]"
+    assertTrue 'main worktree left clean' "[ -z \"\$(git -C '$root' status --porcelain)\" ]"
+}
+
+# ── Scenario 7c: wrong-repo guard 2 -- existing git remote gates on confirmation ─
+# A repo that already has a git remote already has a git server, which is not what this plugin
+# bridges; overwhelmingly it means the cwd was wrong. Token + zero changes, overridable by flag.
+test_existing_git_remote_gate() {
+    local root out rc out2 rc2
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    printf 'seed\n' > "$root/seed.txt"
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
+    git -C "$root" remote add origin 'https://example.invalid/some/repo.git' >/dev/null 2>&1
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")" 2>&1)"; rc=$?
+    assertNotEquals "existing-remote gate exits non-zero (out: $out)" 0 "$rc"
+    case "$out" in *"TP_TOKEN:EXISTING_GIT_REMOTE"*) assertTrue 'emits EXISTING_GIT_REMOTE token' 0 ;; *) fail "no EXISTING_GIT_REMOTE token: $out" ;; esac
+    case "$out" in *"remotes=origin"*) assertTrue 'token names the offending remote' 0 ;; *) fail "token lacks the remote name: $out" ;; esac
+    assertEquals 'gate changed nothing: no bridge branch' 0 "$(bridge_branch_count "$root")"
+    assertTrue 'gate changed nothing: no bridge worktree dir' "[ ! -d '$(bridge_path "$root")' ]"
+    assertTrue 'gate changed nothing: worktree still clean' "[ -z \"\$(git -C '$root' status --porcelain)\" ]"
+
+    # --allow-existing-remote takes the gate down. The run still fails later on the unreachable
+    # URL; we assert only that the gate itself no longer fires.
+    out2="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/no-such-repo")" --allow-existing-remote 2>&1)"; rc2=$?
+    case "$out2" in
+        *"TP_TOKEN:EXISTING_GIT_REMOTE"*) fail "gate still fired despite --allow-existing-remote (rc=$rc2): $out2" ;;
+        *) assertTrue 'flag suppresses the gate' 0 ;;
+    esac
+}
+
 # ── Scenario 8: unreachable (scheme-valid) SVN URL -> fail with no residue ────
 test_rollback_on_checkout_failure() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi

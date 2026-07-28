@@ -144,6 +144,17 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      - 指定範圍:PowerShell `-Granularity range -Range <lo>:<hi>` / bash `--granularity range --range <lo>:<hi>`
    - **≤5 個修訂**時腳本不發此 token(直接逐筆匯入),agent 無需處理。
 
+3c. **目標專案已連著 git 遠端(`TP_TOKEN:EXISTING_GIT_REMOTE remotes=<names>`)→ 確認後才重呼叫**。腳本在**動任何
+   東西之前**偵測到目標 repo 已設定 git remote 時印此 token 並非零 exit(**零變更、可乾淨重跑**)。這絕大多數
+   情況代表**跑錯資料夾**——本 plugin 是給「只能用 SVN、沒有 git 伺服器」的專案用的。agent:
+   - **先查資料夾對不對**:把腳本回報的路徑跟使用者當初指定的專案對照。不一致 → 換到正確資料夾重跑,
+     **不要**直接放行旗標。
+   - 確實要在這個專案建橋時,用 `AskUserQuestion` 以**白話**向使用者確認(**不得**把 token 名或旗標名丟給
+     使用者),例如:「這個專案已經連著一個 git 遠端(`<names>`)。turbo-plugin 是設計給沒有 git 伺服器、
+     只能靠 SVN 共用程式碼的專案。確定要在這個專案上建立 SVN 橋接嗎?」
+   - 使用者確認後才**重新呼叫**同一支腳本並加旗標:PowerShell `-AllowExistingRemote` /
+     bash `--allow-existing-remote`。
+
 4. **腳本成功後 → base 骨架後置**(疊在 merge 進來的 SVN 內容上,全 idempotent):
    - **順序硬性要求:先 append `.gitignore` 的 git-svn patterns(4b),才做任何 `git add`(4d)**。否則巢狀
      bridge worktree(`.turbo-plugin/worktrees/`)與其 `.svn/` 在 main 尚未被 ignore,`git add -A` 會誤把 `.svn`
@@ -258,6 +269,13 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
   (exit 0、零 commit、bridge 未建)時,agent **白話**問粒度(一顆一顆/壓成一顆/指定範圍,預設一顆一顆;**不外洩** token /
   `refs/tp/svn/<n>` / 修訂號給使用者),再帶 `-Granularity`/`--granularity`(+ 範圍時 `-Range`/`--range`)**重呼叫同一支腳本**。
   ≤5 修訂不發此 token。見 case (a) sub-step 3b。
+- **跑錯資料夾的兩道守門(bootstrap 腳本內建,兩道都在動任何東西之前)** — bootstrap 從 **cwd** 往上推導要橋接
+  哪個 repo,所以「在錯的資料夾呼叫」會安靜地把橋建到使用者沒指名的 repo 上。故腳本自帶:
+  ① **不是主 worktree 就硬拒**(非零 exit;否則會在**另一個** checkout 建分支/worktree 並把 SVN 內容 merge 進
+  **它**的當前分支)。case 偵測本就把 peer worktree 導向 (d),這道是給「繞過 SKILL 直接呼叫腳本」的保險。
+  ② **目標 repo 已有 git remote → 回 `TP_TOKEN:EXISTING_GIT_REMOTE remotes=<names>`**(零變更)。agent **先核對
+  資料夾是否為使用者指定的專案**,確認無誤再**白話**徵得同意(不外洩 token / 旗標名),才帶
+  `-AllowExistingRemote` / `--allow-existing-remote` 重呼叫。見 case (a) sub-step 3c。
 - **case (b) `TP_TOKEN:MERGE_CONFLICT` 由 agent 端收尾、不重呼叫腳本** — bridge 已建成且不 rollback;agent 列衝突檔、
   引導手動解 + commit merge(不自動 abort),再直接接「base 骨架後置」收尾。盲目重呼叫腳本會撞「bridge 已存在」死路。
 - **不自動代填使用者身分或設定** — git `user.name`/`user.email`、SVN URL 等缺漏一律先 `AskUserQuestion` 再做;
