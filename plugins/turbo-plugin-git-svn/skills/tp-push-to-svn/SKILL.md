@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 
 ## Purpose
 
-把本地 git working branch 的新 commits push 上 SVN。SVN message body 由 prepare 腳本**確定性鎖定**為這次推送範圍內**所有非-merge commit 的 subject 條列**(`- ` 開頭、無 hash、無 commit-type 過濾);agent 只負責寫一行 **title**。body 經 temp 檔交付給 commit 腳本自行組合(title + 鎖定 body),agent 無法竄改 body。
+把本地 git working branch 的新 commits push 上 SVN。SVN message body 由 prepare 腳本**確定性鎖定**為這次推送範圍內**所有非-merge commit 的 subject 條列**(`- ` 開頭、無 hash、無 commit-type 過濾);跨多個來源分支時(例如把 main 併進分支後再推),body 會自動**按來源分支分組**、各組冠上 `【<分支名>】` 標題,目前分支排最前。agent 只負責寫一行 **title**。body 經 temp 檔交付給 commit 腳本自行組合(title + 換行 + 鎖定 body,中間不空行),agent 無法竄改 body。
 
 **設計理念**:SVN history 的可讀性來自「完整保留每個 code-level subject」,不再做 type 篩選或逐筆未知 type 詢問。要改 body 內容,請對對應 commit `git rebase` / amend subject 後重跑本 skill。commit 訊息的語意品質由獨立的 `tp-commit-msg` 負責(它**不**驗證 / 限制 commit type),與本 skill 無關。
 
@@ -64,7 +64,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
 - check 是否有 pending merge state(見下方 PENDING_MERGE_DETECTED 處理)
 - 跑 `git merge --no-ff --no-commit` stage merge
 - 把 source branch HEAD SHA 寫入 `<remote-path>/.git/MERGE_HEAD.tp_branch_sha`(供 commit 步驟驗證)
-- 把**鎖定 body**(這次範圍內所有非-merge commit subject、`- ` 條列)寫入 `<remote-path>/.git/MERGE_HEAD.tp_svn_body`(供 commit 步驟讀回自組)
+- 把**鎖定 body**(這次範圍內所有非-merge commit subject、`- ` 條列;跨來源分支時帶 `【<分支名>】` 分組標題)寫入 `<remote-path>/.git/MERGE_HEAD.tp_svn_body`(供 commit 步驟讀回自組)
 - 印出 `BODY\n- <subject>\n...\n\nFILES\n<diff_status>|<git_status>|<path>\n...`
 
 **Script 已自動處理失敗情境**:
@@ -108,16 +108,26 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
      即將提交到 SVN 的訊息如下,要怎麼做?
 
      <title>
+     <BODY 原樣>
+     ```
 
+     `<title>` 之後**直接接** `BODY`、**中間不空行**,且 `BODY` 要**原樣照搬**(不要自己重排、補空行或改寫)——
+     這樣預覽才會跟腳本真正送出的訊息逐字一致。`BODY` 只有一個來源分支時是平坦的 `- <subject>` 條列;
+     跨多個來源分支時會自帶 `【<分支名>】` 分組標題,例如:
+
+     ```
+     <title>
+     【<目前分支>】
      - <subject 1>
      - <subject 2>
-     …
+     【<merge 進來的分支>】
+     - <subject 3>
      ```
 
    - `header`:短籤,如「送出 SVN」。
    - 三選一(選項描述也用白話):
      1. **確認送出** → 進 Step 5。
-     2. **改標題** → 請使用者輸入新標題(自由文字,單行)→ 以「新標題 + 同一份 commit 條列」**重組同樣的預覽問句**再問一次(同樣不印 step 前言)。**只有第一行標題可改,下面的 commit 條列永遠是系統帶出的那份。**
+     2. **改標題** → 請使用者輸入新標題(自由文字,單行)→ 以「新標題 + 同一份 BODY」**重組同樣的預覽問句**再問一次(同樣不印 step 前言、標題與 BODY 之間一樣不空行)。**只有第一行標題可改,下面的 BODY 永遠是系統帶出的那份、原樣不動。**
      3. **取消** → 跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill。
 
 > 注意:送出前若你又 commit 新內容進 working branch,Step 5 的 commit 腳本會偵測 git HEAD SHA 不符並 abort,提示重跑 prepare。請在送出前確認不會再 commit 新內容。
@@ -126,7 +136,7 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
 
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Submit-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/submit-svn-commit.sh`)帶 `--branch <name> --title "<那一行 title>"`(**只傳 title,不傳 body / message**)。Script 會:
 - 再次 re-validate SVN HEAD + SHA pin + svn-status drift(防止 race condition)
-- 讀 `MERGE_HEAD.tp_svn_body`(鎖定 body;缺檔則 fail-closed 要求重 prepare),把 title collapse 成單行,自組 `title` + 空行 + `body` 寫入 UTF-8 no-BOM temp 檔
+- 讀 `MERGE_HEAD.tp_svn_body`(鎖定 body;缺檔則 fail-closed 要求重 prepare),把 title collapse 成單行,自組 `title` + 換行 + `body`(**兩者之間不空行**,與 Step 4 預覽逐字一致)寫入 UTF-8 no-BOM temp 檔
 - `git commit --no-edit` 完成 stage merge
 - 處理 `?` `!` `M` 的 svn add / delete
 - `svn commit --file <tmp> --encoding UTF-8` push(避免中文 Big5 mangle)

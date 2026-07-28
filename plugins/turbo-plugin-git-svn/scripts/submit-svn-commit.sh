@@ -110,7 +110,7 @@ SVN_BODY="$(cat "$BODY_FILE")"
 # newlines (a '\n' in the title would otherwise bypass the body lock).
 TITLE_LINE="$(printf '%s' "$TITLE" | tr '\r\n' '  ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 if [[ -z "$TITLE_LINE" ]]; then echo "Error: title is empty after removing line breaks." >&2; exit 1; fi
-FULL_MESSAGE="$(printf '%s\n\n%s' "$TITLE_LINE" "$SVN_BODY")"
+FULL_MESSAGE="$(printf '%s\n%s' "$TITLE_LINE" "$SVN_BODY")"
 
 # U4/KTD5: decide whether this push ADVANCES tp:last-aligned-rev. It advances only when the branch
 # being pushed newly reaches a higher `svn-revision:` trailer than its stored alignment -- i.e. a

@@ -116,7 +116,7 @@ try {
     # embedded newlines ('\n' would otherwise bypass the body lock).
     $titleLine = ($Title -replace '[\r\n]+', ' ').Trim()
     if ([string]::IsNullOrWhiteSpace($titleLine)) { throw 'Title is empty after removing line breaks.' }
-    $fullMessage = "$titleLine`n`n$svnBody"
+    $fullMessage = "$titleLine`n$svnBody"
 
     # U4/KTD5: decide whether this push ADVANCES tp:last-aligned-rev (see submit-svn-commit.sh for
     # the full rationale). $tpNewAligned = the highest svn-revision trailer REACHABLE FROM THE BRANCH
