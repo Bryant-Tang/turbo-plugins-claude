@@ -705,6 +705,21 @@ svn_rev_marks() {
 # Ambiguity is impossible by construction (a ref name holds one revision), so the old
 # fail-loud-on-duplicate branch is gone; markers left behind by a rolled-back import are simply
 # unreachable from main and skipped here.
+#
+# WHY `main` and not the bridge ref (remote-svn/main) -- load-bearing, not an oversight:
+#   * The SHA returned here becomes the PARENT of the branch checkout is about to create. A later
+#     `git merge-base main <branch>` can only resolve to it if it sits in main's OWN history; that
+#     is the entire point of grading the fork point (U5).
+#   * Commits the bridge has but main does not come in two flavours, and NEITHER is a usable base:
+#     the `Merge branch 'main' into remote-svn/main` commits that push creates (the bridge tip is
+#     verifiably NOT an ancestor of main), and commits pull has already replayed but whose merge
+#     into main has not landed yet.
+#   * So widening the scan to the bridge would not buy reachability -- merge-base still would not
+#     land on the chosen base. It would only trade "stop with a clear error" for "silently attach
+#     the branch to history that main may never acquire".
+# Scope differs per caller BY DESIGN, which is why svn_max_rev_reachable takes a ref:
+#   pull resume point -> remote-svn/main | push alignment -> the pushed branch |
+#   checkout grading bound + this floor -> main.
 # Args: <repo_dir> <target_rev>
 svn_floor_commit_for_rev() {
   local repo_dir="$1" target="$2" rev sha
