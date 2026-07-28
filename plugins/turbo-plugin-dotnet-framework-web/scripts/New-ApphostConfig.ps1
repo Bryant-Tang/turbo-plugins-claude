@@ -47,22 +47,6 @@ function Test-SslPortBound {
     return [regex]::IsMatch($out, "(?m):$([regex]::Escape($Port))\s*$")
 }
 
-# Is the IIS Express development certificate trusted for this user? Untrusted only means the
-# browser shows a warning -- the site still serves -- so this is advisory, never fatal.
-function Test-IisExpressCertTrusted {
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-    try {
-        $found = @(Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
-            Where-Object { $_.FriendlyName -match 'IIS Express' -or $_.Subject -match 'CN=localhost' })
-        return ($found.Count -gt 0)
-    } catch {
-        return $null
-    } finally {
-        $ErrorActionPreference = $prevEAP
-    }
-}
-
 try {
     Probe-GitVersion
 
@@ -182,9 +166,12 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
             Write-Output "               最簡單的修法是把專案的 <IISExpressSSLPort> 改成 44300-44399 之間的號碼;"
             Write-Output "               要沿用這個 port 則需要系統管理員權限自行綁定憑證"
         }
-        $trusted = Test-IisExpressCertTrusted
-        if ($trusted -eq $false) {
+        # Trust is advisory: untrusted only costs a browser warning, the site still serves. Emit a
+        # token so the SKILL can offer to fix it, but never fail the setup over it.
+        $devCert = Get-IisExpressDevCert
+        if (($null -ne $devCert) -and (-not (Test-IisExpressCertTrusted -Certificate $devCert))) {
             Write-Output '               (開發憑證尚未加入信任清單,瀏覽器會顯示憑證警告;信任與否不影響站台能否啟動)'
+            Write-Output "TP_TOKEN:CERT_UNTRUSTED thumbprint=$($devCert.Thumbprint)"
         }
     }
     exit 0

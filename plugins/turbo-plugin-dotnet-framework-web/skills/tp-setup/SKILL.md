@@ -137,6 +137,33 @@ else:
        (2) 在 `.turbo-plugin/config.toml` 的 dotnet 區塊寫 `[iis] enabled = false`,跳過 IIS skill。
 ```
 
+#### §cert-trust — 開發憑證信任（`TP_TOKEN:CERT_UNTRUSTED`）
+
+apphost 產生 / 複製後,若輸出含 `TP_TOKEN:CERT_UNTRUSTED thumbprint=<指紋>`,表示這個專案有 https、
+而 IIS Express 的開發憑證**尚未加入本使用者的信任清單** → 瀏覽器會跳憑證警告。
+
+**這是選配,不是錯誤**:沒有信任 https 一樣能跑,只是會警告。**絕不可**因為它讓 setup 失敗,也**不可**
+在沒問過的情況下逕自加入(那是安全性設定)。agent:
+
+1. 用 `AskUserQuestion` 以**白話**問(**不得**把 token 名 / 指紋 / 存放區名稱丟給使用者):
+   > 用瀏覽器連這個網站的 https 時會跳出憑證警告。要不要把 IIS Express 的開發憑證加進信任清單、
+   > 讓警告不再出現?這跟 Visual Studio 第一次跑 https 專案時問你的是同一件事——**只影響你這個
+   > Windows 使用者帳號、不需要系統管理員權限,之後也可以移除**。
+   選項:「加入信任(建議)」/「先不要(https 照樣能用,只是會有警告)」。
+2. 選擇加入 → **先明講「Windows 會再跳一個自己的確認視窗,請按『是』;在你按下之前指令會一直等待」**,
+   再跑(路由規則同下方 Decision Rules):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Approve-IisExpressCert.ps1"
+   ```
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/approve-iis-express-cert.sh"
+   ```
+   把 `CERT_OUTPUT` 區段逐字轉述。使用者在 Windows 視窗按了「否」→ 腳本非零 exit 並說明,**照常繼續 setup**。
+3. 選擇先不要 → 不跑任何指令,Phase 4 註明「https 會有憑證警告,之後可再處理」。
+
+> 只做「信任」這一步。**建立憑證、綁定 port 到系統**都需要系統管理員權限且動的是全機狀態,不在
+> setup 範圍;安裝 IIS Express 時本來就已經把 44300-44399 綁好同一張憑證了。
+
 ### Phase 4 — 完成報告
 
 - **偵測結果**:case + 子流程。

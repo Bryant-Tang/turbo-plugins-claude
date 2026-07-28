@@ -92,6 +92,55 @@ function Find-ApplicationhostTarget {
     return $canonical
 }
 
+# --- IIS Express development certificate ------------------------------------
+# Installing IIS Express drops this certificate (with its private key) into LocalMachine\My and
+# pre-binds ports 44300-44399 to it in http.sys -- which is why VS projects pick an SSL port from
+# that range and https works out of the box. What the installer does NOT do is make it TRUSTED:
+# that is the one-time prompt Visual Studio shows, and it writes to CurrentUser\Root, i.e. per
+# Windows user. So a fresh machine, a fresh user profile, or someone who never ran an https
+# project in VS will get a browser certificate warning even though the site serves fine.
+
+# The IIS Express development certificate, or $null. Prefers a FriendlyName match, falls back to a
+# CN=localhost self-signed cert; among several, the one that expires last wins.
+function Get-IisExpressDevCert {
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $all = @(Get-ChildItem Cert:\LocalMachine\My -ErrorAction SilentlyContinue)
+        $named = @($all | Where-Object { $_.FriendlyName -match 'IIS Express' })
+        # @() around the whole if-expression, not just its branches: assigning a single-element
+        # array through an if-expression unwraps it to a scalar, and the .Count read below then
+        # throws under StrictMode -- silently, because the catch turns it into "no certificate
+        # found". A machine with exactly one certificate hits this every time.
+        $candidates = @(if ($named.Count -gt 0) { $named } else { $all | Where-Object { $_.Subject -match 'CN=localhost' } })
+        if ($candidates.Count -eq 0) { return $null }
+        return (@($candidates | Sort-Object -Property NotAfter -Descending))[0]
+    } catch {
+        return $null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# Is $Certificate present in this user's trusted-root store? Compared by thumbprint, never by
+# subject: several unrelated dev certs use CN=localhost (ASP.NET Core ships one too) and matching
+# on the name would report the wrong one as trusted.
+function Test-IisExpressCertTrusted {
+    param($Certificate)
+    if ($null -eq $Certificate) { return $false }
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $hit = @(Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
+            Where-Object { $_.Thumbprint -eq $Certificate.Thumbprint })
+        return ($hit.Count -gt 0)
+    } catch {
+        return $false
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
 # Parse the IIS Express wiring out of a .csproj. Every input Visual Studio uses to synthesise its
 # <site> entry lives in these elements, which is what lets New-ApphostConfig reproduce VS's output
 # instead of requiring the user to open VS once just to generate a config file.
