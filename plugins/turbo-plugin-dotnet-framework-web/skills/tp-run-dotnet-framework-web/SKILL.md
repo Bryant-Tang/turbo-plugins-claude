@@ -47,17 +47,21 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
   Visual Studio 寫進 `applicationhost.config` 的名字)與**執行期名**(`<csproj-stem>-<sha256前8字元>`,帶 project
   identity hash)。canonical 檔只用前者(可進版控、換機器不會對不上);hash 只出現在 per-launch temp 檔與
   iisexpress 命令列上,供 stop / orphan 清理辨識是哪個專案
-- **`.turbo-plugin/applicationhost.config` 缺這個專案的站台就當場補上**(檔案不存在就依範本建立):站台需要的
+- **`.turbo-plugin/applicationhost.config` 缺這個專案的站台就當場補上**(檔案不存在就產生一份):站台需要的
   資訊全都在 csproj 裡,不必先跑任何設定指令(Visual Studio 也是第一次執行專案時才生出這個檔)。同一份檔案
-  可以放多個專案的站台,補的時候不會動到別的站台。補完會多印一行說明,照樣轉述給使用者
+  可以放多個專案的站台,補的時候不會動到別的站台。既有內容若是 IIS Express 載不進去的形狀,會自動重建並
+  保留原有站台。補完會多印一行說明,照樣轉述給使用者
+  - 產生的檔以 **IIS Express 自帶的範本**為底,所以會有一千行左右——那是它真的需要的內容,不是冗餘
 - 找已執行的 iisexpress.exe instance:
   - **同 port + site name 也 match(同 project,可能在別 worktree 啟)** → 自動 `Stop-Process` 舊 instance,繼續啟新
   - **同 port + site name 不 match(別 project 撞 port)** → fail loudly,提示停掉別 project 的 instance 或改 port
   - **無佔用** → 直接啟
 - 渲染 per-launch temp applicationhost.config(canonical 不變,替換 physicalPath 為當前 worktree,並把站台改名成
-  帶 hash 的執行期名)、`Start-Process iisexpress.exe`(**不可用 `-WindowStyle Hidden`**:IIS Express 沒有 console
-  會立刻以 exit code 0 自行結束、根本沒綁到 port)、polling `netstat` 直到 port LISTENING 或超時(`-Timeout` →
-  `[run].listening_timeout_seconds` → default 30)
+  帶 hash 的執行期名)、以 **`-NoNewWindow`** 啟動 `iisexpress.exe`(**不可用 `-WindowStyle`**——不管 Hidden 或
+  Minimized,IIS Express 都會在綁 port 前就以 exit code 0 結束;`-NoNewWindow` 既不開視窗又跑得起來)、
+  polling `netstat` 直到 port LISTENING 或超時(`-Timeout` → `[run].listening_timeout_seconds` → default 30)
+- 啟動失敗時會把 IIS Express **自己的訊息**一起印出來(它的 stdout/stderr 導到 per-launch log),那通常直接
+  就是原因;照樣逐字轉述給使用者
 
 ### Step 3 — 回報結果模板
 

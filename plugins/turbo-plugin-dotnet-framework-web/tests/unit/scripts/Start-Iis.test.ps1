@@ -26,8 +26,10 @@ BeforeAll {
     $script:ScriptUnderTest = [System.IO.Path]::Combine($script:pluginRoot, 'scripts', 'Start-Iis.ps1')
     $script:SandboxBase = [System.IO.Path]::Combine($script:pluginRoot, 'tests', '.sandbox', 'sandboxes')
     # Get-ProjectIdentityHash: lets the lazy-bootstrap sandboxes delete the exact per-launch temp
-    # config their (deliberately failed) launch left in %TEMP%, instead of globbing for it.
+    # files their (deliberately failed) launch left in %TEMP%, instead of globbing for them.
+    # Find-IisExpressPath: locates the applicationhost.config template those sandboxes need.
     . ([System.IO.Path]::Combine($script:pluginRoot, 'scripts', 'lib', 'Common.ps1'))
+    . ([System.IO.Path]::Combine($script:pluginRoot, 'scripts', 'lib', 'IisHelpers.ps1'))
 
     $script:testRoot = [System.IO.Path]::Combine($script:pluginRoot, 'tests', '.sandbox', 'test-turbo-plugin')
     $script:cfgPath = [System.IO.Path]::Combine($script:testRoot, '.turbo-plugin', 'config.toml')
@@ -100,10 +102,23 @@ BeforeAll {
         }
     }
 
+    # Where IIS Express keeps the applicationhost.config template we generate from. Empty when IIS
+    # Express is not installed, which makes the lazy-bootstrap contexts skip instead of fail.
+    $script:IisTemplate = ''
+    try {
+        $probe = Find-IisExpressPath -RepoRoot ''
+        $cand = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($probe), 'AppServer', 'applicationhost.config')
+        if (Test-Path -LiteralPath $cand -PathType Leaf) { $script:IisTemplate = $cand }
+    } catch {
+        $script:IisTemplate = ''
+    }
+
     # A throwaway repo for the lazy-bootstrap cases: one csproj, [iis] enabled, and an
-    # iis_express_path pointing at a file that is NOT a real Win32 image. Start-Iis therefore runs
-    # the whole configuration path for real and only fails at the launch step -- which is exactly
-    # what makes this assertable without the test suite ever spawning an IIS Express process.
+    # iis_express_path pointing at a file that is NOT a real Win32 image -- but with a REAL
+    # applicationhost.config template beside it under AppServer/, exactly where the production code
+    # looks. So the whole configuration path (including generating from the genuine template) runs
+    # for real, and only the launch step fails -- which is what makes this assertable without the
+    # test suite ever spawning an IIS Express process.
     function New-LazySandbox {
         param([string]$Tag, [string]$Port = '51789')
         $enc = New-Object System.Text.UTF8Encoding($false)
@@ -111,6 +126,9 @@ BeforeAll {
         $null = New-Item -ItemType Directory -Path $root -Force
         $tp = [System.IO.Path]::Combine($root, '.turbo-plugin')
         $null = New-Item -ItemType Directory -Path $tp -Force
+        $appServer = [System.IO.Path]::Combine($root, 'AppServer')
+        $null = New-Item -ItemType Directory -Path $appServer -Force
+        Copy-Item -LiteralPath $script:IisTemplate -Destination ([System.IO.Path]::Combine($appServer, 'applicationhost.config')) -Force
 
         $csproj = @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -147,8 +165,10 @@ BeforeAll {
         # leaves nothing in %TEMP% and cannot touch a real project's temp config.
         try {
             $hash = Get-ProjectIdentityHash -RepoPath $Dir -CsprojRelPath 'HelloApp.csproj'
-            $temp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$hash.config")
-            if ([System.IO.File]::Exists($temp)) { [System.IO.File]::Delete($temp) }
+            foreach ($ext in @('config', 'out.log', 'err.log')) {
+                $temp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$hash.$ext")
+                if ([System.IO.File]::Exists($temp)) { [System.IO.File]::Delete($temp) }
+            }
         } catch { }
         try { if ([System.IO.Directory]::Exists($Dir)) { [System.IO.Directory]::Delete($Dir, $true) } } catch { }
     }
@@ -201,13 +221,20 @@ Describe 'Start-Iis' {
     # avoid.
     Context 'Case 2: 沒有 applicationhost.config → 第一次執行就自己產生' {
         BeforeAll {
+            if ([string]::IsNullOrWhiteSpace($script:IisTemplate)) { return }
             $script:lazy2 = New-LazySandbox -Tag 'gen'
             $script:apphost2 = [System.IO.Path]::Combine($script:lazy2, '.turbo-plugin', 'applicationhost.config')
             $script:r2 = Invoke-Script -WorkDir $script:lazy2 -ExtraArgs @('-Project', 'HelloApp.csproj')
             $script:combined2 = $script:r2.Stdout + "`n" + $script:r2.Stderr
             $script:site2 = Get-SiteNode -ConfigPath $script:apphost2 -SiteName 'HelloApp'
         }
-        AfterAll { Remove-LazySandbox -Dir $script:lazy2 }
+        AfterAll { if (-not [string]::IsNullOrWhiteSpace($script:IisTemplate)) { Remove-LazySandbox -Dir $script:lazy2 } }
+
+        BeforeEach {
+            if ([string]::IsNullOrWhiteSpace($script:IisTemplate)) {
+                Set-ItResult -Skipped -Because '這台機器沒有安裝 IIS Express,拿不到它自帶的設定檔範本'
+            }
+        }
 
         It 'case2: 設定檔被產生出來' {
             [System.IO.File]::Exists($script:apphost2) | Should -BeTrue -Because $script:combined2
@@ -282,8 +309,26 @@ Describe 'Start-Iis' {
                 Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
         }
 
-        It 'case5: 不再以 -WindowStyle Hidden 啟動 IIS Express' {
-            $script:startIisCode | Should -Not -Match '-WindowStyle\s+Hidden'
+        # Measured on Windows 11 + IIS Express 10 against a VALID config: -WindowStyle (either
+        # Hidden or Minimized) forces UseShellExecute=$true, and IIS Express then exits with code 0
+        # before binding the port -- it wants stdin it can read. -NoNewWindow hands it this
+        # process's handles, it stays up, survives this script exiting, and shows no window at all.
+        It 'case5: 不用 -WindowStyle 啟動(那會讓 IIS Express 立刻 exit 0)' {
+            $script:startIisCode | Should -Not -Match '-WindowStyle'
+        }
+        It 'case5: 用 -NoNewWindow 啟動' {
+            $script:startIisCode | Should -Match '-NoNewWindow'
+        }
+        It 'case5: 啟動參數自己加引號(-NoNewWindow 不會代勞,而 %TEMP% 路徑常含空白)' {
+            # 引號是字面加進參數字串裡的,例如 ('"/config:' + $tempApphost + '"')。
+            # (PowerShell 的跳脫字元是反引號不是反斜線,所以這裡用 [regex]::Escape 避開引號地獄。)
+            $script:startIisCode | Should -Match ([regex]::Escape('(''"/config:'))
+        }
+        It 'case5: 啟動失敗時把 IIS Express 自己的訊息讀回來' {
+            # 舊訊息指向一個正常安裝根本不存在的 TraceLogFiles 目錄,等於什麼都沒說。
+            # 比對去掉註解的版本:註解裡刻意寫著被淘汰的做法,整檔比對會打到那段說明本身。
+            $script:startIisCode | Should -Match 'Get-IisLaunchLogTail'
+            $script:startIisCode | Should -Not -Match 'TraceLogFiles'
         }
         It 'case5: canonical 站台以專案名查找(CanonicalSiteName)' {
             $script:startIisCode | Should -Match 'CanonicalSiteName'
@@ -307,6 +352,7 @@ Describe 'Start-Iis' {
     # template would silently drop the sibling projects' sites.
     Context 'Case 6: 設定檔已存在但缺這個專案的站台 → 補上,不動同檔內別的站台' {
         BeforeAll {
+            if ([string]::IsNullOrWhiteSpace($script:IisTemplate)) { return }
             $script:lazy6 = New-LazySandbox -Tag 'append'
             $script:apphost6 = [System.IO.Path]::Combine($script:lazy6, '.turbo-plugin', 'applicationhost.config')
             $seed = @'
@@ -330,7 +376,13 @@ Describe 'Start-Iis' {
             $script:r6 = Invoke-Script -WorkDir $script:lazy6 -ExtraArgs @('-Project', 'HelloApp.csproj')
             $script:combined6 = "$($script:r6.Stdout)`n$($script:r6.Stderr)"
         }
-        AfterAll { Remove-LazySandbox -Dir $script:lazy6 }
+        AfterAll { if (-not [string]::IsNullOrWhiteSpace($script:IisTemplate)) { Remove-LazySandbox -Dir $script:lazy6 } }
+
+        BeforeEach {
+            if ([string]::IsNullOrWhiteSpace($script:IisTemplate)) {
+                Set-ItResult -Skipped -Because '這台機器沒有安裝 IIS Express,拿不到它自帶的設定檔範本'
+            }
+        }
 
         It 'case6: 補上以專案名命名的站台' {
             (Get-SiteNode -ConfigPath $script:apphost6 -SiteName 'HelloApp') |

@@ -16,15 +16,18 @@ BeforeAll {
     $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..', '..'))
     $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'lib', 'ApplicationHostHelpers.ps1')
     $script:CommonPs1 = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'lib', 'Common.ps1')
+    $script:IisHelpers = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'lib', 'IisHelpers.ps1')
     $script:SandboxRoot = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes')
 
     if (-not [System.IO.File]::Exists($script:ScriptUnderTest)) {
         throw "ApplicationHostHelpers.ps1 not found at $($script:ScriptUnderTest)"
     }
 
-    # dot-source dependencies (production helper + lib under test) into test scope
+    # dot-source dependencies (production helper + lib under test) into test scope.
+    # IisHelpers supplies Find-IisExpressPath, which locates the applicationhost.config template.
     . $script:CommonPs1
     . $script:ScriptUnderTest
+    . $script:IisHelpers
 
     function New-Sandbox {
         param([string]$Tag = 'apphost')
@@ -183,7 +186,14 @@ Describe 'ApplicationHostHelpers' {
     # change that breaks generation is caught here.
     Context 'Case 6: Initialize-ApplicationhostSite (lazy bootstrap)' {
         BeforeAll {
-            $script:tpl = Get-ApplicationhostTemplatePath
+            # The template is IIS Express's own applicationhost.config, so these cases need it
+            # installed. A runner without IIS Express skips rather than fails.
+            $script:tpl = ''
+            try {
+                $script:tpl = Get-ApplicationhostTemplatePath -IisExpressPath (Find-IisExpressPath -RepoRoot '')
+            } catch {
+                $script:tpl = ''
+            }
 
             function New-TestBinding {
                 param([string]$Scheme = 'http', [string]$Port = '5000', [string]$SslPort = '', [bool]$Classic = $false)
@@ -197,6 +207,9 @@ Describe 'ApplicationHostHelpers' {
             }
         }
         BeforeEach {
+            if ([string]::IsNullOrWhiteSpace($script:tpl)) {
+                Set-ItResult -Skipped -Because '這台機器沒有安裝 IIS Express,拿不到它自帶的設定檔範本'
+            }
             # A path under a directory that does NOT exist yet: creating it is part of the contract,
             # because on a fresh repo .turbo-plugin/ has never been made by anyone.
             $script:initDir = [System.IO.Path]::Combine($script:sb, "init-$([Guid]::NewGuid().ToString('N').Substring(0,8))", '.turbo-plugin')
@@ -273,6 +286,48 @@ Describe 'ApplicationHostHelpers' {
             # Duplicate ids make IIS Express refuse the whole config, so the second site must not
             # reuse the hardcoded id the single-project generator used to emit.
             $second.GetAttribute('id') | Should -Not -Be $first.GetAttribute('id')
+        }
+
+        # An earlier version of this plugin generated a ~40-line file with no <configSections>.
+        # IIS Express rejects such a file outright, and the site-lookup path would happily find the
+        # entry inside it and conclude everything was fine -- so without this, an affected repo
+        # would keep failing forever with no way out except knowing to delete the file by hand.
+        It 'rebuilds a config IIS Express could never load, keeping the sites it listed' {
+            $null = [System.IO.Directory]::CreateDirectory($script:initDir)
+            $unusable = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.applicationHost>
+    <sites>
+      <site name="HelloApp" id="1">
+        <application path="/" applicationPool="Clr4IntegratedAppPool">
+          <virtualDirectory path="/" physicalPath="__TURBO_PLUGIN_PHYSICAL_PATH__" />
+        </application>
+        <bindings>
+          <binding protocol="http" bindingInformation="*:5123:localhost" />
+        </bindings>
+      </site>
+    </sites>
+  </system.applicationHost>
+</configuration>
+'@
+            [System.IO.File]::WriteAllText($script:initPath, $unusable, [System.Text.UTF8Encoding]::new($false))
+
+            $r = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding -Port '5123')
+            [bool]$r.ConfigRebuilt | Should -BeTrue
+            [bool]$r.SiteAdded | Should -BeFalse
+
+            $text = [System.IO.File]::ReadAllText($script:initPath)
+            $text | Should -Match '<configSections>'
+            $x = New-Object System.Xml.XmlDocument
+            $x.Load($script:initPath)
+            $site = Find-ApplicationhostSite -Xml $x -SiteName 'HelloApp'
+            $site | Should -Not -BeNullOrEmpty
+            # 原本那份的設定要被搬過來,不是重新依 csproj 產一個
+            $site.SelectSingleNode('bindings/binding').GetAttribute('bindingInformation') | Should -Be '*:5123:localhost'
+            # 而且不能把範本自帶的示範站台一起帶進來
+            (Find-ApplicationhostSite -Xml $x -SiteName 'Development Web Site') | Should -BeNullOrEmpty
         }
 
         It 'fails loudly when the template is missing rather than writing a broken config' {

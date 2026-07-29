@@ -79,14 +79,21 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         $null = Remove-ApplicationhostSite -ConfigPath $canonical -SiteName $siteName
     }
 
+    # Generating needs IIS Express itself: its shipped applicationhost.config is the template.
+    $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot
+
     $result = Initialize-ApplicationhostSite `
         -ConfigPath $canonical `
-        -TemplatePath (Get-ApplicationhostTemplatePath) `
+        -TemplatePath (Get-ApplicationhostTemplatePath -IisExpressPath $iisExpressPath) `
         -SiteName $siteName `
         -Binding $binding
 
     $configNote = if ($result.ConfigCreated) {
         '(新建)'
+    } elseif ($result.ConfigRebuilt -and $result.SiteAdded) {
+        '(原本的內容 IIS Express 載不進去,已重建並補上這個專案的站台)'
+    } elseif ($result.ConfigRebuilt) {
+        '(原本的內容 IIS Express 載不進去,已重建;站台保留)'
     } elseif ($result.SiteAdded) {
         '(已存在,已補上這個專案的站台)'
     } else {

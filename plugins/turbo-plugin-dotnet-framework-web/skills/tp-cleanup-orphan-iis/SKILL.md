@@ -1,6 +1,6 @@
 ---
 name: tp-cleanup-orphan-iis
-description: '清除殘留的孤兒 IIS Express process 及 %TEMP% 殘留的 per-launch applicationhost.config 暫存檔,通常在 worktree rename 或 project 搬移後出現。使用者明確要求清除時執行;tp-stop 偵測到同 csproj-stem 但不同 hash 的 orphan instance 時建議。'
+description: '清除殘留的孤兒 IIS Express process 及 %TEMP% 殘留的 per-launch 暫存檔(設定檔 + 啟動 log),通常在 worktree rename 或 project 搬移後出現。使用者明確要求清除時執行;tp-stop 偵測到同 csproj-stem 但不同 hash 的 orphan instance 時建議。'
 argument-hint: '[--project <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Grep, AskUserQuestion
@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Grep, AskUserQuestion
 
 ## Purpose
 
-清除因 worktree rename / project 搬移留下的孤兒 IIS Express instance 與殘留的 per-launch temp applicationhost.config 暫存檔。turbo-plugin 以 `<csproj-stem>-<sha256前8字元>` 格式命名 site,hash 改變後舊 process / 舊暫存檔不會自動清除(canonical applicationhost.config 跨 worktree 共用、執行時不被改,故**無** XML `<site>` 孤兒)。
+清除因 worktree rename / project 搬移留下的孤兒 IIS Express instance 與殘留的 per-launch 暫存檔。一次啟動會在 `%TEMP%` 留下三個同名不同副檔名的檔:`turbo-plugin-iis-<hash>.config`(渲染後的設定)、`.out.log` / `.err.log`(IIS Express 自己的輸出,啟動失敗時的錯誤原因就在裡面)。turbo-plugin 以 `<csproj-stem>-<sha256前8字元>` 格式命名 site,hash 改變後舊 process / 舊暫存檔不會自動清除(canonical applicationhost.config 跨 worktree 共用、執行時不被改,故**無** XML `<site>` 孤兒)。
 
 實際掃描與移除動作都在 `${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1`(Windows-only;非 Windows 沒有 IIS Express)。Skill 只負責呼叫 script、解析輸出、跟使用者確認後再次呼叫 script 執行刪除。
 
@@ -43,10 +43,10 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1 [-Project <path>]
 
 stdout 會是以下其中之一:
 
-- `No orphan IIS Express instances or stale temp applicationhost.config files found.` → 沒有孤兒,直接結束,告知使用者「未發現孤兒」即可。
+- `No orphan IIS Express instances or stale temp files found.` → 沒有孤兒,直接結束,告知使用者「未發現孤兒」即可。
 - 一行或多行下列兩種:
   - `ORPHAN: <site_name> process pid=<n>` —— 一個正在跑的孤兒 `iisexpress.exe`(`pid` 是整數)。
-  - `ORPHAN_TEMP: <path>` —— 一個沒有任何 live iisexpress 引用、殘留在 `%TEMP%` 的 `turbo-plugin-iis-*.config` 暫存檔。
+  - `ORPHAN_TEMP: <path>` —— 一個沒有任何 live iisexpress 使用、殘留在 `%TEMP%` 的 `turbo-plugin-iis-<hash>.{config,out.log,err.log}` 暫存檔。判斷依據是檔名裡的 identity hash 有沒有對應到執行中的 instance。
 
 **Parse rule**:
 - `ORPHAN:` 行 → `{ site_name: string, pid: number }`。kind 固定是 `process`(canonical applicationhost.config 跨 worktree 共用、執行時永不被改,故已無 XML `<site>` 孤兒;不再有 `xml` / `both` 類或 `pid=-`)。
@@ -116,9 +116,9 @@ Both `-RemoveSite` and `-RemoveAll` honor the same exit code contract. For the a
 ## Test Scenarios
 
 - **Process orphan**: launch a dummy IIS Express with `/site:<csproj-stem>-deadbeef`(隨意 hash),enumerate-only 模式輸出 `ORPHAN: <name> process pid=<n>`(pid 是整數)。`-RemoveSite <name>` 後 `Get-Process iisexpress` 確認該 PID 不見。
-- **Temp-file orphan**: 在 `%TEMP%` 放一個沒有 live iisexpress 引用的 `turbo-plugin-iis-<hash>.config`,enumerate 顯示 `ORPHAN_TEMP: <path>`。scoped `-RemoveAll` 後該檔被移除;`-RemoveSite` **不**動 temp 檔(temp 以 identity-hash 命名、不對應單一 site)。
+- **Temp-file orphan**: 在 `%TEMP%` 放一組沒有 live iisexpress 使用的 `turbo-plugin-iis-<hash>.config` / `.out.log` / `.err.log`,enumerate 三個都顯示 `ORPHAN_TEMP: <path>`。scoped `-RemoveAll` 後該檔被移除;`-RemoveSite` **不**動 temp 檔(temp 以 identity-hash 命名、不對應單一 site)。
 - **Cancel path**: enumerate 後使用者選 Cancel,確認 script 沒被以 `-RemoveAll` / `-RemoveSite` 模式呼叫、iisexpress process list + `%TEMP%` 都沒改。
-- **Idempotency**: 連跑 enumerate 兩次,輸出穩定;scoped `-RemoveAll` 兩次,第二次顯示 `No orphan IIS Express instances or stale temp applicationhost.config files found.` 並 exit 0。
+- **Idempotency**: 連跑 enumerate 兩次,輸出穩定;scoped `-RemoveAll` 兩次,第二次顯示 `No orphan IIS Express instances or stale temp files found.` 並 exit 0。
 - **Partial selection**: 3 個 process orphan,只 `-RemoveSite` 1 個 → 該 site 不見、其餘 2 個 enumerate 仍出現。
 - **Partial failure**: scoped `-RemoveAll` 對多個 orphan,其中一個 `Stop-Process` 失敗(例如該 PID 權限不足無法殺)→ exit code 2、stdout 含 `PARTIAL_FAILURE: failed=<n> sites=<comma-list>`、stderr 含 per-site reason。re-run enumerate 確認失敗的仍在、其餘已清。
 - **No-project `-RemoveAll` 被拒**: 不帶 `-Project` 跑 `-RemoveAll` → 非 0 exit、訊息為「Refusing -RemoveAll without a project...」,不殺任何 process。

@@ -67,12 +67,41 @@ function Find-IisInstanceByPort {
     return ,$matched
 }
 
+# Read back whatever IIS Express managed to say before dying. Its own message is the only thing
+# that distinguishes "your config is unloadable" from "the port is taken" from "the site name is
+# wrong" -- previously the failure pointed at a TraceLogFiles directory that does not even exist on
+# a normal install, so every launch failure looked identical and told the user nothing.
+function Get-IisLaunchLogTail {
+    param([string[]]$LogPaths, [int]$MaxLines = 12)
+    $lines = @()
+    foreach ($p in $LogPaths) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { continue }
+        try {
+            $content = @(Get-Content -LiteralPath $p -ErrorAction Stop | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        } catch {
+            continue
+        }
+        if ($content.Count -eq 0) { continue }
+        $lines += @($content | Select-Object -Last $MaxLines)
+    }
+    if ($lines.Count -eq 0) { return '' }
+    return ($lines -join "`n")
+}
+
 function Wait-PortListening {
-    param([string]$Port, [int]$Seconds, [System.Diagnostics.Process]$Process)
+    param([string]$Port, [int]$Seconds, [System.Diagnostics.Process]$Process, [string[]]$LogPaths = @())
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline) {
         if ($Process.HasExited) {
-            throw "IIS Express process (PID $($Process.Id)) exited prematurely with exit code $($Process.ExitCode). Check $env:LOCALAPPDATA\IISExpress\TraceLogFiles\ for crash details."
+            $detail = Get-IisLaunchLogTail -LogPaths $LogPaths
+            $msg = "IIS Express process (PID $($Process.Id)) exited prematurely with exit code $($Process.ExitCode)."
+            if (-not [string]::IsNullOrWhiteSpace($detail)) {
+                $msg += "`nIIS Express 自己的訊息:`n$detail"
+            } else {
+                $msg += ' IIS Express 沒有留下任何訊息。'
+            }
+            throw $msg
         }
         $listening = @((& netstat -ano) | Select-String -Pattern ":$Port\b" | Where-Object { $_ -match 'LISTENING' })
         if ($listening.Count -gt 0) { return $true }
@@ -121,28 +150,40 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     # split have one, and forcing a migration would buy nothing.
     $canonicalSiteInFile = $settings.CanonicalSiteName
     $siteEntry = $null
+    $configUnusable = $false
     if (Test-Path -LiteralPath $settings.ApplicationhostConfigFile -PathType Leaf) {
         $apphostXml = New-Object System.Xml.XmlDocument
         $apphostXml.PreserveWhitespace = $true
         $apphostXml.Load($settings.ApplicationhostConfigFile)
+        # A config with no <configSections> can never be loaded by IIS Express, whatever sites it
+        # lists. Route it into the initializer too, which rebuilds it and carries the sites over --
+        # otherwise a repo that already has such a file would keep failing forever, since the
+        # site-lookup below would find its entry and conclude everything was fine.
+        $configUnusable = ($null -eq $apphostXml.SelectSingleNode('/configuration/configSections'))
         $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $canonicalSiteInFile
         if ($null -eq $siteEntry) {
             $canonicalSiteInFile = $settings.IisConfigSiteName
             $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $canonicalSiteInFile
         }
     }
-    if ($null -eq $siteEntry) {
+    if (($null -eq $siteEntry) -or $configUnusable) {
+        # When a usable entry was already found (we are only here to rebuild an unloadable file),
+        # pass THAT name through: asking for the canonical name instead would append a second site
+        # on the same port next to the salvaged one.
+        $siteToEnsure = if ($null -ne $siteEntry) { $canonicalSiteInFile } else { $settings.CanonicalSiteName }
         $bootstrap = Initialize-ApplicationhostSite `
             -ConfigPath $settings.ApplicationhostConfigFile `
-            -TemplatePath (Get-ApplicationhostTemplatePath) `
-            -SiteName $settings.CanonicalSiteName `
+            -TemplatePath (Get-ApplicationhostTemplatePath -IisExpressPath $settings.IisExpressPath) `
+            -SiteName $siteToEnsure `
             -Binding $settings.Binding
         if ($bootstrap.ConfigCreated) {
             Write-Output "Generated applicationhost.config (site: $($settings.CanonicalSiteName)): $($settings.ApplicationhostConfigFile)"
+        } elseif ($bootstrap.ConfigRebuilt) {
+            Write-Output "Rebuilt applicationhost.config (previous content could not be loaded by IIS Express): $($settings.ApplicationhostConfigFile)"
         } else {
             Write-Output "Added site '$($settings.CanonicalSiteName)' to applicationhost.config: $($settings.ApplicationhostConfigFile)"
         }
-        $canonicalSiteInFile = $settings.CanonicalSiteName
+        $canonicalSiteInFile = $siteToEnsure
         $verifyXml = New-Object System.Xml.XmlDocument
         $verifyXml.PreserveWhitespace = $true
         $verifyXml.Load($settings.ApplicationhostConfigFile)
@@ -186,11 +227,17 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     # concurrently across worktrees (port/site/bindings all derive from the project
     # file and collide if two instances were attempted).
     $tempApphost = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash).config")
-    if (Test-Path -LiteralPath $tempApphost -PathType Leaf) {
-        try {
-            Remove-Item -LiteralPath $tempApphost -Force -ErrorAction Stop
-        } catch {
-            Write-Output "Note: failed to remove stale temp apphost '$tempApphost': $($_.Exception.Message)"
+    # Per-launch log files share the temp config's identity-hash naming so tp-cleanup-orphan-iis
+    # recognises and cleans them as one set.
+    $tempStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash).out.log")
+    $tempStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash).err.log")
+    foreach ($stale in @($tempApphost, $tempStdout, $tempStderr)) {
+        if (Test-Path -LiteralPath $stale -PathType Leaf) {
+            try {
+                Remove-Item -LiteralPath $stale -Force -ErrorAction Stop
+            } catch {
+                Write-Output "Note: failed to remove stale temp file '$stale': $($_.Exception.Message)"
+            }
         }
     }
     Copy-Item -LiteralPath $settings.ApplicationhostConfigFile -Destination $tempApphost -Force
@@ -230,17 +277,36 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         $null = Rename-ApplicationhostSite -ConfigPath $tempApphost -FromName $canonicalSiteInFile -ToName $settings.IisConfigSiteName
     }
 
-    # NOT -WindowStyle Hidden: IIS Express wants a console, and started hidden it exits immediately
-    # with code 0 -- before ever binding the port -- which surfaced as a bogus "exited prematurely"
-    # failure on every single run. Minimized keeps it out of the way while letting it live.
+    # -NoNewWindow, NOT -WindowStyle. -WindowStyle forces UseShellExecute=$true, and a console app
+    # launched that way under a non-interactive host gets a console it cannot actually use: IIS
+    # Express prints "Enter 'Q' to stop", finds no usable stdin, and exits with code 0 before ever
+    # binding the port. Measured on Windows 11 + IIS Express 10 against a VALID config: Hidden and
+    # Minimized both die that way; -NoNewWindow (UseShellExecute=$false, child inherits this
+    # process's handles) stays up and keeps serving after this script exits. It also shows no
+    # window at all, which is what a background dev server should do.
+    #
+    # Arguments are quoted EXPLICITLY: unlike the -WindowStyle path, -NoNewWindow does not quote
+    # them for us, and the temp config lives under %TEMP% whose path routinely contains a space
+    # (IIS Express then reports "Command-line switches must be preceded by '-' or '/'").
+    #
+    # stdout/stderr are redirected so (a) IIS Express's own banner does not interleave with
+    # RUN_OUTPUT, and (b) a failed launch leaves its reason somewhere readable -- see
+    # Get-IisLaunchLogTail. They must be two different files; Start-Process rejects one.
+    $launchArgs = @(
+        ('"/config:' + $tempApphost + '"'),
+        ('"/site:' + $settings.IisConfigSiteName + '"')
+    )
     try {
-        $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList @("/config:$tempApphost", "/site:$($settings.IisConfigSiteName)") -WindowStyle Minimized -PassThru
+        $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList $launchArgs `
+            -NoNewWindow -PassThru -RedirectStandardOutput $tempStdout -RedirectStandardError $tempStderr
     } catch {
-        # Nothing was launched, so the temp config rendered a moment ago is dead weight. Remove it
-        # here instead of leaving a file behind that tp-cleanup-orphan-iis would later report as an
-        # orphan. Only this branch cleans up: once a process exists it is READING this file.
-        if (Test-Path -LiteralPath $tempApphost -PathType Leaf) {
-            try { Remove-Item -LiteralPath $tempApphost -Force -ErrorAction Stop } catch { }
+        # Nothing was launched, so the temp files rendered a moment ago are dead weight. Remove them
+        # here instead of leaving files behind that tp-cleanup-orphan-iis would later report as
+        # orphans. Only this branch cleans up: once a process exists it is READING/WRITING them.
+        foreach ($f in @($tempApphost, $tempStdout, $tempStderr)) {
+            if (Test-Path -LiteralPath $f -PathType Leaf) {
+                try { Remove-Item -LiteralPath $f -Force -ErrorAction Stop } catch { }
+            }
         }
         throw
     }
@@ -256,8 +322,11 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         30
     }
 
-    if (-not (Wait-PortListening -Port $settings.IisPort -Seconds $timeoutSeconds -Process $process)) {
-        throw "IIS Express started (PID $($process.Id)) but port $($settings.IisPort) is not LISTENING after ${timeoutSeconds}s. Check the IIS Express log or raise [run].listening_timeout_seconds in .turbo-plugin/config.toml."
+    if (-not (Wait-PortListening -Port $settings.IisPort -Seconds $timeoutSeconds -Process $process -LogPaths @($tempStdout, $tempStderr))) {
+        $tail = Get-IisLaunchLogTail -LogPaths @($tempStdout, $tempStderr)
+        $msg = "IIS Express started (PID $($process.Id)) but port $($settings.IisPort) is not LISTENING after ${timeoutSeconds}s. 可調高 .turbo-plugin/config.toml 的 [run].listening_timeout_seconds。"
+        if (-not [string]::IsNullOrWhiteSpace($tail)) { $msg += "`nIIS Express 自己的訊息:`n$tail" }
+        throw $msg
     }
     Write-Output "Listening on $($settings.IisUrl)"
 

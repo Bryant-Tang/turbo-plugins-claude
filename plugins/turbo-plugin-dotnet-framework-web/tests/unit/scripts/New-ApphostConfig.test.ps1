@@ -248,6 +248,68 @@ Describe 'New-ApphostConfig' {
         }
     }
 
+    # THE regression lock for this script. Everything else here asserts on the XML we wrote; this
+    # asks IIS EXPRESS ITSELF whether it can load the result. The first shipped version generated a
+    # ~40-line file that parsed fine as XML, satisfied every structural assertion, and was rejected
+    # outright by IIS Express ("cannot read configuration section 'system.applicationHost' because
+    # it is missing a section declaration") -- a real applicationhost.config carries ~1000 lines of
+    # <configSections> plus the <system.webServer> module/handler tables.
+    #
+    # appcmd parses the config WITHOUT starting a server, so this stays hermetic: no process is
+    # spawned, no port is bound, nothing on the machine changes.
+    Context 'Case 8: IIS Express itself can load the generated config' {
+        BeforeAll {
+            $script:appcmd = ''
+            try {
+                . ([System.IO.Path]::Combine($script:pluginRoot, 'scripts', 'lib', 'Common.ps1'))
+                . ([System.IO.Path]::Combine($script:pluginRoot, 'scripts', 'lib', 'IisHelpers.ps1'))
+                $exe = Find-IisExpressPath -RepoRoot ''
+                $candidate = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($exe), 'appcmd.exe')
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { $script:appcmd = $candidate }
+            } catch {
+                $script:appcmd = ''
+            }
+
+            $script:r8Root = ''
+            if (-not [string]::IsNullOrWhiteSpace($script:appcmd)) {
+                $elements = "    <IISUrl>http://localhost:5000/</IISUrl>`n    <IISExpressSSLPort>44301</IISExpressSSLPort>"
+                $script:r8Root = New-ProjectSandbox -Tag 'appcmd' -IisElements $elements
+                $script:r8 = Invoke-Script -WorkDir $script:r8Root -ExtraArgs @('-Project', 'HelloApp.csproj')
+                $script:r8Cfg = [System.IO.Path]::Combine($script:r8Root, '.turbo-plugin', 'applicationhost.config')
+                $script:r8Appcmd = (& $script:appcmd list site /apphostconfig:"$($script:r8Cfg)" 2>&1 | Out-String)
+                $script:r8AppcmdExit = $LASTEXITCODE
+            }
+        }
+        AfterAll { if (-not [string]::IsNullOrWhiteSpace($script:r8Root)) { Remove-ProjectSandbox -Dir $script:r8Root } }
+
+        It 'case8: appcmd 能載入這份設定檔(exit 0)' {
+            if ([string]::IsNullOrWhiteSpace($script:appcmd)) {
+                Set-ItResult -Skipped -Because '這台機器沒有 IIS Express 的 appcmd.exe'
+            }
+            $script:r8AppcmdExit | Should -Be 0 -Because $script:r8Appcmd
+        }
+        It 'case8: appcmd 列得出這個專案的站台' {
+            if ([string]::IsNullOrWhiteSpace($script:appcmd)) {
+                Set-ItResult -Skipped -Because '這台機器沒有 IIS Express 的 appcmd.exe'
+            }
+            $script:r8Appcmd | Should -Match 'SITE "HelloApp"'
+        }
+        It 'case8: 內建的示範站台沒有被一起帶進來' {
+            if ([string]::IsNullOrWhiteSpace($script:appcmd)) {
+                Set-ItResult -Skipped -Because '這台機器沒有 IIS Express 的 appcmd.exe'
+            }
+            # IIS Express 的範本自帶一個 "Development Web Site"(:8080、指向空目錄)。它不該進到
+            # 這個 repo 共享的設定檔裡,否則每個專案都莫名多一個站台、還占著 8080。
+            $script:r8Appcmd | Should -Not -Match 'Development Web Site'
+        }
+        It 'case8: 設定檔含區段宣告(缺這段 IIS Express 會直接拒收)' {
+            if ([string]::IsNullOrWhiteSpace($script:appcmd)) {
+                Set-ItResult -Skipped -Because '這台機器沒有 IIS Express 的 appcmd.exe'
+            }
+            [System.IO.File]::ReadAllText($script:r8Cfg) | Should -Match '<configSections>'
+        }
+    }
+
     Context 'Case 5: csproj without any IIS setting fails loudly' {
         BeforeAll {
             # Mirrors a project where VS kept the server settings in the gitignored .csproj.user.

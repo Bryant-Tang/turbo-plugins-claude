@@ -63,11 +63,34 @@ function Save-ApplicationhostConfigAtomically {
     }
 }
 
-# Path of the applicationhost.config template shipped with the plugin. Both the standalone
-# generator and the lazy first-run bootstrap start from this same skeleton, so they cannot drift.
+# The applicationhost.config template to generate from: IIS Express's OWN default config, which
+# ships next to iisexpress.exe at <install>\AppServer\applicationhost.config.
+#
+# This must not be a skeleton we write ourselves. A working applicationhost.config is ~1000 lines:
+# the <configSections> declarations alone are load-bearing (without the one for
+# system.applicationHost, IIS Express refuses the file outright), and beyond that the whole
+# <system.webServer> block of globalModules / modules / handlers / isapiFilters is what actually
+# makes it serve ASP.NET. A hand-written 40-line file parses as XML and is completely unusable --
+# which is exactly what shipped before, because nothing in the test suite ever asked IIS Express
+# whether it could load the result.
+#
+# The shipped file is safe to start from: it contains no machine-specific absolute paths, only
+# %IIS_BIN% / %IIS_USER_HOME% / %AppData% / %windir% style variables that IIS Express expands at
+# runtime, and it already defines Clr4IntegratedAppPool / Clr4ClassicAppPool -- the two pools the
+# generated <site> references. This is also what Visual Studio does for its own per-solution config.
 function Get-ApplicationhostTemplatePath {
-    return [System.IO.Path]::GetFullPath(
-        [System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'default-files', '.turbo-plugin', 'applicationhost.config'))
+    param([Parameter(Mandatory = $true)][string]$IisExpressPath)
+
+    $installDir = [System.IO.Path]::GetDirectoryName($IisExpressPath)
+    $template = [System.IO.Path]::Combine($installDir, 'AppServer', 'applicationhost.config')
+    if (-not (Test-Path -LiteralPath $template -PathType Leaf)) {
+        throw @"
+找不到 IIS Express 內建的 applicationhost.config 範本:$template
+產生設定檔需要它(自行拼一份是行不通的:少了 <configSections> 與 <system.webServer> 的模組宣告,
+IIS Express 會直接拒絕載入)。請確認 IIS Express 安裝完整,必要時重新安裝。
+"@
+    }
+    return $template
 }
 
 # Ensure an applicationhost.config exists at $ConfigPath and carries a <site> for one project.
@@ -81,14 +104,15 @@ function Get-ApplicationhostTemplatePath {
 # nothing machine-specific, safe to commit and share. The identity-hashed runtime name and the real
 # worktree path are applied by Start-Iis to the per-launch temp copy only.
 #
-# An existing config is never rebuilt: a missing site is APPENDED to it, so a repo with several web
-# projects accumulates one <site> per project the way Visual Studio's shared config does, and a
-# site that is already there (possibly hand-tuned, or copied from VS) is left untouched.
+# A usable existing config is never rebuilt: a missing site is APPENDED to it, so a repo with
+# several web projects accumulates one <site> per project the way Visual Studio's shared config
+# does, and a site that is already there (possibly hand-tuned, or copied from VS) is left untouched.
+# The one exception is a config that IIS Express could never load at all -- see the self-heal below.
 #
 # $Binding is a Get-IisProjectBinding result (Uri / Port / SslPort / ClassicPipeline). It is passed
 # in rather than parsed here so this file stays free of any dependency on IisHelpers.ps1.
 #
-# Returns @{ ConfigCreated = <bool>; SiteAdded = <bool>; SiteName; AppPool; ConfigPath }.
+# Returns @{ ConfigCreated; ConfigRebuilt; SiteAdded = <bool>; SiteName; AppPool; ConfigPath }.
 function Initialize-ApplicationhostSite {
     param(
         [Parameter(Mandatory = $true)][string]$ConfigPath,
@@ -98,10 +122,39 @@ function Initialize-ApplicationhostSite {
     )
 
     $created = $false
+    $rebuilt = $false
     $xml = New-Object System.Xml.XmlDocument
     $xml.PreserveWhitespace = $true
     if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
         $xml.Load($ConfigPath)
+
+        # Self-heal a config that can never work. <configSections> is the one part IIS Express
+        # refuses to run without ("cannot read configuration section 'system.applicationHost'
+        # because it is missing a section declaration"), so its absence means the file was written
+        # by something that did not start from a real applicationhost.config -- including an early
+        # version of this very script. Rebuild from the template and carry the existing <site>
+        # entries over, rather than making the user work out that the file has to be deleted.
+        if ($null -eq $xml.SelectSingleNode('/configuration/configSections')) {
+            if (-not (Test-Path -LiteralPath $TemplatePath -PathType Leaf)) {
+                throw "找不到 applicationhost.config 範本:$TemplatePath"
+            }
+            $salvagedSites = @($xml.SelectNodes('/configuration/system.applicationHost/sites/site'))
+            $fresh = New-Object System.Xml.XmlDocument
+            $fresh.PreserveWhitespace = $true
+            $fresh.Load($TemplatePath)
+            $freshSites = $fresh.SelectSingleNode('/configuration/system.applicationHost/sites')
+            if ($null -eq $freshSites) {
+                throw "applicationhost.config 範本缺少 <sites> 節點:$TemplatePath"
+            }
+            foreach ($stockSite in @($freshSites.SelectNodes('site'))) {
+                [void]$stockSite.ParentNode.RemoveChild($stockSite)
+            }
+            foreach ($old in $salvagedSites) {
+                [void]$freshSites.AppendChild($fresh.ImportNode($old, $true))
+            }
+            $xml = $fresh
+            $rebuilt = $true
+        }
     } else {
         if (-not (Test-Path -LiteralPath $TemplatePath -PathType Leaf)) {
             throw "找不到 applicationhost.config 範本:$TemplatePath"
@@ -116,11 +169,25 @@ function Initialize-ApplicationhostSite {
         throw "applicationhost.config 缺少 <sites> 節點,無法加入站台:$offender"
     }
 
+    # Starting from IIS Express's own config means inheriting its demo site ("Development Web Site"
+    # on :8080, serving an empty directory). Drop it on creation so the file this repo shares only
+    # ever lists real projects -- and so its port never collides with anything. Only on creation:
+    # an existing config's sites belong to this repo and are never touched.
+    if ($created) {
+        foreach ($stockSite in @($sitesNode.SelectNodes('site'))) {
+            [void]$stockSite.ParentNode.RemoveChild($stockSite)
+        }
+    }
+
     $appPool = if ($Binding.ClassicPipeline) { 'Clr4ClassicAppPool' } else { 'Clr4IntegratedAppPool' }
 
     if ($null -ne (Find-ApplicationhostSite -Xml $xml -SiteName $SiteName)) {
+        # A rebuild still has to be written out even though no site was added -- the whole point is
+        # that the file on disk was unusable.
+        if ($rebuilt) { Save-ApplicationhostConfigAtomically -Xml $xml -ConfigPath $ConfigPath }
         return @{
             ConfigCreated = $false
+            ConfigRebuilt = $rebuilt
             SiteAdded     = $false
             SiteName      = $SiteName
             AppPool       = $appPool
@@ -175,6 +242,7 @@ function Initialize-ApplicationhostSite {
 
     return @{
         ConfigCreated = $created
+        ConfigRebuilt = $rebuilt
         SiteAdded     = $true
         SiteName      = $SiteName
         AppPool       = $appPool

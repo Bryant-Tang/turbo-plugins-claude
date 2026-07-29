@@ -22,6 +22,18 @@ oneTimeSetUp() {
     if [ -d "$TEST_ROOT" ] && [ ! -d "$TEST_ROOT/.git" ]; then
         (cd "$TEST_ROOT" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1 || true
     fi
+
+    # applicationhost.config is generated FROM IIS Express's own shipped template, so the
+    # lazy-bootstrap case needs it present. Empty when IIS Express is not installed -> SKIP.
+    IIS_TEMPLATE=""
+    for _root in "$(cygpath -u "${PROGRAMFILES:-C:\\Program Files}" 2>/dev/null)" \
+                 "$(cygpath -u "$(printenv 'ProgramFiles(x86)' 2>/dev/null || echo 'C:\\Program Files (x86)')" 2>/dev/null)"; do
+        [ -n "$_root" ] || continue
+        if [ -f "$_root/IIS Express/AppServer/applicationhost.config" ]; then
+            IIS_TEMPLATE="$_root/IIS Express/AppServer/applicationhost.config"
+            break
+        fi
+    done
 }
 
 set_iis_enabled() {
@@ -66,11 +78,15 @@ test_skill_reinvoke_disabled() {
 # stops the script.)
 test_lazy_apphost_generated() {
     [ "$HAS_PS" -eq 1 ] || startSkipping
+    [ -n "$IIS_TEMPLATE" ] || startSkipping
     local guid sb combined generated
     guid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "${RANDOM}${RANDOM}${RANDOM}")"
     guid="${guid//-/}"; guid="${guid:0:12}"
     sb="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-lazy-sh-$guid"
-    mkdir -p "$sb/.turbo-plugin"
+    mkdir -p "$sb/.turbo-plugin" "$sb/AppServer"
+    # The production code looks for the template beside iisexpress.exe under AppServer/, so the
+    # fake executable gets a real template next to it and the generation path runs for real.
+    cp "$IIS_TEMPLATE" "$sb/AppServer/applicationhost.config"
     cat > "$sb/HelloApp.csproj" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">

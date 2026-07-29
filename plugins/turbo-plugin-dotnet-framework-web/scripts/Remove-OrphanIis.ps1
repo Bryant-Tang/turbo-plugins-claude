@@ -70,39 +70,42 @@ try {
         $orphanMap[$op.SiteName] = @{ Pid = $op.Pid }
     }
 
-    # 3. clean up stale per-launch temp applicationhost.config files in %TEMP%
-    #    whose owning iisexpress.exe is gone. Files match pattern turbo-plugin-iis-*.config.
-    #    For each file, identify-by-content (parse XML, read site name) is overkill; instead,
-    #    match the running iisexpress.exe processes' -config:<path> argument and remove temp
-    #    files that no live process references.
-    $referencedTempFiles = @{}
+    # 3. clean up stale per-launch temp files in %TEMP% whose owning iisexpress.exe is gone.
+    #    One launch leaves three files, all named turbo-plugin-iis-<identity-hash>.*:
+    #    the rendered .config plus the redirected .out.log / .err.log.
+    #
+    #    Matching is done on the IDENTITY HASH parsed out of the file name, not on the full path.
+    #    Comparing paths was wrong twice over: the log files never appear on any command line at
+    #    all, and %TEMP% routinely contains a space ("C:\Users\Mel Wu\..."), which the old
+    #    non-greedy path pattern truncated at the first space -- so no live process ever matched
+    #    and every temp file was reported as an orphan.
+    $referencedHashes = @{}
     foreach ($p in $processes) {
         if ([string]::IsNullOrWhiteSpace($p.CommandLine)) { continue }
-        # IIS Express uses /config:<path> on its commandline (Start-Process emits both forward
-        # slash and dash on different .NET versions; match both for robustness).
-        if ($p.CommandLine -match '[/-]config:(["]?)([^"\s]+)\1') {
-            $cfgPath = $Matches[2]
-            try {
-                $norm = Get-NormalizedAbsolutePath -Path $cfgPath
-                $referencedTempFiles[$norm.ToLower()] = $true
-            } catch {
-                # ignore malformed paths
-            }
+        # Three quoting shapes seen in the wild: "/config:<path>" (whole switch quoted),
+        # /config:"<path>" (value quoted), and /config:<path> (no spaces). Dash form matched too.
+        $cfgPath = ''
+        if ($p.CommandLine -match '"[/-]config:([^"]+)"') { $cfgPath = $Matches[1] }
+        elseif ($p.CommandLine -match '[/-]config:"([^"]+)"') { $cfgPath = $Matches[1] }
+        elseif ($p.CommandLine -match '[/-]config:(\S+)') { $cfgPath = $Matches[1] }
+        if ([string]::IsNullOrWhiteSpace($cfgPath)) { continue }
+        $leaf = ''
+        try { $leaf = [System.IO.Path]::GetFileName($cfgPath) } catch { continue }
+        if ($leaf -match '^turbo-plugin-iis-([0-9a-f]{8})\.config$') {
+            $referencedHashes[$Matches[1]] = $true
         }
     }
 
     $orphanTempFiles = @()
     $tempDir = [System.IO.Path]::GetTempPath()
     if (Test-Path -LiteralPath $tempDir -PathType Container) {
-        $tempCandidates = @(Get-ChildItem -LiteralPath $tempDir -Filter 'turbo-plugin-iis-*.config' -File -ErrorAction SilentlyContinue)
+        $tempCandidates = @(Get-ChildItem -LiteralPath $tempDir -Filter 'turbo-plugin-iis-*' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^turbo-plugin-iis-[0-9a-f]{8}\.(config|out\.log|err\.log)$' })
         foreach ($tf in $tempCandidates) {
-            try {
-                $norm = (Get-NormalizedAbsolutePath -Path $tf.FullName).ToLower()
-            } catch {
-                $norm = $tf.FullName.ToLower()
-            }
-            if (-not $referencedTempFiles.ContainsKey($norm)) {
-                $orphanTempFiles += $tf.FullName
+            if ($tf.Name -match '^turbo-plugin-iis-([0-9a-f]{8})\.') {
+                if (-not $referencedHashes.ContainsKey($Matches[1])) {
+                    $orphanTempFiles += $tf.FullName
+                }
             }
         }
     }
@@ -114,7 +117,7 @@ try {
         if (-not [string]::IsNullOrWhiteSpace($RemoveSite)) {
             [Console]::Error.WriteLine("Warning: -RemoveSite '$RemoveSite' specified but no orphans found. Nothing matched your request.")
         }
-        Write-Output 'No orphan IIS Express instances or stale temp applicationhost.config files found.'
+        Write-Output 'No orphan IIS Express instances or stale temp files found.'
         exit 0
     }
 
@@ -172,14 +175,14 @@ try {
         }
     }
 
-    # 6. remove stale temp applicationhost.config files when -RemoveAll given.
+    # 6. remove stale per-launch temp files (.config / .out.log / .err.log) when -RemoveAll given.
     #    (For -RemoveSite, leave temp files alone — they're keyed by identity-hash, not site
     #    name, so we can't reliably correlate to a single requested site.)
     if ($RemoveAll -and $orphanTempFiles.Count -gt 0) {
         foreach ($tf in $orphanTempFiles) {
             try {
                 Remove-Item -LiteralPath $tf -Force -ErrorAction Stop
-                Write-Output "Removed orphan temp applicationhost.config: $tf"
+                Write-Output "Removed orphan temp file: $tf"
             } catch {
                 [Console]::Error.WriteLine("Warning: failed to remove orphan temp file '$tf': $($_.Exception.Message)")
             }

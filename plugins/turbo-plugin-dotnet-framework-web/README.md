@@ -35,9 +35,15 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
 - 需 Windows + IIS Express + MSBuild。MSBuild 來自 **Visual Studio 2017/2019/2022 任一版本,或只裝
   「Build Tools for Visual Studio」**(沒有 IDE 也可以,CI 機器就是這樣)。
 - **不需要先跑任何設定指令。** 各項設定都是用到才建、且都能自我修復:
-  - `.turbo-plugin/applicationhost.config` — 第一次 `/tp-run` 時依 csproj 的 `<IISUrl>` /
-    `<IISExpressSSLPort>` / `<IISExpressUseClassicPipelineMode>` 產生(站台名 = 專案名、physicalPath 是佔位符,
+  - `.turbo-plugin/applicationhost.config` — 第一次 `/tp-run` 時,**以 IIS Express 自帶的
+    `AppServer\applicationhost.config` 為底**、加上依 csproj 的 `<IISUrl>` / `<IISExpressSSLPort>` /
+    `<IISExpressUseClassicPipelineMode>` 合成的站台產生(站台名 = 專案名、physicalPath 是佔位符,
     所以這個檔可以進版控、跨同事跨 worktree 共用)。同一份檔案可以放多個 web 專案的站台。
+    - 它會有一千行左右——那是 IIS Express 真正需要的內容(`<configSections>` 宣告 +
+      `<system.webServer>` 的模組表),少了就直接拒絕載入。Visual Studio 的
+      `.vs/<sln>/config/applicationhost.config` 也是同樣的量級。裡面沒有機器專屬絕對路徑,
+      只有 `%IIS_BIN%` 這類由 IIS Express 自行展開的變數。
+    - 如果既有的那份是舊版產生的、IIS Express 載不進去,下次執行會自動重建並保留站台設定。
   - `.turbo-plugin/config.toml` 的 dotnet 區塊 — 由記憶存回在寫入時自己建立(含標記區塊與 section)。
     `[iis] enabled` 未設定即視為啟用;要停用 IIS 相關 skill 才需要手動寫 `enabled = false`。
   - MSBuild / IIS Express 路徑寫在 `.turbo-plugin/config.local.toml` 的 `[tools]`(gitignored、機器專屬),
