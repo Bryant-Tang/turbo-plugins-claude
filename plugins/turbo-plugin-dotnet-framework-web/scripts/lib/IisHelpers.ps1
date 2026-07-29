@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 # Locate iisexpress.exe. Lookup order (strict cut, no env fallback):
 #   1. .turbo-plugin/config.local.toml [tools] iis_express_path  (machine-specific, gitignored)
 #   2. Standard install paths (Program Files (x86) / Program Files)
-#   3. Throw with /tp-setup guidance.
+#   3. Throw, pointing at config.local.toml.
 # $env:TURBO_PLUGIN_IIS_EXPRESS_PATH is deliberately NOT read — this is the first release;
 # no legacy users to migrate. If the env var happens to be set externally, it is ignored.
 function Find-IisExpressPath {
@@ -23,7 +23,7 @@ function Find-IisExpressPath {
             throw @"
 IIS Express 路徑設定指向不存在的檔案: $resolved
 (來源: .turbo-plugin/config.local.toml [tools] iis_express_path)
-請跑 /tp-setup 重新偵測,或手動修正 .turbo-plugin/config.local.toml 內的路徑。
+請修正該檔內的路徑,或整行移除改用自動偵測。
 "@
         }
     }
@@ -39,9 +39,9 @@ IIS Express 路徑設定指向不存在的檔案: $resolved
         }
     }
 
-    # Step 3: throw with /tp-setup guidance
+    # Step 3: throw, pointing at the one place a path can be pinned.
     throw @"
-IIS Express 路徑未設定且找不到標準安裝。請跑 /tp-setup 互動填入 IIS Express 路徑,
+找不到 IIS Express。請安裝 IIS Express(不需要完整的 Visual Studio),
 或手動在 .turbo-plugin/config.local.toml 加上:
   [tools]
   iis_express_path = "C:/Program Files/IIS Express/iisexpress.exe"
@@ -242,5 +242,8 @@ function Resolve-IisSettings {
         IisConfigSiteName = $siteName
         CanonicalSiteName = $canonicalSiteName
         IdentityHash = $identityHash
+        # The parsed csproj IIS wiring, carried through so Start-Iis can generate a missing
+        # applicationhost.config on the spot without re-reading and re-parsing the project file.
+        Binding = $binding
     }
 }

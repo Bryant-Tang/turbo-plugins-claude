@@ -100,40 +100,55 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
     # apphost-mode is always required (port-mode removed); ensure the canonical config file is set.
     if ([string]::IsNullOrWhiteSpace($settings.ApplicationhostConfigFile)) {
-        throw "applicationhost.config 路徑無法解析。請執行 /tp-setup 建立 .turbo-plugin/applicationhost.config。"
+        throw 'applicationhost.config 路徑無法解析,無法啟動 IIS Express。'
     }
     # Find-IisExpressPath (in lib/IisHelpers.ps1) throws on missing/invalid path;
     # guard kept as defensive layer in case caller short-circuits the helper.
     if (-not (Test-Path -LiteralPath $settings.IisExpressPath -PathType Leaf)) {
         throw "IIS Express executable does not exist: $($settings.IisExpressPath)"
     }
-    if (-not (Test-Path -LiteralPath $settings.ApplicationhostConfigFile -PathType Leaf)) {
-        throw "canonical applicationhost.config does not exist at: $($settings.ApplicationhostConfigFile). 請執行 /tp-setup 從 VS 複製或建立空白 template。"
-    }
 
-    # Pre-validate: the site entry must exist in canonical applicationhost.config before launching.
+    # The site entry must exist in canonical applicationhost.config before launching -- and if it
+    # does not, it is CREATED HERE rather than demanded of the user. Everything the entry needs is
+    # already in the csproj, so a first run can simply produce it; Visual Studio works the same way,
+    # its config appears when you first run a project. Requiring a separate setup command first only
+    # ever produced a dead end.
+    #
     # Canonical carries the PLAIN csproj-stem name -- exactly what Visual Studio writes -- so a
     # config copied from VS works unchanged and the shared file stays free of machine-specific
     # data. The identity-hashed runtime name is applied to the per-launch temp copy further down.
     # A canonical that already uses the hashed name is still accepted: repos set up before this
     # split have one, and forcing a migration would buy nothing.
-    $apphostXml = New-Object System.Xml.XmlDocument
-    $apphostXml.PreserveWhitespace = $true
-    $apphostXml.Load($settings.ApplicationhostConfigFile)
     $canonicalSiteInFile = $settings.CanonicalSiteName
-    $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $canonicalSiteInFile
-    if ($null -eq $siteEntry) {
-        $canonicalSiteInFile = $settings.IisConfigSiteName
+    $siteEntry = $null
+    if (Test-Path -LiteralPath $settings.ApplicationhostConfigFile -PathType Leaf) {
+        $apphostXml = New-Object System.Xml.XmlDocument
+        $apphostXml.PreserveWhitespace = $true
+        $apphostXml.Load($settings.ApplicationhostConfigFile)
         $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $canonicalSiteInFile
+        if ($null -eq $siteEntry) {
+            $canonicalSiteInFile = $settings.IisConfigSiteName
+            $siteEntry = Find-ApplicationhostSite -Xml $apphostXml -SiteName $canonicalSiteInFile
+        }
     }
     if ($null -eq $siteEntry) {
-        throw @"
-applicationhost.config 裡找不到名為 '$($settings.CanonicalSiteName)' 的站台。
-  設定檔:$($settings.ApplicationhostConfigFile)
-這個檔應該含一個以專案名命名的站台(Visual Studio 載入方案時就是這樣寫的)。請確認它是從該專案的
-.vs/<sln>/config/applicationhost.config 複製過來的,或在其 <sites> 底下手動補一個
-name="$($settings.CanonicalSiteName)" 的站台。
-"@
+        $bootstrap = Initialize-ApplicationhostSite `
+            -ConfigPath $settings.ApplicationhostConfigFile `
+            -TemplatePath (Get-ApplicationhostTemplatePath) `
+            -SiteName $settings.CanonicalSiteName `
+            -Binding $settings.Binding
+        if ($bootstrap.ConfigCreated) {
+            Write-Output "Generated applicationhost.config (site: $($settings.CanonicalSiteName)): $($settings.ApplicationhostConfigFile)"
+        } else {
+            Write-Output "Added site '$($settings.CanonicalSiteName)' to applicationhost.config: $($settings.ApplicationhostConfigFile)"
+        }
+        $canonicalSiteInFile = $settings.CanonicalSiteName
+        $verifyXml = New-Object System.Xml.XmlDocument
+        $verifyXml.PreserveWhitespace = $true
+        $verifyXml.Load($settings.ApplicationhostConfigFile)
+        if ($null -eq (Find-ApplicationhostSite -Xml $verifyXml -SiteName $canonicalSiteInFile)) {
+            throw "已寫入 applicationhost.config,但裡面仍找不到名為 '$canonicalSiteInFile' 的站台:$($settings.ApplicationhostConfigFile)"
+        }
     }
 
     # Existing instance on the same port? (port check still uses the canonical config —
@@ -218,7 +233,17 @@ name="$($settings.CanonicalSiteName)" 的站台。
     # NOT -WindowStyle Hidden: IIS Express wants a console, and started hidden it exits immediately
     # with code 0 -- before ever binding the port -- which surfaced as a bogus "exited prematurely"
     # failure on every single run. Minimized keeps it out of the way while letting it live.
-    $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList @("/config:$tempApphost", "/site:$($settings.IisConfigSiteName)") -WindowStyle Minimized -PassThru
+    try {
+        $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList @("/config:$tempApphost", "/site:$($settings.IisConfigSiteName)") -WindowStyle Minimized -PassThru
+    } catch {
+        # Nothing was launched, so the temp config rendered a moment ago is dead weight. Remove it
+        # here instead of leaving a file behind that tp-cleanup-orphan-iis would later report as an
+        # orphan. Only this branch cleans up: once a process exists it is READING this file.
+        if (Test-Path -LiteralPath $tempApphost -PathType Leaf) {
+            try { Remove-Item -LiteralPath $tempApphost -Force -ErrorAction Stop } catch { }
+        }
+        throw
+    }
     Write-Output "Started IIS Express (site: $($settings.IisConfigSiteName), PID: $($process.Id), config: $tempApphost)"
 
     $repoRoot = $settings.RepoRoot

@@ -68,82 +68,36 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     $canonical = Find-ApplicationhostTarget -RepoRoot $repoRoot -ProjectFile $projectFile
     $siteName = [System.IO.Path]::GetFileNameWithoutExtension($projectFile)
 
-    if ((Test-Path -LiteralPath $canonical -PathType Leaf) -and (-not $Force)) {
-        # Idempotent: an existing canonical is authoritative. Only report whether the site this
-        # project needs is actually in it, so a half-set-up repo is still diagnosed rather than
-        # silently declared fine.
-        $existingXml = New-Object System.Xml.XmlDocument
-        $existingXml.PreserveWhitespace = $true
-        $existingXml.Load($canonical)
-        $hasSite = ($null -ne (Find-ApplicationhostSite -Xml $existingXml -SiteName $siteName))
-        Write-Output 'APPHOST_OUTPUT (relay these lines to the user as the result):'
-        Write-Output "  設定檔     : $canonical (已存在,未變更)"
-        Write-Output "  專案站台   : $siteName $(if ($hasSite) { '(已在檔內)' } else { '(不在檔內 — 加 -Force 重新產生,或手動補上)' })"
-        exit 0
-    }
-
+    # Read the csproj before touching anything on disk: a project with no IIS settings at all must
+    # fail without leaving a half-written config behind.
     $binding = Get-IisProjectBinding -ProjectFile $projectFile
 
-    $templatePath = [System.IO.Path]::GetFullPath(
-        [System.IO.Path]::Combine($PSScriptRoot, '..', 'default-files', '.turbo-plugin', 'applicationhost.config'))
-    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
-        throw "找不到 applicationhost.config 範本:$templatePath"
+    # -Force regenerates THIS project's site from the csproj. It drops only that one entry, never
+    # the whole file -- a shared config can hold a site per web project, and rebuilding from the
+    # template would silently discard the siblings.
+    if ($Force -and (Test-Path -LiteralPath $canonical -PathType Leaf)) {
+        $null = Remove-ApplicationhostSite -ConfigPath $canonical -SiteName $siteName
     }
 
-    $xml = New-Object System.Xml.XmlDocument
-    $xml.PreserveWhitespace = $true
-    $xml.Load($templatePath)
+    $result = Initialize-ApplicationhostSite `
+        -ConfigPath $canonical `
+        -TemplatePath (Get-ApplicationhostTemplatePath) `
+        -SiteName $siteName `
+        -Binding $binding
 
-    $sitesNode = $xml.SelectSingleNode('/configuration/system.applicationHost/sites')
-    if ($null -eq $sitesNode) {
-        throw "範本缺少 <sites> 節點,無法產生站台:$templatePath"
+    $configNote = if ($result.ConfigCreated) {
+        '(新建)'
+    } elseif ($result.SiteAdded) {
+        '(已存在,已補上這個專案的站台)'
+    } else {
+        '(已存在,未變更)'
     }
-    if ($null -ne (Find-ApplicationhostSite -Xml $xml -SiteName $siteName)) {
-        throw "範本已含名為 '$siteName' 的站台,這不該發生:$templatePath"
-    }
-
-    $appPool = if ($binding.ClassicPipeline) { 'Clr4ClassicAppPool' } else { 'Clr4IntegratedAppPool' }
-
-    $siteEl = $xml.CreateElement('site')
-    $siteEl.SetAttribute('name', $siteName)
-    $siteEl.SetAttribute('id', '1')
-
-    $appEl = $xml.CreateElement('application')
-    $appEl.SetAttribute('path', '/')
-    $appEl.SetAttribute('applicationPool', $appPool)
-    $vdirEl = $xml.CreateElement('virtualDirectory')
-    $vdirEl.SetAttribute('path', '/')
-    # Placeholder, not a real path: Start-Iis substitutes the current worktree at launch time, so
-    # the committed file stays valid on every machine and in every worktree.
-    $vdirEl.SetAttribute('physicalPath', '__TURBO_PLUGIN_PHYSICAL_PATH__')
-    $null = $appEl.AppendChild($vdirEl)
-    $null = $siteEl.AppendChild($appEl)
-
-    $bindingsEl = $xml.CreateElement('bindings')
-    $primary = $xml.CreateElement('binding')
-    $primary.SetAttribute('protocol', $binding.Uri.Scheme)
-    $primary.SetAttribute('bindingInformation', "*:$($binding.Port):localhost")
-    $null = $bindingsEl.AppendChild($primary)
-    if ((-not [string]::IsNullOrWhiteSpace($binding.SslPort)) -and ($binding.SslPort -ne $binding.Port)) {
-        $https = $xml.CreateElement('binding')
-        $https.SetAttribute('protocol', 'https')
-        $https.SetAttribute('bindingInformation', "*:$($binding.SslPort):localhost")
-        $null = $bindingsEl.AppendChild($https)
-    }
-    $null = $siteEl.AppendChild($bindingsEl)
-    $null = $sitesNode.AppendChild($siteEl)
-
-    $canonicalDir = [System.IO.Path]::GetDirectoryName($canonical)
-    if (-not (Test-Path -LiteralPath $canonicalDir -PathType Container)) {
-        $null = New-Item -ItemType Directory -Path $canonicalDir -Force
-    }
-    Save-ApplicationhostConfigAtomically -Xml $xml -ConfigPath $canonical
 
     # ---- result template ------------------------------------------------------
     Write-Output 'APPHOST_OUTPUT (relay these lines to the user as the result):'
-    Write-Output "  設定檔     : $canonical"
+    Write-Output "  設定檔     : $canonical $configNote"
     Write-Output "  專案站台   : $siteName"
-    Write-Output "  應用程式集區: $appPool"
+    Write-Output "  應用程式集區: $($result.AppPool)"
     Write-Output "  網站位址   : $($binding.Uri.Scheme)://localhost:$($binding.Port)"
 
     $sslPort = $binding.SslPort

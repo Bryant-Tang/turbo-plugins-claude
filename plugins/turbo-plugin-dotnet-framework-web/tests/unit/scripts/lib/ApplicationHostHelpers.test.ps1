@@ -176,4 +176,110 @@ Describe 'ApplicationHostHelpers' {
             { Rename-ApplicationhostSite -ConfigPath $script:renamePath -FromName 'HelloApp-deadbeef' -ToName 'Other' } | Should -Throw
         }
     }
+
+    # Initialize-ApplicationhostSite is the lazy bootstrap: it is what lets /tp-run work on a
+    # project nobody ever "set up", by synthesising the <site> from the csproj on first launch the
+    # way Visual Studio does. The shipped template is used as-is (not a stand-in) so a template
+    # change that breaks generation is caught here.
+    Context 'Case 6: Initialize-ApplicationhostSite (lazy bootstrap)' {
+        BeforeAll {
+            $script:tpl = Get-ApplicationhostTemplatePath
+
+            function New-TestBinding {
+                param([string]$Scheme = 'http', [string]$Port = '5000', [string]$SslPort = '', [bool]$Classic = $false)
+                return [pscustomobject]@{
+                    Url             = "${Scheme}://localhost:$Port/"
+                    Uri             = [uri]"${Scheme}://localhost:$Port/"
+                    Port            = $Port
+                    SslPort         = $SslPort
+                    ClassicPipeline = $Classic
+                }
+            }
+        }
+        BeforeEach {
+            # A path under a directory that does NOT exist yet: creating it is part of the contract,
+            # because on a fresh repo .turbo-plugin/ has never been made by anyone.
+            $script:initDir = [System.IO.Path]::Combine($script:sb, "init-$([Guid]::NewGuid().ToString('N').Substring(0,8))", '.turbo-plugin')
+            $script:initPath = [System.IO.Path]::Combine($script:initDir, 'applicationhost.config')
+        }
+
+        It 'creates the config (and its directory) from the template when absent' {
+            $r = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding)
+            [bool]$r.ConfigCreated | Should -BeTrue
+            [bool]$r.SiteAdded | Should -BeTrue
+            [System.IO.File]::Exists($script:initPath) | Should -BeTrue
+        }
+
+        It 'writes the site in canonical shape: plain project name + physicalPath placeholder' {
+            $null = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding)
+            $x = New-Object System.Xml.XmlDocument
+            $x.Load($script:initPath)
+            $site = Find-ApplicationhostSite -Xml $x -SiteName 'HelloApp'
+            $site | Should -Not -BeNullOrEmpty
+            $site.SelectSingleNode('application/virtualDirectory').GetAttribute('physicalPath') |
+                Should -Be '__TURBO_PLUGIN_PHYSICAL_PATH__'
+            $site.SelectSingleNode('application').GetAttribute('applicationPool') | Should -Be 'Clr4IntegratedAppPool'
+            $b = @($site.SelectNodes('bindings/binding'))
+            $b.Count | Should -Be 1
+            $b[0].GetAttribute('bindingInformation') | Should -Be '*:5000:localhost'
+        }
+
+        It 'adds an https binding when the project has an SSL port' {
+            $null = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding -SslPort '44301')
+            $x = New-Object System.Xml.XmlDocument
+            $x.Load($script:initPath)
+            $b = @((Find-ApplicationhostSite -Xml $x -SiteName 'HelloApp').SelectNodes('bindings/binding'))
+            ($b | ForEach-Object { $_.GetAttribute('protocol') }) -join ',' | Should -Be 'http,https'
+            $b[1].GetAttribute('bindingInformation') | Should -Be '*:44301:localhost'
+        }
+
+        It 'selects the classic app pool for a classic-pipeline project' {
+            $r = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding -Classic $true)
+            $r.AppPool | Should -Be 'Clr4ClassicAppPool'
+        }
+
+        It 'is idempotent: an existing site is left byte-for-byte alone' {
+            $null = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding)
+            $before = [System.IO.File]::ReadAllBytes($script:initPath)
+            # A different port on the second call: an entry already in the file wins, because it may
+            # have been hand-tuned or copied from Visual Studio.
+            $r = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding -Port '6001')
+            [bool]$r.SiteAdded | Should -BeFalse
+            [bool]$r.ConfigCreated | Should -BeFalse
+            [System.IO.File]::ReadAllBytes($script:initPath) | Should -Be $before
+        }
+
+        It 'appends a second project without disturbing the first, and gives it a distinct id' {
+            $null = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding -Port '5000')
+            $r = Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $script:tpl `
+                -SiteName 'AdminApp' -Binding (New-TestBinding -Port '5001')
+            [bool]$r.ConfigCreated | Should -BeFalse
+            [bool]$r.SiteAdded | Should -BeTrue
+
+            $x = New-Object System.Xml.XmlDocument
+            $x.Load($script:initPath)
+            $first = Find-ApplicationhostSite -Xml $x -SiteName 'HelloApp'
+            $second = Find-ApplicationhostSite -Xml $x -SiteName 'AdminApp'
+            $first | Should -Not -BeNullOrEmpty
+            $second | Should -Not -BeNullOrEmpty
+            $first.SelectSingleNode('bindings/binding').GetAttribute('bindingInformation') | Should -Be '*:5000:localhost'
+            # Duplicate ids make IIS Express refuse the whole config, so the second site must not
+            # reuse the hardcoded id the single-project generator used to emit.
+            $second.GetAttribute('id') | Should -Not -Be $first.GetAttribute('id')
+        }
+
+        It 'fails loudly when the template is missing rather than writing a broken config' {
+            $missingTpl = [System.IO.Path]::Combine($script:sb, 'no-such-template.config')
+            { Initialize-ApplicationhostSite -ConfigPath $script:initPath -TemplatePath $missingTpl `
+                -SiteName 'HelloApp' -Binding (New-TestBinding) } | Should -Throw
+            [System.IO.File]::Exists($script:initPath) | Should -BeFalse
+        }
+    }
 }

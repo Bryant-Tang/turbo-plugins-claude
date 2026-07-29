@@ -63,6 +63,125 @@ function Save-ApplicationhostConfigAtomically {
     }
 }
 
+# Path of the applicationhost.config template shipped with the plugin. Both the standalone
+# generator and the lazy first-run bootstrap start from this same skeleton, so they cannot drift.
+function Get-ApplicationhostTemplatePath {
+    return [System.IO.Path]::GetFullPath(
+        [System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'default-files', '.turbo-plugin', 'applicationhost.config'))
+}
+
+# Ensure an applicationhost.config exists at $ConfigPath and carries a <site> for one project.
+#
+# This is what lets the config be created LAZILY, on the first run, instead of by a separate setup
+# step: every input Visual Studio uses to synthesise a <site> already lives in the .csproj, so
+# there is nothing to ask the user. Visual Studio behaves the same way -- its config appears the
+# first time you run a project, not when you install VS.
+#
+# The site is written in CANONICAL shape: the plain project name plus a physicalPath placeholder --
+# nothing machine-specific, safe to commit and share. The identity-hashed runtime name and the real
+# worktree path are applied by Start-Iis to the per-launch temp copy only.
+#
+# An existing config is never rebuilt: a missing site is APPENDED to it, so a repo with several web
+# projects accumulates one <site> per project the way Visual Studio's shared config does, and a
+# site that is already there (possibly hand-tuned, or copied from VS) is left untouched.
+#
+# $Binding is a Get-IisProjectBinding result (Uri / Port / SslPort / ClassicPipeline). It is passed
+# in rather than parsed here so this file stays free of any dependency on IisHelpers.ps1.
+#
+# Returns @{ ConfigCreated = <bool>; SiteAdded = <bool>; SiteName; AppPool; ConfigPath }.
+function Initialize-ApplicationhostSite {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$TemplatePath,
+        [Parameter(Mandatory = $true)][string]$SiteName,
+        [Parameter(Mandatory = $true)]$Binding
+    )
+
+    $created = $false
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.PreserveWhitespace = $true
+    if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
+        $xml.Load($ConfigPath)
+    } else {
+        if (-not (Test-Path -LiteralPath $TemplatePath -PathType Leaf)) {
+            throw "找不到 applicationhost.config 範本:$TemplatePath"
+        }
+        $xml.Load($TemplatePath)
+        $created = $true
+    }
+
+    $sitesNode = $xml.SelectSingleNode('/configuration/system.applicationHost/sites')
+    if ($null -eq $sitesNode) {
+        $offender = if ($created) { $TemplatePath } else { $ConfigPath }
+        throw "applicationhost.config 缺少 <sites> 節點,無法加入站台:$offender"
+    }
+
+    $appPool = if ($Binding.ClassicPipeline) { 'Clr4ClassicAppPool' } else { 'Clr4IntegratedAppPool' }
+
+    if ($null -ne (Find-ApplicationhostSite -Xml $xml -SiteName $SiteName)) {
+        return @{
+            ConfigCreated = $false
+            SiteAdded     = $false
+            SiteName      = $SiteName
+            AppPool       = $appPool
+            ConfigPath    = $ConfigPath
+        }
+    }
+
+    # Site ids must be unique within the file. Take the next id above whatever is already present
+    # rather than a hardcoded 1, so a second project appended later does not collide with the first.
+    $maxId = 0
+    foreach ($existing in @($sitesNode.SelectNodes('site'))) {
+        $idValue = 0
+        if ([int]::TryParse($existing.GetAttribute('id'), [ref]$idValue) -and $idValue -gt $maxId) {
+            $maxId = $idValue
+        }
+    }
+
+    $siteEl = $xml.CreateElement('site')
+    $siteEl.SetAttribute('name', $SiteName)
+    $siteEl.SetAttribute('id', ($maxId + 1).ToString())
+
+    $appEl = $xml.CreateElement('application')
+    $appEl.SetAttribute('path', '/')
+    $appEl.SetAttribute('applicationPool', $appPool)
+    $vdirEl = $xml.CreateElement('virtualDirectory')
+    $vdirEl.SetAttribute('path', '/')
+    # Placeholder, not a real path: Start-Iis substitutes the current worktree at launch time, so
+    # the committed file stays valid on every machine and in every worktree.
+    $vdirEl.SetAttribute('physicalPath', '__TURBO_PLUGIN_PHYSICAL_PATH__')
+    $null = $appEl.AppendChild($vdirEl)
+    $null = $siteEl.AppendChild($appEl)
+
+    $bindingsEl = $xml.CreateElement('bindings')
+    $primary = $xml.CreateElement('binding')
+    $primary.SetAttribute('protocol', $Binding.Uri.Scheme)
+    $primary.SetAttribute('bindingInformation', "*:$($Binding.Port):localhost")
+    $null = $bindingsEl.AppendChild($primary)
+    if ((-not [string]::IsNullOrWhiteSpace($Binding.SslPort)) -and ($Binding.SslPort -ne $Binding.Port)) {
+        $https = $xml.CreateElement('binding')
+        $https.SetAttribute('protocol', 'https')
+        $https.SetAttribute('bindingInformation', "*:$($Binding.SslPort):localhost")
+        $null = $bindingsEl.AppendChild($https)
+    }
+    $null = $siteEl.AppendChild($bindingsEl)
+    $null = $sitesNode.AppendChild($siteEl)
+
+    $configDir = [System.IO.Path]::GetDirectoryName($ConfigPath)
+    if ((-not [string]::IsNullOrWhiteSpace($configDir)) -and (-not (Test-Path -LiteralPath $configDir -PathType Container))) {
+        $null = New-Item -ItemType Directory -Path $configDir -Force
+    }
+    Save-ApplicationhostConfigAtomically -Xml $xml -ConfigPath $ConfigPath
+
+    return @{
+        ConfigCreated = $created
+        SiteAdded     = $true
+        SiteName      = $SiteName
+        AppPool       = $appPool
+        ConfigPath    = $ConfigPath
+    }
+}
+
 # Atomically + idempotently update <virtualDirectory physicalPath> (and
 # <application physicalPath> when present) for a named site in applicationhost.config.
 # Returns @{ Updated = <bool>; SiteName = <string>; OldPaths = <array>; NewPath = <string> }.

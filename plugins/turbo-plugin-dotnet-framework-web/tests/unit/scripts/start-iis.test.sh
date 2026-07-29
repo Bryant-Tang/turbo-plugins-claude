@@ -57,20 +57,44 @@ test_skill_reinvoke_disabled() {
     echo "$combined" | grep -Eq 'IIS 已停用'; assertTrue 'case4: 訊息一致' $?
 }
 
-# Case 2: missing apphost -> exit != 0 + message mentions applicationhost.
-# Only runs when the fixture has an applicationhost.config to remove.
-test_missing_apphost() {
+# Case 2: no applicationhost.config -> generated on the spot (lazy bootstrap).
+#
+# A throwaway repo is used rather than the shared fixture, and its iis_express_path points at a
+# file that is NOT a real executable: the whole configuration path runs for real and only the
+# launch step fails, so the test suite never spawns an IIS Express process. (Pointing the fixture
+# at the machine's real IIS Express would do exactly that, now that a missing config no longer
+# stops the script.)
+test_lazy_apphost_generated() {
     [ "$HAS_PS" -eq 1 ] || startSkipping
-    [ -f "$APPHOST" ] || startSkipping
-    local combined e
-    cp "$APPHOST" "${APPHOST}.bak"
-    rm -f "$APPHOST"
-    cd "$TEST_ROOT"
-    combined="$(bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    local guid sb combined generated
+    guid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "${RANDOM}${RANDOM}${RANDOM}")"
+    guid="${guid//-/}"; guid="${guid:0:12}"
+    sb="$PLUGIN_ROOT/tests/.sandbox/sandboxes/turbo-plugin-test-lazy-sh-$guid"
+    mkdir -p "$sb/.turbo-plugin"
+    cat > "$sb/HelloApp.csproj" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <AssemblyName>HelloApp</AssemblyName>
+    <UseIISExpress>true</UseIISExpress>
+    <IISUrl>http://localhost:51793/</IISUrl>
+  </PropertyGroup>
+</Project>
+EOF
+    printf '[iis]\nenabled = true\n' > "$sb/.turbo-plugin/config.toml"
+    printf 'not an executable' > "$sb/not-really-iisexpress.exe"
+    printf '[tools]\niis_express_path = "not-really-iisexpress.exe"\n' > "$sb/.turbo-plugin/config.local.toml"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+    cd "$sb"
+    combined="$(bash "$SCRIPT_UNDER_TEST" -Project HelloApp.csproj 2>&1)"
     cd "$PLUGIN_ROOT"
-    mv "${APPHOST}.bak" "$APPHOST"
-    assertNotEquals 'case2: missing apphost exit != 0' 0 "$e"
-    echo "$combined" | grep -Eq 'applicationhost'; assertTrue 'case2: 訊息提及 applicationhost' $?
+
+    generated="$sb/.turbo-plugin/applicationhost.config"
+    [ -f "$generated" ]; assertTrue 'case2: 設定檔第一次執行就被產生出來' $?
+    grep -q 'name="HelloApp"' "$generated"; assertTrue 'case2: 站台以專案名命名' $?
+    grep -q '\*:51793:localhost' "$generated"; assertTrue 'case2: binding 取自 csproj 的 IISUrl' $?
+    echo "$combined" | grep -q 'tp-setup'; assertFalse 'case2: 不再叫使用者先跑別的設定指令' $?
+    rm -rf "$sb" 2>/dev/null || true
 }
 
 # Case 3: enabled IIS but missing csproj -> exit != 0 + message mentions .csproj

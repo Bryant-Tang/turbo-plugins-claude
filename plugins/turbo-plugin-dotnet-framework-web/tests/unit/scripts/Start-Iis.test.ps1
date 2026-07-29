@@ -10,19 +10,24 @@
 #   1. [iis] enabled = false canonical (CRITICAL — canonical disabled fixture case):
 #      改 fixture 的 config.toml 為 enabled = false → 跑 script → exit ≠ 0,stderr 含「IIS 已停用」;
 #      最後還原 config.toml 為 enabled = true。
-#   2. Missing canonical applicationhost.config in fixture: 刪 fixture 的 apphost.config →
-#      script throws「applicationhost.config does not exist」or「無法解析」(無 apphost → SKIP)
+#   2. 沒有 applicationhost.config → 第一次執行就自己產生(lazy bootstrap),不要求先跑別的指令
 #   3. Missing csproj: workspace 無 csproj → throws .csproj 訊息
 #   4. SKILL entry path (disabled fixture):用同樣的 [iis] enabled=false fixture 再呼叫一次 →
 #      行為一致
+#   5. 站台命名 / 啟動視窗的 regression lock(原始碼層)
+#   6. 設定檔已存在但缺這個專案的站台 → 補上該站台,不動同檔內別的站台
 #
 # 不跑「真正啟動 IIS Express + port LISTENING」happy case:會 spawn 真實 process 污染 OS state。
-#   Cases 1-3 走 gate / missing-file 路徑,不需要實際 iisexpress.exe。
+#   Cases 2 / 6 需要走到產生設定檔之後,所以把 iis_express_path 指向一個「不是真正可執行檔」的檔案:
+#   設定那一段完整跑完,最後在啟動那一步失敗 — 測試套件從頭到尾不會啟動任何 IIS Express。
 
 BeforeAll {
     $script:pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
     $script:ScriptUnderTest = [System.IO.Path]::Combine($script:pluginRoot, 'scripts', 'Start-Iis.ps1')
     $script:SandboxBase = [System.IO.Path]::Combine($script:pluginRoot, 'tests', '.sandbox', 'sandboxes')
+    # Get-ProjectIdentityHash: lets the lazy-bootstrap sandboxes delete the exact per-launch temp
+    # config their (deliberately failed) launch left in %TEMP%, instead of globbing for it.
+    . ([System.IO.Path]::Combine($script:pluginRoot, 'scripts', 'lib', 'Common.ps1'))
 
     $script:testRoot = [System.IO.Path]::Combine($script:pluginRoot, 'tests', '.sandbox', 'test-turbo-plugin')
     $script:cfgPath = [System.IO.Path]::Combine($script:testRoot, '.turbo-plugin', 'config.toml')
@@ -95,6 +100,70 @@ BeforeAll {
         }
     }
 
+    # A throwaway repo for the lazy-bootstrap cases: one csproj, [iis] enabled, and an
+    # iis_express_path pointing at a file that is NOT a real Win32 image. Start-Iis therefore runs
+    # the whole configuration path for real and only fails at the launch step -- which is exactly
+    # what makes this assertable without the test suite ever spawning an IIS Express process.
+    function New-LazySandbox {
+        param([string]$Tag, [string]$Port = '51789')
+        $enc = New-Object System.Text.UTF8Encoding($false)
+        $root = [System.IO.Path]::Combine($script:SandboxBase, "turbo-plugin-test-lazy-$Tag-$([Guid]::NewGuid().ToString('N').Substring(0,8))")
+        $null = New-Item -ItemType Directory -Path $root -Force
+        $tp = [System.IO.Path]::Combine($root, '.turbo-plugin')
+        $null = New-Item -ItemType Directory -Path $tp -Force
+
+        $csproj = @"
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <AssemblyName>HelloApp</AssemblyName>
+    <UseIISExpress>true</UseIISExpress>
+    <IISUrl>http://localhost:$Port/</IISUrl>
+  </PropertyGroup>
+</Project>
+"@
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, 'HelloApp.csproj'), $csproj, $enc)
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($tp, 'config.toml'), "[iis]`nenabled = true`n", $enc)
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, 'not-really-iisexpress.exe'), 'not an executable', $enc)
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($tp, 'config.local.toml'),
+            "[tools]`niis_express_path = `"not-really-iisexpress.exe`"`n", $enc)
+
+        Push-Location -LiteralPath $root
+        try {
+            Invoke-GitSilent init -q
+            Invoke-GitSilent config user.email 'test@example.invalid'
+            Invoke-GitSilent config user.name 'Test'
+            Invoke-GitSilent add -A
+            Invoke-GitSilent -c commit.gpgsign=false commit -q -m 'lazy fixture'
+        } finally { Pop-Location }
+        return $root
+    }
+
+    function Remove-LazySandbox {
+        param([string]$Dir)
+        if ([string]::IsNullOrWhiteSpace($Dir)) { return }
+        # The launch attempt renders a per-launch temp config before it fails. Delete exactly that
+        # file -- computed from the sandbox's own identity hash, never globbed -- so the suite
+        # leaves nothing in %TEMP% and cannot touch a real project's temp config.
+        try {
+            $hash = Get-ProjectIdentityHash -RepoPath $Dir -CsprojRelPath 'HelloApp.csproj'
+            $temp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$hash.config")
+            if ([System.IO.File]::Exists($temp)) { [System.IO.File]::Delete($temp) }
+        } catch { }
+        try { if ([System.IO.Directory]::Exists($Dir)) { [System.IO.Directory]::Delete($Dir, $true) } } catch { }
+    }
+
+    function Get-SiteNode {
+        param([string]$ConfigPath, [string]$SiteName)
+        if (-not [System.IO.File]::Exists($ConfigPath)) { return $null }
+        $x = New-Object System.Xml.XmlDocument
+        $x.Load($ConfigPath)
+        foreach ($n in @($x.SelectNodes('/configuration/system.applicationHost/sites/site'))) {
+            if ($n.GetAttribute('name') -ieq $SiteName) { return $n }
+        }
+        return $null
+    }
+
     $script:FixtureReady = Ensure-FixtureGit
 }
 
@@ -125,28 +194,40 @@ Describe 'Start-Iis' {
         It 'case4: 訊息一致' { $script:combined4 | Should -Match 'IIS 已停用' }
     }
 
-    Context 'Case 2: missing canonical applicationhost.config' {
+    # Lazy bootstrap. A project nobody ever "set up" must just run: everything the <site> needs is
+    # already in the csproj, and Visual Studio behaves the same way (its config appears on the first
+    # run, not at install time). Demanding a separate setup command here was a dead end -- the old
+    # error told users to copy a file out of Visual Studio, which is what this plugin exists to
+    # avoid.
+    Context 'Case 2: 沒有 applicationhost.config → 第一次執行就自己產生' {
         BeforeAll {
-            $script:apphostPresent = $script:FixtureReady -and [System.IO.File]::Exists($script:apphostPath)
-            if ($script:apphostPresent) {
-                $apphostBackup = [System.IO.File]::ReadAllBytes($script:apphostPath)
-                try {
-                    [System.IO.File]::Delete($script:apphostPath)
-                    $script:r2 = Invoke-Script -WorkDir $script:testRoot
-                    $script:combined2 = $script:r2.Stdout + "`n" + $script:r2.Stderr
-                } finally {
-                    [System.IO.File]::WriteAllBytes($script:apphostPath, $apphostBackup)
-                }
-            }
+            $script:lazy2 = New-LazySandbox -Tag 'gen'
+            $script:apphost2 = [System.IO.Path]::Combine($script:lazy2, '.turbo-plugin', 'applicationhost.config')
+            $script:r2 = Invoke-Script -WorkDir $script:lazy2 -ExtraArgs @('-Project', 'HelloApp.csproj')
+            $script:combined2 = $script:r2.Stdout + "`n" + $script:r2.Stderr
+            $script:site2 = Get-SiteNode -ConfigPath $script:apphost2 -SiteName 'HelloApp'
         }
+        AfterAll { Remove-LazySandbox -Dir $script:lazy2 }
 
-        It 'case2: missing apphost exit ≠ 0' {
-            if (-not $script:apphostPresent) { Set-ItResult -Skipped -Because 'no canonical apphost present in fixture (treated as N/A)' }
-            ($script:r2.Exit -ne 0) | Should -BeTrue
+        It 'case2: 設定檔被產生出來' {
+            [System.IO.File]::Exists($script:apphost2) | Should -BeTrue -Because $script:combined2
         }
-        It 'case2: 訊息提及 applicationhost' {
-            if (-not $script:apphostPresent) { Set-ItResult -Skipped -Because 'no canonical apphost present in fixture (treated as N/A)' }
-            $script:combined2 | Should -Match 'applicationhost'
+        It 'case2: 站台以專案名命名(canonical 形狀,可進版控)' {
+            $script:site2 | Should -Not -BeNullOrEmpty
+            $script:site2.SelectSingleNode('application/virtualDirectory').GetAttribute('physicalPath') |
+                Should -Be '__TURBO_PLUGIN_PHYSICAL_PATH__'
+        }
+        # No angle brackets in the name: Pester treats <...> as a data-driven placeholder and tries
+        # to expand it as a variable, which under StrictMode throws instead of rendering empty.
+        It 'case2: binding 取自 csproj 的 IISUrl 元素' {
+            $script:site2.SelectSingleNode('bindings/binding').GetAttribute('bindingInformation') |
+                Should -Be '*:51789:localhost'
+        }
+        It 'case2: 有告知使用者設定檔是這次產生的' {
+            $script:r2.Stdout | Should -Match 'applicationhost\.config'
+        }
+        It 'case2: 不再叫使用者先去跑別的設定指令' {
+            $script:combined2 | Should -Not -Match 'tp-setup'
         }
     }
 
@@ -212,26 +293,59 @@ Describe 'Start-Iis' {
         }
         It 'case5: 站台缺漏的訊息不再指向「開 VS 後重跑 setup」這條死路' {
             # Naming Visual Studio as the ORIGIN of the site name is fine and useful; what must
-            # never come back is instructing the user to open VS and re-run /tp-setup as the FIX,
-            # because re-copying from VS could never produce the name the old code demanded.
+            # never come back is instructing the user to open VS and re-run a setup command as the
+            # FIX, because re-copying from VS could never produce the name the old code demanded.
             $script:startIisText | Should -Not -Match '請先用 Visual Studio 開'
+        }
+        It 'case5: 執行路徑上不再把使用者推去跑另一個設定指令' {
+            $script:startIisCode | Should -Not -Match 'tp-setup'
         }
     }
 
-    Context 'Case 6: canonical 缺專案站台時 fail loudly,且不指向 VS 死路' {
+    # A repo can hold more than one web project, and a config generated for the first one knows
+    # nothing about the second. Appending is the only correct move: rebuilding the file from the
+    # template would silently drop the sibling projects' sites.
+    Context 'Case 6: 設定檔已存在但缺這個專案的站台 → 補上,不動同檔內別的站台' {
         BeforeAll {
-            Set-IisEnabled -Enabled $true
-            $script:apphostBackup6 = [System.IO.File]::ReadAllText($script:apphostPath, [System.Text.Encoding]::UTF8)
-            # Rename the canonical site to something neither the plain nor the hashed name matches.
-            $broken6 = $script:apphostBackup6.Replace('name="HelloApp"', 'name="SomethingElse"')
-            [System.IO.File]::WriteAllText($script:apphostPath, $broken6, (New-Object System.Text.UTF8Encoding($false)))
-            $script:r6 = Invoke-Script -WorkDir $script:testRoot -ExtraArgs @('-Project', 'HelloApp.csproj')
+            $script:lazy6 = New-LazySandbox -Tag 'append'
+            $script:apphost6 = [System.IO.Path]::Combine($script:lazy6, '.turbo-plugin', 'applicationhost.config')
+            $seed = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.applicationHost>
+    <sites>
+      <site name="SomebodyElse" id="1">
+        <application path="/" applicationPool="Clr4IntegratedAppPool">
+          <virtualDirectory path="/" physicalPath="__TURBO_PLUGIN_PHYSICAL_PATH__" />
+        </application>
+        <bindings>
+          <binding protocol="http" bindingInformation="*:5999:localhost" />
+        </bindings>
+      </site>
+    </sites>
+  </system.applicationHost>
+</configuration>
+'@
+            [System.IO.File]::WriteAllText($script:apphost6, $seed, (New-Object System.Text.UTF8Encoding($false)))
+            $script:r6 = Invoke-Script -WorkDir $script:lazy6 -ExtraArgs @('-Project', 'HelloApp.csproj')
             $script:combined6 = "$($script:r6.Stdout)`n$($script:r6.Stderr)"
-            [System.IO.File]::WriteAllText($script:apphostPath, $script:apphostBackup6, (New-Object System.Text.UTF8Encoding($false)))
         }
+        AfterAll { Remove-LazySandbox -Dir $script:lazy6 }
 
-        It 'case6: exit ≠ 0' { ($script:r6.Exit -ne 0) | Should -BeTrue }
-        It 'case6: 訊息點名缺的是以專案名命名的站台' { $script:combined6 | Should -Match 'HelloApp' }
+        It 'case6: 補上以專案名命名的站台' {
+            (Get-SiteNode -ConfigPath $script:apphost6 -SiteName 'HelloApp') |
+                Should -Not -BeNullOrEmpty -Because $script:combined6
+        }
+        It 'case6: 原本就在檔案裡的別的站台原封不動' {
+            $other = Get-SiteNode -ConfigPath $script:apphost6 -SiteName 'SomebodyElse'
+            $other | Should -Not -BeNullOrEmpty
+            $other.SelectSingleNode('bindings/binding').GetAttribute('bindingInformation') | Should -Be '*:5999:localhost'
+        }
+        It 'case6: 兩個站台的 id 不重複(重複會讓 IIS Express 整份設定拒收)' {
+            $a = (Get-SiteNode -ConfigPath $script:apphost6 -SiteName 'HelloApp').GetAttribute('id')
+            $b = (Get-SiteNode -ConfigPath $script:apphost6 -SiteName 'SomebodyElse').GetAttribute('id')
+            $a | Should -Not -Be $b
+        }
         It 'case6: 訊息不再指向「開 VS 後重跑 setup」這條死路' {
             $script:combined6 | Should -Not -Match '請先用 Visual Studio 開'
         }

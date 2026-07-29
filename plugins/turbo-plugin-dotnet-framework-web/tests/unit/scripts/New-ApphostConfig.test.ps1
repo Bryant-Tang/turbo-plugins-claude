@@ -182,6 +182,72 @@ Describe 'New-ApphostConfig' {
         It 'case4: 回報「已存在,未變更」' { $script:r4.Stdout | Should -Match '已存在' }
     }
 
+    # A repo with more than one web project shares ONE applicationhost.config, the way Visual
+    # Studio's does. Regenerating the file from the template for each project would leave only the
+    # last one standing, so the second project's site has to be appended to the first's.
+    Context 'Case 6: a second project is appended to the same config' {
+        BeforeAll {
+            $script:r6Root = New-ProjectSandbox -Tag 'multi' -IisElements '    <IISUrl>http://localhost:5000/</IISUrl>'
+            $second = @"
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <AssemblyName>AdminApp</AssemblyName>
+    <UseIISExpress>true</UseIISExpress>
+    <IISUrl>http://localhost:5001/</IISUrl>
+  </PropertyGroup>
+</Project>
+"@
+            [System.IO.File]::WriteAllText(
+                [System.IO.Path]::Combine($script:r6Root, 'AdminApp.csproj'), $second,
+                (New-Object System.Text.UTF8Encoding($false)))
+            $null = Invoke-Script -WorkDir $script:r6Root -ExtraArgs @('-Project', 'HelloApp.csproj')
+            $script:r6 = Invoke-Script -WorkDir $script:r6Root -ExtraArgs @('-Project', 'AdminApp.csproj')
+        }
+        AfterAll { Remove-ProjectSandbox -Dir $script:r6Root }
+
+        It 'case6: exit 0' { $script:r6.Exit | Should -Be 0 -Because $script:r6.Combined }
+        It 'case6: 兩個專案的站台都在同一份設定檔裡' {
+            (Get-GeneratedSite -Root $script:r6Root -SiteName 'HelloApp') | Should -Not -BeNullOrEmpty
+            (Get-GeneratedSite -Root $script:r6Root -SiteName 'AdminApp') | Should -Not -BeNullOrEmpty
+        }
+        It 'case6: 先產生的站台保留自己的 binding' {
+            (Get-GeneratedSite -Root $script:r6Root -SiteName 'HelloApp').SelectSingleNode('bindings/binding').GetAttribute('bindingInformation') |
+                Should -Be '*:5000:localhost'
+        }
+        It 'case6: 兩個站台 id 不重複' {
+            $a = (Get-GeneratedSite -Root $script:r6Root -SiteName 'HelloApp').GetAttribute('id')
+            $b = (Get-GeneratedSite -Root $script:r6Root -SiteName 'AdminApp').GetAttribute('id')
+            $a | Should -Not -Be $b
+        }
+        It 'case6: 回報是「補上站台」而不是「新建」' {
+            $script:r6.Stdout | Should -Match '已補上'
+        }
+    }
+
+    # -Force regenerates ONE project's site from its csproj. It must not take the sibling projects
+    # with it -- the old implementation rebuilt the whole file from the template and did exactly that.
+    Context 'Case 7: -Force rebuilds only the named site' {
+        BeforeAll {
+            $script:r7Root = New-ProjectSandbox -Tag 'force' -IisElements '    <IISUrl>http://localhost:5000/</IISUrl>'
+            $null = Invoke-Script -WorkDir $script:r7Root -ExtraArgs @('-Project', 'HelloApp.csproj')
+            # Add a sibling site by hand, then force-regenerate HelloApp.
+            $script:r7Path = [System.IO.Path]::Combine($script:r7Root, '.turbo-plugin', 'applicationhost.config')
+            $text = [System.IO.File]::ReadAllText($script:r7Path, [System.Text.Encoding]::UTF8)
+            $sibling = '<site name="Sibling" id="9"><application path="/" applicationPool="Clr4IntegratedAppPool"><virtualDirectory path="/" physicalPath="__TURBO_PLUGIN_PHYSICAL_PATH__" /></application><bindings><binding protocol="http" bindingInformation="*:5099:localhost" /></bindings></site>'
+            [System.IO.File]::WriteAllText($script:r7Path, $text.Replace('</sites>', "$sibling</sites>"),
+                (New-Object System.Text.UTF8Encoding($false)))
+            $script:r7 = Invoke-Script -WorkDir $script:r7Root -ExtraArgs @('-Project', 'HelloApp.csproj', '-Force')
+        }
+        AfterAll { Remove-ProjectSandbox -Dir $script:r7Root }
+
+        It 'case7: exit 0' { $script:r7.Exit | Should -Be 0 -Because $script:r7.Combined }
+        It 'case7: 目標站台仍在' { (Get-GeneratedSite -Root $script:r7Root -SiteName 'HelloApp') | Should -Not -BeNullOrEmpty }
+        It 'case7: 同檔案裡別的站台沒有被一起清掉' {
+            (Get-GeneratedSite -Root $script:r7Root -SiteName 'Sibling') | Should -Not -BeNullOrEmpty
+        }
+    }
+
     Context 'Case 5: csproj without any IIS setting fails loudly' {
         BeforeAll {
             # Mirrors a project where VS kept the server settings in the gitignored .csproj.user.

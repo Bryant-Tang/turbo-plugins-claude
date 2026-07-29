@@ -47,6 +47,9 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
   Visual Studio 寫進 `applicationhost.config` 的名字)與**執行期名**(`<csproj-stem>-<sha256前8字元>`,帶 project
   identity hash)。canonical 檔只用前者(可進版控、換機器不會對不上);hash 只出現在 per-launch temp 檔與
   iisexpress 命令列上,供 stop / orphan 清理辨識是哪個專案
+- **`.turbo-plugin/applicationhost.config` 缺這個專案的站台就當場補上**(檔案不存在就依範本建立):站台需要的
+  資訊全都在 csproj 裡,不必先跑任何設定指令(Visual Studio 也是第一次執行專案時才生出這個檔)。同一份檔案
+  可以放多個專案的站台,補的時候不會動到別的站台。補完會多印一行說明,照樣轉述給使用者
 - 找已執行的 iisexpress.exe instance:
   - **同 port + site name 也 match(同 project,可能在別 worktree 啟)** → 自動 `Stop-Process` 舊 instance,繼續啟新
   - **同 port + site name 不 match(別 project 撞 port)** → fail loudly,提示停掉別 project 的 instance 或改 port
@@ -72,6 +75,9 @@ run 成功後,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/memory-
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **target 由你判斷、不靠 script 偵測**:要跑哪個 csproj 由你看 context / 記憶 / 必要時 `AskUserQuestion`;收到 `.sln` 報錯。
+- **設定檔缺就當場補,不要叫使用者先去跑設定指令**:`applicationhost.config` 的內容完全由 csproj 推導得出,
+  沒有任何要問使用者的東西。要求先跑別的指令只會變成死路(舊版錯誤訊息叫人「開 Visual Studio 複製設定檔」,
+  而這個 plugin 存在的目的就是不必開 VS)。
 - **跨 worktree self-heal**:同 project 在別 worktree 已啟 → 自動停舊 instance,**不**詢問使用者(這是 brainstorm 動機 bug fix)。
 - **別 project 撞 port**:fail loudly,**不**自動停別 project 的 instance。
 - **listening 健康檢查 incorporated 進 run**:啟完一定要驗 port 真的 LISTENING,不寫「Started PID xxx」就結束。
