@@ -170,11 +170,15 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      - `.svn/`:讓 git 忽略 bridge worktree 內的 SVN 管理目錄。
    - 4c. **git-svn 設定**:`.turbo-plugin/config.toml` 的 `git-svn` 標記區塊確保含 `[svn]` section(目前無必填
      key,保留空 section 供未來 svn 行為設定)。用 base 段「更新自己區塊」程序,只動 `# >>> turbo-plugin:git-svn >>>` 區塊。
-   - 4d. **commit 骨架**(分兩步、禁 `&&` 串接 state-changing git):先 `git add -A`(此時 4b 已 ignore 掉
-     `.svn/` 與 worktree 容器),再 `git commit -m "chore: turbo-plugin git-svn setup (skeleton)"`。
-     > .NET 產物(`.vs/` / `bin/` / `obj/` / `packages/`)的 ignore 屬 **dotnet** plugin。若這是 .NET 專案,請也裝
-     > `turbo-plugin-dotnet-framework-web` 並跑其 setup;或在 4d `git add -A` 前先補上這些 pattern(這是把 .NET
-     > 機器產物擋在版控外的後盾)。
+   - 4c-2. **產物 / 機密的 ignore 判斷(在 `git add -A` 之前)**:4b 只寫死 plugin 自造的基礎設施;
+     **這個專案自己的**建置產物、本機設定與機密沒有固定清單,由你判斷。讀
+     `${CLAUDE_PLUGIN_ROOT}/skills/tp-suggest-ignore/assets/ignore-rubric.md`,對照 `git status --short`
+     裡 `??` 的東西逐項判斷,把該擋的 pattern append 進 `.gitignore`(不必單獨 commit,4d 會一起帶走)。
+     - **時機不能往後挪**:4d 的 `git add -A` 會把當下沒被忽略的東西全部掃進第一顆 commit,之後再補
+       `.gitignore` 也救不回來(已經在版控裡了,而且很可能已經推上 SVN)。
+     - 有判不準的就**問使用者**,不要猜(§判準:「不確定就不要動」)。看到疑似機密要單獨、明確地講。
+   - 4d. **commit 骨架**(分兩步、禁 `&&` 串接 state-changing git):先 `git add -A`(此時 4b/4c-2 已 ignore 掉
+     `.svn/`、worktree 容器與這個專案的產物),再 `git commit -m "chore: turbo-plugin git-svn setup (skeleton)"`。
 
 > **case (a) 中途取消/失敗的復原**:腳本的 rollback 會清掉中途失敗留下的 bridge branch / worktree;唯一可能
 > 殘留的是身分 throw 留下的 bare 空 `.git`(無 commit)。若使用者此時取消、之後直接重跑 `/tp-setup`,case 偵測
@@ -244,12 +248,24 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 - **bridge 結果**(case (a)/(b)):`remote-svn/main` branch + `.turbo-plugin/worktrees/remote-svn-main` worktree、
   svn checkout、固定 `svn:ignore=.git`、連接歷史。
 - **使用者仍須手動處理**:
-  - 若是 .NET Framework Web 專案 → 裝 `turbo-plugin-dotnet-framework-web` 並跑其 `/tp-setup`(IIS / build 設定)。
+  - 若是 .NET Framework Web 專案 → 裝 `turbo-plugin-dotnet-framework-web`。它**沒有 setup 指令**,直接
+    `/tp-build-dotnet-framework-web` / `/tp-run-dotnet-framework-web` 即可(設定用到才建)。
   - 若要用三環境 DB → 裝 `turbo-plugin-three-environment-db` 並跑其 `/tp-setup`(dbhub)。
 - **下一步建議**:
   - case (a)/(b):「bridge 已連接、初次 SVN 內容已在當前分支;之後用 `/tp-pull-from-svn --branch main` 同步 SVN
     後續變更、`/tp-push-to-svn` 推送本機 commit」。
   - case (c)/(d):「設定已就緒」。
+
+### Phase 5 — 收尾:跑一次 ignore 檢查（case (a)/(b)/(c)，peer-mode 不跑）
+
+報告完之後,**直接跑一次 `tp-suggest-ignore` 的 analysis mode**(不必問要不要跑,跑它本身沒有副作用——
+它自己會在要動任何東西之前徵求同意)。理由:使用者不會知道有這個 skill,而「哪些東西不該進版控」正是
+setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一件事;推上 SVN 之後就是永久的。
+
+- case (a)/(b):4c-2 已經在骨架 commit 前判斷過一輪,這一輪是安全網(抓「已經被追蹤、但不該追蹤」的東西)。
+- case (c):這是**唯一**一次判斷(既有專案沒有骨架 commit 那個時機點),不要跳過。
+- case (d) peer-mode:不跑(不碰任何 git-versioned shared file)。
+- 它回報「沒有發現」是正常結果,照實轉述、不要加工。
 
 ---
 
@@ -280,9 +296,14 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
   引導手動解 + commit merge(不自動 abort),再直接接「base 骨架後置」收尾。盲目重呼叫腳本會撞「bridge 已存在」死路。
 - **不自動代填使用者身分或設定** — git `user.name`/`user.email`、SVN URL 等缺漏一律先 `AskUserQuestion` 再做;
   **絕不**拿 Claude 帳號 email / 本機使用者名稱 / 臆測值代填。寫 git 身分一律 repo-local(不加 `--global`)。
-- **骨架 commit 的 .NET 產物後盾** — git-svn 的 `.gitignore` 不含 .NET 產物區塊(那是 dotnet plugin);若是 .NET
-  專案,在 case (a)/(b) sub-step 4d `git add -A` 前先補 `.vs/`/`bin/`/`obj/`/`packages/` pattern(或裝 dotnet
-  plugin 跑其 setup),把機器產物擋在版控外。
+- **兩類 ignore、責任不同** — 4b 寫死的只有 **plugin 自造的基礎設施**(`.turbo-plugin/worktrees/`、`.svn/`,
+  加上 base 的兩條 `*.local.*`):形狀固定、且必須在任何 `git add` 之前就位。**這個專案自己的**建置產物 /
+  本機設定 / 機密**沒有寫死清單**,由 agent 依 `skills/tp-suggest-ignore/assets/ignore-rubric.md` 的判準,
+  在 4c-2(仍在 `git add -A` 之前)逐項判斷後 append。寫死清單只會同時漏掉這個專案真正的產物、又硬塞
+  不適用的項目;而時機不能往後挪,因為第一顆 commit 掃進去的東西補 `.gitignore` 也拿不掉。
+- **setup 收尾一定跑一次 ignore 檢查(Phase 5,peer-mode 除外)** — 不要只在報告裡「建議使用者去跑」。
+  使用者不會知道有這個 skill;而 SVN 一旦提交就是永久的,這件事值得主動做。case (c) 尤其不能跳過——
+  既有專案沒有骨架 commit 那個判斷時機,這是唯一一次。
 - **Case (c)/(d) 必須 idempotent** — 跑兩次結果同跑一次,不重複追加標記區塊、不覆寫已存在 shared file。
 - **標記區塊只動自己 concern 的** — config.toml 用 concern 標記、CLAUDE.md 用單一 `base` 區塊;git-svn 只寫
   config.toml 的 `git-svn`(及 CLAUDE.md 的 `base`,若 base 段未先建)區塊,不碰 dotnet 區塊或標記外內容。
@@ -309,6 +330,8 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
   (SVN 內容已併入);若 merge 曾衝突,須使用者先手動解完 + `git commit` 後 agent 才接骨架收尾。
 - Case (c)/(d):跑兩次結果同跑一次(idempotent)。
 - Case (d):未動到任何 git-versioned shared file。
+- Case (a)/(b)/(c):流程結尾跑過一次 `tp-suggest-ignore` analysis mode(「沒有發現」也算跑過)。
+- Case (a)/(b):骨架 commit 內**不含**這個專案的建置產物(`git show --stat` 檢查第一顆 commit)。
 
 ## Test Scenarios
 

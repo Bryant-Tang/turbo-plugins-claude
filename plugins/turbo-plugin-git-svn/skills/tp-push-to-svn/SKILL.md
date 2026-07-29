@@ -93,6 +93,12 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
 prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備、不印任何給使用者**(內容到 Step 4 才呈現):
 
 - 解析 `FILES` 段(svn status:`?`→新增、`!`→刪除、`M`→修改;標 `ignored` 者被 git check-ignore 過濾、本次不進 SVN)——清單留待 Step 4 列出。
+- **對「本次會新增到 SVN」的檔案(`?`)跑一次 ignore 檢查**:讀
+  `${CLAUDE_PLUGIN_ROOT}/skills/tp-suggest-ignore/assets/ignore-rubric.md`,依判準看有沒有建置產物 /
+  本機專屬設定 / 機密混在裡面。**這是最後一道關**——SVN 提交是永久的,推上去之後把檔案刪掉,歷史裡還在。
+  - **有發現才出聲**;沒發現就什麼都不提,Step 4 照常只列異動檔案。不要每次 push 都問使用者 ignore 的事。
+  - 這裡**只偵測、不修**:不要在 push 流程中途去改 `.gitignore` 或呼叫別的 skill(merge 已經 stage 好了,
+    中途插入寫檔會把這次推送的內容弄髒)。把發現帶到 Step 4 讓使用者決定要不要先取消。
 - 解析 `BODY` 段(每個 commit 一行的條列)——原樣留待放進 Step 4 的訊息預覽。
 - propose 一行 **title**(白話摘要,**固定不加 conventional-commit type 前綴**——`feat:` / `fix:` / `chore:` / `docs:` / `refactor:` 等都不要;SVN 端不跑 release-please / commitlint,type 前綴只是雜訊)。它會成為 Step 4 預覽訊息的第一行;commit 腳本端會把 title collapse 成單行,agent **無法**藉換行把額外內容塞進 body。
 
@@ -100,7 +106,13 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
 
 **先印異動檔案、緊接著直接 `AskUserQuestion`**。**不要把「Step 4」「Step 3」這類內部流程編號 / 步驟標題輸出給使用者**——那是 SKILL 內部結構、不是要顯示的內容;這一步直接從「異動檔案」開始印,不加任何 step 前言或標題。
 
-1. **異動檔案(純文字,AskUserQuestion 正上方)**:把 `FILES` 以白話列出(新增 / 刪除 / 修改;ignored 者不進 SVN);若有疑慮項(例如含機器路徑的設定檔)在此一併白話提醒。**這是唯一的純文字輸出**,前面不加「Step X」標題或前言。
+1. **異動檔案(純文字,AskUserQuestion 正上方)**:把 `FILES` 以白話列出(新增 / 刪除 / 修改;ignored 者不進 SVN)。**這是唯一的純文字輸出**,前面不加「Step X」標題或前言。
+   - **Step 3 的 ignore 檢查有發現時**(只有有發現才寫這段):接在檔案清單後面,用白話點出是哪幾個檔案、
+     它們看起來是什麼(「這是建置產生的輸出」「這看起來是資料庫連線字串」),並提醒**SVN 提交是永久的、
+     推上去之後刪檔也救不回來**。疑似機密要**單獨列在最前面**,不要混在產物裡帶過。
+     然後在 Step 4 的 `AskUserQuestion` 多給一個選項:「先取消,處理這幾個檔案」——使用者選它就
+     `git -C <remote-path> merge --abort` 清掉已 stage 的 merge、結束 skill,並告訴他可以跑
+     `/tp-suggest-ignore` 處理完再重推。
 2. **`AskUserQuestion`**:把**完整 SVN message 預覽放進 `question` 本身**(**不要**先用純文字把預覽印一次、再用「以上 / 上方」帶過;**不洩漏內部術語**):
    - `question`:
 
@@ -125,10 +137,12 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
      ```
 
    - `header`:短籤,如「送出 SVN」。
-   - 三選一(選項描述也用白話):
+   - 三選一(選項描述也用白話;Step 3 的 ignore 檢查有發現時多加第 4 個選項):
      1. **確認送出** → 進 Step 5。
      2. **改標題** → 請使用者輸入新標題(自由文字,單行)→ 以「新標題 + 同一份 BODY」**重組同樣的預覽問句**再問一次(同樣不印 step 前言、標題與 BODY 之間一樣不空行)。**只有第一行標題可改,下面的 BODY 永遠是系統帶出的那份、原樣不動。**
      3. **取消** → 跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill。
+     4. (**只在有發現時出現**)**先取消,處理那幾個檔案** → 同「取消」清掉 stage 的 merge、結束 skill,
+        並告訴使用者可以跑 `/tp-suggest-ignore` 把它們排除掉再重推。
 
 > 注意:送出前若你又 commit 新內容進 working branch,Step 5 的 commit 腳本會偵測 git HEAD SHA 不符並 abort,提示重跑 prepare。請在送出前確認不會再 commit 新內容。
 
@@ -179,6 +193,11 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
 - **對使用者一律白話、不洩漏內部術語**:`title` / `鎖定 body` / `BODY` / `FILES` / `prepare` / token 名等是 agent / 腳本的**內部用語**,呈現給使用者(尤其 `AskUserQuestion` 問句與選項標籤)時一律換白話——例如 body 講「每個 commit 一行的條列、由系統自動帶出、不能在這裡改」、title 講「第一行標題」。內部結構描述(如「title + 鎖定 body」)只供 agent 對照,**不要照進使用者看得到的文字**。
 - **不輸出「Step N」流程編號 / 步驟標題**:本 SKILL 的 `Step 0`–`Step 6` 是**內部程序結構**,**不是要顯示給使用者的內容**。執行時不要印「Step 4 — 確認…」這類 step 標題或前言;使用者看到的應該只有實質內容(異動檔案 + `AskUserQuestion`)。Push 流程**唯一**對使用者輸出的地方是 Step 4 的「異動檔案 + AskUserQuestion」,直接從異動檔案開始印。
 - **SVN 訊息 title 不帶 commit-type 前綴**:agent propose 的 title 是白話一行摘要,**固定不寫成** `feat:` / `fix:` / `chore:` / `docs:` 這種 conventional-commit 形式(SVN 端無 release-please / commitlint 消費 type,純雜訊)。**body 條列是 verbatim git subject、保留原樣(可能含 type),不在此限**——只規範 agent 寫的 title。「改標題」時也提示使用者免帶 type 前綴。
+- **推送前的 ignore 檢查:偵測到才出聲,而且只偵測不修**(Step 3/4)——對本次會**新增**到 SVN 的檔案套
+  `skills/tp-suggest-ignore/assets/ignore-rubric.md` 的判準。沒發現就完全不提(push 是最常用的指令,
+  每次都問 ignore 只會變成雜訊);有發現才在 Step 4 的檔案清單後面白話點名,並多給一個「先取消去處理」
+  的選項。**不要在 push 中途改 `.gitignore` 或呼叫別的 skill**:merge 已經 stage 好了,中途寫檔會弄髒
+  這次推送的內容。之所以值得擋這一下:SVN 提交是永久的,推上去之後刪檔,歷史裡還在。
 - **Merge state 必須乾淨**:Step 2 開頭 check `MERGE_HEAD` 不存在;cancel 一律呼叫 `git merge --abort` 確保不留 stale state。
 - **UTF-8 no-BOM commit message**:Step 5 script 已正確處理,**不要**改成 `svn commit -m "..."`(Windows CP_ACP 會 mangle 中文)。
 - **Pull-from-svn 是 prerequisite**:remote SVN HEAD 不 up-to-date 直接拒跑,讓使用者先 `/tp-pull-from-svn`。
@@ -202,6 +221,8 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
 - **SHA pin cleanup**: 成功 push 後,`<main>/.git/worktrees/<remote-name>/MERGE_HEAD.tp_branch_sha`、`.tp_svn_status`、`.tp_svn_body` 皆不應存在(`Test-Path` / `[[ -f ]]` 皆 false)。
 - **PENDING_MERGE Continue path**: prepare 偵到既有 staged merge → SKILL 三選一選 Continue(option 2)→ 略過 prepare,agent propose title 後送出,既有 staged content + 既有鎖定 body 推上 SVN,push 成功。
 - **PENDING_MERGE Cancel path**: prepare 偵到既有 staged merge → SKILL 三選一選 Cancel(option 3)→ SKILL 結束,remote worktree `git status` 仍顯示 unstaged merge state(刻意不清,讓使用者手動處理)。
+- **ignore 檢查:乾淨的 push 不出聲**: 推一批純程式碼變更 → Step 4 只列異動檔案 + 三選一,**完全沒有**關於 ignore 的文字或第 4 個選項。
+- **ignore 檢查:有發現才出聲**: 讓一個明顯是建置產物的新檔(以及一個含連線字串的設定檔)進入本次推送範圍 → Step 4 在檔案清單後白話點名(機密那筆單獨列最前面)、出現「先取消去處理」選項;選它 → `git -C <remote-path> status --porcelain` 乾淨(merge 已 abort)、SVN 無新 revision。
 
 ## Tool Preference
 

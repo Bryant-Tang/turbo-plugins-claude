@@ -1,6 +1,6 @@
 ---
 name: tp-suggest-ignore
-description: '管理 `.gitignore`:直接增刪 pattern,或互動分析偵測「該被 git ignore」與「該從 SVN untrack」的檔案。**Add / remove ignore pattern 可逆**(寫錯可拿掉),agent 偵測到新 untracked 檔案符合常見 ignore pattern 時可建議執行;使用者明確要求 analysis mode 全 repo 掃描時也可跑。'
+description: '管理 `.gitignore`:直接增刪 pattern,或互動分析找出「該被 git ignore」與「該從 SVN untrack」的檔案——由你(agent)看專案實際內容判斷什麼是產物 / 本機設定 / 機密,不套固定清單。**Add / remove ignore pattern 可逆**(寫錯可拿掉),偵測到新的 untracked 檔案像是建置產物或機密時可主動建議執行;使用者明確要求全 repo 掃描時也可跑。'
 argument-hint: 'Direct: --add-git|--remove-git <pattern>… | Analysis: (no args)'
 user-invocable: true
 allowed-tools: Bash, Read, Edit, Glob, Grep, AskUserQuestion
@@ -49,8 +49,11 @@ Constraints: only one direct-mode flag per invocation.
 ### `--remove-git <pattern>`
 
 1. Resolve main worktree.
-2. If `.gitignore` does not exist, or pattern is not in it → report "not found" and stop.
-3. Edit `.gitignore` to remove the matching line.
+2. **基礎設施 pattern 不可移除**:若 pattern 是 `.svn/`、`.turbo-plugin/worktrees/`、
+   `.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*` 其中之一 → **拒絕**,用白話說明後果
+   (見 §判準的硬規則:`.svn/` 一旦不再被忽略,bridge 的 SVN 管理目錄會被推上 SVN)並停止。
+3. If `.gitignore` does not exist, or pattern is not in it → report "not found" and stop.
+4. Edit `.gitignore` to remove the matching line.
 4. `git -C <main> add .gitignore`
 5. `git -C <main> commit -m "chore: update .gitignore"`
 6. Report success.
@@ -86,20 +89,19 @@ git -C <main-worktree> ls-files
 git -C <remote-worktree> ls-files -o -i --exclude-standard
 ```
 
-### Step 3 — Classify candidates
+### Step 3 — Classify candidates（判斷由你做，不套固定清單）
 
-Use the collected data to build candidate lists for each category. Common "should-be-ignored" patterns to recognise:
+**先讀 `${CLAUDE_PLUGIN_ROOT}/skills/tp-suggest-ignore/assets/ignore-rubric.md`**,依它的判準逐檔判斷。
+那份檔案裡**沒有**pattern 清單,這是刻意的:一份寫死的清單只對某個技術棧成立,會同時漏掉這個專案真正的
+產物、又硬塞不適用的項目。先從 `*.csproj` / `*.sln` / `package.json` / `requirements.txt` / `pom.xml` /
+CI 設定看出這個專案是什麼、產物長什麼樣,必要時直接讀檔案內容,再判斷每一個候選。
 
-- IDE/OS: `.idea/`, `.vscode/`, `.DS_Store`, `Thumbs.db`
-- Environment: `.env`, `.env.*`, `.env.local`
-- Build artifacts: `build/`, `dist/`, `out/`, `target/`, `bin/`, `obj/`
-- Compiled output: `*.o`, `*.obj`, `*.class`, `*.pyc`, `__pycache__/`
-- Logs / temp: `*.log`, `*.tmp`, `*.cache`
-- Claude Code config: `.claude/`
+判斷時把 §判準的「不應該 ignore」那一組**也套一次**——尤其「不確定就不要動」:誤判成該 ignore 的代價
+(別人 clone 下來少檔案、build 壞掉)比留著不管大得多。
 
 **Git Ignore — Add to `.gitignore`**
 - Source: `git status --short` entries starting with `??`
-- Condition: matches a common ignore pattern AND not already in `.gitignore`
+- Condition: 你依判準認定它是產物 / 本機專屬 / 機密 AND not already in `.gitignore`
 - **Guard**: if the file is already git-tracked (`git ls-files` includes it) → move to Un-track instead
 
 **Inconsistency — SVN-tracked but git-ignored**
@@ -107,10 +109,13 @@ Use the collected data to build candidate lists for each category. Common "shoul
 - Condition: for each found file, run `svn status <file>` in that worktree — if output is blank or `M` (not `?`) the file is SVN-tracked
 - Report which worktree(s) have the inconsistency
 - These files exist in SVN but git ignores them; SVN changes won't propagate through git
+- **例外**:`.svn/` 底下的東西不是候選,那是 bridge 的管理目錄(見 §判準的硬規則)
 
 **Un-track — Tracked by both, should be un-tracked**
 - Source: `git ls-files` (git-tracked files in main worktree)
-- Condition: matches a common ignore pattern AND not already in `.gitignore`
+- Condition: 你依判準認定它不該進版控 AND not already in `.gitignore`
+- 這一類要**更保守**:已經被追蹤很久的檔案,預設是「刻意進版控的」(§判準「不應該 ignore」第 3 條)。
+  沒有明確理由不要提議 un-track。
 - (Note: Git Ignore candidates that are already git-tracked are automatically reclassified here)
 
 Filter out patterns already present in `.gitignore` before presenting.
@@ -214,6 +219,14 @@ List what was changed in each category and what was skipped.
 
 ## Decision Rules
 
+- **判斷交你、執行走既有路徑**:哪些檔案該 ignore 由你看專案實際內容判斷(§判準,無固定清單);但**實際的
+  SVN 移除一律走 `Remove-SvnFile`**,不要自己下 `svn delete` / `svn commit`。判斷沒有標準答案所以留給你,
+  執行有標準答案所以留在腳本裡(腳本才有測試守著)。
+- **基礎設施 pattern 是不變式,不歸你判斷也不可移除** — `.svn/`、`.turbo-plugin/worktrees/`、
+  `.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*` 由 `/tp-setup` 寫死。不要建議加(已經在了)、
+  **不要照使用者要求移除**(拒絕並說明後果)、分析時不要把它們底下的東西列成候選。
+- **機密單獨講、講在最前面** — 憑證 / 連線字串 / token 推上 SVN 之後是永久的,之後刪檔也救不回來
+  (歷史裡還在)。不要混在一串建置產物裡帶過。
 - If `.gitignore` does not exist, create it before editing.
 - If remote worktree is absent, only Git Ignore is available (Inconsistency / Un-track need remote worktrees).
 - **All SVN removal is delegated to `Remove-SvnFile`; never run raw `svn delete` / `svn commit`, and never delegate to `/tp-push-to-svn` for the removal itself.** push can't remove: it refuses to start on an unignored-but-untracked file (main-clean gate) and skips git-ignored files (`git check-ignore`). `Remove-SvnFile` deletes directly and, when the path is git-tracked on the bridge, reconciles with commit formats **identical to `/tp-pull-from-svn`** (`sync: svn r<rev>` + `Merge branch 'remote-svn/<branch>' into <branch>`), so `remote-svn/*` only ever carries sync + merge commits. (Un-track A's follow-up `/tp-push-to-svn` in step 3 is a *different* thing — it runs **after** `Remove-SvnFile` has already removed the file, only to propagate the updated `.gitignore` to SVN.)
@@ -236,7 +249,9 @@ List what was changed in each category and what was skipped.
 - **Direct mode --add-git**: PowerShell `--add-git "*.log"` / bash `--add-git "*.log"` → .gitignore 末尾出現 "*.log"、新 commit on main branch 內容只有 .gitignore。
 - **Direct mode --remove-git**: 對已存在 pattern 跑 `--remove-git` → 該行從 .gitignore 移除、commit 新增。對不存在 pattern 跑 → 印 "not found" 不 commit。
 - **Direct mode --add-svn / --remove-svn 已移除**: 跑 `--add-svn` 或 `--remove-svn` → 回報 unknown/unsupported flag,不執行任何 svn 操作。
+- **基礎設施 pattern 移除被擋**: 跑 `--remove-git ".svn/"`(及另外三條)→ 拒絕並白話說明後果,`.gitignore` 不變、無新 commit。
 - **Analysis mode**: 在有 untracked `.env` 的 repo 跑 analysis mode → Git Ignore prompt 出現 .env,使用者選 Apply all → .gitignore 加 .env、commit 新增;分析不出現「SVN Ignore」分類。
+- **判斷不套固定清單**: 在一個把產物輸出到非慣例目錄(例如 `artifacts/`)的專案跑 analysis mode → 該目錄被認出是產物;反過來,在一個刻意把某個 `bin/` 進版控且已被追蹤已久的專案跑 → **不**提議 un-track 它。
 - **Un-track Option A 委派 Remove-SvnFile(reconcile)**: 對同被 git/SVN 追蹤的檔跑 Un-track Option A → main `git rm --cached` + `.gitignore` + commit,再委派 `Remove-SvnFile`;`svn list` 不含該檔、`remote-svn/<branch>` 末筆 `sync: svn r<rev>` + `<branch>` 末筆 `Merge branch ...`(格式同 pull)、本機檔仍在但不被 git 追蹤、bridge 乾淨。流程**不再**有裸 `svn delete` / `svn commit` 或 push 委派。(自動化覆蓋見 `tests/unit/scripts/Remove-SvnFile.test.*`。)
 - **Inconsistency Option B 委派 Remove-SvnFile(no-reconcile)**: 對 git-ignored + svn-tracked 檔跑 Option B → 委派 `Remove-SvnFile`;`svn list` 不含該檔、bridge 乾淨、`remote-svn/<branch>` 無新 commit。
 - **No remote worktrees**: 沒 remote-* worktree 的 repo 跑 analysis mode → 只跑 Git Ignore 分類,跳過 Inconsistency / Un-track。
