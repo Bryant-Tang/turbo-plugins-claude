@@ -1,8 +1,10 @@
 # tp-setup 共用 base 段（concern-neutral）
 
-> 這份檔案是 **turbo-plugin 系列共用的 setup base 段**,被 git-svn / dotnet / db 三個 plugin 的
+> 這份檔案是 **turbo-plugin 系列共用的 setup base 段**,被**有 setup 指令的** plugin(git-svn / db)的
 > `tp-setup` SKILL 引用。各 plugin 的 SKILL 會「先跑本 base 段,再跑自己的 concern 段」。
-> 三個 plugin 各帶一份**內容相同**的本檔(像 `Core.{ps1,sh}` 一樣 byte-identical);修改時三份要同步。
+> 這些 plugin 各帶一份**內容相同**的本檔(像 `Core.{ps1,sh}` 一樣 byte-identical);修改時每一份都要同步。
+>
+> `turbo-plugin-dotnet-framework-web` **沒有** setup 指令(所有設定都是用到才建),故不帶本檔。
 >
 > base 段**只**處理 concern-neutral 的共用檔骨架,**不**碰任何單一 concern 的設定
 > (git bridge / IIS apphost / dbhub 等一律由各 plugin 的 concern 段處理)。
@@ -51,8 +53,9 @@
    .claude/**/*.local.*
    .turbo-plugin/**/*.local.*
    ```
-   - git bridge 與 .NET 產物等 concern-specific 的 ignore 規則(`.turbo-plugin/worktrees/`、`.svn/`、
-     `.vs/`、`bin/`、`obj/` 等)由各 plugin 的 concern 段追加,不在 base。
+   - git bridge 的 ignore 規則(`.turbo-plugin/worktrees/`、`.svn/`)由 git-svn 的 concern 段追加,不在 base。
+   - **專案自己的建置產物沒有寫死清單**:由 agent 依
+     `turbo-plugin-git-svn` 的 `skills/tp-suggest-ignore/assets/ignore-rubric.md` 判斷後追加。
 4. **專案根 `CLAUDE.md`** — 確保含 turbo-plugin base 區塊(目前內容:「不得提交僅限本機之物」硬規則)。注入內容(複製
    `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/claudemd-base-snippet.md`)用 `<!-- turbo-plugin:begin base -->`
    / `<!-- turbo-plugin:end base -->` 標記包夾:不存在則建立含該 snippet 的檔;已存在則用標記
@@ -62,8 +65,8 @@
 
 - **git init / 預設分支 / 初始 commit / `remote-svn/main` bridge / 連接歷史 / `[svn]` 設定 /
   `.svn/` ignore** → **git-svn** concern。
-- **`[iis]/[build]/[publish]/[frontend]/[run]` 設定 / `applicationhost.config` / `.vs//bin//obj/` ignore /
-  MSBuild / IIS Express 路徑偵測** → **dotnet** concern。
+- **`[iis]/[build]/[publish]/[frontend]/[run]` 設定 / `applicationhost.config` / MSBuild / IIS Express 路徑**
+  → **dotnet** plugin,但它**沒有 setup 指令**:這些全部由要用到它們的那支 skill 在當下自己建。
 - **`dbhub.example.local.toml` / `dbhub.local.toml` / `.mcp.json`(tp-dbhub)** → **db** concern。
 
 ## Case 偵測（供各 plugin concern 段使用,固定優先序）
