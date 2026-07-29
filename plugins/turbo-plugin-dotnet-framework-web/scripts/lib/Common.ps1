@@ -50,8 +50,13 @@ function Format-IisExpressSiteName {
 
 # Locate MSBuild.exe. Lookup order (strict cut, no env fallback):
 #   1. .turbo-plugin/config.local.toml [tools] msbuild_path  (machine-specific, gitignored)
-#   2. Standard VS install paths (VS 2017/2019/2022 Enterprise/Professional/Community)
-#   3. Throw with /tp-setup guidance.
+#   2. Standard install paths (VS 2017/2019/2022 Enterprise/Professional/Community/BuildTools)
+#   3. Throw, pointing at config.local.toml.
+# Build Tools is in the list because it is the whole point of not depending on Visual Studio: a CI
+# agent or a trimmed developer machine installs "Build Tools for Visual Studio" + IIS Express and
+# never installs the IDE. Without those paths this plugin still silently required a full VS.
+# It comes last within each year: it is the most limited edition, so an IDE install on the same
+# machine should win.
 # $env:TURBO_PLUGIN_MSBUILD_PATH is deliberately NOT read — turbo-plugin is the
 # first release; no legacy users to migrate. If the env var happens to be set by some
 # other tool, it is ignored.
@@ -69,34 +74,40 @@ function Find-MSBuild {
             throw @"
 MSBuild 路徑設定指向不存在的檔案: $resolved
 (來源: .turbo-plugin/config.local.toml [tools] msbuild_path)
-請跑 /tp-setup 重新偵測,或手動修正 .turbo-plugin/config.local.toml 內的路徑。
+請修正該檔內的路徑,或整行移除改用自動偵測。
 "@
         }
     }
 
-    # Step 2: probe standard VS install paths
+    # Step 2: probe standard install paths.
+    # Build Tools 2022 still installs under Program Files (x86) by default even though VS 2022
+    # itself is 64-bit, so both roots are probed for every year rather than assuming one.
     $candidates = @(
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017\Enterprise\MSBuild\15.0\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017\Professional\MSBuild\15.0\Bin\MSBuild.exe",
-        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017\Community\MSBuild\15.0\Bin\MSBuild.exe"
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017\Community\MSBuild\15.0\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017\BuildTools\MSBuild\15.0\Bin\MSBuild.exe"
     )
     $found = @($candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1)
     if ($found.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($found[0])) {
         return $found[0]
     }
 
-    # Step 3: throw with /tp-setup guidance
+    # Step 3: throw, pointing at the one place a path can be pinned.
     throw @"
-MSBuild 路徑未設定且找不到 VS 安裝。請跑 /tp-setup 互動填入 MSBuild 路徑,
+找不到 MSBuild。請安裝「Build Tools for Visual Studio」(不需要完整的 Visual Studio),
 或手動在 .turbo-plugin/config.local.toml 加上:
   [tools]
-  msbuild_path = "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe"
+  msbuild_path = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/MSBuild.exe"
 "@
 }
 

@@ -230,7 +230,7 @@ msbuild_path = "$tomlPath"
     }
 
     Context 'auto-probe OR throw - no [tools] configured (machine-state dependent)' {
-        It 'either throws with /tp-setup guidance or auto-probes an existing file' {
+        It 'either throws pointing at config.local.toml or auto-probes an existing file' {
             $repo = New-IsolatedRepoRoot 'tools'
             try {
                 $env:TURBO_PLUGIN_MSBUILD_PATH = $null
@@ -241,13 +241,120 @@ msbuild_path = "$tomlPath"
                     $threw = $true; $errMsg = $_.Exception.Message
                 }
                 if ($threw) {
-                    $errMsg | Should -Match '/tp-setup'
+                    $errMsg | Should -Match 'MSBuild'
                     $errMsg | Should -Match '(config\.local\.toml|\[tools\])'
                 } else {
                     Test-Path -LiteralPath $result -PathType Leaf | Should -BeTrue
                 }
             } finally {
                 $env:TURBO_PLUGIN_MSBUILD_PATH = $script:OrigMsbuildEnv
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+    }
+
+    # "Build Tools for Visual Studio" is a standalone installer with no IDE -- what a CI agent or a
+    # trimmed developer machine actually has. Leaving it out of the probe list is what made this
+    # plugin quietly require a full Visual Studio install despite being built to avoid one.
+    #
+    # The probe reads $env:ProgramFiles / ${env:ProgramFiles(x86)} at call time, so both are pointed
+    # at a sandbox: that exercises the real lookup instead of asserting on source text, and it also
+    # hides whatever Visual Studio the machine running the tests happens to have. Both variables are
+    # process-local and restored in finally -- nothing outside this process is touched.
+    Context 'probes a Build Tools install (no Visual Studio IDE present)' {
+        BeforeAll {
+            $script:origPF = $env:ProgramFiles
+            $script:origPF86 = ${env:ProgramFiles(x86)}
+
+            # Defined in BeforeAll, not at Context scope: Pester 5 evaluates Context bodies during
+            # discovery, so a function declared there is gone by the time the tests actually run.
+            function New-FakeMsbuild {
+                param([string]$Root, [string]$Year, [string]$Edition, [string]$ToolsVersion)
+                $dir = [System.IO.Path]::Combine($Root, 'Microsoft Visual Studio', $Year, $Edition, 'MSBuild', $ToolsVersion, 'Bin')
+                $null = New-Item -ItemType Directory -Path $dir -Force
+                $exe = [System.IO.Path]::Combine($dir, 'MSBuild.exe')
+                [System.IO.File]::WriteAllText($exe, '')
+                return $exe
+            }
+        }
+        AfterAll {
+            $env:ProgramFiles = $script:origPF
+            ${env:ProgramFiles(x86)} = $script:origPF86
+        }
+
+        It 'finds MSBuild under 2022 BuildTools in Program Files (x86)' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $pf = Join-Path $repo 'PF'; $pf86 = Join-Path $repo 'PF86'
+                $null = New-Item -ItemType Directory -Path $pf -Force
+                $null = New-Item -ItemType Directory -Path $pf86 -Force
+                $expected = New-FakeMsbuild -Root $pf86 -Year '2022' -Edition 'BuildTools' -ToolsVersion 'Current'
+                $env:ProgramFiles = $pf
+                ${env:ProgramFiles(x86)} = $pf86
+                Find-MSBuild -RepoRoot $repo | Should -Be $expected
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'finds MSBuild under 2019 / 2017 BuildTools too' {
+            foreach ($case in @(
+                @{ Year = '2019'; Tools = 'Current' },
+                @{ Year = '2017'; Tools = '15.0' }
+            )) {
+                $repo = New-IsolatedRepoRoot 'tools'
+                try {
+                    $pf = Join-Path $repo 'PF'; $pf86 = Join-Path $repo 'PF86'
+                    $null = New-Item -ItemType Directory -Path $pf -Force
+                    $null = New-Item -ItemType Directory -Path $pf86 -Force
+                    $expected = New-FakeMsbuild -Root $pf86 -Year $case.Year -Edition 'BuildTools' -ToolsVersion $case.Tools
+                    $env:ProgramFiles = $pf
+                    ${env:ProgramFiles(x86)} = $pf86
+                    Find-MSBuild -RepoRoot $repo | Should -Be $expected -Because "BuildTools $($case.Year) 應該要被探測到"
+                } finally {
+                    $env:ProgramFiles = $script:origPF
+                    ${env:ProgramFiles(x86)} = $script:origPF86
+                    Remove-IsolatedRepoRoot -Dir $repo
+                }
+            }
+        }
+
+        It 'prefers a real IDE edition over BuildTools of the same year' {
+            # BuildTools is the most limited edition; when a machine has both, the IDE install wins.
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $pf = Join-Path $repo 'PF'; $pf86 = Join-Path $repo 'PF86'
+                $null = New-Item -ItemType Directory -Path $pf -Force
+                $null = New-Item -ItemType Directory -Path $pf86 -Force
+                $community = New-FakeMsbuild -Root $pf -Year '2022' -Edition 'Community' -ToolsVersion 'Current'
+                $null = New-FakeMsbuild -Root $pf -Year '2022' -Edition 'BuildTools' -ToolsVersion 'Current'
+                $env:ProgramFiles = $pf
+                ${env:ProgramFiles(x86)} = $pf86
+                Find-MSBuild -RepoRoot $repo | Should -Be $community
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'with nothing installed, the error names Build Tools as the fix' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $pf = Join-Path $repo 'PF'; $pf86 = Join-Path $repo 'PF86'
+                $null = New-Item -ItemType Directory -Path $pf -Force
+                $null = New-Item -ItemType Directory -Path $pf86 -Force
+                $env:ProgramFiles = $pf
+                ${env:ProgramFiles(x86)} = $pf86
+                $errMsg = ''
+                try { $null = Find-MSBuild -RepoRoot $repo } catch { $errMsg = $_.Exception.Message }
+                $errMsg | Should -Match 'Build Tools'
+                $errMsg | Should -Match 'config\.local\.toml'
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
                 Remove-IsolatedRepoRoot -Dir $repo
             }
         }
@@ -267,7 +374,7 @@ msbuild_path = "$tomlPath"
                 }
                 if ($threw) {
                     $errMsg | Should -Not -Match 'TURBO_PLUGIN_MSBUILD_PATH'
-                    $errMsg | Should -Match '/tp-setup'
+                    $errMsg | Should -Match 'config\.local\.toml'
                 } else {
                     Test-Path -LiteralPath $result -PathType Leaf | Should -BeTrue
                     $result | Should -Not -Be $fakeEnvPath
@@ -318,7 +425,7 @@ iis_express_path = "$tomlPath"
     }
 
     Context 'auto-probe OR throw - no [tools] configured (machine-state dependent)' {
-        It 'either throws with /tp-setup guidance or auto-probes an existing file' {
+        It 'either throws pointing at config.local.toml or auto-probes an existing file' {
             $repo = New-IsolatedRepoRoot 'tools'
             try {
                 $env:TURBO_PLUGIN_IIS_EXPRESS_PATH = $null
@@ -329,7 +436,7 @@ iis_express_path = "$tomlPath"
                     $threw = $true; $errMsg = $_.Exception.Message
                 }
                 if ($threw) {
-                    $errMsg | Should -Match '/tp-setup'
+                    $errMsg | Should -Match 'IIS Express'
                     $errMsg | Should -Match '(config\.local\.toml|\[tools\])'
                 } else {
                     Test-Path -LiteralPath $result -PathType Leaf | Should -BeTrue
@@ -355,7 +462,7 @@ iis_express_path = "$tomlPath"
                 }
                 if ($threw) {
                     $errMsg | Should -Not -Match 'TURBO_PLUGIN_IIS_EXPRESS_PATH'
-                    $errMsg | Should -Match '/tp-setup'
+                    $errMsg | Should -Match 'config\.local\.toml'
                 } else {
                     Test-Path -LiteralPath $result -PathType Leaf | Should -BeTrue
                     $result | Should -Not -Be $fakeEnvPath
