@@ -65,7 +65,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ### Step 4 — 記憶存回(save-back)
 
-run 成功後,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/memory-save-back.md`:比對這次選定的 target 與已存記憶,有差異就問使用者要不要存。**run 存回寫 `[run].project`**(不寫 `[build]`)。run 不涉 configuration,故 save-back 只比對 target。
+run 成功後,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.md`:比對這次選定的 target 與已存記憶,有差異就問使用者要不要存。**run 存回寫 `[run].project`**(不寫 `[build]`)。run 不涉 configuration,故 save-back 只比對 target。
 
 ## Decision Rules
 

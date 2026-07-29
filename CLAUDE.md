@@ -42,7 +42,8 @@ plugins/<plugin-name>/
 ├── LICENSE                      # MIT
 ├── commands/<name>.md           # 可選 — slash command（含 frontmatter）
 ├── skills/<name>/SKILL.md       # 可選 — agent skill（含 frontmatter）
-├── skills/<name>/assets/        # 可選 — skill 用的 template 等資產
+├── skills/<name>/assets/        # 可選 — 單一 skill 用的 template 等資產
+├── assets/                      # 可選 — 跨多個 skill 共用、沒有單一擁有者的資產
 ├── scripts/<name>.ps1           # 可選 — PowerShell 實作（Windows）
 ├── scripts/<name>.sh            # 可選 — Bash 實作（Linux / macOS / Git Bash）
 ├── default-files/               # 可選 — `setup` 類 skill 會複製這些範本到 workspace

@@ -755,7 +755,7 @@ Describe 'Resolve-ProjectTarget' {
     }
 
     It 'seeded empty sections do not false-resolve; per-op keys read independently' {
-        # Mirrors what tp-setup seeds: active-but-empty [build]/[publish] + a real [run].project.
+        # Mirrors a real config: active-but-empty [build]/[publish] + a real [run].project.
         $repo = New-IsolatedRepoRoot 'rpt-seeded'
         try {
             $runCsproj = Join-Path $repo 'Run.csproj'

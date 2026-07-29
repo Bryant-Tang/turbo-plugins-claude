@@ -198,7 +198,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     # Patch physicalPath in the temp file. Try placeholder substitution first (cheap, line-level);
     # if no substitution happened, fall back to XML SetAttribute for the resolved site name —
     # this handles the case where canonical was sourced from VS with concrete absolute paths
-    # (e.g. before the tp-setup placeholder rewrite shipped).
+    # (e.g. a config copied out of Visual Studio by hand).
     $placeholder = '__TURBO_PLUGIN_PHYSICAL_PATH__'
     # XML attribute values escape backslash as-is (no \ escaping required), but `&`, `<`, `"`
     # must be encoded. csproj paths can contain `&` (rare) on Windows; encode defensively.

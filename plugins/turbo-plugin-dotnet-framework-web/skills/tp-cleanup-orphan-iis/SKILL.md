@@ -104,7 +104,7 @@ Both `-RemoveSite` and `-RemoveAll` honor the same exit code contract. For the a
 - **盡力判斷當前專案、能判斷就傳 `-Project`(KTD8)**:scoped 模式會排除該專案正在跑的活站台、避免誤殺,且只有 scoped 模式能用 `-RemoveAll`。**走無-project 是最後手段**——判斷不出時寧可先問使用者,別直接無-project。
 - **無-project 模式要警示活站台**:沒有當前專案時不帶 `-Project`,script 用通用樣式列舉但**拒 `-RemoveAll`**(無法分辨活站台);列出的站台全是正在跑的程序、**可能含你正在使用的**,只逐站台 `-RemoveSite` 清、每個都要使用者明確勾選,且刪前要警示(見 Step 2)。
 - **不自動清除**:Step 2 的使用者確認不可跳過;絕不在沒有明確選擇下呼叫 `-RemoveAll`。
-- **不嘗試重建正確 site 條目**:清除後,使用者應重跑 `/tp-setup` 或用 Visual Studio 開啟 .sln 讓 VS 重建正確條目。
+- **不嘗試重建正確 site 條目**:清除後不必做任何補救——下一次 `/tp-run` 發現 `applicationhost.config` 缺這個專案的站台就會自己補回來。
 - **stop-iis 的提示路徑**:`tp-stop` 偵測到同 stem-不同 hash 的 instance 時會建議使用者跑 `/tp-cleanup-orphan-iis`,本 skill 就是該流程的目的地。
 
 ## Completion Checks

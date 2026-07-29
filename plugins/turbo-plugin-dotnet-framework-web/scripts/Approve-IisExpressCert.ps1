@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 #   * Trust is optional. Without it https still serves, the browser just shows a warning. So
 #     nothing in this plugin fails because the certificate is untrusted.
 #
-# WHY THIS IS A SEPARATE, EXPLICITLY-INVOKED SCRIPT rather than a step inside tp-setup:
+# WHY THIS IS A SEPARATE, EXPLICITLY-INVOKED SCRIPT rather than a step folded into a launch:
 # Windows shows its own security dialog when anything is added to a Root store, and that dialog
 # cannot be suppressed through the supported API. The call therefore BLOCKS until a human clicks.
 # Buried inside setup that reads as a hang; as a short, separately-invoked command -- announced

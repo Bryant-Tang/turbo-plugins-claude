@@ -7,7 +7,7 @@ turbo-plugins-claude 收納四個正交、各自獨立安裝的 plugin。只裝�
 | Plugin | 用途 | 需要 setup? |
 |---|---|---|
 | **`turbo-plugin-git-svn`** | git↔SVN bridge + 設定入口（setup / pull / push / svn-log / reset / merge / suggest-ignore / commit-msg） | 是（`/tp-setup`） |
-| **`turbo-plugin-dotnet-framework-web`** | .NET Framework Web 本機開發（build / run / stop / publish / cleanup-orphan-iis，IIS Express + MSBuild） | 共用 `.turbo-plugin/`（由 git-svn 的 `/tp-setup` 建立） |
+| **`turbo-plugin-dotnet-framework-web`** | .NET Framework Web 本機開發（build / run / stop / publish / cleanup-orphan-iis，IIS Express + MSBuild） | 否（設定用到才建，可自我修復） |
 | **`turbo-plugin-three-environment-db`** | 三環境 DB 輔助（`tp-db-management` skill + `tp-dbhub` MCP server） | 複製 `dbhub.example.local.toml` → `dbhub.local.toml` 填值 |
 | **`turbo-plugin-code-comment`** | C# / JS / TS 註解撰寫慣例（`tp-csharp-comment` / `tp-js-comment`） | 否（純 skill） |
 
@@ -18,7 +18,7 @@ turbo-plugins-claude 收納四個正交、各自獨立安裝的 plugin。只裝�
 - 要用 DBHub 唯讀檢視三環境 DB + SQL 標準化 → 加裝 **`turbo-plugin-three-environment-db`**。
 - 只想要程式碼註解慣例（不碰 SVN / IIS / DB）→ 單裝 **`turbo-plugin-code-comment`** 即可，無需 setup。
 
-> `.turbo-plugin/` 設定目錄由 `turbo-plugin-git-svn` 的 `/tp-setup` 建立並由各 plugin 共用。若不裝 git-svn 而要單用 dotnet plugin，請手動建立 `.turbo-plugin/config.local.toml`（見該 plugin README）。
+> `.turbo-plugin/` 設定目錄由各 plugin 共用。`turbo-plugin-git-svn` 的 `/tp-setup` 會建立它；只裝 dotnet plugin 時不必先做任何事——需要寫設定的一方會自己把目錄、檔案與自己的區塊建起來。
 
 ## 安裝
 

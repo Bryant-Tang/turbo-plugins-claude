@@ -6,7 +6,10 @@ env-free 設計，集中設定於專案根的 `.turbo-plugin/`（與其它 turbo
 
 ## Skills
 
-- **`tp-setup`** — 設定入口:先跑共用 base 段(建 `.turbo-plugin/` + concern-neutral 共用檔),再做 dotnet concern(`config.toml` 的 `[iis]`/`[build]`/`[run]`/`[publish]` 標記區塊、`applicationhost.config` bootstrap、`.gitignore` 的 .NET 產物區塊)。無 git repo 時 fail-loud。
+> **沒有 setup 指令**——需要什麼就在用到的時候才建,跟 Visual Studio 一樣(VS 的 `applicationhost.config`
+> 也是第一次執行專案時才出現,不是裝好 VS 就有)。`applicationhost.config` 由第一次 `/tp-run` 依 csproj 產生;
+> 設定檔與其中的區塊由「要寫它的那一方」自己建。詳見〈設定〉。
+
 - **`tp-build-dotnet-framework-web`** — 用 MSBuild 建置 .NET Framework Web 專案(csproj 或整個 `.sln`)。
 - **`tp-run-dotnet-framework-web`** — 以 IIS Express 啟動某個 csproj 的站台。
 - **`tp-stop-dotnet-framework-web`** — 停止某個 csproj 對應的 IIS Express 站台。
@@ -29,9 +32,21 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
 
 ## 設定
 
-- 需 Windows + IIS Express + MSBuild（VS 2017/2019/2022 任一）。
-- 跑 `/tp-setup` 部署 `.turbo-plugin/config.toml` 的 dotnet 區塊（`[iis]` 等）與 `applicationhost.config`。`tp-setup` 用共用 base 段建立 concern-neutral 共用檔（標記區塊),只寫自己的 dotnet 區塊,不覆蓋其它 plugin。
-- MSBuild / IIS Express 路徑寫在 `.turbo-plugin/config.local.toml` 的 `[tools]`（gitignored、機器專屬）；**不在 setup 詢問**——`/tp-*` skill 會自動探測標準 VS 安裝,找不到時 throw 引導你手動填入。
+- 需 Windows + IIS Express + MSBuild。MSBuild 來自 **Visual Studio 2017/2019/2022 任一版本,或只裝
+  「Build Tools for Visual Studio」**(沒有 IDE 也可以,CI 機器就是這樣)。
+- **不需要先跑任何設定指令。** 各項設定都是用到才建、且都能自我修復:
+  - `.turbo-plugin/applicationhost.config` — 第一次 `/tp-run` 時依 csproj 的 `<IISUrl>` /
+    `<IISExpressSSLPort>` / `<IISExpressUseClassicPipelineMode>` 產生(站台名 = 專案名、physicalPath 是佔位符,
+    所以這個檔可以進版控、跨同事跨 worktree 共用)。同一份檔案可以放多個 web 專案的站台。
+  - `.turbo-plugin/config.toml` 的 dotnet 區塊 — 由記憶存回在寫入時自己建立(含標記區塊與 section)。
+    `[iis] enabled` 未設定即視為啟用;要停用 IIS 相關 skill 才需要手動寫 `enabled = false`。
+  - MSBuild / IIS Express 路徑寫在 `.turbo-plugin/config.local.toml` 的 `[tools]`(gitignored、機器專屬),
+    **只在自動探測失敗時才需要**;skill 會自己探測標準安裝路徑,找不到才 throw 並引導你手動填。
+- **需要 git repo**:專案識別用 `git --git-common-dir` 算,不在 git work tree 內的話 skill 會 fail loudly。
+  要建 git + SVN 環境請裝 `turbo-plugin-git-svn` 跑它的 `/tp-setup`(那些動作會碰外部伺服器,不能 lazy)。
+- **哪些檔案不該進版控**(`bin/` / `obj/` / `.vs/` / 本機設定 …)由 `turbo-plugin-git-svn` 的
+  `/tp-suggest-ignore` 判斷,本 plugin 不寫死清單。唯一的例外是 `*.local.*`:記憶存回在寫
+  `config.local.toml` 之前會先確保 `.gitignore` 擋住它(誰寫這種檔誰負責)。
 
 ## 安裝
 
@@ -49,7 +64,7 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
 自動化測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
 
 - `tests/Invoke-ScriptTests.ps1`（Windows PowerShell 5.1）/ `tests/invoke-script-tests.sh`（bash）。
-- 各腳本、`lib` helper（IisHelpers / ApplicationHostHelpers / Common 的 dotnet concern）、EnterWorktree hook 的行為測試；缺 MSBuild / IIS 的 runner 上對應測試自我 SKIP（CI 視為綠）。
+- 各腳本與 `lib` helper（IisHelpers / ApplicationHostHelpers / Common 的 dotnet concern）的行為測試；缺 MSBuild / IIS 的 runner 上對應測試自我 SKIP（CI 視為綠）。
 
 ## License
 

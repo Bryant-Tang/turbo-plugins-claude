@@ -5,9 +5,9 @@
 # [tools](machine-specific 工具路徑,如 msbuild_path / iis_express_path)請寫到
 # .turbo-plugin/config.local.toml(gitignored 的 sibling 檔案),不要寫在這裡。
 #
-# 下面的 "# >>> turbo-plugin:<concern> >>>" / "# <<< ... <<<" 是各 plugin setup 的
-# 標記區塊;每個 plugin 只會更新自己的區塊,彼此不覆蓋。標記是 TOML 註解(# 開頭),
-# config reader 會略過,不影響解析。
+# 下面的 "# >>> turbo-plugin:<concern> >>>" / "# <<< ... <<<" 是各 plugin 的標記區塊;
+# 每個 plugin 只會更新自己的區塊,彼此不覆蓋。標記是 TOML 註解(# 開頭),
+# config reader 會略過,不影響解析。找不到自己的區塊時,寫入方會在檔尾補一組。
 
 # >>> turbo-plugin:git-svn >>>
 [svn]

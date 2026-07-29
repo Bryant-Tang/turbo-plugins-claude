@@ -21,7 +21,7 @@ try {
     $projectFile = $target.Path
 
     # MSBuild path: config.local.toml [tools] msbuild_path → standard VS install locations
-    # (strict cut, no env var fallback — throws with /tp-setup guidance if missing)
+    # (strict cut, no env var fallback — throws pointing at config.local.toml if missing)
     $msbuildPath = Find-MSBuild -RepoRoot $repoRoot
 
     # pubxml: CLI arg → config.toml [publish].default_pubxml → auto-detect single .pubxml under project's Properties/PublishProfiles

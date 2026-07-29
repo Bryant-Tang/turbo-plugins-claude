@@ -20,7 +20,7 @@ try {
     $projectFile = $target.Path
 
     # MSBuild path: config.local.toml [tools] msbuild_path → standard VS install locations
-    # (strict cut, no env var fallback — throws with /tp-setup guidance if missing)
+    # (strict cut, no env var fallback — throws pointing at config.local.toml if missing)
     $msbuildPath = Find-MSBuild -RepoRoot $repoRoot
 
     # Configuration / Platform: OMIT when the agent gave no value (no CLI, no [build] memory) so

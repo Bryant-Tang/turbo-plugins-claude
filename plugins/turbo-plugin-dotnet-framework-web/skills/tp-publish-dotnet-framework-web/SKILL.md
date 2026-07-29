@@ -63,7 +63,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ### Step 4 — 記憶存回(save-back)
 
-publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/memory-save-back.md`:比對這次選定的 csproj target / pubxml / configuration 與已存記憶(`[publish]` 的 key),有差異就問使用者要不要存。
+publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.md`:比對這次選定的 csproj target / pubxml / configuration 與已存記憶(`[publish]` 的 key),有差異就問使用者要不要存。
 
 ## Decision Rules
 

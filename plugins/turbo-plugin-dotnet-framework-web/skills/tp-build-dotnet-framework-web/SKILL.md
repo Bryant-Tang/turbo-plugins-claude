@@ -58,7 +58,7 @@ Script 會:解析 target(CLI `-Project` → `config.toml [build].project` → �
 
 ### Step 4 — 記憶存回(save-back)
 
-build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/memory-save-back.md`:比對這次選定的 target / configuration / platform 與已存記憶,有差異就問使用者要不要存(committed / local / 撤回省略 / 不存)。
+build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.md`:比對這次選定的 target / configuration / platform 與已存記憶,有差異就問使用者要不要存(committed / local / 撤回省略 / 不存)。
 
 ## Decision Rules
 

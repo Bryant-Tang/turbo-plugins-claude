@@ -44,7 +44,7 @@ try {
     #    mode matches the generic <stem>-<8hex> family (no live site is known to exclude).
     # canonical applicationhost.config is shared across worktrees and never mutated
     # at runtime; XML orphan site scan is therefore obsolete (canonical only contains current
-    # project's site entries managed by VS / tp-setup, not stale per-worktree entries).
+    # project's canonical site entries, not stale per-worktree ones).
     $processes = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'iisexpress.exe'" -ErrorAction SilentlyContinue)
     $orphanProcs = @()
     foreach ($p in $processes) {

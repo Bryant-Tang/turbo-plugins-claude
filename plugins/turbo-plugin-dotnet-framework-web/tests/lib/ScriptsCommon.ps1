@@ -110,7 +110,7 @@ function New-GitMainRepo {
     # <Root>/.turbo-plugin/worktrees. Commit a .gitignore for it BEFORE adding any
     # linked worktree there so the main worktree's `git status` stays clean (the
     # nested worktree would otherwise show as an untracked ".turbo-plugin/" entry).
-    # (The full gitignore wiring lives in tp-setup; this is the fixture-side companion.)
+    # (Which project files belong in .gitignore is tp-suggest-ignore's call; this is the fixture side.)
     [System.IO.File]::WriteAllText([System.IO.Path]::Combine($Root, '.gitignore'), "/.turbo-plugin/worktrees/`n")
     $null = Run-Git -Cwd $Root -GitArgs @('add', '-A')
     $null = Run-Git -Cwd $Root -GitArgs @('commit', '-m', 'initial', '--allow-empty')
