@@ -3,7 +3,9 @@ param(
     [string]$Branch = '',
     # U9: the agent supplies ONLY the title. The body is read from the pin file written by
     # Build-SvnCommit (body-from-file) and combined here — the agent cannot pass a free message.
-    [string]$Title = ''
+    [string]$Title = '',
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -33,7 +35,7 @@ try {
     $tpPrevConsoleEnc = [Console]::OutputEncoding
     [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage)
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
 
     $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir

@@ -166,5 +166,39 @@ test_error_token_on_postsanitization_failure() {
     assertEquals 'exactly one token' 1 "$(token_count)"
 }
 
+# ── Case 8: --repo-root names the repository instead of inheriting the cwd ─────
+# Contrast with Case 7: the SAME non-repo working directory that yields TP_TOKEN:ERROR
+# without --repo-root must route normally once the repository is named.
+test_repo_root_overrides_cwd() {
+    if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi
+    if git -C "$SB" rev-parse --git-dir >/dev/null 2>&1; then
+        echo "WARNING: --repo-root test skipped: \$SB ($SB) is inside a git repo, so cwd alone could produce the token." >&2
+        startSkipping; return 0
+    fi
+    local repo; repo="$(new_git_repo)"   # on main; no .turbo-plugin/worktrees bridge
+    run_preflight "$SB" --branch main --repo-root "$repo"
+    assertEquals 'named repo routes normally from outside any repo' 0 "$PF_EXIT"
+    case "$PF_STDOUT" in
+        *"TP_TOKEN:BRIDGE_ABSENT requested=main target="*) assertTrue 'emits BRIDGE_ABSENT for the NAMED repo' 0 ;;
+        *) fail "expected 'BRIDGE_ABSENT requested=main target=...', got: $PF_STDOUT" ;;
+    esac
+    assertEquals 'exactly one token' 1 "$(token_count)"
+}
+
+# ── Case 9: a --repo-root that does not exist stays token-shaped ───────────────
+# resolve_git_root fails before any git call; the failure must still reach the SKILL as the
+# one TP_TOKEN:ERROR it routes on, never as a bare non-zero exit.
+test_repo_root_missing_emits_error_token() {
+    if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi
+    local repo; repo="$(new_git_repo)"
+    run_preflight "$repo" --branch main --repo-root "$SB/definitely-not-here"
+    assertEquals 'missing --repo-root exits 1' 1 "$PF_EXIT"
+    case "$PF_STDOUT" in
+        TP_TOKEN:ERROR*) assertTrue 'emits TP_TOKEN:ERROR' 0 ;;
+        *) fail "expected stdout to start with 'TP_TOKEN:ERROR', got: $PF_STDOUT" ;;
+    esac
+    assertEquals 'exactly one token' 1 "$(token_count)"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

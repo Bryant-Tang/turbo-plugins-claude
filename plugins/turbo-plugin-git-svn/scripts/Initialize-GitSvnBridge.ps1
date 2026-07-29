@@ -5,7 +5,12 @@ param(
     [string]$Granularity = '',
     [string]$Range = '',
     [switch]$AllowExistingRemote,
-    [switch]$AllowNestedRepos
+    [switch]$AllowNestedRepos,
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    # Load-bearing here more than anywhere else: this is the one script that can CREATE a repository,
+    # so naming the target outright is the difference between bootstrapping the project the caller
+    # meant and bootstrapping whatever checkout the process happened to be standing in.
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -52,12 +57,15 @@ try {
     # Skipping it on re-invoke / case (b) keeps the re-run clean and is still idempotent.
     #
     # When we ARE already in a repo, two guards run FIRST, before anything is mutated, so a refusal
-    # leaves the repo byte-identical. Both exist because this script resolves its target from the
-    # AMBIENT cwd (Get-MainWorktree walks up from wherever it was invoked), so an invocation made in
-    # the wrong directory silently bootstraps a bridge into a repo the caller never named.
+    # leaves the repo byte-identical. Both exist because, absent -RepoRoot, this script resolves its
+    # target from the AMBIENT cwd (git walks up from wherever it was invoked), so an invocation made
+    # in the wrong directory silently bootstraps a bridge into a repo the caller never named. Passing
+    # -RepoRoot removes that failure mode at the source; the guards stay because the ambient default
+    # is still supported and still the common way this is called.
+    $gitRoot = Resolve-GitRoot -RepoRoot $RepoRoot
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
-    & git rev-parse --git-dir 2>$null | Out-Null
+    & git -C $gitRoot rev-parse --git-dir 2>$null | Out-Null
     $alreadyRepo = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = $prevEAP
     if ($alreadyRepo) {
@@ -66,15 +74,15 @@ try {
         # content into ITS current branch -- not the branch the caller is standing on. tp-setup
         # already routes peer worktrees to its "verify config only" case; this enforces the same
         # rule for callers that reach the script directly.
-        if (-not (Test-IsMainWorktree)) {
+        if (-not (Test-IsMainWorktree -RepoRoot $RepoRoot)) {
             $prevEAP = $ErrorActionPreference
             $ErrorActionPreference = 'SilentlyContinue'
-            $here = (& git rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
+            $here = (& git -C $gitRoot rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
             $ErrorActionPreference = $prevEAP
             if ([string]::IsNullOrWhiteSpace($here)) { $here = '<unknown>' }
             $msg = "Refusing to bootstrap an SVN bridge from a linked worktree.`n"
             $msg += "  you are in:    $here`n"
-            $msg += "  would act on:  $(Get-MainWorktree)`n"
+            $msg += "  would act on:  $(Get-MainWorktree -RepoRoot $RepoRoot)`n"
             $msg += 'Bootstrapping here would create the bridge branch and worktree in that OTHER checkout and merge SVN content into its current branch. Re-run from the main worktree instead.'
             throw $msg
         }
@@ -86,7 +94,7 @@ try {
         if (-not $AllowExistingRemote) {
             $prevEAP = $ErrorActionPreference
             $ErrorActionPreference = 'SilentlyContinue'
-            $remoteNames = @(& git remote 2>$null)
+            $remoteNames = @(& git -C $gitRoot remote 2>$null)
             $ErrorActionPreference = $prevEAP
             $remoteNames = @($remoteNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
             if ($remoteNames.Count -gt 0) {
@@ -107,7 +115,7 @@ try {
         # legitimately contain a vendored sub-repo -- so emit a token and let the agent ask which
         # project was meant.
         if (-not $AllowNestedRepos) {
-            $nested = @(Get-ChildItem -LiteralPath (Get-Location).Path -Directory -ErrorAction SilentlyContinue |
+            $nested = @(Get-ChildItem -LiteralPath $gitRoot -Directory -ErrorAction SilentlyContinue |
                 Where-Object { Test-Path -LiteralPath ([System.IO.Path]::Combine($_.FullName, '.git')) } |
                 ForEach-Object { $_.Name })
             if ($nested.Count -gt 0) {
@@ -120,11 +128,11 @@ try {
             }
         }
 
-        & git init -b main
+        & git -C $gitRoot init -b main
         if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
     }
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
 
     # ---- step 4: git identity check (merged local+global; plain reads, NOT --local). ----
     # `git commit` needs an identity. If EITHER name or email is empty, emit the token on stdout so

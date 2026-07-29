@@ -21,11 +21,14 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 BRANCH='main'
 REL_PATH=''   # NOT `PATH` — that is the shell's executable search path.
+# Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
+REPO_ROOT=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --branch) [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
-    --path)   [[ $# -ge 2 ]] || { echo "Error: --path requires a value" >&2; exit 1; }; REL_PATH="$2"; shift 2 ;;
+    --branch)    [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --path)      [[ $# -ge 2 ]] || { echo "Error: --path requires a value" >&2; exit 1; }; REL_PATH="$2"; shift 2 ;;
+    --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -35,7 +38,7 @@ probe_git_version
 if [[ -z "$BRANCH" ]]; then BRANCH='main'; fi
 if [[ -z "$REL_PATH" ]]; then echo "Error: --path is required (bridge-relative path)" >&2; exit 1; fi
 
-MAIN_WORKTREE="$(get_main_worktree)"
+MAIN_WORKTREE="$(get_main_worktree "$REPO_ROOT")"
 WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
 
 REMOTE_SPEC="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR")"

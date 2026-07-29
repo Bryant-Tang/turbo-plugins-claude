@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$Branch = ''
+    [string]$Branch = '',
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -41,7 +43,7 @@ try {
     Assert-ValidRemoteBranchName -BranchName $Branch
     $sanitized = $true
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
 
     # Detached-HEAD detection via symbolic-ref (NOT "current == requested"):

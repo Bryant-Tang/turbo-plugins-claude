@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$SvnUrl = '',
-    [string]$Branch = ''
+    [string]$Branch = '',
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -65,7 +67,7 @@ try {
 
     if ([string]::IsNullOrWhiteSpace($SvnUrl)) { throw '-SvnUrl is required (the existing SVN branch URL to import)' }
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
     if (-not (Test-Path -LiteralPath $worktreesDir)) {
         throw "Worktrees directory not found: $worktreesDir. Run git-svn /tp-setup first to bootstrap."

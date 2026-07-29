@@ -27,6 +27,11 @@ GRANULARITY=''
 RANGE=''
 ALLOW_EXISTING_REMOTE=false
 ALLOW_NESTED_REPOS=false
+# Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
+# Load-bearing here more than anywhere else: this is the one script that can CREATE a repository,
+# so naming the target outright is the difference between bootstrapping the project the caller
+# meant and bootstrapping whatever checkout the process happened to be standing in.
+REPO_ROOT=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +39,7 @@ while [[ $# -gt 0 ]]; do
     --branch)      [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
     --granularity) [[ $# -ge 2 ]] || { echo "Error: --granularity requires a value" >&2; exit 1; }; GRANULARITY="$2"; shift 2 ;;
     --range)       [[ $# -ge 2 ]] || { echo "Error: --range requires a value" >&2; exit 1; }; RANGE="$2"; shift 2 ;;
+    --repo-root)   [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
     --allow-existing-remote) ALLOW_EXISTING_REMOTE=true; shift ;;
     --allow-nested-repos) ALLOW_NESTED_REPOS=true; shift ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
@@ -62,20 +68,23 @@ fi
 # idempotent.
 #
 # When we ARE already in a repo, two guards run FIRST, before anything is mutated, so a refusal
-# leaves the repo byte-identical. Both exist because this script resolves its target from the
-# AMBIENT cwd (get_main_worktree walks up from wherever it was invoked), so an invocation made in
-# the wrong directory silently bootstraps a bridge into a repo the caller never named.
-if git rev-parse --git-dir >/dev/null 2>&1; then
+# leaves the repo byte-identical. Both exist because, absent --repo-root, this script resolves its
+# target from the AMBIENT cwd (git walks up from wherever it was invoked), so an invocation made in
+# the wrong directory silently bootstraps a bridge into a repo the caller never named. Passing
+# --repo-root removes that failure mode at the source; the guards stay because the ambient default
+# is still supported and still the common way this is called.
+GIT_ROOT="$(resolve_git_root "$REPO_ROOT")"
+if git -C "$GIT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   # Guard 1 -- must be the MAIN worktree. From a linked worktree get_main_worktree resolves to a
   # DIFFERENT checkout, so we would create the bridge branch/worktree there and merge SVN content
   # into ITS current branch -- not the branch the caller is standing on. tp-setup already routes
   # peer worktrees to its "verify config only" case; this enforces the same rule for callers that
   # reach the script directly.
-  if ! test_is_main_worktree; then
-    HERE="$(git rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
+  if ! test_is_main_worktree "$REPO_ROOT"; then
+    HERE="$(git -C "$GIT_ROOT" rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
     echo "Error: refusing to bootstrap an SVN bridge from a linked worktree." >&2
     echo "  you are in:    ${HERE:-<unknown>}" >&2
-    echo "  would act on:  $(get_main_worktree)" >&2
+    echo "  would act on:  $(get_main_worktree "$REPO_ROOT")" >&2
     echo "Bootstrapping here would create the bridge branch and worktree in that OTHER checkout and merge SVN content into its current branch. Re-run from the main worktree instead." >&2
     exit 1
   fi
@@ -85,7 +94,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   # it means the cwd was wrong. Not a hard refusal: emit a token so the agent can confirm with the
   # user in plain language and re-invoke with --allow-existing-remote.
   if [[ "$ALLOW_EXISTING_REMOTE" != true ]]; then
-    EXISTING_REMOTES="$(git remote 2>/dev/null | tr '\n' ' ' | sed 's/ *$//' || true)"
+    EXISTING_REMOTES="$(git -C "$GIT_ROOT" remote 2>/dev/null | tr '\n' ' ' | sed 's/ *$//' || true)"
     if [[ -n "$EXISTING_REMOTES" ]]; then
       echo "TP_TOKEN:EXISTING_GIT_REMOTE remotes=$EXISTING_REMOTES"
       echo "This repository already has git remote(s): $EXISTING_REMOTES"
@@ -103,7 +112,7 @@ else
   # sub-repo -- so emit a token and let the agent ask which project was meant.
   if [[ "$ALLOW_NESTED_REPOS" != true ]]; then
     NESTED=''
-    for _child in ./*/; do
+    for _child in "$GIT_ROOT"/*/; do
       [[ -d "$_child" ]] || continue
       [[ -e "${_child}.git" ]] || continue
       _name="$(basename -- "${_child%/}")"
@@ -118,10 +127,10 @@ else
     fi
   fi
 
-  git init -b main
+  git -C "$GIT_ROOT" init -b main
 fi
 
-MAIN_WORKTREE="$(get_main_worktree)"
+MAIN_WORKTREE="$(get_main_worktree "$REPO_ROOT")"
 
 # ---- step 4: git identity check (merged local+global; plain reads, NOT --local). ----
 # `git commit` needs an identity. If EITHER name or email is empty, emit the token on stdout so

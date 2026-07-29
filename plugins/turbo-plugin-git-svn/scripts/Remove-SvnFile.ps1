@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$Branch = 'main',
-    [string]$Path = ''
+    [string]$Path = '',
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -34,7 +36,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($Branch)) { $Branch = 'main' }
     if ([string]::IsNullOrWhiteSpace($Path)) { throw 'Missing required argument: -Path <bridge-relative path>' }
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
 
     $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir

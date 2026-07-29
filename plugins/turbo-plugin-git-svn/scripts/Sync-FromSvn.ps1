@@ -2,7 +2,9 @@
 param(
     [string]$Branch = '',
     [string]$Granularity = '',
-    [string]$Range = ''
+    [string]$Range = '',
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -22,7 +24,7 @@ try {
         throw 'Missing required argument: -Branch <branch>'
     }
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
 
     $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir

@@ -83,9 +83,38 @@ get_normalized_absolute_path() {
   echo "$resolved"
 }
 
+# Resolve an optional explicit repository root into the value handed to `git -C`.
+#
+# Omitted / empty echoes '.', and `git -C .` is a no-op -- so callers that pass nothing keep the
+# historical behaviour exactly: git resolves the repository by walking up from whatever directory
+# the process happens to be standing in. A supplied path is normalized (Git Bash /c/foo -> c:/foo)
+# and asserted to be a real directory here, so a typo fails with a message naming the argument
+# instead of surfacing later as git's own "cannot change to ..." mid-operation.
+#
+# Why this exists: deriving the target from the ambient cwd is how the marketplace repo once got a
+# bridge bootstrapped into it. Every entry script now accepts --repo-root so the caller can name the
+# repository outright, which is also what makes a multi-project workspace (several sibling repos
+# under one session root) workable.
+resolve_git_root() {
+  local repo_root="${1:-}"
+  if [[ -z "$repo_root" ]]; then
+    echo '.'
+    return 0
+  fi
+  local normalized
+  normalized="$(get_normalized_absolute_path "$repo_root")" || return 1
+  if [[ ! -d "$normalized" ]]; then
+    echo "Error: repo root not found (or not a directory): $repo_root" >&2
+    return 1
+  fi
+  echo "$normalized"
+}
+
+# Args: [repo_root]  (omit for the ambient cwd)
 get_main_worktree() {
-  local common_dir
-  common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  local root common_dir
+  root="$(resolve_git_root "${1:-}")" || return 1
+  common_dir="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   if [[ -z "$common_dir" ]]; then
     echo "Error: not inside a git repository." >&2
     return 1
@@ -93,10 +122,12 @@ get_main_worktree() {
   get_normalized_absolute_path "$(dirname "$common_dir")"
 }
 
+# Args: [repo_root]  (omit for the ambient cwd)
 test_is_main_worktree() {
-  local common_dir top_level parent top
-  common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  top_level="$(git rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
+  local root common_dir top_level parent top
+  root="$(resolve_git_root "${1:-}")" || return 1
+  common_dir="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  top_level="$(git -C "$root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
   if [[ -z "$common_dir" || -z "$top_level" ]]; then
     return 1
   fi
@@ -105,9 +136,11 @@ test_is_main_worktree() {
   [[ "$parent" == "$top" ]]
 }
 
+# Args: [repo_root]  (omit for the ambient cwd)
 test_is_submodule() {
-  local super
-  super="$(git rev-parse --show-superproject-working-tree 2>/dev/null || true)"
+  local root super
+  root="$(resolve_git_root "${1:-}")" || return 1
+  super="$(git -C "$root" rev-parse --show-superproject-working-tree 2>/dev/null || true)"
   [[ -n "$super" ]]
 }
 

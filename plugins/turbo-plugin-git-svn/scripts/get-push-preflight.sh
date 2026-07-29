@@ -12,6 +12,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 PREFIX='TP_TOKEN:'
 BRANCH=''
+# Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
+REPO_ROOT=''
 
 # Emit a terminal ERROR token on the SKILL's routing channel (parity with the .ps1 catch),
 # for a POST-sanitization failure (e.g. MAX_PATH in resolve) so it is never a tokenless
@@ -26,7 +28,8 @@ _die_token() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --branch) [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --branch)    [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -48,7 +51,7 @@ assert_valid_remote_branch_name "$BRANCH" || exit 1
 
 # Post-sanitization: worktree resolution failures emit TP_TOKEN:ERROR (parity with the .ps1
 # catch, which fires for the same Get-MainWorktree/Get-WorktreesDir throws once sanitized).
-if ! MAIN_WORKTREE="$(get_main_worktree 2>&1)"; then _die_token "$MAIN_WORKTREE"; fi
+if ! MAIN_WORKTREE="$(get_main_worktree "$REPO_ROOT" 2>&1)"; then _die_token "$MAIN_WORKTREE"; fi
 if ! WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE" 2>&1)"; then _die_token "$WORKTREES_DIR"; fi
 
 # Detached-HEAD detection via symbolic-ref (not current == requested).

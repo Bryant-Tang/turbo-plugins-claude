@@ -12,11 +12,14 @@ BRANCH=''
 # U9: the agent supplies ONLY the title. The body is read from the pin file written by
 # build-svn-commit.sh (body-from-file) and combined here — the agent cannot pass a free message.
 TITLE=''
+# Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
+REPO_ROOT=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --branch)   [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
-    --title)    [[ $# -ge 2 ]] || { echo "Error: --title requires a value" >&2; exit 1; }; TITLE="$2"; shift 2 ;;
+    --branch)    [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --title)     [[ $# -ge 2 ]] || { echo "Error: --title requires a value" >&2; exit 1; }; TITLE="$2"; shift 2 ;;
+    --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -26,7 +29,7 @@ probe_git_version
 if [[ -z "$BRANCH" ]]; then echo "Error: --branch is required" >&2; exit 1; fi
 if [[ -z "$TITLE" ]]; then echo "Error: --title is required" >&2; exit 1; fi
 
-MAIN_WORKTREE="$(get_main_worktree)"
+MAIN_WORKTREE="$(get_main_worktree "$REPO_ROOT")"
 WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
 
 REMOTE_SPEC="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR")"

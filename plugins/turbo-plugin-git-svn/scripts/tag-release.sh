@@ -16,10 +16,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
 BRANCH=''
+# Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
+REPO_ROOT=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --branch) [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --branch)    [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -28,7 +31,7 @@ if [[ -z "$BRANCH" ]]; then echo "Error: --branch is required" >&2; exit 1; fi
 
 probe_git_version
 
-MAIN_WORKTREE="$(get_main_worktree)"
+MAIN_WORKTREE="$(get_main_worktree "$REPO_ROOT")"
 WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
 
 RESOLVED="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR")"

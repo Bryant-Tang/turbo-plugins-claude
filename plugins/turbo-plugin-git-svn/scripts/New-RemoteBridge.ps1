@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$Branch = '',
-    [string]$SvnUrl = ''
+    [string]$SvnUrl = '',
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -21,7 +23,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($Branch)) { throw '-Branch is required' }
     if ([string]::IsNullOrWhiteSpace($SvnUrl)) { throw '-SvnUrl is required' }
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
 
     if (-not (Test-Path -LiteralPath $worktreesDir)) {

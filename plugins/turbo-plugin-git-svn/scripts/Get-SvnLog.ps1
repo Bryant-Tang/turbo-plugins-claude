@@ -3,7 +3,9 @@ param(
     [string]$Branch = 'main',
     [int]$Limit = 5,
     [string]$Revision = '',
-    [switch]$VerboseOutput
+    [switch]$VerboseOutput,
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -18,7 +20,7 @@ try {
         throw "Limit must be a positive integer (got '$Limit')."
     }
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
     $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
 
     $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir

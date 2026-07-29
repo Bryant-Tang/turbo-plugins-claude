@@ -27,6 +27,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 # Collect any --branch <name> args (repeatable). No --branch => default to all.
 REQUESTED=()
+# Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
+REPO_ROOT=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch)
@@ -38,6 +40,15 @@ while [[ $# -gt 0 ]]; do
       REQUESTED+=("${1#--branch=}")
       shift
       ;;
+    --repo-root)
+      if [[ $# -lt 2 ]]; then echo "Error: --repo-root requires a value." >&2; exit 1; fi
+      REPO_ROOT="$2"
+      shift 2
+      ;;
+    --repo-root=*)
+      REPO_ROOT="${1#--repo-root=}"
+      shift
+      ;;
     *)
       echo "Error: unknown argument '$1'." >&2
       exit 1
@@ -47,7 +58,7 @@ done
 
 probe_git_version
 
-MAIN_WORKTREE="$(get_main_worktree)"
+MAIN_WORKTREE="$(get_main_worktree "$REPO_ROOT")"
 
 # Refuse to run against a dirty main worktree.
 if ! STATUS="$(git -C "$MAIN_WORKTREE" status --porcelain)"; then

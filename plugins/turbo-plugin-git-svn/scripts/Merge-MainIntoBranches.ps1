@@ -1,5 +1,9 @@
 ﻿[CmdletBinding()]
-param([string[]]$Branch = @())
+param(
+    [string[]]$Branch = @(),
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -31,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 try {
     Probe-GitVersion
 
-    $mainWorktree = Get-MainWorktree
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
 
     # Refuse to run from / against a dirty main worktree.
     $status = (& git -C $mainWorktree status --porcelain 2>$null | Out-String).Trim()

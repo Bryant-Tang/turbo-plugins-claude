@@ -16,13 +16,16 @@ BRANCH='main'
 LIMIT='5'
 REVISION=''
 VERBOSE=false
+# Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
+REPO_ROOT=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --branch)   [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
-    --limit)    [[ $# -ge 2 ]] || { echo "Error: --limit requires a value" >&2; exit 1; }; LIMIT="$2"; shift 2 ;;
-    --revision) [[ $# -ge 2 ]] || { echo "Error: --revision requires a value" >&2; exit 1; }; REVISION="$2"; shift 2 ;;
-    --verbose)  VERBOSE=true; shift ;;
+    --branch)    [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --limit)     [[ $# -ge 2 ]] || { echo "Error: --limit requires a value" >&2; exit 1; }; LIMIT="$2"; shift 2 ;;
+    --revision)  [[ $# -ge 2 ]] || { echo "Error: --revision requires a value" >&2; exit 1; }; REVISION="$2"; shift 2 ;;
+    --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
+    --verbose)   VERBOSE=true; shift ;;
     *) echo "Error: unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -33,7 +36,7 @@ if ! [[ "$LIMIT" =~ ^[1-9][0-9]*$ ]]; then
   echo "Error: --limit must be a positive integer (got '$LIMIT')." >&2; exit 1
 fi
 
-MAIN_WORKTREE="$(get_main_worktree)"
+MAIN_WORKTREE="$(get_main_worktree "$REPO_ROOT")"
 WORKTREES_DIR="$(get_worktrees_dir "$MAIN_WORKTREE")"
 
 REMOTE_SPEC="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR")"

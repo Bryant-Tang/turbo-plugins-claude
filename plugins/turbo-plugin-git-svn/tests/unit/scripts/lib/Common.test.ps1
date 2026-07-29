@@ -428,6 +428,104 @@ Describe 'Get-NormalizedAbsolutePath' {
     }
 }
 
+Describe 'Resolve-GitRoot' {
+
+    It 'omitted repo root resolves to "." so git -C . stays a no-op' {
+        Resolve-GitRoot -RepoRoot '' | Should -Be '.'
+    }
+
+    It 'whitespace-only repo root also resolves to "."' {
+        Resolve-GitRoot -RepoRoot '   ' | Should -Be '.'
+    }
+
+    It 'a path that does not exist throws instead of reaching git' {
+        $missing = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), ('tp-absent-' + [Guid]::NewGuid().ToString('N')))
+        { Resolve-GitRoot -RepoRoot $missing } | Should -Throw -ExpectedMessage '*Repo root not found*'
+    }
+
+    It 'a file rather than a directory is rejected' {
+        $repo = New-IsolatedRepoRoot 'gitrootfile'
+        try {
+            $file = Join-Path $repo 'not-a-dir.txt'
+            [System.IO.File]::WriteAllText($file, 'x')
+            { Resolve-GitRoot -RepoRoot $file } | Should -Throw -ExpectedMessage '*Repo root not found*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+}
+
+Describe 'Get-MainWorktree / Test-IsMainWorktree with an explicit -RepoRoot' {
+
+    BeforeAll {
+        # Declared in BeforeAll, not at Describe scope: a function defined directly under a
+        # Describe/Context body is gone by the time Pester 5 runs the It blocks.
+        function Invoke-GitQuiet {
+            param([string]$Cwd, [string[]]$GitArgs)
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            try {
+                & git -C $Cwd @GitArgs 2>$null | Out-Null
+            } finally {
+                $ErrorActionPreference = $prev
+            }
+        }
+
+        function New-BareGitRepo {
+            param([string]$Path)
+            $null = New-Item -ItemType Directory -Path $Path -Force
+            Invoke-GitQuiet -Cwd $Path -GitArgs @('init', '-b', 'main')
+            Invoke-GitQuiet -Cwd $Path -GitArgs @('config', 'user.email', 'test@turbo-plugin')
+            Invoke-GitQuiet -Cwd $Path -GitArgs @('config', 'user.name', 'turbo-plugin-test')
+            Invoke-GitQuiet -Cwd $Path -GitArgs @('commit', '--allow-empty', '-m', 'init')
+        }
+    }
+
+    It 'resolves the NAMED repo, not the one the process happens to be standing in' {
+        $sandbox = New-IsolatedRepoRoot 'reporoot'
+        $origin = (Get-Location).Path
+        try {
+            $alpha = Join-Path $sandbox 'alpha'
+            $beta = Join-Path $sandbox 'beta'
+            New-BareGitRepo -Path $alpha
+            New-BareGitRepo -Path $beta
+
+            Set-Location -LiteralPath $alpha
+            $ambient = Get-MainWorktree
+            $named = Get-MainWorktree -RepoRoot $beta
+
+            $ambient | Should -Match 'alpha$'
+            $named | Should -Match 'beta$'
+            $named | Should -Not -Be $ambient
+        } finally {
+            Set-Location -LiteralPath $origin
+            Remove-IsolatedRepoRoot -Dir $sandbox
+        }
+    }
+
+    It 'Test-IsMainWorktree judges the named path, not the cwd' {
+        # Guard 1 of the bridge bootstrap rides on this: standing in the main worktree while
+        # naming a linked one must still report "linked".
+        $sandbox = New-IsolatedRepoRoot 'reporootlw'
+        $origin = (Get-Location).Path
+        try {
+            $main = Join-Path $sandbox 'main'
+            $linked = Join-Path $sandbox 'linked'
+            New-BareGitRepo -Path $main
+            Invoke-GitQuiet -Cwd $main -GitArgs @('worktree', 'add', '-b', 'feat/lw', $linked)
+
+            Set-Location -LiteralPath $main
+            (Test-IsMainWorktree -RepoRoot $main) | Should -BeTrue
+            (Test-IsMainWorktree -RepoRoot $linked) | Should -BeFalse
+            # ...and the main worktree is what both resolve to.
+            (Get-MainWorktree -RepoRoot $linked) | Should -Be (Get-MainWorktree -RepoRoot $main)
+        } finally {
+            Set-Location -LiteralPath $origin
+            Remove-IsolatedRepoRoot -Dir $sandbox
+        }
+    }
+}
+
 Describe 'Resolve-RemoteWorktree' {
 
     BeforeAll { $script:WtDir = 'C:\proj.worktrees' }

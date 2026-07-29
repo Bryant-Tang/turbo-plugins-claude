@@ -39,11 +39,13 @@ BeforeAll {
     }
 
     function Invoke-Preflight {
-        param([string]$WorkDir, [string]$Branch)
+        param([string]$WorkDir, [string]$Branch, [string]$RepoRoot = '')
         $oldLoc = Get-Location
         try {
             Set-Location -LiteralPath $WorkDir
-            $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script:ScriptUnderTest -Branch $Branch 2>$null
+            $psArgs = @('-Branch', $Branch)
+            if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) { $psArgs += @('-RepoRoot', $RepoRoot) }
+            $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script:ScriptUnderTest @psArgs 2>$null
             $exit = $LASTEXITCODE
         } catch {
             $out = @($_.Exception.Message); $exit = 99
@@ -137,6 +139,41 @@ Describe 'Get-PushPreflight token contract' {
             } finally {
                 Remove-Item -LiteralPath $nonGit -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    Context '-RepoRoot names the repository instead of inheriting the caller''s directory' {
+        # Contrast with the Context above: the SAME non-repo working directory that yields
+        # TP_TOKEN:ERROR without -RepoRoot must route normally once the repository is named.
+        It 'routes on the named repo while cwd is outside any git repo' -Skip:(-not $hasGit) {
+            $repo = New-GitRepo   # on main; no .turbo-plugin/worktrees
+            $nonGit = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pf-outside-$([Guid]::NewGuid().ToString('N'))")
+            $null = New-Item -ItemType Directory -Path $nonGit -Force
+            try {
+                $inRepo = $false
+                try { & git -C $nonGit rev-parse --git-dir 2>$null | Out-Null; $inRepo = ($LASTEXITCODE -eq 0) } catch { $inRepo = $false }
+                if ($inRepo) {
+                    Write-Warning '-RepoRoot test skipped: temp dir is inside a git repo, so cwd alone could produce the token.'
+                    Set-ItResult -Skipped -Because 'temp dir is inside a git repo'; return
+                }
+
+                $r = Invoke-Preflight -WorkDir $nonGit -Branch 'main' -RepoRoot $repo
+                $r.Token | Should -BeLike 'TP_TOKEN:BRIDGE_ABSENT*requested=main*target=*'
+                $r.TokenCount | Should -Be 1
+            } finally {
+                Remove-Item -LiteralPath $nonGit -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'a -RepoRoot that does not exist fails as TP_TOKEN:ERROR, not tokenless' -Skip:(-not $hasGit) {
+            # Resolve-GitRoot throws before any git call; the script''s catch must still shape it
+            # into the one token the SKILL routes on.
+            $repo = New-GitRepo
+            $absent = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pf-absent-$([Guid]::NewGuid().ToString('N'))")
+            $r = Invoke-Preflight -WorkDir $repo -Branch 'main' -RepoRoot $absent
+            $r.Exit | Should -Be 1
+            $r.Token | Should -BeLike 'TP_TOKEN:ERROR*'
+            $r.TokenCount | Should -Be 1
         }
     }
 }

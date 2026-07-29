@@ -5,7 +5,9 @@
 # Covers:
 #   - probe_git_version            — happy (git on PATH >= 2.31)
 #   - get_normalized_absolute_path — /c/foo Git-Bash style, forward-slash, empty
-#   - get_main_worktree            — fresh git init top-level + linked worktree
+#   - get_main_worktree            — fresh git init top-level + linked worktree + explicit root
+#   - resolve_git_root             — omitted is '.', missing path fails loudly
+#   - test_is_main_worktree        — explicit root judged instead of the cwd
 #   - test_is_submodule            — fresh git init is NOT a submodule
 #   - assert_trusted_svn_url       — boundary-safe SVN URL trust check (U1; SKIPs w/o svn)
 #   - resolve_repo_path            — relative / ./relative / absolute / Git-Bash / empty
@@ -140,6 +142,101 @@ test_get_main_worktree_linked() {
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
     assertEquals 'get_main_worktree from a linked worktree returns the main worktree path' 0 "$rc"
+}
+
+# ─── resolve_git_root — omitted is '.', a bad path fails loudly ───────────────
+test_resolve_git_root_empty_is_dot() {
+    local root
+    root="$(resolve_git_root '' 2>/dev/null || true)"
+    assertEquals "omitted repo root resolves to '.' so 'git -C .' stays a no-op" '.' "$root"
+}
+
+test_resolve_git_root_missing_fails() {
+    local tmp err rc
+    tmp="$(mktemp -d -t turbo-common-rgr-XXXXXX)"
+    err="$(resolve_git_root "$tmp/definitely-not-here" 2>&1 >/dev/null)"
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    if [[ $rc -eq 0 ]]; then
+        fail "expected non-zero for a repo root that does not exist"
+        return
+    fi
+    case "$err" in
+        *'repo root not found'*) assertTrue 'error names the missing repo root' 0 ;;
+        *) fail "expected a 'repo root not found' message, got '$err'" ;;
+    esac
+}
+
+# ─── get_main_worktree <root> — the named repo wins over the ambient cwd ──────
+# Two sibling repos, cwd inside the FIRST one. Asking for the second by path must return the
+# second. This is the whole point of --repo-root: which repository is acted on stops depending
+# on where the process happens to be standing.
+test_get_main_worktree_repo_root_overrides_cwd() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-rr-XXXXXX)"
+    (
+        cd "$tmp" || exit 99
+        for name in alpha beta; do
+            mkdir "$name"
+            git -C "$name" init -q -b main >/dev/null 2>&1
+            git -C "$name" config user.email 'test@turbo-plugin'
+            git -C "$name" config user.name 'turbo-plugin-test'
+            git -C "$name" commit -q --allow-empty -m 'init' >/dev/null 2>&1
+        done
+
+        cd alpha || exit 99
+        here="$(get_main_worktree 2>/dev/null || true)"
+        there="$(get_main_worktree "$tmp/beta" 2>/dev/null || true)"
+
+        if [[ -z "$here" || -z "$there" ]]; then
+            echo "empty result (cwd='$here' named='$there')" >&2
+            exit 1
+        fi
+        if [[ "$here" == "$there" ]]; then
+            echo "named root did not override cwd (both '$here')" >&2
+            exit 1
+        fi
+        if [[ "$there" != *beta ]]; then
+            echo "expected the beta repo, got '$there'" >&2
+            exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'get_main_worktree <root> resolves the NAMED repo, not the one cwd is in' 0 "$rc"
+}
+
+# ─── test_is_main_worktree <root> — judges the named path, not the cwd ────────
+# Guard 1 of the bridge bootstrap depends on this: standing in the main worktree while naming a
+# linked one must still report "linked".
+test_is_main_worktree_repo_root() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-timw-XXXXXX)"
+    (
+        cd "$tmp" || exit 99
+        mkdir main
+        cd main || exit 99
+        git init -q -b main >/dev/null 2>&1
+        git config user.email 'test@turbo-plugin'
+        git config user.name 'turbo-plugin-test'
+        git commit -q --allow-empty -m 'init' >/dev/null 2>&1
+        git worktree add -q -b feat/lw ../linked >/dev/null 2>&1
+
+        # cwd is the MAIN worktree for both calls; only the argument differs.
+        if ! test_is_main_worktree "$tmp/main"; then
+            echo "named main worktree reported as linked" >&2
+            exit 1
+        fi
+        if test_is_main_worktree "$tmp/linked"; then
+            echo "named linked worktree reported as main" >&2
+            exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'test_is_main_worktree <root> judges the named path, not the cwd' 0 "$rc"
 }
 
 # ─── test_is_submodule — fresh git init is NOT a submodule ────────────────────
