@@ -155,6 +155,16 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
    - 使用者確認後才**重新呼叫**同一支腳本並加旗標:PowerShell `-AllowExistingRemote` /
      bash `--allow-existing-remote`。
 
+3d. **這裡不是 repo、但底下的子資料夾是(`TP_TOKEN:NESTED_GIT_REPOS dirs=<names>`)→ 先問是哪一個專案**。
+   腳本在 `git init` **之前**偵測到「當前資料夾沒有 git、但直屬子目錄有」時印此 token 並非零 exit(零變更)。
+   這是「多個獨立專案並排放在一個工作區資料夾底下」的形狀——在這裡 `git init` 會把它們全部包進同一個 repo,
+   而且事後沒有東西能還原。agent:
+   - **預設就是跑錯地方**:用 `AskUserQuestion` 白話問使用者要對**哪一個**子專案建橋(選項就用 token 帶回來
+     的那幾個目錄名),然後**切到該子專案重跑**,不要放行旗標。
+   - 只有在使用者明確表示「這個資料夾本身就是一個專案,底下那些是它內含的第三方原始碼」時,才用
+     `-AllowNestedRepos` / `--allow-nested-repos` 重呼叫。
+   - **不得**把 token 名或旗標名丟給使用者。
+
 4. **腳本成功後 → base 骨架後置**(疊在 merge 進來的 SVN 內容上,全 idempotent):
    - **順序硬性要求:先 append `.gitignore` 的 git-svn patterns(4b),才做任何 `git add`(4d)**。否則巢狀
      bridge worktree(`.turbo-plugin/worktrees/`)與其 `.svn/` 在 main 尚未被 ignore,`git add -A` 會誤把 `.svn`
@@ -285,13 +295,18 @@ setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一�
   (exit 0、零 commit、bridge 未建)時,agent **白話**問粒度(一顆一顆/壓成一顆/指定範圍,預設一顆一顆;**不外洩** token /
   `refs/tp/svn/<n>` / 修訂號給使用者),再帶 `-Granularity`/`--granularity`(+ 範圍時 `-Range`/`--range`)**重呼叫同一支腳本**。
   ≤5 修訂不發此 token。見 case (a) sub-step 3b。
-- **跑錯資料夾的兩道守門(bootstrap 腳本內建,兩道都在動任何東西之前)** — bootstrap 從 **cwd** 往上推導要橋接
+- **跑錯資料夾的三道守門(bootstrap 腳本內建,三道都在動任何東西之前)** — bootstrap 從 **cwd** 往上推導要橋接
   哪個 repo,所以「在錯的資料夾呼叫」會安靜地把橋建到使用者沒指名的 repo 上。故腳本自帶:
   ① **不是主 worktree 就硬拒**(非零 exit;否則會在**另一個** checkout 建分支/worktree 並把 SVN 內容 merge 進
   **它**的當前分支)。case 偵測本就把 peer worktree 導向 (d),這道是給「繞過 SKILL 直接呼叫腳本」的保險。
   ② **目標 repo 已有 git remote → 回 `TP_TOKEN:EXISTING_GIT_REMOTE remotes=<names>`**(零變更)。agent **先核對
   資料夾是否為使用者指定的專案**,確認無誤再**白話**徵得同意(不外洩 token / 旗標名),才帶
   `-AllowExistingRemote` / `--allow-existing-remote` 重呼叫。見 case (a) sub-step 3c。
+  ③ **這裡不是 repo、但直屬子目錄是 → 回 `TP_TOKEN:NESTED_GIT_REPOS dirs=<names>`**(零變更)。①② 擋不到這種
+  情況,因為這個資料夾**真的**沒有 git,而 `git rev-parse` 只往上找不往下找。這是「多個獨立專案並排」的工作區
+  形狀,在這裡 `git init` 會把它們全包成一個 repo 且事後無法還原。預設當成跑錯地方,問清楚是哪個子專案再切過去
+  重跑;`-AllowNestedRepos` / `--allow-nested-repos` 只留給「這資料夾本身就是專案、底下是內含的第三方原始碼」。
+  見 case (a) sub-step 3d。
 - **case (b) `TP_TOKEN:MERGE_CONFLICT` 由 agent 端收尾、不重呼叫腳本** — bridge 已建成且不 rollback;agent 列衝突檔、
   引導手動解 + commit merge(不自動 abort),再直接接「base 骨架後置」收尾。盲目重呼叫腳本會撞「bridge 已存在」死路。
 - **不自動代填使用者身分或設定** — git `user.name`/`user.email`、SVN URL 等缺漏一律先 `AskUserQuestion` 再做;

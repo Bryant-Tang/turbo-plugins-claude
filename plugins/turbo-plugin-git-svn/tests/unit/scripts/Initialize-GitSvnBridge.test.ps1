@@ -488,6 +488,47 @@ Describe 'Initialize-GitSvnBridge' {
         }
     }
 
+    # A folder that is not a repo but holds sibling projects that are. `git rev-parse` only searches
+    # UPWARD, so guards 1 and 2 see "no git here" and fall straight through to `git init` -- which
+    # would wrap every sibling project into one repository. Nothing later undoes that.
+    Context 'Scenario 7d: wrong-repo guard 3 -- refuse to git init over sibling repos' {
+        It 'emits the token, creates no repository, and -AllowNestedRepos takes the gate down' {
+            $sb = New-Sandbox -Tag 'igsb-7d'
+            try {
+                $workspace = [System.IO.Path]::Combine($sb, 'proj-root')
+                $null = New-Item -ItemType Directory -Path $workspace -Force
+                # two independent projects side by side; the workspace folder itself has no git
+                foreach ($name in @('proj-1', 'proj-2')) {
+                    $child = [System.IO.Path]::Combine($workspace, $name)
+                    New-CaseBRepo -Root $child -Files @{ 'seed.txt' = "seed`n" }
+                }
+
+                $svnUri = 'file:///' + ([System.IO.Path]::Combine($sb, 'svnrepo') -replace '\\', '/')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $workspace -ScriptArgs @('-SvnUrl', $svnUri)
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'TP_TOKEN:NESTED_GIT_REPOS'
+                $res.Combined | Should -Match 'proj-1'
+                $res.Combined | Should -Match 'proj-2'
+
+                # the load-bearing assertion: no repository was created over the workspace folder.
+                [System.IO.Directory]::Exists([System.IO.Path]::Combine($workspace, '.git')) | Should -BeFalse
+                # and the sibling projects are untouched.
+                foreach ($name in @('proj-1', 'proj-2')) {
+                    $child = [System.IO.Path]::Combine($workspace, $name)
+                    (Run-Git-Capture -Cwd $child -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+                }
+
+                # -AllowNestedRepos takes the gate down (a real project may hold a vendored sub-repo).
+                # The run still fails later on the unreachable URL; assert only that the gate is gone.
+                $bogusUri = 'file:///' + ([System.IO.Path]::Combine($sb, 'no-such-repo') -replace '\\', '/')
+                $res2 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $workspace -ScriptArgs @('-SvnUrl', $bogusUri, '-AllowNestedRepos')
+                $res2.Combined | Should -Not -Match 'TP_TOKEN:NESTED_GIT_REPOS'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
     Context 'Scenario 8: unreachable (scheme-valid) SVN URL -> fail, no residue' {
         It 'on an unreachable URL leaves no bridge branch + no worktree dir' -Skip:(-not $SvnAvailable) {
             $sb = New-Sandbox -Tag 'igsb-8'

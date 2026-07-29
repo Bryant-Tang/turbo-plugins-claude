@@ -359,6 +359,42 @@ test_existing_git_remote_gate() {
     esac
 }
 
+# ── Scenario 7d: wrong-repo guard 3 -- refuse to git init over sibling repos ────
+# A folder that is not a repo but holds sibling projects that are. `git rev-parse` only searches
+# UPWARD, so guards 1 and 2 see "no git here" and fall through to `git init` -- which would wrap
+# every sibling project into one repository. Nothing later undoes that.
+test_nested_git_repos_gate() {
+    local ws out rc out2 rc2 name
+    ws="$SB/proj-root"
+    mkdir -p "$ws"
+    for name in proj-1 proj-2; do
+        init_repo_with_identity "$ws/$name"
+        echo 'seed' > "$ws/$name/seed.txt"
+        git -C "$ws/$name" add -A >/dev/null 2>&1
+        git -C "$ws/$name" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
+    done
+
+    out="$(cd "$ws" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")" 2>&1)"; rc=$?
+    assertNotEquals "nested-repos gate exits non-zero (out: $out)" 0 "$rc"
+    case "$out" in *"TP_TOKEN:NESTED_GIT_REPOS"*) assertTrue 'emits NESTED_GIT_REPOS token' 0 ;; *) fail "no NESTED_GIT_REPOS token: $out" ;; esac
+    case "$out" in *proj-1*) assertTrue 'token names proj-1' 0 ;; *) fail "token lacks proj-1: $out" ;; esac
+    case "$out" in *proj-2*) assertTrue 'token names proj-2' 0 ;; *) fail "token lacks proj-2: $out" ;; esac
+
+    # the load-bearing assertion: no repository was created over the workspace folder.
+    assertTrue 'no repository created over the workspace folder' "[ ! -e '$ws/.git' ]"
+    for name in proj-1 proj-2; do
+        assertTrue "sibling $name left clean" "[ -z \"\$(git -C '$ws/$name' status --porcelain)\" ]"
+    done
+
+    # --allow-nested-repos takes the gate down (a real project may hold a vendored sub-repo). The
+    # run still fails later on the unreachable URL; assert only that the gate itself no longer fires.
+    out2="$(cd "$ws" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/no-such-repo")" --allow-nested-repos 2>&1)"; rc2=$?
+    case "$out2" in
+        *"TP_TOKEN:NESTED_GIT_REPOS"*) fail "gate still fired despite --allow-nested-repos (rc=$rc2): $out2" ;;
+        *) assertTrue 'flag suppresses the gate' 0 ;;
+    esac
+}
+
 # ── Scenario 8: unreachable (scheme-valid) SVN URL -> fail with no residue ────
 test_rollback_on_checkout_failure() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi

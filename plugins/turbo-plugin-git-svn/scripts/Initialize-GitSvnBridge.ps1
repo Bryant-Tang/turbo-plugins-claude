@@ -4,7 +4,8 @@ param(
     [string]$Branch = 'main',
     [string]$Granularity = '',
     [string]$Range = '',
-    [switch]$AllowExistingRemote
+    [switch]$AllowExistingRemote,
+    [switch]$AllowNestedRepos
 )
 
 Set-StrictMode -Version Latest
@@ -98,6 +99,27 @@ try {
             }
         }
     } else {
+        # Guard 3 -- not a repo HERE, but child directories are. That is the shape of a workspace
+        # folder holding several independent projects side by side, and `git init` here would wrap
+        # all of them into one repository: the wrong outcome, and one nothing later undoes. The two
+        # guards above cannot catch it, because this directory genuinely has no git and `git
+        # rev-parse` only searches UPWARD, never down. Not a hard refusal -- a real project can
+        # legitimately contain a vendored sub-repo -- so emit a token and let the agent ask which
+        # project was meant.
+        if (-not $AllowNestedRepos) {
+            $nested = @(Get-ChildItem -LiteralPath (Get-Location).Path -Directory -ErrorAction SilentlyContinue |
+                Where-Object { Test-Path -LiteralPath ([System.IO.Path]::Combine($_.FullName, '.git')) } |
+                ForEach-Object { $_.Name })
+            if ($nested.Count -gt 0) {
+                $joined = ($nested -join ' ')
+                Write-Output "TP_TOKEN:NESTED_GIT_REPOS dirs=$joined"
+                Write-Output "This directory is not a git repository, but these subdirectories are: $joined"
+                Write-Output 'Creating a repository here would wrap those separate projects into one.'
+                Write-Output 'Nothing was changed. Switch to the project you meant, or re-run with -AllowNestedRepos if a repository really belongs here.'
+                exit 1
+            }
+        }
+
         & git init -b main
         if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
     }

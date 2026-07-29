@@ -26,6 +26,7 @@ BRANCH='main'
 GRANULARITY=''
 RANGE=''
 ALLOW_EXISTING_REMOTE=false
+ALLOW_NESTED_REPOS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +35,7 @@ while [[ $# -gt 0 ]]; do
     --granularity) [[ $# -ge 2 ]] || { echo "Error: --granularity requires a value" >&2; exit 1; }; GRANULARITY="$2"; shift 2 ;;
     --range)       [[ $# -ge 2 ]] || { echo "Error: --range requires a value" >&2; exit 1; }; RANGE="$2"; shift 2 ;;
     --allow-existing-remote) ALLOW_EXISTING_REMOTE=true; shift ;;
+    --allow-nested-repos) ALLOW_NESTED_REPOS=true; shift ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -93,6 +95,29 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     fi
   fi
 else
+  # Guard 3 -- not a repo HERE, but child directories are. That is the shape of a workspace folder
+  # holding several independent projects side by side, and `git init` here would wrap all of them
+  # into one repository: the wrong outcome, and one nothing later undoes. The two guards above
+  # cannot catch it, because this directory genuinely has no git and `git rev-parse` only searches
+  # UPWARD, never down. Not a hard refusal -- a real project can legitimately contain a vendored
+  # sub-repo -- so emit a token and let the agent ask which project was meant.
+  if [[ "$ALLOW_NESTED_REPOS" != true ]]; then
+    NESTED=''
+    for _child in ./*/; do
+      [[ -d "$_child" ]] || continue
+      [[ -e "${_child}.git" ]] || continue
+      _name="$(basename -- "${_child%/}")"
+      NESTED="${NESTED:+$NESTED }$_name"
+    done
+    if [[ -n "$NESTED" ]]; then
+      echo "TP_TOKEN:NESTED_GIT_REPOS dirs=$NESTED"
+      echo "This directory is not a git repository, but these subdirectories are: $NESTED"
+      echo "Creating a repository here would wrap those separate projects into one."
+      echo "Nothing was changed. Switch to the project you meant, or re-run with --allow-nested-repos if a repository really belongs here."
+      exit 1
+    fi
+  fi
+
   git init -b main
 fi
 
