@@ -110,6 +110,14 @@ fi
 
 # Nothing new to replay and nothing resumable ahead -> up to date.
 if (( COUNT == 0 && AHEAD_COUNT == 0 )); then
+  # The working copy legitimately sits below the repository HEAD in a repository shared with other
+  # projects: a sibling path's commit bumps the global revision without touching ours. Catch it up
+  # anyway. It costs one no-op update, and a working copy left permanently behind makes every later
+  # pull re-enumerate an ever-growing range of revisions that were never ours. Failure is not fatal
+  # here -- we are already reporting "up to date".
+  if (( WC_REV_START < HEAD_REV )); then
+    svn update "$REMOTE_PATH" >/dev/null 2>&1 || true
+  fi
   echo "Already up to date at SVN r$CUR"
   exit 0
 fi

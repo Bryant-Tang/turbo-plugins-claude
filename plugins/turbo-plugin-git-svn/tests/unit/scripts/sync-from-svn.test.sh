@@ -45,13 +45,17 @@ tearDown() { [ -n "${SB:-}" ] && rm -rf "$SB" 2>/dev/null || true; }
 
 # Build a real pushed bridge (svn import -> initialize -> build+submit push), matching the PS
 # New-PushedBridge. Echoes "root|uri|repo|cfg"; returns non-zero when any step fails.
+# A second argument bridges a SUBDIRECTORY of the repository instead of its root, which is what a
+# repository shared by several projects looks like (/proj-1, /proj-2, ... side by side).
 build_pushed_bridge() {
-    local sandbox="$1"
+    local sandbox="$1" subpath="${2:-}"
     local repo="$sandbox/svnrepo" root="$sandbox/test-turbo-plugin" cfg="$sandbox/.svncfg"
-    local seed="$sandbox/seed" uri win wt
+    local seed="$sandbox/seed" uri root_uri win wt
     svnadmin create "$repo" >/dev/null 2>&1 || return 1
     win="$(cygpath -m "$repo" 2>/dev/null || printf '%s' "$repo")"
-    uri="file:///$win"
+    root_uri="file:///$win"
+    uri="$root_uri"
+    [ -n "$subpath" ] && uri="$root_uri/$subpath"
     mkdir -p "$seed"
     printf 'app\n' > "$seed/app.txt"
     printf '*.log\n' > "$seed/.gitignore"
@@ -69,7 +73,14 @@ build_pushed_bridge() {
     ( cd "$root" && bash "$SCRIPTS_DIR/submit-svn-commit.sh" --branch main --title 'sync main to svn' >/dev/null 2>&1 ) || return 1
     wt="$root/.turbo-plugin/worktrees/remote-svn-main"
     ( cd "$wt" && svn update >/dev/null 2>&1 ) || return 1
+    # Return shape is unchanged on purpose: existing callers read the last field with
+    # "${spec##*|}", so appending a field would silently hand every one of them the wrong value.
     printf '%s|%s|%s|%s' "$root" "$uri" "$repo" "$cfg"
+}
+
+# The bridge working copy's own checked-out revision.
+wc_revision() {
+    svn info --show-item revision "$1" 2>/dev/null | tr -d '[:space:]'
 }
 
 # Commit <count> new real trunk revisions to <uri> via a scratch WC. Each revision adds one file
@@ -274,6 +285,49 @@ test_marked_but_unmerged_replay_is_resumable() {
     else
         fail "the replayed commit is STILL not in main after a re-run: $out"
     fi
+}
+
+# ── Case 16: a sibling project's commit must not deadlock push against pull ───
+# SVN revision numbers are repository-wide. In a repository shared by several projects, a
+# colleague's commit to a SIBLING path bumps HEAD without touching ours -- and the two sides used
+# to disagree about what that meant: push compared the working copy against repository HEAD and
+# refused ("run pull first"), while pull correctly found no revision affecting this path and
+# returned "already up to date". Neither could make progress. Both halves are asserted because
+# fixing either alone still leaves the working copy drifting further behind on every sibling commit.
+test_sibling_commit_does_not_deadlock() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root uri cfg wt root_uri win wc_before wc_after out rc prep prc
+    spec="$(build_pushed_bridge "$SB" 'proj-1')" || { startSkipping; return 0; }
+    root="${spec%%|*}"; uri="$(printf '%s' "$spec" | cut -d'|' -f2)"; cfg="${spec##*|}"
+    wt="$root/.turbo-plugin/worktrees/remote-svn-main"
+    win="$(cygpath -m "$SB/svnrepo" 2>/dev/null || printf '%s' "$SB/svnrepo")"
+    root_uri="file:///$win"
+
+    wc_before="$(wc_revision "$wt")"
+
+    # A sibling project commits. Nothing under proj-1 changes; only HEAD moves.
+    svn mkdir "$root_uri/proj-2" -m 'sibling project commit' --config-dir "$cfg" >/dev/null 2>&1         || { startSkipping; return 0; }
+
+    # Half 1 -- pull reports "up to date" (correct) but must still catch the working copy up.
+    out="$(cd "$root" && bash "$SCRIPT" --branch main 2>&1)"; rc=$?
+    assertEquals "pull must succeed (out: $out)" 0 "$rc"
+    case "$out" in *"Already up to date"*) assertTrue 'pull reports up to date' 0 ;; *) fail "expected 'Already up to date': $out" ;; esac
+    wc_after="$(wc_revision "$wt")"
+    assertTrue "pull must advance the working copy ($wc_before -> $wc_after)" "[ '$wc_after' -gt '$wc_before' ]"
+
+    # Half 2 -- push must not refuse in the first place. Rewind the working copy to the state pull
+    # would have left it in before the fix above existed.
+    svn update -r "$wc_before" "$wt" >/dev/null 2>&1 || { startSkipping; return 0; }
+    assertEquals 'rewind to the pre-sibling revision' "$wc_before" "$(wc_revision "$wt")"
+
+    printf 'new
+' > "$root/new.txt"
+    git -C "$root" add new.txt >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -q -m 'feat: something of ours' >/dev/null 2>&1
+
+    prep="$(cd "$root" && bash "$SCRIPTS_DIR/build-svn-commit.sh" --branch main 2>&1)"; prc=$?
+    case "$prep" in *"not up to date"*) fail "push was refused by a sibling project's commit: $prep" ;; esac
+    assertEquals "push prepare must succeed (out: $prep)" 0 "$prc"
 }
 
 # shellcheck disable=SC1090

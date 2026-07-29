@@ -55,11 +55,24 @@ if [[ -n "$REMOTE_GIT_STATUS" ]]; then
 fi
 
 SVN_URL="$(svn info --show-item url "$REMOTE_PATH")"
-LOCAL_REV="$(svn info --show-item revision "$REMOTE_PATH")"
-HEAD_REV="$(svn info --show-item revision "$SVN_URL")"
 
-if [[ "$LOCAL_REV" != "$HEAD_REV" ]]; then
-  echo "Error: remote SVN worktree is not up to date (local r$LOCAL_REV, head r$HEAD_REV). Run '/tp-pull-from-svn --branch $BRANCH' first." >&2
+# Staleness is measured against the last revision that touched THIS branch path, never against the
+# repository HEAD. SVN revision numbers are repository-wide, so in a repository holding several
+# projects a colleague's commit to a SIBLING path bumps HEAD without changing anything of ours.
+# Comparing to HEAD made that look stale and refused the push -- while pull correctly found nothing
+# to replay for this path, reported "already up to date" and returned. Push said "go pull", pull
+# said "nothing to do": a deadlock only a manual `svn update` broke.
+#
+# This is safe because `svn commit` itself only rejects paths that are actually out of date: a
+# working copy below HEAD commits fine as long as nothing under our path changed (measured on svn
+# 1.14). And last-changed-revision bubbles up from files nested anywhere beneath the path, so a real
+# change deep inside the branch is still caught.
+LOCAL_REV="$(svn info --show-item revision "$REMOTE_PATH" | tr -d '[:space:]')"
+PATH_REV="$(svn info --show-item last-changed-revision "$SVN_URL" | tr -d '[:space:]')"
+
+# Arithmetic comparison, not string: "9" sorts after "10" lexically.
+if (( LOCAL_REV < PATH_REV )); then
+  echo "Error: remote SVN worktree is not up to date (local r$LOCAL_REV, this path last changed at r$PATH_REV). Run '/tp-pull-from-svn --branch $BRANCH' first." >&2
   exit 1
 fi
 

@@ -69,14 +69,17 @@ BeforeAll {
     # Build a real bridge (svn import + Initialize) then PUSH main into it, reaching the NORMAL
     # post-push state where remote-svn/main is ahead of main by a benign `Merge branch 'main' into
     # remote-svn/main` commit. Returns @{ Root; Bridge } or $null if the svn/bridge pipeline failed.
+    # -SubPath bridges a SUBDIRECTORY of the repository instead of its root, which is what a
+    # repository shared by several projects looks like (/proj-1, /proj-2, ... side by side).
     function New-PushedBridge {
-        param([string]$Sandbox)
+        param([string]$Sandbox, [string]$SubPath = '')
         $root = [System.IO.Path]::Combine($Sandbox, 'test-turbo-plugin')
         $repo = [System.IO.Path]::Combine($Sandbox, 'svnrepo')
         $cfg  = [System.IO.Path]::Combine($Sandbox, '.svnconfig')
         & svnadmin create $repo
         if ($LASTEXITCODE -ne 0) { return $null }
-        $uri = 'file:///' + ($repo -replace '\\', '/')
+        $repoRootUri = 'file:///' + ($repo -replace '\\', '/')
+        $uri = if ([string]::IsNullOrWhiteSpace($SubPath)) { $repoRootUri } else { "$repoRootUri/$SubPath" }
         $seed = [System.IO.Path]::Combine($Sandbox, 'seed')
         $null = New-Item -ItemType Directory -Path $seed -Force
         $enc = New-Object Text.UTF8Encoding($false)
@@ -105,7 +108,15 @@ BeforeAll {
         # deterministic baseline for the new-revision tests below.
         Push-Location $bridge
         try { & svn update 2>$null | Out-Null } finally { Pop-Location }
-        return @{ Root = $root; Bridge = $bridge; Uri = $uri; Repo = $repo; Cfg = $cfg }
+        return @{ Root = $root; Bridge = $bridge; Uri = $uri; RepoRootUri = $repoRootUri; Repo = $repo; Cfg = $cfg }
+    }
+
+    # Read the bridge working copy's own checked-out revision.
+    function Get-WcRevision {
+        param([string]$Bridge)
+        $v = (& svn info --show-item revision $Bridge | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($v)) { return -1 }
+        return [int]$v
     }
 
     # Commit $Count new real trunk revisions to $Uri via a scratch WC. Each revision adds one file;
@@ -575,6 +586,51 @@ Describe 'Sync-FromSvn' {
                 & cmd.exe /c "git -C `"$($ctx.Root)`" log remote-svn/main -1 --format=%B > `"$mbFile`""
                 $bytes = if ([System.IO.File]::Exists($mbFile)) { [System.IO.File]::ReadAllBytes($mbFile) } else { @() }
                 (Test-SvnLogRoundTrip -RawBytes $bytes -ExpectedText $cjk) | Should -BeTrue
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    # SVN revision numbers are repository-wide. In a repository shared by several projects, a
+    # colleague's commit to a SIBLING path bumps HEAD without touching ours -- and the two sides
+    # used to disagree about what that meant: push compared the working copy against repository
+    # HEAD and refused ("run pull first"), while pull correctly found no revision affecting this
+    # path and returned "already up to date". Neither could make progress; only a manual
+    # `svn update` broke it. Both halves are asserted here because fixing either one alone still
+    # leaves the working copy drifting further behind on every sibling commit.
+    Context 'Case 16: a sibling project''s commit must not deadlock push against pull' {
+        It 'push is not refused, and pull brings the working copy up to repository HEAD' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-16'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb -SubPath 'proj-1'
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+
+                $wcBefore = Get-WcRevision -Bridge $ctx.Bridge
+
+                # A sibling project commits. Nothing under proj-1 changes; only HEAD moves.
+                & svn mkdir "$($ctx.RepoRootUri)/proj-2" -m 'sibling project commit' --config-dir $ctx.Cfg 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'could not commit to the sibling path'; return }
+
+                # Half 1 -- pull must not leave the working copy behind. It reports "up to date"
+                # (correct: nothing of ours changed) but still catches the checkout up.
+                $pull = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $pull.ExitCode | Should -Be 0 -Because $pull.Combined
+                $pull.Combined | Should -Match 'Already up to date'
+                (Get-WcRevision -Bridge $ctx.Bridge) | Should -BeGreaterThan $wcBefore
+
+                # Half 2 -- and push must not refuse in the first place. Roll the working copy back
+                # to its pre-sibling revision so the check faces exactly the state pull would have
+                # left it in before the fix above existed.
+                & svn update -r $wcBefore $ctx.Bridge 2>$null | Out-Null
+                (Get-WcRevision -Bridge $ctx.Bridge) | Should -Be $wcBefore
+
+                $enc = New-Object Text.UTF8Encoding($false)
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($ctx.Root, 'new.txt'), "new`n", $enc)
+                $null = Run-Git -Cwd $ctx.Root -GitArgs @('add', 'new.txt')
+                $null = Run-Git -Cwd $ctx.Root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '-m', 'feat: something of ours')
+
+                $prep = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $prep.Combined | Should -Not -Match 'not up to date'
+                $prep.ExitCode | Should -Be 0 -Because $prep.Combined
             } finally { Remove-Sandbox -Dir $sb }
         }
     }

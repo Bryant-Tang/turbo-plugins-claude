@@ -60,12 +60,24 @@ try {
     $svnUrl = (& svn info --show-item url $remote.Path | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not get SVN URL from '$($remote.Name)'. Is it a valid SVN working copy?" }
 
-    $localRev = (& svn info --show-item revision $remote.Path | Out-String).Trim()
-    $headRev = (& svn info --show-item revision $svnUrl | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) { throw "Could not query SVN HEAD revision for: $svnUrl" }
+    # Staleness is measured against the last revision that touched THIS branch path, never against
+    # the repository HEAD. SVN revision numbers are repository-wide, so in a repository holding
+    # several projects a colleague's commit to a SIBLING path bumps HEAD without changing anything
+    # of ours. Comparing to HEAD made that look stale and refused the push -- while pull correctly
+    # found nothing to replay for this path, reported "already up to date" and returned. Push said
+    # "go pull", pull said "nothing to do": a deadlock only a manual `svn update` broke.
+    #
+    # This is safe because `svn commit` itself only rejects paths that are actually out of date: a
+    # working copy below HEAD commits fine as long as nothing under our path changed (measured on
+    # svn 1.14). And last-changed-revision bubbles up from files nested anywhere beneath the path,
+    # so a real change deep inside the branch is still caught.
+    $localRev = [int]((& svn info --show-item revision $remote.Path | Out-String).Trim())
+    $pathRev = [int]((& svn info --show-item last-changed-revision $svnUrl | Out-String).Trim())
+    if ($LASTEXITCODE -ne 0) { throw "Could not query the last changed SVN revision for: $svnUrl" }
 
-    if ($localRev -ne $headRev) {
-        throw "Remote SVN worktree is not up to date (local r$localRev, head r$headRev). Run '/tp-pull-from-svn --branch $Branch' first."
+    # Integer comparison, not string: '9' -lt '10' is FALSE when compared as text.
+    if ($localRev -lt $pathRev) {
+        throw "Remote SVN worktree is not up to date (local r$localRev, this path last changed at r$pathRev). Run '/tp-pull-from-svn --branch $Branch' first."
     }
 
     $range = "$($remote.Branch)..$Branch"
