@@ -6,12 +6,12 @@
   "plugins": [
     {
       "name": "turbo-plugin-git-svn",
-      "description": "git↔SVN bridge 本機開發工具集（9 個 skill:setup / pull / push / checkout-svn-branch / svn-log / reset / merge / suggest-ignore / commit-msg）。env-free，集中設定於 .turbo-plugin/。",
+      "description": "git↔SVN bridge 本機開發工具集（8 個 skill:setup / pull / push / checkout-svn-branch / svn-log / merge / suggest-ignore / commit-msg）。env-free，集中設定於 .turbo-plugin/。",
       "source": "./plugins/turbo-plugin-git-svn"
     },
     {
       "name": "turbo-plugin-dotnet-framework-web",
-      "description": ".NET Framework Web 本機開發雜務:setup / build / run / stop / publish / cleanup-orphan-iis（IIS Express + MSBuild）。env-free，集中設定於 .turbo-plugin/。",
+      "description": ".NET Framework Web 本機開發雜務:build / run / stop / publish / cleanup-orphan-iis（IIS Express + MSBuild）。env-free，集中設定於 .turbo-plugin/;不需要 setup 指令,設定用到才建。",
       "source": "./plugins/turbo-plugin-dotnet-framework-web"
     },
     {
