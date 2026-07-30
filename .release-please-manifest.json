@@ -2,5 +2,6 @@
   "plugins/turbo-plugin-code-comment": "0.1.0",
   "plugins/turbo-plugin-dotnet-framework-web": "0.1.0",
   "plugins/turbo-plugin-git-svn": "0.1.0",
+  "plugins/turbo-plugin-multi-repo-workspace": "0.1.0",
   "plugins/turbo-plugin-three-environment-db": "0.1.0"
 }
