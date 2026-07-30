@@ -62,16 +62,8 @@ tearDown() {
     fi
 }
 
-# Echo a file:/// URI for an svn repo path (Windows drive form via cygpath when present).
-svn_uri() {
-    local repo="$1" win
-    if command -v cygpath >/dev/null 2>&1; then
-        win="$(cygpath -m "$repo")"
-        printf 'file:///%s' "$win"
-    else
-        printf 'file://%s' "$repo"
-    fi
-}
+# shellcheck disable=SC1091
+source "$PLUGIN_ROOT/tests/lib/svn-uri.sh"
 
 # Create an svn repo. $1=path, $2=1 to load the seed dump (trunk + branches), else empty rev-0.
 # svnadmin takes NO --config-dir. Returns non-zero on failure.

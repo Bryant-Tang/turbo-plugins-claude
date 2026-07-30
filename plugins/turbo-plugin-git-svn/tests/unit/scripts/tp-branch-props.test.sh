@@ -19,6 +19,9 @@ COMMON="$PLUGIN_ROOT/scripts/lib/common.sh"
 DUMP_PATH="$PLUGIN_ROOT/tests/fixtures/seed/svn-repo-r1-r20.dump"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
+# shellcheck disable=SC1091
+source "$PLUGIN_ROOT/tests/lib/svn-uri.sh"
+
 svn_available() { command -v svn >/dev/null 2>&1 && command -v svnadmin >/dev/null 2>&1; }
 
 _load_helpers() {
@@ -55,8 +58,7 @@ make_svn_repo() {
     mkdir -p "$cfg"
     svnadmin create "$repo" >/dev/null 2>&1 || return 1
     svnadmin load "$repo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
-    winrepo="$(cygpath -m "$repo" 2>/dev/null || printf '%s' "$repo")"
-    printf 'file:///%s' "$winrepo"
+    svn_uri "$repo"
 }
 
 CFG() { printf '%s' "$SB/.svnconfig"; }

@@ -155,6 +155,21 @@ Describe 'Publish-Web' {
                 [System.IO.Path]::Combine($script:sb2, 'HelloApp.csproj'),
                 $script:MinimalCsproj,
                 (New-Object System.Text.UTF8Encoding($false)))
+            # A stub MSBuild, even though this case never publishes. The script resolves MSBuild
+            # BEFORE it looks for a pubxml, so on a machine without Visual Studio / Build Tools it
+            # fails at the MSBuild step and never emits the missing-pubxml message this case is
+            # about. Pointing at a stub makes the case assert what it claims to, independent of
+            # whether the host happens to have MSBuild -- which the CI runner does not.
+            $tpDir2 = Join-Path $script:sb2 '.turbo-plugin'
+            $null = New-Item -ItemType Directory -Path $tpDir2 -Force
+            [System.IO.File]::WriteAllText(
+                (Join-Path $tpDir2 'config.local.toml'),
+                "[tools]`r`nmsbuild_path = `"msbuild-stub.bat`"`r`n",
+                (New-Object System.Text.UTF8Encoding($false)))
+            [System.IO.File]::WriteAllText(
+                (Join-Path $script:sb2 'msbuild-stub.bat'),
+                "@echo off`r`necho MSBUILD_ARGS: %*`r`n",
+                (New-Object System.Text.UTF8Encoding($false)))
             Push-Location -LiteralPath $script:sb2
             try {
                 Invoke-GitSilent init -q

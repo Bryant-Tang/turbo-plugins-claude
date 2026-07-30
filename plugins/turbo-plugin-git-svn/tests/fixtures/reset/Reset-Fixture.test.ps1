@@ -45,7 +45,12 @@ BeforeAll {
         ($null -ne (Get-Command svnlook -ErrorAction SilentlyContinue))
 
     function New-IsolatedFixtureRoot {
-        $tempDir = $env:TEMP
+        # GetTempPath(), not $env:TEMP: TEMP is a Windows-only variable and is unset under pwsh on
+        # Linux, so Combine() would receive $null and yield a RELATIVE path -- the sandbox would be
+        # created inside the repo. For this suite that is not just untidy: its own "is this folder
+        # inside a git repo?" guard then correctly answers yes and skips every case, so the whole
+        # file silently self-disabled on the ubuntu runner.
+        $tempDir = [System.IO.Path]::GetTempPath()
         try {
             $tempDir = (Get-Item -LiteralPath $tempDir).FullName
         } catch {

@@ -19,7 +19,11 @@ SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
 oneTimeSetUp() {
     HAS_PS=0
-    if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then HAS_PS=1; fi
+    # `powershell` specifically, NOT "powershell or pwsh". These scripts reach PowerShell through
+    # ps1-delegate.sh, which runs `exec powershell ...` literally, so pwsh being installed does not
+    # make them work -- and ubuntu runners DO have pwsh (Pester needs it), which made this gate
+    # report "available" and then fail with `powershell: not found`.
+    if command -v powershell >/dev/null 2>&1; then HAS_PS=1; fi
 }
 
 setUp() {

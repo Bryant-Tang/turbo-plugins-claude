@@ -12,6 +12,18 @@
 #   4. Limit invalid: -Limit 0 → exit 非 0,訊息提及「positive integer」
 #   5. SKILL entry: 再呼叫一次 → 結果 deterministic
 
+# Skip conditions must be resolved at DISCOVERY time (Pester 5): a flag set in BeforeAll is $null
+# during discovery, which would skip everything.
+BeforeDiscovery {
+    # Every case here drives the real `svn log` against the seeded fixture, so without svn the
+    # script exits 1 with empty stdout and all of them fail. The other 17 test files in this plugin
+    # already gate on this; this file was the one that did not, which is why it was the only red
+    # file on the Windows CI runner -- there, choco installs svn but the PATH update does not reach
+    # the same job's later steps, so `svn` is genuinely absent at test time.
+    $hasSvn = [bool](Get-Command svn -ErrorAction SilentlyContinue) -and `
+              [bool](Get-Command svnadmin -ErrorAction SilentlyContinue)
+}
+
 BeforeAll {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -139,7 +151,7 @@ BeforeAll {
     }
 }
 
-Describe 'Get-SvnLog' {
+Describe 'Get-SvnLog' -Skip:(-not $hasSvn) {
 
     It 'fixture git repo is present' {
         $script:FixtureReady | Should -BeTrue -Because "fixture $script:TestRoot expected (Reset-Fixture seeds it)"

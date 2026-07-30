@@ -59,15 +59,8 @@ tearDown() {
     fi
 }
 
-svn_uri() {
-    local repo="$1" win
-    if command -v cygpath >/dev/null 2>&1; then
-        win="$(cygpath -m "$repo")"
-        printf 'file:///%s' "$win"
-    else
-        printf 'file://%s' "$repo"
-    fi
-}
+# shellcheck disable=SC1091
+source "$PLUGIN_ROOT/tests/lib/svn-uri.sh"
 
 bridge_path() { printf '%s' "$1/.turbo-plugin/worktrees/remote-svn-main"; }
 

@@ -41,6 +41,19 @@ oneTimeSetUp() {
     fi
 }
 
+# Windows-only assertions live behind this. get_normalized_absolute_path / resolve_repo_path convert
+# Git-Bash `/c/foo` into the drive form `c:/foo`, which only means anything where drive letters
+# exist. On Linux there is no drive letter, and `realpath -m c:/foo` reasonably reads `c:/foo` as a
+# RELATIVE path and prefixes the cwd -- so these cases were not finding a bug, they were asserting
+# Windows semantics on a platform that has none. They stayed invisible because the .sh suite had
+# only ever run on Git Bash.
+need_windows() {
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*) return 0 ;;
+        *) startSkipping; return 1 ;;
+    esac
+}
+
 # ─── probe_git_version ───────────────────────────────────────────────────────
 test_probe_git_version_happy() {
     probe_git_version 2>/dev/null
@@ -49,6 +62,7 @@ test_probe_git_version_happy() {
 
 # ─── get_normalized_absolute_path ────────────────────────────────────────────
 test_normalize_git_bash_c() {
+    need_windows || return 0
     local norm
     norm="$(get_normalized_absolute_path '/c/projdir' 2>/dev/null || true)"
     case "$norm" in
@@ -58,6 +72,7 @@ test_normalize_git_bash_c() {
 }
 
 test_normalize_forward_slash_abs() {
+    need_windows || return 0
     local norm
     norm="$(get_normalized_absolute_path 'C:/Some/Path' 2>/dev/null || true)"
     case "$norm" in
@@ -67,6 +82,7 @@ test_normalize_forward_slash_abs() {
 }
 
 test_normalize_git_bash_d() {
+    need_windows || return 0
     local norm
     norm="$(get_normalized_absolute_path '/d/Projects/App' 2>/dev/null || true)"
     if [[ "$norm" =~ ^d:.*Projects.*App$ ]]; then
@@ -99,10 +115,16 @@ test_get_main_worktree_toplevel() {
         # Match by basename — Windows 8.3 short name vs git long-name make a literal
         # comparison unreliable. Verify non-empty, lowercased drive, unique basename.
         tmpdir_basename="${tmp##*/}"
-        if [[ -n "$mw" && "$mw" =~ ^[a-z]:.* && "$mw" == *"$tmpdir_basename"* ]]; then
+        # The drive-letter shape is a Windows-only expectation; the part worth asserting
+        # everywhere is "resolved to this repo's top level".
+        case "$(uname -s 2>/dev/null)" in
+            MINGW*|MSYS*|CYGWIN*) drive_ok=$([[ "$mw" =~ ^[a-z]:.* ]] && echo 1 || echo 0) ;;
+            *)                    drive_ok=1 ;;
+        esac
+        if [[ -n "$mw" && "$drive_ok" -eq 1 && "$mw" == *"$tmpdir_basename"* ]]; then
             exit 0
         fi
-        echo "expected path containing '$tmpdir_basename' on lowercased drive, got '$mw'" >&2
+        echo "expected path containing '$tmpdir_basename' (lowercased drive on Windows), got '$mw'" >&2
         exit 1
     )
     rc=$?
@@ -357,6 +379,7 @@ test_resolve_repo_path_dot_relative() {
 }
 
 test_resolve_repo_path_absolute() {
+    need_windows || return 0
     local out
     out="$(resolve_repo_path 'C:/repo/root' 'D:/elsewhere/app' 2>/dev/null || true)"
     if [[ "$out" == D:/elsewhere/app && "$out" != *repo/root* ]]; then
@@ -367,6 +390,7 @@ test_resolve_repo_path_absolute() {
 }
 
 test_resolve_repo_path_git_bash() {
+    need_windows || return 0
     local out
     out="$(resolve_repo_path 'C:/repo/root' '/c/Git/Bash/Path' 2>/dev/null || true)"
     if [[ "$out" == C:/Git/Bash/Path && "$out" != *repo/root* ]]; then

@@ -17,7 +17,11 @@ APPHOST="$TEST_ROOT/.turbo-plugin/applicationhost.config"
 oneTimeSetUp() {
     # U5: ps1-delegate (needs PowerShell + IIS Express). On a runner without PowerShell, SKIP.
     HAS_PS=0
-    if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then HAS_PS=1; fi
+    # `powershell` specifically, NOT "powershell or pwsh". These scripts reach PowerShell through
+    # ps1-delegate.sh, which runs `exec powershell ...` literally, so pwsh being installed does not
+    # make them work -- and ubuntu runners DO have pwsh (Pester needs it), which made this gate
+    # report "available" and then fail with `powershell: not found`.
+    if command -v powershell >/dev/null 2>&1; then HAS_PS=1; fi
 
     if [ -d "$TEST_ROOT" ] && [ ! -d "$TEST_ROOT/.git" ]; then
         (cd "$TEST_ROOT" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1 || true

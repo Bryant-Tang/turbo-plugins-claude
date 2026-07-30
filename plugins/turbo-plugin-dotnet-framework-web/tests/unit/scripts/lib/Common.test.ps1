@@ -34,7 +34,12 @@ BeforeAll {
         # Expand any 8.3 short-name segments in $env:TEMP (e.g. MELWU~1) — Remove-Item
         # -LiteralPath on PS 5.1 + a short-named parent dir trips an "object at path does
         # not exist" error.
-        $tempDir = $env:TEMP
+        # GetTempPath(), not $env:TEMP: TEMP is a Windows-only variable and is unset under pwsh on
+        # Linux, so Combine() would receive $null and yield a RELATIVE path -- the sandbox would be
+        # created inside the repo. For this suite that is not just untidy: its own "is this folder
+        # inside a git repo?" guard then correctly answers yes and skips every case, so the whole
+        # file silently self-disabled on the ubuntu runner.
+        $tempDir = [System.IO.Path]::GetTempPath()
         try {
             $tempDir = (Get-Item -LiteralPath $tempDir).FullName
         } catch {

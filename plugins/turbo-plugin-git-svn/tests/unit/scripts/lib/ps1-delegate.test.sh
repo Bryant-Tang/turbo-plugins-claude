@@ -18,8 +18,12 @@ DELEGATE="$PLUGIN_ROOT/scripts/lib/ps1-delegate.sh"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
 oneTimeSetUp() {
+    # `powershell` specifically, NOT "powershell or pwsh". ps1-delegate.sh runs
+    # `exec powershell ...` literally, so pwsh being installed does not make the delegate work --
+    # and ubuntu runners DO have pwsh (Pester needs it), which made this gate report "PowerShell is
+    # available" and then fail with `powershell: not found`, exit 127.
     HAS_PS=0
-    if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then HAS_PS=1; fi
+    if command -v powershell >/dev/null 2>&1; then HAS_PS=1; fi
 }
 
 setUp() {

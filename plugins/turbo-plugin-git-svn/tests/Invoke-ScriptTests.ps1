@@ -79,6 +79,26 @@ $null = New-Item -ItemType Directory -Path $sandboxBase -Force
 # Retained for reference/reporting only. The lint no longer keys on it: a pure-skill plugin still
 # ships this orchestrator as a .ps1, so there IS something to lint even with no scripts/ dir.
 $hasScriptsDir = [System.IO.Directory]::Exists($scriptsDir)
+
+# NOT named $isWindows: PowerShell Core (pwsh) defines a READ-ONLY automatic variable $IsWindows,
+# and PowerShell variable names are case-insensitive, so assigning $isWindows aborts the script with
+# "Cannot overwrite variable IsWindows because it is read-only or constant." Windows PowerShell 5.1
+# has no such variable, so this only ever failed off-Windows -- which is to say it failed on every
+# ubuntu CI run, killing this orchestrator before a single test ran. Kept as an explicit probe
+# rather than just using $IsWindows, so the expression still works under 5.1 where it is undefined.
+$onWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
+
+# The .ps1 suite is the WINDOWS-SIDE suite, and off-Windows it is skipped wholesale.
+#
+# Every script in these plugins ships as a pair: the `.ps1` runs on Windows, the `.sh` runs on
+# Linux/macOS. So on a Linux host the `.ps1` files are not the code that executes -- testing them
+# there checks an implementation nobody uses on that platform. In practice they cannot run anyway:
+# the test harness drives scripts through `powershell.exe` / `cmd.exe`, and the dotnet suite needs
+# IIS Express and MSBuild. This is the exact mirror of the rule below that leaves BashPath
+# unresolved off-Windows so the `.sh` suite never double-runs; both halves are owned by exactly one
+# orchestrator. Coverage does not drop: on Windows BOTH suites run, so each implementation is
+# exercised on the platform it is for.
+$runPs1Suite = $onWindows
 $hasPs1Tests = $false
 foreach ($base in @($unitDir, $fixturesDir)) {
     if ([System.IO.Directory]::Exists($base) -and
@@ -107,7 +127,7 @@ if ($SkipPreflight) {
 
 # ─── Step 2: Framework gate (ALWAYS when .ps1 tests exist — not gated by ──────
 # -SkipPreflight, R3-3). Skipped only when there are zero *.test.ps1 (pure-skill plugin).
-if ($hasPs1Tests) {
+if ($hasPs1Tests -and $runPs1Suite) {
     Write-Output '─── Framework gate (Pester >= 5.0) ──────────────────────────────────'
     try {
         # -MaximumVersion pins the Pester 5 line. These tests are written against Pester 5; the
@@ -124,6 +144,9 @@ if ($hasPs1Tests) {
         Write-Output "  (Import-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 error: $($_.Exception.Message))"
         exit 1
     }
+} elseif (-not $runPs1Suite) {
+    Write-Output 'Framework gate (Pester): SKIPPED (non-Windows host — the .ps1 suite is not run here)'
+    Write-Output ''
 } else {
     Write-Output 'Framework gate (Pester): SKIPPED (no *.test.ps1 — pure-skill plugin)'
     Write-Output ''
@@ -136,7 +159,6 @@ if ($hasPs1Tests) {
 # has no such variable, so this only ever failed off-Windows -- which is to say it failed on every
 # ubuntu CI run, killing this orchestrator before a single test ran. Kept as an explicit probe
 # rather than just using $IsWindows, so the expression still works under 5.1 where it is undefined.
-$onWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
 if ([string]::IsNullOrWhiteSpace($BashPath)) {
     if ($onWindows) {
         foreach ($c in @('C:\Program Files\Git\bin\bash.exe', 'C:\Program Files (x86)\Git\bin\bash.exe')) {
@@ -170,6 +192,15 @@ Write-Output ''
 # ─── Step 5: Run *.test.ps1 via Pester (one file per Invoke-Pester for isolation) ─
 $psPassed = 0; $psFailed = 0; $psSkipped = 0
 $failedFiles = @()
+
+if (-not $runPs1Suite -and $psTests.Count -gt 0) {
+    Write-Output "PS suite: SKIPPED on this host ($($psTests.Count) file(s)) — the .ps1 scripts are the"
+    Write-Output '  Windows-side implementation; the .sh suite is the Unix side and is run by'
+    Write-Output '  invoke-script-tests.sh. Nothing is uncovered: on Windows both suites run.'
+    Write-Output ''
+    $psSkipped = $psTests.Count
+    $psTests = @()
+}
 
 foreach ($t in $psTests) {
     Write-Output "─── PS: $($t.Name) ──────────────────────────────────────"

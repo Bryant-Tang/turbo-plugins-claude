@@ -32,6 +32,9 @@ BUILD="$PLUGIN_ROOT/scripts/build-svn-commit.sh"
 PS_SUBMIT="$PLUGIN_ROOT/scripts/Submit-SvnCommit.ps1"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
+# shellcheck disable=SC1091
+source "$PLUGIN_ROOT/tests/lib/svn-uri.sh"
+
 svn_available() { command -v svn >/dev/null 2>&1 && command -v svnadmin >/dev/null 2>&1; }
 
 oneTimeSetUp() {
@@ -51,8 +54,7 @@ tearDown() {
 _make_wc() {
     local repo="$SB/repo" wc="$SB/wc" win uri
     svnadmin create "$repo" >/dev/null 2>&1 || return 1
-    win="$(cygpath -m "$repo" 2>/dev/null || printf '%s' "$repo")"
-    uri="file:///$win"
+    uri="$(svn_uri "$repo")"
     svn checkout "$uri" "$wc" >/dev/null 2>&1 || return 1
     printf '%s' "$wc"
 }

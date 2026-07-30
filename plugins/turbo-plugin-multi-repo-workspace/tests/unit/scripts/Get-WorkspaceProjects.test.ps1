@@ -1,4 +1,4 @@
-# Get-WorkspaceProjects.test.ps1 (Pester 5)
+﻿# Get-WorkspaceProjects.test.ps1 (Pester 5)
 #
 # Script: plugins/turbo-plugin-multi-repo-workspace/scripts/Get-WorkspaceProjects.ps1
 # Output contract: zero or more plain `PROJECT ...` lines, then EXACTLY ONE terminal `TP_TOKEN:` line.
@@ -25,7 +25,12 @@ BeforeAll {
     function New-WorkspaceSandbox {
         # Expand 8.3 short-name segments in %TEMP% (e.g. MELWU~1): Remove-Item -LiteralPath on
         # PS 5.1 fails against a short-named parent, and Resolve-Path does not expand them.
-        $tempDir = $env:TEMP
+        # GetTempPath(), not $env:TEMP: TEMP is a Windows-only variable and is unset under pwsh on
+        # Linux, so Combine() would receive $null and yield a RELATIVE path -- the sandbox would be
+        # created inside the repo. For this suite that is not just untidy: its own "is this folder
+        # inside a git repo?" guard then correctly answers yes and skips every case, so the whole
+        # file silently self-disabled on the ubuntu runner.
+        $tempDir = [System.IO.Path]::GetTempPath()
         try { $tempDir = (Get-Item -LiteralPath $tempDir).FullName } catch { }
         $dir = [System.IO.Path]::Combine($tempDir, 'turbo-mrw-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
         $null = New-Item -ItemType Directory -Path $dir -Force
@@ -82,7 +87,10 @@ BeforeAll {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'SilentlyContinue'
         try {
-            $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script:ScriptUnderTest -WorkspaceRoot $WorkspaceRoot 2>$null
+            # `powershell` only exists on Windows; PowerShell 7+ (including the ubuntu runner) ships
+            # `pwsh`. Spawn the SAME edition this process runs under so the child resolves.
+            $psExe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
+            $out = & $psExe -NoProfile -ExecutionPolicy Bypass -File $script:ScriptUnderTest -WorkspaceRoot $WorkspaceRoot 2>$null
             $exit = $LASTEXITCODE
         } catch {
             $out = @($_.Exception.Message); $exit = 99
@@ -264,7 +272,7 @@ Describe 'Get-WorkspaceProjects output contract' -Skip:(-not $hasGit) {
             New-Repo -Path ([System.IO.Path]::Combine($ws, 'proj-a'))
 
             # Ask using the raw %TEMP% spelling, which on this host may carry a short name.
-            $rawWs = [System.IO.Path]::Combine($env:TEMP, [System.IO.Path]::GetFileName($sb), 'ws')
+            $rawWs = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetFileName($sb), 'ws')
             $r = Invoke-Survey -WorkspaceRoot $rawWs
             $r.Tokens.Count | Should -Be 1
             $projectPath = ($r.Projects[0] -replace '^.*\bpath=', '')

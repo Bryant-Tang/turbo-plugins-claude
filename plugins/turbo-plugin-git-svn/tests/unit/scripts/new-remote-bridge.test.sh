@@ -18,6 +18,9 @@ SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/new-remote-bridge.sh"
 DUMP_PATH="$PLUGIN_ROOT/tests/fixtures/seed/svn-repo-r1-r20.dump"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
+# shellcheck disable=SC1091
+source "$PLUGIN_ROOT/tests/lib/svn-uri.sh"
+
 svn_available() { command -v svn >/dev/null 2>&1 && command -v svnadmin >/dev/null 2>&1; }
 
 oneTimeSetUp() {
@@ -59,9 +62,8 @@ make_remote_main_wc() {
     local worktrees="$root/.turbo-plugin/worktrees"
     svnadmin create "$svnrepo" >/dev/null 2>&1 || return 1
     svnadmin load "$svnrepo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
-    local uri winpath
-    winpath="$(cygpath -m "$svnrepo" 2>/dev/null || printf '%s' "$svnrepo")"
-    uri="file:///$winpath"
+    local uri
+    uri="$(svn_uri "$svnrepo")"
     svn checkout "$uri/trunk" "$worktrees/remote-svn-main" >/dev/null 2>&1 || return 1
     # The bridge branch is now based on remote-svn/main's tip (not a repo root commit), so the
     # anchor ref must exist for the create path to run. Real setups create it via Initialize;
@@ -353,8 +355,7 @@ make_drift_scenario() {
     mkdir -p "$cfg"
     svnadmin create "$repo" >/dev/null 2>&1 || return 1
     svnadmin load "$repo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
-    winrepo="$(cygpath -m "$repo" 2>/dev/null || printf '%s' "$repo")"
-    uri="file:///$winrepo"
+    uri="$(svn_uri "$repo")"
 
     # trunk: svn:ignore=.git + versioned .gitignore(LF) + Templates/drift.txt content "v1".
     local twc="$sb/trunkwc"
@@ -444,8 +445,7 @@ make_unpushed_gitignore_scenario() {
     mkdir -p "$cfg"
     svnadmin create "$repo" >/dev/null 2>&1 || return 1
     svnadmin load "$repo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
-    winrepo="$(cygpath -m "$repo" 2>/dev/null || printf '%s' "$repo")"
-    uri="file:///$winrepo"   # the seed dump already carries /trunk + /branches
+    uri="$(svn_uri "$repo")"   # the seed dump already carries /trunk + /branches
 
     # trunk: svn:ignore=.git + versioned .gitignore (in sync with what main will start from).
     local twc="$sb/trunkwc"

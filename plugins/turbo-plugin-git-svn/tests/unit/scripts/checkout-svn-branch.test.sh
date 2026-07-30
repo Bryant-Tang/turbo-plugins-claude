@@ -17,6 +17,9 @@ SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/checkout-svn-branch.sh"
 DUMP_PATH="$PLUGIN_ROOT/tests/fixtures/seed/svn-repo-r1-r20.dump"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
+# shellcheck disable=SC1091
+source "$PLUGIN_ROOT/tests/lib/svn-uri.sh"
+
 svn_available() { command -v svn >/dev/null 2>&1 && command -v svnadmin >/dev/null 2>&1; }
 
 oneTimeSetUp() {
@@ -57,8 +60,7 @@ make_remote_main_wc() {
     svnadmin create "$svnrepo" >/dev/null 2>&1 || return 1
     svnadmin load "$svnrepo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
     local uri winpath
-    winpath="$(cygpath -m "$svnrepo" 2>/dev/null || printf '%s' "$svnrepo")"
-    uri="file:///$winpath"
+    uri="$(svn_uri "$svnrepo")"
     svn checkout "$uri/trunk" "$worktrees/remote-svn-main" >/dev/null 2>&1 || return 1
     # The import now bases the bridge branch on remote-svn/main (the trunk mirror) so the imported
     # branch connects to main. Real setups create this anchor ref via tp-setup; here a ref at main

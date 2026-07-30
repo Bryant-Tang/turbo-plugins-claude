@@ -22,6 +22,9 @@ SCRIPT="$PLUGIN_ROOT/scripts/sync-from-svn.sh"
 SCRIPTS_DIR="$PLUGIN_ROOT/scripts"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
+# shellcheck disable=SC1091
+source "$PLUGIN_ROOT/tests/lib/svn-uri.sh"
+
 svn_available() { command -v svn >/dev/null 2>&1 && command -v svnadmin >/dev/null 2>&1; }
 
 oneTimeSetUp() {
@@ -52,8 +55,7 @@ build_pushed_bridge() {
     local repo="$sandbox/svnrepo" root="$sandbox/test-turbo-plugin" cfg="$sandbox/.svncfg"
     local seed="$sandbox/seed" uri root_uri win wt
     svnadmin create "$repo" >/dev/null 2>&1 || return 1
-    win="$(cygpath -m "$repo" 2>/dev/null || printf '%s' "$repo")"
-    root_uri="file:///$win"
+    root_uri="$(svn_uri "$repo")"
     uri="$root_uri"
     [ -n "$subpath" ] && uri="$root_uri/$subpath"
     mkdir -p "$seed"
@@ -300,8 +302,7 @@ test_sibling_commit_does_not_deadlock() {
     spec="$(build_pushed_bridge "$SB" 'proj-1')" || { startSkipping; return 0; }
     root="${spec%%|*}"; uri="$(printf '%s' "$spec" | cut -d'|' -f2)"; cfg="${spec##*|}"
     wt="$root/.turbo-plugin/worktrees/remote-svn-main"
-    win="$(cygpath -m "$SB/svnrepo" 2>/dev/null || printf '%s' "$SB/svnrepo")"
-    root_uri="file:///$win"
+    root_uri="$(svn_uri "$SB/svnrepo")"
 
     wc_before="$(wc_revision "$wt")"
 
