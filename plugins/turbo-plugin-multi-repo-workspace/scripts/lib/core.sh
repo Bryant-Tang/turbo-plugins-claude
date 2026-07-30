@@ -73,9 +73,10 @@ get_normalized_absolute_path() {
 # and asserted to be a real directory here, so a typo fails with a message naming the argument
 # instead of surfacing later as git's own "cannot change to ..." mid-operation.
 #
-# Kept identical to turbo-plugin-git-svn's copy of this lib: a multi-repo workspace has to judge
-# several sibling repositories in one run, so every git-touching helper must accept the repository
-# as an argument rather than inferring it from the process's current directory.
+# Why this exists: deriving the target from the ambient cwd is how the marketplace repo once got a
+# bridge bootstrapped into it. Every entry script now accepts --repo-root so the caller can name the
+# repository outright, which is also what makes a multi-project workspace (several sibling repos
+# under one session root) workable.
 resolve_git_root() {
   local repo_root="${1:-}"
   if [[ -z "$repo_root" ]]; then

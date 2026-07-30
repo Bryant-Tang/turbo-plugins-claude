@@ -53,13 +53,41 @@ function Get-NormalizedAbsolutePath {
     return $resolved
 }
 
+# Resolve an optional explicit repository root into the value handed to `git -C`.
+#
+# Omitted / empty returns '.', and `git -C .` is a no-op — so callers that pass nothing keep the
+# historical behaviour exactly: git resolves the repository by walking up from whatever directory
+# the process happens to be standing in. A supplied path is normalized (Git Bash /c/foo -> c:\foo)
+# and asserted to be a real directory here, so a typo fails with a message naming the argument
+# instead of surfacing later as git's own "cannot change to ..." mid-operation.
+#
+# Why this exists: deriving the target from the ambient cwd is how the marketplace repo once got a
+# bridge bootstrapped into it. Every entry script now accepts -RepoRoot so the caller can name the
+# repository outright, which is also what makes a multi-project workspace (several sibling repos
+# under one session root) workable.
+function Resolve-GitRoot {
+    param([string]$RepoRoot = '')
+
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+        return '.'
+    }
+    $normalized = Get-NormalizedAbsolutePath -Path $RepoRoot
+    if (-not (Test-Path -LiteralPath $normalized -PathType Container)) {
+        throw "Repo root not found (or not a directory): $RepoRoot"
+    }
+    return $normalized
+}
+
 function Get-MainWorktree {
+    param([string]$RepoRoot = '')
+
+    $root = Resolve-GitRoot -RepoRoot $RepoRoot
     # fix: wrap git call in try/catch to prevent PS 5.1 + StrictMode + EAP=Stop
     # from bubbling raw git "fatal: not a git repository" stderr as terminating NativeCommandError
     # before our self-emitted "Not inside a git repository." throw can fire.
     $commonDir = ''
     try {
-        $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+        $commonDir = (& git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
     } catch {
         $commonDir = ''
     }
@@ -71,8 +99,11 @@ function Get-MainWorktree {
 }
 
 function Test-IsMainWorktree {
-    $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
-    $topLevel = (& git rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
+    param([string]$RepoRoot = '')
+
+    $root = Resolve-GitRoot -RepoRoot $RepoRoot
+    $commonDir = (& git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+    $topLevel = (& git -C $root rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonDir) -or [string]::IsNullOrWhiteSpace($topLevel)) {
         return $false
     }
@@ -82,7 +113,10 @@ function Test-IsMainWorktree {
 }
 
 function Test-IsSubmodule {
-    $super = (& git rev-parse --show-superproject-working-tree 2>$null | Out-String).Trim()
+    param([string]$RepoRoot = '')
+
+    $root = Resolve-GitRoot -RepoRoot $RepoRoot
+    $super = (& git -C $root rev-parse --show-superproject-working-tree 2>$null | Out-String).Trim()
     return -not [string]::IsNullOrWhiteSpace($super)
 }
 

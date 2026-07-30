@@ -32,12 +32,22 @@ err() { echo "FAIL: $*" >&2; fail=1; }
 # ">=2 copies present" check) catches a copy DELETED from all-but-one plugin --
 # otherwise the lone survivor would silently pass. canonical = turbo-plugin-git-svn.
 # Adding a plugin that should carry a shared file means adding it to the spec.
+#
+# NOTE on what belongs in the universal Core: only helpers every plugin could need
+# (config / path / worktree / git-version / UTF-8 write). Anything concern-specific goes in that
+# plugin's own concern lib instead -- git-svn's `svn` non-interactive shim lives in
+# Common.ps1 / common.sh, and get_worktrees_dir was moved out of Core for the same reason.
+# Putting a concern helper in Core forces every other plugin to carry code it never calls, and
+# the only way to satisfy this check would be to ship it there.
+#
+# dotnet-framework-web is absent from the tp-setup asset specs on purpose: its tp-setup was
+# removed (setup is no longer a step for that plugin), so it carries no copy of those assets.
 shared_specs=(
-  "scripts/lib/Core.ps1|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web turbo-plugin-three-environment-db"
-  "scripts/lib/core.sh|turbo-plugin-git-svn turbo-plugin-three-environment-db"
+  "scripts/lib/Core.ps1|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
+  "scripts/lib/core.sh|turbo-plugin-git-svn turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
   "scripts/lib/ps1-delegate.sh|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web"
-  "skills/tp-setup/assets/setup-base.md|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web turbo-plugin-three-environment-db"
-  "skills/tp-setup/assets/claudemd-base-snippet.md|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web turbo-plugin-three-environment-db"
+  "skills/tp-setup/assets/setup-base.md|turbo-plugin-git-svn turbo-plugin-three-environment-db"
+  "skills/tp-setup/assets/claudemd-base-snippet.md|turbo-plugin-git-svn turbo-plugin-three-environment-db"
 )
 
 for spec in "${shared_specs[@]}"; do

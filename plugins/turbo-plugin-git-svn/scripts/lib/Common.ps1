@@ -4,6 +4,30 @@
 # in Core.ps1 from the same lib/ directory.
 . ([System.IO.Path]::Combine($PSScriptRoot, 'Core.ps1'))
 
+# --- svn must NEVER prompt (single choke point) -------------------------------
+# These scripts are driven by an agent / CI with no usable stdin. A prompting `svn` (conflict
+# resolution, credential request, cert acceptance) does not fail -- it blocks FOREVER, which reads
+# as "the script hung" and cannot be recovered or rolled back. Real incident: a bootstrap replay hit
+# a tree conflict on `.gitignore` and sat in svn's interactive conflict prompt indefinitely.
+#
+# Shadowing `svn` here (rather than adding the flag at ~18 call sites) makes the invariant global
+# and future-proof: every `& svn ...` in every script that dot-sources this lib gets it, including
+# ones added later. The real executable is resolved with -CommandType Application so this function
+# never recurses. $LASTEXITCODE propagates through the wrapper unchanged, so the existing
+# `if ($LASTEXITCODE -ne 0)` guards and rollback blocks still work.
+# NOTE: credentials must therefore already be cached -- an uncached password now fails loudly
+# rather than waiting on a prompt nobody can answer.
+#
+# Lives in the SVN CONCERN lib, not in universal Core.ps1: Core.ps1 is the file copied
+# byte-identical into every plugin (enforced by tools/verify-core-identical.sh), and an svn shim
+# has no business in a plugin that never touches svn. Every script here that can invoke svn
+# dot-sources THIS file, so the choke point is unchanged. Same reasoning as the earlier move of
+# Get-WorktreesDir out of universal Core.
+function svn {
+    $exe = (Get-Command svn -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    & $exe --non-interactive @args
+}
+
 # Granularity gate threshold (KTD7/R2/R3): per-revision SILENTLY at or below this many new
 # revisions; ABOVE it the granularity choice is offered. One shared definition for Sync-FromSvn.ps1
 # and Initialize-GitSvnBridge.ps1 (dot-sourced into their scope) so the two never drift.

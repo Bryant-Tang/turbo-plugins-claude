@@ -55,15 +55,16 @@ function Get-NormalizedAbsolutePath {
 
 # Resolve an optional explicit repository root into the value handed to `git -C`.
 #
-# Omitted / empty returns '.', and `git -C .` is a no-op -- so callers that pass nothing keep the
+# Omitted / empty returns '.', and `git -C .` is a no-op — so callers that pass nothing keep the
 # historical behaviour exactly: git resolves the repository by walking up from whatever directory
 # the process happens to be standing in. A supplied path is normalized (Git Bash /c/foo -> c:\foo)
 # and asserted to be a real directory here, so a typo fails with a message naming the argument
 # instead of surfacing later as git's own "cannot change to ..." mid-operation.
 #
-# Kept identical to turbo-plugin-git-svn's copy of this lib: a multi-repo workspace has to judge
-# several sibling repositories in one run, so every git-touching helper must accept the repository
-# as an argument rather than inferring it from the process's current directory.
+# Why this exists: deriving the target from the ambient cwd is how the marketplace repo once got a
+# bridge bootstrapped into it. Every entry script now accepts -RepoRoot so the caller can name the
+# repository outright, which is also what makes a multi-project workspace (several sibling repos
+# under one session root) workable.
 function Resolve-GitRoot {
     param([string]$RepoRoot = '')
 

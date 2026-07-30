@@ -5,6 +5,30 @@
 # first; this concern lib must NOT weaken those (KTD2a).
 source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
 
+# --- svn must NEVER prompt (single choke point) -------------------------------
+# These scripts are driven by an agent / CI with no usable stdin. A prompting `svn`
+# (conflict resolution, credential request, cert acceptance) does not fail -- it blocks
+# FOREVER, which reads as "the script hung" and cannot be recovered or rolled back.
+# Real incident: a bootstrap replay hit a tree conflict on `.gitignore` and sat in svn's
+# interactive conflict prompt indefinitely.
+#
+# Shadowing `svn` here (rather than adding the flag at ~19 call sites) makes the invariant
+# global and future-proof: every svn invocation in every script that sources this lib gets
+# it, including ones added later. `command svn` bypasses this function, so no recursion.
+# With --non-interactive svn returns a non-zero exit instead of prompting, so the existing
+# `|| exit 1` / `$LASTEXITCODE` guards and rollback traps do their job.
+# NOTE: credentials must therefore already be cached (or supplied in the URL) -- an
+# uncached password now fails loudly rather than waiting on a prompt nobody can answer.
+#
+# Lives in the SVN CONCERN lib, not in universal core.sh: core.sh is the file copied
+# byte-identical into every plugin (enforced by tools/verify-core-identical.sh), and an svn
+# shim has no business in a plugin that never touches svn. Every script here that can invoke
+# svn sources THIS file, so the choke point is unchanged. Same reasoning as the earlier move
+# of get_worktrees_dir out of universal core.
+svn() {
+  command svn --non-interactive "$@"
+}
+
 # Granularity gate threshold (KTD7/R2/R3): a pull or first import replays per-revision SILENTLY at
 # or below this many new revisions; ABOVE it, the granularity choice is offered. One shared
 # definition for the pull loop (sync-from-svn.sh) and the first-import bootstrap
