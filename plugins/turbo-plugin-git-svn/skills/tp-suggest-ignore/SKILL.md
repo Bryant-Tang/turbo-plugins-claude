@@ -37,7 +37,8 @@ Constraints: only one direct-mode flag per invocation.
 
 ### `--add-git <pattern>`
 
-1. Resolve main worktree via `git rev-parse --git-common-dir`.
+1. Resolve main worktree via `git -C <目標> rev-parse --git-common-dir`（`<目標>` 依
+   `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`;單一專案的目錄就是它自己）。
 2. If `.gitignore` does not exist, create it as an empty file.
 3. If pattern is already present in `.gitignore` → report "already exists" and stop.
 4. Check `git -C <main> ls-files` for files matching the pattern. If any are found, **warn**: "The following files are already git-tracked; adding to .gitignore will not un-track them. Use analysis mode or run `git rm --cached` manually if you want to stop tracking them." (still proceed)
@@ -48,7 +49,7 @@ Constraints: only one direct-mode flag per invocation.
 
 ### `--remove-git <pattern>`
 
-1. Resolve main worktree.
+1. Resolve main worktree（同上,`<目標>` 依 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`）。
 2. **基礎設施 pattern 不可移除**:若 pattern 是 `.svn/`、`.turbo-plugin/worktrees/`、
    `.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*` 其中之一 → **拒絕**,用白話說明後果
    (見 §判準的硬規則:`.svn/` 一旦不再被忽略,bridge 的 SVN 管理目錄會被推上 SVN)並停止。
@@ -66,7 +67,8 @@ Constraints: only one direct-mode flag per invocation.
 
 ### Step 1 — Resolve paths
 
-1. Resolve main worktree and all remote worktrees (`remote-svn-*`, e.g. `remote-svn-main`, `remote-svn-feat-login`) from `git rev-parse --git-common-dir`.
+0. **先確定要對哪個 repo 動手**——讀 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`。這支 SKILL 自己下 `git`(不只透過腳本),所以「指名目標」在這裡的作法是**每個 `git` 都帶 `-C <目標>`**(本 SKILL 各步驟已經都是這個寫法);唯一要決定的是 `<目標>` 從哪來:當前目錄本身是 repo → 就用它;當前目錄自己不是 repo 但底下並排著多個 repo → **先問使用者是哪一個**。呼叫 `Remove-SvnFile` / `remove-svn-file.sh` 時把同一個路徑用 `-RepoRoot` / `--repo-root` 傳進去。
+1. Resolve main worktree and all remote worktrees (`remote-svn-*`, e.g. `remote-svn-main`, `remote-svn-feat-login`) from `git -C <目標> rev-parse --git-common-dir`.
 2. If no remote worktrees exist, skip Inconsistency and Un-track, and proceed with Git Ignore only.
 
 ### Step 2 — Collect data
@@ -168,10 +170,10 @@ UTF-8-safe `svn delete` + commit; the file is git-ignored so the bridge stays cl
 `<branch>` is the branch of the remote worktree the inconsistent file lives in; `<file>` is its
 bridge-relative path. Pick the tool per **Execution routing** (Decision Rules):
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/remove-svn-file.sh" --branch <branch> --path <file>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/remove-svn-file.sh" --branch <branch> --path <file> [--repo-root <path>]
 ```
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Remove-SvnFile.ps1" -Branch <branch> -Path <file>
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Remove-SvnFile.ps1" -Branch <branch> -Path <file> [-RepoRoot <path>]
 ```
 
 **Un-track — Option A (stop git tracking + delete from SVN, keep the local file):**
@@ -187,10 +189,10 @@ git -C <main-worktree> rm --cached "<file>"
    script reconciles: `svn delete` + a `sync: svn r<rev>` commit + a merge into `<branch>`, formats
    identical to `/tp-pull-from-svn`). Pick the tool per **Execution routing**:
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/remove-svn-file.sh" --branch <branch> --path <file>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/remove-svn-file.sh" --branch <branch> --path <file> [--repo-root <path>]
 ```
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Remove-SvnFile.ps1" -Branch <branch> -Path <file>
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Remove-SvnFile.ps1" -Branch <branch> -Path <file> [-RepoRoot <path>]
 ```
    If the script exits non-zero, report its message and stop (the local file is kept regardless).
 3. **Sync the updated `.gitignore` to SVN** so it does not linger only on `main` until some later
@@ -233,7 +235,7 @@ List what was changed in each category and what was skipped.
 - **`.gitignore` timing differs by intent**: Un-track A adds `.gitignore` **before** calling `Remove-SvnFile` and it's fine (the script isn't push, so `check-ignore` never suppresses the delete); Un-track B adds `.gitignore` immediately to **protect** the SVN copy from a future push's `!`-delete. Both are "add now" here — the after-push ordering only matters when a removal is routed through push, which this SKILL never does.
 - **Execution routing (pick `.ps1` vs `.sh`)**: don't use the Bash tool to call `pwsh` / `powershell`. Windows + Git Bash → **Bash tool** runs `.sh`; Windows + no Git Bash → **PowerShell tool** runs `.ps1` (single-dash params `-Branch` / `-Path`); Linux / macOS → **Bash tool** runs `.sh`. Git Bash detection: check `C:\Program Files\Git\bin\bash.exe`, then `C:\Program Files (x86)\Git\bin\bash.exe`; else `where.exe bash` but **exclude** `System32\bash.exe` (WSL).
 - **Un-track option B warning is mandatory** — never skip it before proceeding with Un-track Option B.
-- SVN removal (Inconsistency option B and Un-track option A) is destructive: always ask a second `AskUserQuestion` confirmation before delegating to `Remove-SvnFile`.
+- SVN removal (Inconsistency option B and Un-track option A) is destructive: always ask a second `AskUserQuestion` confirmation before delegating to `Remove-SvnFile`. **該確認的第一行寫要動的專案絕對路徑**(`要動的專案:<絕對路徑>`)——這是 SVN 上的永久刪除,而「目標 repo 本身完全合法、只是不是使用者想的那個」沒有守門攔得住。判準見 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`。
 - An Inconsistency or Un-track file must be confirmed individually — no "apply all" option.
 - On git operation failure (dirty working tree), stop and report; do not proceed to the next step.
 

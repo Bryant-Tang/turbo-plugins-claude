@@ -30,6 +30,7 @@ Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program F
 
 ### Step 1 — 前置確認
 
+- **先確定要對哪個 repo 動手**——讀 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`,依它的判準決定要不要帶 `-RepoRoot` / `--repo-root`。單一專案的目錄不用帶;當前目錄自己不是 repo 但底下並排著多個 repo 時**必須先問使用者是哪一個**再指名。這支會在本機 git 端建分支 / worktree,所以**跑之前先用白話講出要動的專案絕對路徑**。
 - 需要 `--svn-url <url>`(要匯入的既有 SVN 分支 URL)。未提供 → 要求使用者提供後再續。
 - 前置條件:`remote-svn-main` bridge 必須已存在(本 skill 以它為信任錨,且**不**自行 bootstrap 主 bridge)。若不存在 / 損壞,腳本會 fail-closed 並導向先跑 git-svn `/tp-setup`。
 - 工作分支名:預設 = SVN URL 的葉名(最後一段)消毒後;要自訂用 `--branch <name>`。
@@ -38,10 +39,10 @@ Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program F
 
 依執行路由跑:
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Checkout-SvnBranch.ps1" -SvnUrl <url> [-Branch <name>]
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Checkout-SvnBranch.ps1" -SvnUrl <url> [-Branch <name>] [-RepoRoot <path>]
 ```
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/checkout-svn-branch.sh" --svn-url <url> [--branch <name>]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/checkout-svn-branch.sh" --svn-url <url> [--branch <name>] [--repo-root <path>]
 ```
 
 Script 會(全部在任何 mutation 之前做完):

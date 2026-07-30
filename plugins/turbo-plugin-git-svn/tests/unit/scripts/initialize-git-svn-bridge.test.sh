@@ -395,6 +395,51 @@ test_nested_git_repos_gate() {
     esac
 }
 
+# ── Scenario 7e: guard 3 scans the --repo-root target, not the working directory ──
+# Same guard, but the workspace is NAMED instead of being the cwd. Without this the guard would
+# scan the (clean) cwd, find nothing, fall through, and git init the workspace it was pointed at --
+# the exact outcome guard 3 exists to prevent, reached through the very argument added to make
+# targeting explicit.
+test_nested_git_repos_gate_scans_repo_root() {
+    local ws elsewhere out rc name out2 rc2 absent
+    ws="$SB/g3-root"
+    elsewhere="$SB/g3-elsewhere"
+    mkdir -p "$ws" "$elsewhere"
+    for name in proj-1 proj-2; do
+        init_repo_with_identity "$ws/$name"
+        echo 'seed' > "$ws/$name/seed.txt"
+        git -C "$ws/$name" add -A >/dev/null 2>&1
+        git -C "$ws/$name" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
+    done
+
+    out="$(cd "$elsewhere" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")" --repo-root "$ws" 2>&1)"; rc=$?
+    assertNotEquals "gate fires for the NAMED workspace (out: $out)" 0 "$rc"
+    case "$out" in *"TP_TOKEN:NESTED_GIT_REPOS"*) assertTrue 'emits NESTED_GIT_REPOS token' 0 ;; *) fail "no NESTED_GIT_REPOS token: $out" ;; esac
+    case "$out" in *proj-1*) assertTrue 'token names proj-1' 0 ;; *) fail "token lacks proj-1: $out" ;; esac
+    case "$out" in *proj-2*) assertTrue 'token names proj-2' 0 ;; *) fail "token lacks proj-2: $out" ;; esac
+
+    # the load-bearing pair: nothing was created at EITHER location.
+    assertTrue 'no repository created over the named workspace' "[ ! -e '$ws/.git' ]"
+    assertTrue 'no repository created over the working directory' "[ ! -e '$elsewhere/.git' ]"
+
+    # Complement: the guard must not fire merely because --repo-root was used. Pointing it at a
+    # genuine single project gets past guard 3 (the run then fails on the unreachable URL).
+    out2="$(cd "$elsewhere" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/no-such-repo")" --repo-root "$ws/proj-1" 2>&1)"; rc2=$?
+    case "$out2" in
+        *"TP_TOKEN:NESTED_GIT_REPOS"*) fail "gate fired for a genuine single project (rc=$rc2): $out2" ;;
+        *) assertTrue 'gate does not fire for a genuine single project' 0 ;;
+    esac
+    assertTrue 'working directory still not a repository' "[ ! -e '$elsewhere/.git' ]"
+
+    # A --repo-root that does not exist is refused before anything is created.
+    absent="$SB/g3-no-such-dir"
+    out="$(cd "$elsewhere" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")" --repo-root "$absent" 2>&1)"; rc=$?
+    assertNotEquals 'missing --repo-root exits non-zero' 0 "$rc"
+    case "$out" in *'repo root not found'*) assertTrue 'names the missing repo root' 0 ;; *) fail "expected 'repo root not found', got: $out" ;; esac
+    assertTrue 'missing repo root was not created' "[ ! -e '$absent' ]"
+    assertTrue 'working directory untouched' "[ ! -e '$elsewhere/.git' ]"
+}
+
 # ── Scenario 8: unreachable (scheme-valid) SVN URL -> fail with no residue ────
 test_rollback_on_checkout_failure() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi

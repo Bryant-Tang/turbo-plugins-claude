@@ -529,6 +529,83 @@ Describe 'Initialize-GitSvnBridge' {
         }
     }
 
+    # Same guard, but the workspace is NAMED via -RepoRoot instead of being the cwd. Without this
+    # the guard would scan the (clean) cwd, find nothing, fall through, and git init the workspace
+    # it was pointed at -- i.e. the exact outcome guard 3 exists to prevent, now reachable through
+    # the very argument added to make targeting explicit.
+    Context 'Scenario 7e: guard 3 scans the -RepoRoot target, not the working directory' {
+        It 'refuses over the NAMED workspace while the cwd is a clean unrelated directory' {
+            $sb = New-Sandbox -Tag 'igsb-7e'
+            try {
+                $workspace = [System.IO.Path]::Combine($sb, 'proj-root')
+                $null = New-Item -ItemType Directory -Path $workspace -Force
+                foreach ($name in @('proj-1', 'proj-2')) {
+                    New-CaseBRepo -Root ([System.IO.Path]::Combine($workspace, $name)) -Files @{ 'seed.txt' = "seed`n" }
+                }
+                # cwd for the run: a sibling directory with no git anywhere in it.
+                $elsewhere = [System.IO.Path]::Combine($sb, 'elsewhere')
+                $null = New-Item -ItemType Directory -Path $elsewhere -Force
+
+                $svnUri = 'file:///' + ([System.IO.Path]::Combine($sb, 'svnrepo') -replace '\\', '/')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $elsewhere `
+                    -ScriptArgs @('-SvnUrl', $svnUri, '-RepoRoot', $workspace)
+
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'TP_TOKEN:NESTED_GIT_REPOS'
+                $res.Combined | Should -Match 'proj-1'
+                $res.Combined | Should -Match 'proj-2'
+
+                # the load-bearing pair: nothing was created at EITHER location.
+                [System.IO.Directory]::Exists([System.IO.Path]::Combine($workspace, '.git')) | Should -BeFalse
+                [System.IO.Directory]::Exists([System.IO.Path]::Combine($elsewhere, '.git')) | Should -BeFalse
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+
+        It 'a -RepoRoot naming a real project proceeds past the guard' {
+            # Complement: the guard must not fire just because -RepoRoot was used. Pointing it at a
+            # genuine single project gets past guard 3; the run then fails on the unreachable URL.
+            $sb = New-Sandbox -Tag 'igsb-7e2'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj-1')
+                New-CaseBRepo -Root $root -Files @{ 'seed.txt' = "seed`n" }
+                $elsewhere = [System.IO.Path]::Combine($sb, 'elsewhere')
+                $null = New-Item -ItemType Directory -Path $elsewhere -Force
+
+                $bogusUri = 'file:///' + ([System.IO.Path]::Combine($sb, 'no-such-repo') -replace '\\', '/')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $elsewhere `
+                    -ScriptArgs @('-SvnUrl', $bogusUri, '-RepoRoot', $root)
+
+                $res.Combined | Should -Not -Match 'TP_TOKEN:NESTED_GIT_REPOS'
+                # and the cwd was never turned into a repository on the way past.
+                [System.IO.Directory]::Exists([System.IO.Path]::Combine($elsewhere, '.git')) | Should -BeFalse
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+
+        It 'a -RepoRoot that does not exist is refused before anything is created' {
+            $sb = New-Sandbox -Tag 'igsb-7e3'
+            try {
+                $elsewhere = [System.IO.Path]::Combine($sb, 'elsewhere')
+                $null = New-Item -ItemType Directory -Path $elsewhere -Force
+                $absent = [System.IO.Path]::Combine($sb, 'no-such-dir')
+                $svnUri = 'file:///' + ([System.IO.Path]::Combine($sb, 'svnrepo') -replace '\\', '/')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $elsewhere `
+                    -ScriptArgs @('-SvnUrl', $svnUri, '-RepoRoot', $absent)
+
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'Repo root not found'
+                [System.IO.Directory]::Exists([System.IO.Path]::Combine($elsewhere, '.git')) | Should -BeFalse
+                [System.IO.Directory]::Exists($absent) | Should -BeFalse
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
     Context 'Scenario 8: unreachable (scheme-valid) SVN URL -> fail, no residue' {
         It 'on an unreachable URL leaves no bridge branch + no worktree dir' -Skip:(-not $SvnAvailable) {
             $sb = New-Sandbox -Tag 'igsb-8'

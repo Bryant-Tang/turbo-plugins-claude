@@ -47,6 +47,20 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 - 在任一 worktree 開的 Claude session 都能呼叫指令——script 會自動定位主 worktree。
 - 本 plugin 只管 `remote-svn-*` 橋接 worktree，**不建立 / 不碰**個人開發用的隔離 worktree（若你自行用 `git worktree add` 建 peer worktree，plugin 不干涉）。
 
+## 要對哪個 repo 動手（`--repo-root`）
+
+每支入口腳本都收一個可選的 `-RepoRoot <path>`（`.ps1`）／ `--repo-root <path>`（`.sh`）。
+
+- **不傳**（預設）：腳本從當前目錄往上找 repo，再定位到它的主 worktree。單一專案的 session 裡這就是答案，行為與這個參數存在之前完全相同。
+- **傳**：直接指名要動的 repo，不必先 `cd`。路徑接受 Git Bash 形式（`/c/Users/...`），不存在或不是目錄時腳本直接報 `repo root not found`、不會走到 git，也不會建立任何東西。
+
+什麼時候該傳、agent 該怎麼判斷，寫在 **`assets/repo-target.md`**（跨七支 SKILL 共用的判準，只有這一份）。摘要：
+
+- 當前目錄自己不是 repo、但底下並排著多個獨立 repo（多專案工作區的形狀）→ **必須指名**。不指名的話每支指令都會倒在 `not inside a git repository`。
+- 會寫入的指令（`tp-setup` / `tp-push-to-svn` / `tp-pull-from-svn` / `tp-suggest-ignore` 的 SVN 移除）在動手前的確認裡會**先寫出要動的專案絕對路徑**。這道不是守門能取代的：當前目錄**是**一個合法 repo、只是不是使用者想的那個時，`tp-setup` 的三道守門一個都不會響。
+
+指名不會放寬任何守門——三道守門判的都是**指名的那個目標**：指到 linked worktree 一樣被拒，指到並排工作區一樣被拒。
+
 ## `.git` 不進 SVN 的機制
 
 bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用）+ 固定 `svn:ignore=.git` 來確保 `.git` 不被推進 SVN——首個 bridge（`tp-setup` case (a)/(b)）由 `Initialize-GitSvnBridge` / `initialize-git-svn-bridge.sh` 做、後續工作分支的 bridge 由 `New-RemoteBridge` / `Checkout-SvnBranch` 做。其餘該排除的檔一律由 `.gitignore` + push 腳本的 `git check-ignore` 決定（bridge 的 add-set = `svn status` 的 `?` 減去 git-ignored），讓 remote-svn 用起來更接近 remote git。

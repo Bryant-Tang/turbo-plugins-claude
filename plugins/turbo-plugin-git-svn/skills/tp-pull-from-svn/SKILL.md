@@ -14,7 +14,8 @@ allowed-tools: Bash, Read
 
 ## Procedure
 
-1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Sync-FromSvn.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/sync-from-svn.sh`)帶 `--branch <branch>` 參數。
+0. **先確定要對哪個 repo 動手**——讀 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`,依它的判準決定要不要帶 `-RepoRoot` / `--repo-root`。單一專案的目錄不用帶(維持既有行為);當前目錄自己不是 repo 但底下並排著多個 repo 時**必須先問使用者是哪一個**再指名,否則 script 只會倒在 `not inside a git repository`。
+1. 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Sync-FromSvn.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/sync-from-svn.sh`)帶 `--branch <branch>` 參數(以及 step 0 決定要帶的 `--repo-root`)。這會改動本機 git 狀態,所以**在跑之前先用白話講出要動的專案絕對路徑**,讓使用者當場能看出目標打錯。
 2. 解讀 script 輸出:
    - `Already up to date at SVN r<rev>` → 完成
    - `Replaying <n> SVN revision(s) ...` / `Pulled SVN r<lo>..r<hi> into <branch> (<n> revision(s), <mode>)` → 完成。逐修訂(per-revision)模式下**每個 SVN 修訂都變成一顆對應的 git commit**,保留原作者 / 訊息 / 時間;squash 模式則是壓成單一 `sync: svn r<rev>`。
@@ -47,7 +48,7 @@ allowed-tools: Bash, Read
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
-- 必須在 main worktree 跑;script 內部會自動定位主 worktree。
+- **作用對象是目標 repo 的主 worktree**,不是要求你先切到某個目錄:script 從當前目錄(或 `--repo-root` 指名的路徑)往上找 repo,再自動定位到它的主 worktree。判準見 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`。
 - main worktree 不乾淨(`git status --porcelain` 非空)→ 拒跑,提示先 commit / stash。
 - 衝突時 **不自動 abort**,讓使用者選擇手動解決。
 - 跑兩次無 SVN 新 commit → 第二次回 "Already up to date" 不重做。

@@ -16,15 +16,21 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 
 ## Procedure
 
+### Step 0a — 確定要對哪個 repo 動手
+
+讀 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`,依它的判準決定要不要帶 `-RepoRoot` / `--repo-root`。單一專案的目錄不用帶(維持既有行為);當前目錄自己不是 repo 但底下並排著多個 repo 時**必須先問使用者是哪一個**再指名。**決定後,本 SKILL 之後每一次呼叫腳本都要帶同一個值**(pre-flight、New-RemoteBridge、prepare、submit——目標中途變掉會把不同 repo 的狀態混在一起)。
+
+這支會寫 SVN(永久),所以 Step 4 的確認裡**必須**帶上要動的專案絕對路徑。理由見該判準檔:當前目錄**是**一個合法 repo、但使用者講的是隔壁那個 repo 時,沒有任何守門會響。
+
 ### Step 0 — First-push bootstrap pre-flight(gate 順序:detached → mismatch → bridge)
 
-依**執行路由**選工具跑 pre-flight 腳本(**PowerShell 用單破折號參數 `-Branch`;GNU 風格 `--branch` 在 `powershell -File` 下不可靠,可能不綁定**):
+依**執行路由**選工具跑 pre-flight 腳本(**PowerShell 用單破折號參數 `-Branch`;GNU 風格 `--branch` 在 `powershell -File` 下不可靠,可能不綁定**;Step 0a 決定要帶 `--repo-root` 的話一併帶上):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Get-PushPreflight.ps1" -Branch <name>
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Get-PushPreflight.ps1" -Branch <name> [-RepoRoot <path>]
 ```
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--repo-root <path>]
 ```
 
 腳本只輸出**一行**以 `TP_TOKEN:` 為前綴的終結 token——**SKILL 只認以 `TP_TOKEN:` 開頭的行**(raw branch 名內嵌的假 token 不算),且**不要自己跑 git 判斷**,完全依此 token 路由:
@@ -45,10 +51,10 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name>
    - **取消** → 結束 skill,不建任何東西。
    - **確認** → 依執行路由跑 New-RemoteBridge(**PowerShell 用單破折號參數**):
      ```powershell
-     powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1" -Branch <r> -SvnUrl <url>
+     powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/New-RemoteBridge.ps1" -Branch <r> -SvnUrl <url> [-RepoRoot <path>]
      ```
      ```bash
-     bash "${CLAUDE_PLUGIN_ROOT}/scripts/new-remote-bridge.sh" --branch <r> --svn-url <url>
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/new-remote-bridge.sh" --branch <r> --svn-url <url> [--repo-root <path>]
      ```
 3. New-RemoteBridge 成功 → 進 Step 1 繼續正常 push。失敗 → 腳本已 rollback 本機 git 端;若訊息提到 SVN 路徑已建立,提醒使用者可重跑首推接續。
 
@@ -106,7 +112,10 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
 
 **先印異動檔案、緊接著直接 `AskUserQuestion`**。**不要把「Step 4」「Step 3」這類內部流程編號 / 步驟標題輸出給使用者**——那是 SKILL 內部結構、不是要顯示的內容;這一步直接從「異動檔案」開始印,不加任何 step 前言或標題。
 
-1. **異動檔案(純文字,AskUserQuestion 正上方)**:把 `FILES` 以白話列出(新增 / 刪除 / 修改;ignored 者不進 SVN)。**這是唯一的純文字輸出**,前面不加「Step X」標題或前言。
+1. **要動的專案 + 異動檔案(純文字,AskUserQuestion 正上方)**:**這是唯一的純文字輸出**,前面不加「Step X」標題或前言。
+   - **第一行先寫要動的專案絕對路徑**(Step 0a 決定的目標,或不帶 `--repo-root` 時腳本實際作用的那個 repo):
+     `要動的專案:<絕對路徑>`。這一行讓「打錯 repo」在寫 SVN 之前就被看出來——沒有任何守門會替你攔這種錯,因為那個 repo 本身完全合法。
+   - 接著把 `FILES` 以白話列出(新增 / 刪除 / 修改;ignored 者不進 SVN)。
    - **Step 3 的 ignore 檢查有發現時**(只有有發現才寫這段):接在檔案清單後面,用白話點出是哪幾個檔案、
      它們看起來是什麼(「這是建置產生的輸出」「這看起來是資料庫連線字串」),並提醒**SVN 提交是永久的、
      推上去之後刪檔也救不回來**。疑似機密要**單獨列在最前面**,不要混在產物裡帶過。
@@ -174,10 +183,10 @@ Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 gi
 選 Yes → 呼叫 `${CLAUDE_PLUGIN_ROOT}/scripts/Tag-Release.ps1`(或依執行路由改 `${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.sh`)帶 `--branch <name>`:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Tag-Release.ps1" -Branch "main"
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Tag-Release.ps1" -Branch "main" [-RepoRoot <path>]
 ```
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.sh" --branch "main"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/tag-release.sh" --branch "main" [--repo-root <path>]
 ```
 
 Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日自動遞增)。把建立的 tag 名回報給使用者。tag 指向 `remote-svn/<branch>` 的 tip。

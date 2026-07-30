@@ -16,21 +16,21 @@ allowed-tools: Bash, Read
 
 ## Procedure
 
-1. **必須在 main worktree 跑**(script 內部用 `Get-MainWorktree` 自動定位 main worktree;若在 linked worktree 呼叫,操作仍落在 main worktree)。
+1. **先確定要對哪個 repo 動手**——讀 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`,依它的判準決定要不要帶 `-RepoRoot` / `--repo-root`。單一專案的目錄不用帶。**作用對象是目標 repo 的主 worktree**:script 內部用 `Get-MainWorktree` 自動定位,所以在 linked worktree 呼叫時操作仍落在主 worktree。
 
 2. 跑 script。**不傳分支** → merge 進全部非 `remote-svn/*` 分支;**傳指定分支** → 只 merge 那些(`.ps1` 用 `-Branch a,b`,`.sh` 用可重複的 `--branch a --branch b`):
 
    ```powershell
    # 全部(預設)
-   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Merge-MainIntoBranches.ps1"
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Merge-MainIntoBranches.ps1" [-RepoRoot <path>]
    # 指定分支
-   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Merge-MainIntoBranches.ps1" -Branch feature-a,feature-b
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Merge-MainIntoBranches.ps1" -Branch feature-a,feature-b [-RepoRoot <path>]
    ```
    ```bash
    # 全部(預設)
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-main-into-branches.sh"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-main-into-branches.sh" [--repo-root <path>]
    # 指定分支
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-main-into-branches.sh" --branch feature-a --branch feature-b
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-main-into-branches.sh" --branch feature-a --branch feature-b [--repo-root <path>]
    ```
 
    script 自己列出目標分支、逐支 merge、最後印 summary。指定但不存在 / 被排除(`main` / `remote-svn/*`)的分支會印一行 `SKIP <b> (not found / excluded)` 略過,不中止。

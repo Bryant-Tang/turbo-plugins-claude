@@ -17,10 +17,10 @@ allowed-tools: Bash, Read
 1. 跑 script,參數依平台:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Get-SvnLog.ps1" [-Branch <branch>] [-Limit <n>] [-Revision <spec>] [-VerboseOutput]
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Get-SvnLog.ps1" [-Branch <branch>] [-Limit <n>] [-Revision <spec>] [-VerboseOutput] [-RepoRoot <path>]
    ```
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-svn-log.sh" [--branch <branch>] [--limit <n>] [--revision <spec>] [--verbose]
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-svn-log.sh" [--branch <branch>] [--limit <n>] [--revision <spec>] [--verbose] [--repo-root <path>]
    ```
 
    可選參數(logical 名稱與行為):
@@ -105,7 +105,7 @@ allowed-tools: Bash, Read
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
-- 必須在 main worktree 跑;script 內部自動定位 main + 對應 remote worktree。
+- **作用對象是目標 repo 的主 worktree**,不是要求你先切到某個目錄:script 從當前目錄(或 `--repo-root` 指名的路徑)往上找 repo,再自動定位 main + 對應 remote worktree。判準見 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`;這支是唯讀的,**不需要**動手前宣告目標(誤打的代價只是印錯一份 log),但當前目錄自己不是 repo 而底下並排著多個 repo 時仍要先問清楚再指名,否則只會倒在 `not inside a git repository`。
 - `--limit` 必須是正整數,非法值 → script 拋錯。
 - `--revision` 的值不經 script validate,直接透傳給 svn — 由 svn 自己決定接受與否。**禁止** 在組指令時把多個 args 拼成單一字串(security invariant per F10);PS / bash script 內部都以 array splatting 傳值。
 - read-only 操作,**不會修改任何檔案 / branch / SVN state**,可安全在 agent 想對齊版本時自動執行。

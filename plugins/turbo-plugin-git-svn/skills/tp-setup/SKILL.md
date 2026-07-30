@@ -37,10 +37,20 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 ### Phase 1 — 偵測
 
+#### 1.0 確定要對哪個 repo 動手（**最先做,先於 case 偵測**）
+
+讀 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`,依它的判準決定要不要帶 `-RepoRoot` / `--repo-root`。
+單一專案的目錄不用帶(維持既有行為);當前目錄自己不是 repo 但底下並排著多個 repo 時**必須先問使用者是哪一個**再指名。
+**決定後,本 SKILL 之後每一次呼叫腳本都要帶同一個值**——包含 `IDENTITY_REQUIRED` / `GRANULARITY_REQUIRED` /
+`EXISTING_GIT_REMOTE` / `NESTED_GIT_REPOS` 的每一次重呼叫。目標中途變掉會把不同 repo 的狀態混在一起。
+
+> **這一步在 setup 特別要緊**:這是唯一會**建立** repo 的指令。case 偵測本身就是看目標資料夾的內容
+> (`.git/` 在不在、`.turbo-plugin/` 在不在),所以目標若一開始就搞錯,連 case 都會判錯。
+
 #### 1.1 共用 base pre-check + case 偵測
 
 讀並執行 `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/setup-base.md` 的 **Pre-check** 與 **Case 偵測**
-(Git ≥ 2.31、非 submodule;case (a)/(b)/(c)/(d) 優先序)。
+(Git ≥ 2.31、非 submodule;case (a)/(b)/(c)/(d) 優先序)。**偵測的對象是 1.0 決定的那個目標**,不是「你剛好站在哪」。
 
 #### 1.2 Encoding profile detect（檔名編碼可攜性,純資訊性）
 
@@ -79,6 +89,10 @@ parse stdout 的 `ARGV_SAFE_FOR_UNICODE`:
 下列 `AskUserQuestion` 的選項標籤與「即將執行」描述都用白話,例如:
 - 「照偵測結果執行(全新專案 → 建立 git+SVN bridge)」/「這其實是<其他情境的白話> → 改用那個」/「取消」。
 
+**這個 summary 的第一行必須是要動的專案絕對路徑**(1.0 決定的目標,或不帶 `--repo-root` 時腳本實際會作用的那個
+資料夾):`要動的專案:<絕對路徑>`。setup 會建立 repo、寫 SVN,而「目標資料夾本身完全合法、只是不是使用者想的那個」
+這種錯沒有任何守門攔得住——只有把路徑攤出來給使用者看才擋得下。
+
 **只列「會動到外部」**的 unconditional 動作,對使用者用白話呈現(下方括號內的 case 代號 / 指令僅供 agent 對照,
 不要照唸給使用者;case (a)/(b) 皆由 `Initialize-GitSvnBridge` 腳本執行):
 - (新建 / 接管)從 SVN 伺服器抓取專案內容(`svn checkout <url>`)
@@ -110,11 +124,12 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
 2. **呼叫 bootstrap 腳本**(依下方 Decision Rules「執行路由」選 `.ps1` / `.sh`;PowerShell 一律單破折號參數
    `-SvnUrl`):
    ```powershell
-   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Initialize-GitSvnBridge.ps1" -SvnUrl <url>
+   powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Initialize-GitSvnBridge.ps1" -SvnUrl <url> [-RepoRoot <path>]
    ```
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/initialize-git-svn-bridge.sh" --svn-url <url>
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/initialize-git-svn-bridge.sh" --svn-url <url> [--repo-root <path>]
    ```
+   (`--repo-root` 依 1.0 的決定帶或不帶,**之後每次重呼叫都要一致**。)
    腳本內部(無需 agent 逐條下指令):`git init -b main`(idempotent、無需身分)→ 檢查 git 身分 →
    root-commit 分流(case (a) 無 root commit → 建空 commit)→ orphan bridge worktree + `git clean` 清空 →
    plain `svn checkout` → `svn rm --keep-local .git` → 確保 bridge `.gitignore` 含 `.svn/` → `git add -A`
@@ -160,7 +175,8 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
    這是「多個獨立專案並排放在一個工作區資料夾底下」的形狀——在這裡 `git init` 會把它們全部包進同一個 repo,
    而且事後沒有東西能還原。agent:
    - **預設就是跑錯地方**:用 `AskUserQuestion` 白話問使用者要對**哪一個**子專案建橋(選項就用 token 帶回來
-     的那幾個目錄名),然後**切到該子專案重跑**,不要放行旗標。
+     的那幾個目錄名),然後用 `-RepoRoot` / `--repo-root` **指名該子專案**重呼叫,不要放行旗標。
+     (用指名而不是 `cd`:指名留下明確紀錄、後續每次重呼叫都帶同一個值,也不會讓「當前目錄」跟其它工作互相干擾。)
    - 只有在使用者明確表示「這個資料夾本身就是一個專案,底下那些是它內含的第三方原始碼」時,才用
      `-AllowNestedRepos` / `--allow-nested-repos` 重呼叫。
    - **不得**把 token 名或旗標名丟給使用者。
@@ -295,8 +311,11 @@ setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一�
   (exit 0、零 commit、bridge 未建)時,agent **白話**問粒度(一顆一顆/壓成一顆/指定範圍,預設一顆一顆;**不外洩** token /
   `refs/tp/svn/<n>` / 修訂號給使用者),再帶 `-Granularity`/`--granularity`(+ 範圍時 `-Range`/`--range`)**重呼叫同一支腳本**。
   ≤5 修訂不發此 token。見 case (a) sub-step 3b。
-- **跑錯資料夾的三道守門(bootstrap 腳本內建,三道都在動任何東西之前)** — bootstrap 從 **cwd** 往上推導要橋接
-  哪個 repo,所以「在錯的資料夾呼叫」會安靜地把橋建到使用者沒指名的 repo 上。故腳本自帶:
+- **目標明確指定優先於 cwd 推導** — 腳本收 `-RepoRoot` / `--repo-root`;**不帶**時才從 cwd 往上推導(既有行為)。
+  Phase 1.0 決定要不要帶,決定後**每一次重呼叫都帶同一個值**。三道守門判的都是**指名的那個目標**(不是你站在哪):
+  指到 linked worktree 一樣被①擋、指到並排工作區一樣被③擋。
+- **跑錯資料夾的三道守門(bootstrap 腳本內建,三道都在動任何東西之前)** — 不帶 `--repo-root` 時 bootstrap 從
+  **cwd** 往上推導要橋接哪個 repo,所以「在錯的資料夾呼叫」會安靜地把橋建到使用者沒指名的 repo 上。故腳本自帶:
   ① **不是主 worktree 就硬拒**(非零 exit;否則會在**另一個** checkout 建分支/worktree 並把 SVN 內容 merge 進
   **它**的當前分支)。case 偵測本就把 peer worktree 導向 (d),這道是給「繞過 SKILL 直接呼叫腳本」的保險。
   ② **目標 repo 已有 git remote → 回 `TP_TOKEN:EXISTING_GIT_REMOTE remotes=<names>`**(零變更)。agent **先核對
@@ -304,8 +323,12 @@ setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一�
   `-AllowExistingRemote` / `--allow-existing-remote` 重呼叫。見 case (a) sub-step 3c。
   ③ **這裡不是 repo、但直屬子目錄是 → 回 `TP_TOKEN:NESTED_GIT_REPOS dirs=<names>`**(零變更)。①② 擋不到這種
   情況,因為這個資料夾**真的**沒有 git,而 `git rev-parse` 只往上找不往下找。這是「多個獨立專案並排」的工作區
-  形狀,在這裡 `git init` 會把它們全包成一個 repo 且事後無法還原。預設當成跑錯地方,問清楚是哪個子專案再切過去
-  重跑;`-AllowNestedRepos` / `--allow-nested-repos` 只留給「這資料夾本身就是專案、底下是內含的第三方原始碼」。
+  形狀,在這裡 `git init` 會把它們全包成一個 repo 且事後無法還原。預設當成跑錯地方,問清楚是哪個子專案後用
+  `-RepoRoot` / `--repo-root` **指名它**重呼叫;`-AllowNestedRepos` / `--allow-nested-repos` 只留給「這資料夾
+  本身就是專案、底下是內含的第三方原始碼」。
+- **會寫入的操作要先把目標講出來** — Phase 1.3 的 summary 第一行是 `要動的專案:<絕對路徑>`。這道不是守門能取代的:
+  當前目錄**是**一個合法 repo、只是不是使用者想的那個時,三道守門一個都不會響。判準見
+  `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`。
   見 case (a) sub-step 3d。
 - **case (b) `TP_TOKEN:MERGE_CONFLICT` 由 agent 端收尾、不重呼叫腳本** — bridge 已建成且不 rollback;agent 列衝突檔、
   引導手動解 + commit merge(不自動 abort),再直接接「base 骨架後置」收尾。盲目重呼叫腳本會撞「bridge 已存在」死路。
