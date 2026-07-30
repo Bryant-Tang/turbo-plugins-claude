@@ -12,7 +12,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Claude Code 的 plugin 更新機制是基於 **版本號**。版本由 **release-please** 依 conventional commit 自動管理——**不要手動 bump `plugin.json`、也不要手寫發版的 CHANGELOG 區段**。
 
-**怎麼運作**：每次 merge 進 `main`，`.github/workflows/release-please.yml` 會依各 plugin 自上次發版以來的 commit type，為「有可發版變更」的 plugin 各開一個 **Release PR**（自動更新該 plugin 的 `.claude-plugin/plugin.json` `version` + `CHANGELOG.md`）；merge 那個 Release PR 即發版 + 打 tag（`<plugin>-v<version>`）。設定在 repo 根的 `release-please-config.json` + `.release-please-manifest.json`（四個 plugin 各自獨立版本 / 各自 Release PR）。
+**怎麼運作**：每次 merge 進 `main`，`.github/workflows/release-please.yml` 會依各 plugin 自上次發版以來的 commit type，為「有可發版變更」的 plugin 各開一個 **Release PR**（自動更新該 plugin 的 `.claude-plugin/plugin.json` `version` + `CHANGELOG.md`）；merge 那個 Release PR 即發版 + 打 tag（**`<plugin>--v<version>`，兩個減號**）。設定在 repo 根的 `release-please-config.json` + `.release-please-manifest.json`（四個 plugin 各自獨立版本 / 各自 Release PR）。
+
+**tag 名稱格式是 load-bearing，不要改成單一減號**：Claude Code 解析 plugin 相依的版本約束時，是去 marketplace repo 列 tag、篩出開頭為 `<plugin-name>--v` 的那些，再取滿足 semver range 的最高版；用單一減號一個都篩不到，帶約束的相依會直接讓依賴方**被停用**（`no-matching-tag`）。所以 `release-please-config.json` 的 `tag-separator` 必須是 `--`，才跟官方 `claude plugin tag` 產生的 tag 同名。另：pre-1.0 的相依**不要用 `^0.1.0` / `~0.1.0`**——0.x 的 caret / tilde 都只允許 patch，而本 repo 設了 `bump-minor-pre-major`，每個 `feat:` 都跳 minor，約束會立刻對不上；用 `>=0.1.0` 之類的寫法。
 
 **commit type → 版本級距**（只有 `feat` / `fix` 會觸發發版）：
 
