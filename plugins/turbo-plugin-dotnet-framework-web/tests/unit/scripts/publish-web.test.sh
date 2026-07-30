@@ -66,6 +66,18 @@ test_missing_pubxml() {
     local sb combined e
     sb="$(new_sb 'publish-sh-nopubxml')"
     write_csproj "$sb"
+    # A stub MSBuild, even though this case never publishes. The script resolves MSBuild BEFORE it
+    # looks for a pubxml, so on a machine without Visual Studio / Build Tools it fails at the
+    # MSBuild step and never emits the missing-pubxml message this case is about. Pointing at a stub
+    # makes the assertion test what it claims to, independent of whether the host has MSBuild --
+    # which the CI runner does not. (Mirrors the same fix in Publish-Web.test.ps1.)
+    mkdir -p "$sb/.turbo-plugin"
+    printf '[tools]
+msbuild_path = "msbuild-stub.bat"
+' > "$sb/.turbo-plugin/config.local.toml"
+    printf '@echo off
+echo MSBUILD_ARGS: %%*
+' > "$sb/msbuild-stub.bat"
     (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
     cd "$sb"
     # Explicit -Project (no auto-detect): reaches the pubxml-finding step so the missing-pubxml
