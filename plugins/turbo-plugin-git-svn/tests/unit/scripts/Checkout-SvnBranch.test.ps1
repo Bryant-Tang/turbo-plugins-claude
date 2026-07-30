@@ -1,4 +1,4 @@
-# Checkout-SvnBranch.test.ps1 (Pester 5)
+﻿# Checkout-SvnBranch.test.ps1 (Pester 5)
 #
 # Script under test: scripts/Checkout-SvnBranch.ps1 (U11).
 #   -SvnUrl <existing-svn-branch-url> [-Branch <name>]
@@ -55,7 +55,7 @@ BeforeAll {
         # The import now bases the bridge branch on remote-svn/main (the trunk mirror) so the imported
         # branch connects to main. Real setups create this anchor ref via tp-setup; a ref at main is
         # enough here (the svn checkout fills the exact branch content regardless).
-        & git -C $Root branch 'remote-svn/main' 'main' > $null 2>&1
+        & git -C $Root branch 'remote-svn/main' 'main' > $null 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
 
         $reposRoot = (& svn info --show-item repos-root-url $remoteMain 2>$null | Out-String).Trim()
@@ -311,9 +311,9 @@ Describe 'Checkout-SvnBranch' {
             try {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-GitMainRepo -Root $root -CreateWorktreesDir
-                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
 
-                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
                 $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
                 if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'could not build remote-svn-main svn WC'; return }
 
@@ -335,7 +335,7 @@ Describe 'Checkout-SvnBranch' {
                 # Inject a SECOND root into main to reproduce the post-bridge two-root state: a
                 # parentless commit-tree on the canonical empty tree, merged --allow-unrelated.
                 $second = (& git -C $root commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m 'sync: svn r1' | Out-String).Trim()
-                & git -C $root merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" $second 2>&1 | Out-Null
+                & git -C $root merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" $second 2>$null | Out-Null
                 $roots = @((Run-Git-Capture -Cwd $root -GitArgs @('rev-list', '--max-parents=0', 'HEAD')) -split "`n" | Where-Object { $_.Trim() })
                 $roots.Count | Should -Be 2
 

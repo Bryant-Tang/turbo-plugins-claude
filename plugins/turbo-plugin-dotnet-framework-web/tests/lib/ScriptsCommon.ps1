@@ -78,9 +78,14 @@ function New-Sandbox {
 function Remove-Sandbox {
     param([string]$Dir)
     if ([string]::IsNullOrWhiteSpace($Dir)) { return }
+    # `\\?\` long-path prefix + a visible warning on failure. The old version swallowed every
+    # delete error, so any sandbox it could not remove was left behind silently, every run --
+    # 298 leftovers had piled up here before anyone looked. Whatever the cause (a path past
+    # MAX_PATH, a file still held by a launched process), a leftover must be reported, not hidden.
+    $target = if ($Dir -like '\\?\*') { $Dir } else { '\\?\' + $Dir }
     try {
-        if ([System.IO.Directory]::Exists($Dir)) {
-            Get-ChildItem -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        if ([System.IO.Directory]::Exists($target)) {
+            Get-ChildItem -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
                 try {
                     $fa = [System.IO.File]::GetAttributes($_.FullName)
                     if ($fa -band [System.IO.FileAttributes]::ReadOnly) {
@@ -88,9 +93,11 @@ function Remove-Sandbox {
                     }
                 } catch { }
             }
-            [System.IO.Directory]::Delete($Dir, $true)
+            [System.IO.Directory]::Delete($target, $true)
         }
-    } catch { }
+    } catch {
+        Write-Warning "Remove-Sandbox could not delete '$Dir': $($_.Exception.Message)"
+    }
 }
 
 # ─── Workspace bootstrap (git init + branches + linked worktrees) ───────────

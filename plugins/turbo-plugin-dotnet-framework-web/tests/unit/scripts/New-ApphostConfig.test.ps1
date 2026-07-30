@@ -276,8 +276,26 @@ Describe 'New-ApphostConfig' {
                 $script:r8Root = New-ProjectSandbox -Tag 'appcmd' -IisElements $elements
                 $script:r8 = Invoke-Script -WorkDir $script:r8Root -ExtraArgs @('-Project', 'HelloApp.csproj')
                 $script:r8Cfg = [System.IO.Path]::Combine($script:r8Root, '.turbo-plugin', 'applicationhost.config')
-                $script:r8Appcmd = (& $script:appcmd list site /apphostconfig:"$($script:r8Cfg)" 2>&1 | Out-String)
-                $script:r8AppcmdExit = $LASTEXITCODE
+                # appcmd's complaint (including the offending line number) is the whole value of
+                # this case when it fails, so stderr must be kept -- but `2>&1` would fold it into
+                # the output stream as ErrorRecords and make $LASTEXITCODE unreliable, which is the
+                # one thing this case actually asserts on. Capture the two streams separately and
+                # join them only for the failure message. EAP is pinned to Continue around the call
+                # because a native exe writing to stderr throws under EAP=Stop even with a
+                # redirection in place.
+                $r8ErrFile = [System.IO.Path]::Combine($script:r8Root, 'appcmd-stderr.txt')
+                $r8PrevEap = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try {
+                    $r8Out = (& $script:appcmd list site /apphostconfig:"$($script:r8Cfg)" 2>$r8ErrFile | Out-String)
+                    $script:r8AppcmdExit = $LASTEXITCODE
+                } finally {
+                    $ErrorActionPreference = $r8PrevEap
+                }
+                $r8Err = if (Test-Path -LiteralPath $r8ErrFile -PathType Leaf) {
+                    [System.IO.File]::ReadAllText($r8ErrFile)
+                } else { '' }
+                $script:r8Appcmd = ($r8Out + $r8Err)
             }
         }
         AfterAll { if (-not [string]::IsNullOrWhiteSpace($script:r8Root)) { Remove-ProjectSandbox -Dir $script:r8Root } }

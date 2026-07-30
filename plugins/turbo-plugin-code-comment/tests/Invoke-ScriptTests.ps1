@@ -57,6 +57,12 @@ $lintPs1     = [System.IO.Path]::Combine($RepoRoot, 'tools', 'lint-ps-compat.ps1
 # scriptsDir is THIS plugin's own scripts/ (sibling of tests/), not a hardcoded plugin
 # name — so a copied/renamed orchestrator auto-targets its own plugin (U2-U5).
 $scriptsDir  = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '..', 'scripts'))
+# But LINT the whole plugin, not just scripts/. The PS 5.1 taboos it checks (BOM on non-ASCII,
+# 3-arg Join-Path, 2>&1 on a native exe, unwrapped pipeline .Count) apply to test code exactly as
+# much as to production code — a test that dies on a NativeCommandError is just as broken. Keeping
+# tests/ out of range meant nothing could even enumerate the violations there, and a hand-driven
+# fix off a review list left most of them in place. The lint itself skips tests/.sandbox/.
+$lintTargetDir = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($scriptDir, '..'))
 
 Write-Output "Invoke-ScriptTests: RepoRoot = $RepoRoot"
 Write-Output "Invoke-ScriptTests: unitDir  = $unitDir"
@@ -70,6 +76,8 @@ $null = New-Item -ItemType Directory -Path $sandboxBase -Force
 # A pure-skill plugin (e.g. code-comment) has no scripts/ dir and no *.test.ps1. It
 # must still go green: skip the lint pre-flight (nothing to lint) and skip the Pester
 # framework gate (no Pester run to gate, so a Pester-less runner must not be forced red).
+# Retained for reference/reporting only. The lint no longer keys on it: a pure-skill plugin still
+# ships this orchestrator as a .ps1, so there IS something to lint even with no scripts/ dir.
 $hasScriptsDir = [System.IO.Directory]::Exists($scriptsDir)
 $hasPs1Tests = $false
 foreach ($base in @($unitDir, $fixturesDir)) {
@@ -83,15 +91,12 @@ foreach ($base in @($unitDir, $fixturesDir)) {
 if ($SkipPreflight) {
     Write-Output 'Pre-flight lint: SKIPPED (-SkipPreflight)'
     Write-Output ''
-} elseif (-not $hasScriptsDir) {
-    Write-Output "Pre-flight lint: SKIPPED (no scripts/ dir at $scriptsDir — pure-skill plugin)"
-    Write-Output ''
 } else {
     Write-Output '─── Pre-flight lint ─────────────────────────────────────────────────'
     if (-not [System.IO.File]::Exists($lintPs1)) {
         throw "Pre-flight: lint-ps-compat.ps1 not found at $lintPs1"
     }
-    & $psExe -NoProfile -ExecutionPolicy Bypass -File $lintPs1 -Path $scriptsDir
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $lintPs1 -Path $lintTargetDir
     if ($LASTEXITCODE -ne 0) {
         Write-Output "Pre-flight FAILED: lint-ps-compat.ps1 returned exit $LASTEXITCODE"
         exit 1

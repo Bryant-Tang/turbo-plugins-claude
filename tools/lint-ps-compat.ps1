@@ -49,7 +49,18 @@ $patNativeExe2to1 = [regex]'&\s+\S.+\s2>&1\b'
 # Pipeline detected by `|` inside the parens. Heuristic — keeps false positives low.
 $patPipeCount    = [regex]'(?<!@)\([^()@]*\|[^()]*\)\.Count\b'
 
-Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object {
+# Enumerate ONCE, and reuse the same list for the summary count. The count used to re-walk the
+# tree with no -ErrorAction, so a single unreadable path aborted the whole run under EAP=Stop --
+# which is what a leftover test sandbox did: its nested bridge worktrees (a bridge inside a bridge)
+# routinely exceed Windows MAX_PATH.
+#
+# tests/.sandbox/ is excluded outright. It holds throwaway fixture checkouts (gitignored), so its
+# .ps1 files are copies rather than sources this rule is about, and whether they are present at all
+# depends on when tests last ran -- a lint result must not depend on that.
+$allPs1 = @(Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '[\\/]tests[\\/]\.sandbox[\\/]' })
+
+$allPs1 | ForEach-Object {
     $file = $_.FullName
     # Skip the lint script itself: it contains literal regex patterns matching
     # the rules it enforces (e.g. the string 'GetRelativePath'), which would
@@ -130,7 +141,7 @@ Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' -ErrorAction SilentlyContinue
 }
 
 if ($violations.Count -eq 0) {
-    Write-Output "lint-ps-compat: 0 violations across $((Get-ChildItem -Path $Path -Recurse -Filter '*.ps1' | Measure-Object).Count) .ps1 files."
+    Write-Output "lint-ps-compat: 0 violations across $($allPs1.Count) .ps1 files."
     exit 0
 }
 

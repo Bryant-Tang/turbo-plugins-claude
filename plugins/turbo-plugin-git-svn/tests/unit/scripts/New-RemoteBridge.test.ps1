@@ -1,4 +1,4 @@
-# New-RemoteBridge.test.ps1 (Pester 5)
+﻿# New-RemoteBridge.test.ps1 (Pester 5)
 #
 # Script under test: plugins/turbo-plugin-git-svn/scripts/New-RemoteBridge.ps1
 #
@@ -68,7 +68,7 @@ BeforeAll {
         # The bridge branch is now based on remote-svn/main's tip (not a repo root commit), so the
         # anchor ref must exist for the create path to run. Real setups create it via Initialize;
         # here a ref at main is enough (the svn checkout --force overlays the branch content anyway).
-        & git -C $Root branch 'remote-svn/main' 'main' > $null 2>&1
+        & git -C $Root branch 'remote-svn/main' 'main' > $null 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
 
         $reposRoot = (& svn info --show-item repos-root-url $remoteMain 2>$null | Out-String).Trim()
@@ -125,11 +125,11 @@ BeforeAll {
         }
         Set-Content -LiteralPath ([System.IO.Path]::Combine($Root, 'Templates', 'drift.txt')) -Value 'v2' -NoNewline
         Set-Content -LiteralPath ([System.IO.Path]::Combine($Root, '.gitignore')) -Value ".svn/`r`nbin/`r`n" -NoNewline
-        & git -C $Root config core.autocrlf false 2>&1 | Out-Null
-        & git -C $Root add -A 2>&1 | Out-Null
-        & git -C $Root -c commit.gpgsign=false commit -m 'main mirrors trunk (drift v2, gitignore differs)' 2>&1 | Out-Null
+        & git -C $Root config core.autocrlf false 2>$null | Out-Null
+        & git -C $Root add -A 2>$null | Out-Null
+        & git -C $Root -c commit.gpgsign=false commit -m 'main mirrors trunk (drift v2, gitignore differs)' 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { return $null }
-        & git -C $Root branch 'remote-svn/main' 'main' 2>&1 | Out-Null
+        & git -C $Root branch 'remote-svn/main' 'main' 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { return $null }
         return $uri
     }
@@ -171,16 +171,16 @@ BeforeAll {
         Get-ChildItem -LiteralPath $tx -Force | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination $Root -Recurse -Force
         }
-        & git -C $Root config core.autocrlf false 2>&1 | Out-Null
-        & git -C $Root add -A 2>&1 | Out-Null
-        & git -C $Root -c commit.gpgsign=false commit -m 'main mirrors trunk' 2>&1 | Out-Null
+        & git -C $Root config core.autocrlf false 2>$null | Out-Null
+        & git -C $Root add -A 2>$null | Out-Null
+        & git -C $Root -c commit.gpgsign=false commit -m 'main mirrors trunk' 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { return $null }
         # Pin remote-svn/main at the in-sync state, THEN diverge main's .gitignore (unpushed edit).
-        & git -C $Root branch 'remote-svn/main' 'main' 2>&1 | Out-Null
+        & git -C $Root branch 'remote-svn/main' 'main' 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { return $null }
         Set-Content -LiteralPath ([System.IO.Path]::Combine($Root, '.gitignore')) -Value ".svn/`r`nbin/`r`n" -NoNewline
-        & git -C $Root add .gitignore 2>&1 | Out-Null
-        & git -C $Root -c commit.gpgsign=false commit -m 'chore: ignore bin (unpushed)' 2>&1 | Out-Null
+        & git -C $Root add .gitignore 2>$null | Out-Null
+        & git -C $Root -c commit.gpgsign=false commit -m 'chore: ignore bin (unpushed)' 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { return $null }
         return $uri
     }
@@ -502,14 +502,14 @@ Describe 'New-RemoteBridge' {
             try {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-GitMainRepo -Root $root -CreateWorktreesDir
-                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
                 $reposRoot = Initialize-RemoteMainWc -Root $root -Sandbox $sb
                 if ($null -eq $reposRoot) { Set-ItResult -Skipped -Because 'could not build remote-svn-main svn WC'; return }
 
                 # Inject a SECOND root into main to reproduce the post-bridge two-root state: a
                 # parentless commit-tree on the canonical empty tree, merged --allow-unrelated.
                 $second = (& git -C $root commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m 'sync: svn r1' | Out-String).Trim()
-                & git -C $root merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" $second 2>&1 | Out-Null
+                & git -C $root merge --allow-unrelated-histories --no-edit -m "Merge branch 'remote-svn/main' into main" $second 2>$null | Out-Null
                 $roots = @((Run-Git-Capture -Cwd $root -GitArgs @('rev-list', '--max-parents=0', 'HEAD')) -split "`n" | Where-Object { $_.Trim() })
                 $roots.Count | Should -Be 2
 
@@ -536,7 +536,7 @@ Describe 'New-RemoteBridge' {
             try {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-GitMainRepo -Root $root -CreateWorktreesDir
-                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
                 $uri = Initialize-DriftScenario -Root $root -Sandbox $sb
                 if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the drift scenario'; return }
 
@@ -628,7 +628,7 @@ Describe 'New-RemoteBridge' {
             try {
                 $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
                 New-GitMainRepo -Root $root -CreateWorktreesDir
-                & git -C $root config commit.gpgsign false 2>&1 | Out-Null
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
                 $uri = Initialize-UnpushedGitignoreScenario -Root $root -Sandbox $sb
                 if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the unpushed-.gitignore scenario'; return }
 

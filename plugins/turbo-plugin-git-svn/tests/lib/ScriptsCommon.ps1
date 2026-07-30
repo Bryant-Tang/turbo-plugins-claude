@@ -81,9 +81,17 @@ function New-Sandbox {
 function Remove-Sandbox {
     param([string]$Dir)
     if ([string]::IsNullOrWhiteSpace($Dir)) { return }
+    # Long-path prefix, and it is load-bearing rather than defensive. A bridge sandbox nests a
+    # worktree inside a worktree (<sandbox>/test-turbo-plugin/.turbo-plugin/worktrees/remote-svn-*/
+    # .turbo-plugin/worktrees/remote-svn-main/...), which routinely pushes past MAX_PATH. Without
+    # `\\?\` the delete throws, the surrounding catch swallows it, and the sandbox is simply left
+    # behind -- silently, every run. That is how 2574 leftover sandbox directories accumulated in
+    # this plugin before anyone noticed, which also broke any tool that walks the repo tree.
+    $target = if ($Dir -like '\\?\*') { $Dir } else { '\\?\' + $Dir }
     try {
-        if ([System.IO.Directory]::Exists($Dir)) {
-            Get-ChildItem -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        if ([System.IO.Directory]::Exists($target)) {
+            # git/svn object files are read-only; clear the attribute or the delete fails.
+            Get-ChildItem -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
                 try {
                     $fa = [System.IO.File]::GetAttributes($_.FullName)
                     if ($fa -band [System.IO.FileAttributes]::ReadOnly) {
@@ -91,9 +99,14 @@ function Remove-Sandbox {
                     }
                 } catch { }
             }
-            [System.IO.Directory]::Delete($Dir, $true)
+            [System.IO.Directory]::Delete($target, $true)
         }
-    } catch { }
+    } catch {
+        # Last resort: report rather than leave a silent leftover. A sandbox that cannot be removed
+        # is a real problem (it accumulates and slows every later run), so make it visible even
+        # though it must not fail the test itself.
+        Write-Warning "Remove-Sandbox could not delete '$Dir': $($_.Exception.Message)"
+    }
 }
 
 # ─── Workspace bootstrap (git init + branches + linked worktrees) ───────────
