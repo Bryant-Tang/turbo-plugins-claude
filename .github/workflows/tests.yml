@@ -104,8 +104,14 @@ jobs:
       - name: Install Pester 5 (Windows PowerShell 5.1)
         shell: powershell
         run: |
+          # Pin to the Pester 5 line. `-MinimumVersion 5.0` means "at least 5.0", so it installed
+          # whatever was newest -- which is now Pester 6.0.1, a different major with breaking
+          # changes. CI was therefore running these tests on a framework nobody had ever run them
+          # on locally (5.7.1), and the mismatch showed up as test failures that reproduce nowhere
+          # else. `-MaximumVersion 5.99.99` keeps CI and local on the same major; moving to Pester 6
+          # should be a deliberate change with the tests migrated, not something a release picks up.
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck -Scope CurrentUser -AllowClobber
+          Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -Force -SkipPublisherCheck -Scope CurrentUser -AllowClobber
 
       - name: Run orchestrator (Windows PowerShell 5.1; .ps1 Pester + .sh shUnit2)
         shell: cmd
@@ -147,8 +153,14 @@ jobs:
       - name: Install Pester 5 (pwsh)
         shell: pwsh
         run: |
+          # Pin to the Pester 5 line. `-MinimumVersion 5.0` means "at least 5.0", so it installed
+          # whatever was newest -- which is now Pester 6.0.1, a different major with breaking
+          # changes. CI was therefore running these tests on a framework nobody had ever run them
+          # on locally (5.7.1), and the mismatch showed up as test failures that reproduce nowhere
+          # else. `-MaximumVersion 5.99.99` keeps CI and local on the same major; moving to Pester 6
+          # should be a deliberate change with the tests migrated, not something a release picks up.
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -Force -SkipPublisherCheck -Scope CurrentUser
 
       - name: Run PowerShell orchestrator (pwsh; .ps1 Pester only, -SkipPreflight)
         shell: pwsh

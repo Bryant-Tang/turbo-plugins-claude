@@ -110,7 +110,10 @@ if ($SkipPreflight) {
 if ($hasPs1Tests) {
     Write-Output '─── Framework gate (Pester >= 5.0) ──────────────────────────────────'
     try {
-        Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
+        # -MaximumVersion pins the Pester 5 line. These tests are written against Pester 5; the
+        # gate must not silently accept a Pester 6 that is present on the machine, because the
+        # failures that produces look like product bugs rather than a framework mismatch.
+        Import-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -ErrorAction Stop
         $pesterVer = (Get-Module Pester | Select-Object -First 1).Version
         Write-Output "Pester $pesterVer present."
         Write-Output ''
@@ -118,7 +121,7 @@ if ($hasPs1Tests) {
         Write-Output 'Framework gate FAILED: Pester 5.0+ is not available.'
         Write-Output '  Windows PowerShell 5.1 ships Pester 3.4; install side-by-side with:'
         Write-Output '    Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck'
-        Write-Output "  (Import-Module Pester -MinimumVersion 5.0 error: $($_.Exception.Message))"
+        Write-Output "  (Import-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 error: $($_.Exception.Message))"
         exit 1
     }
 } else {
@@ -127,9 +130,15 @@ if ($hasPs1Tests) {
 }
 
 # ─── Step 3: Resolve BashPath (Windows only; non-Windows does NOT resolve) ────
-$isWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
+# NOT named $isWindows: PowerShell Core (pwsh) defines a READ-ONLY automatic variable $IsWindows,
+# and PowerShell variable names are case-insensitive, so assigning $isWindows aborts the script with
+# "Cannot overwrite variable IsWindows because it is read-only or constant." Windows PowerShell 5.1
+# has no such variable, so this only ever failed off-Windows -- which is to say it failed on every
+# ubuntu CI run, killing this orchestrator before a single test ran. Kept as an explicit probe
+# rather than just using $IsWindows, so the expression still works under 5.1 where it is undefined.
+$onWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
 if ([string]::IsNullOrWhiteSpace($BashPath)) {
-    if ($isWindows) {
+    if ($onWindows) {
         foreach ($c in @('C:\Program Files\Git\bin\bash.exe', 'C:\Program Files (x86)\Git\bin\bash.exe')) {
             if ([System.IO.File]::Exists($c)) { $BashPath = $c; break }
         }
@@ -177,7 +186,7 @@ foreach ($t in $psTests) {
     # in-process per-file looping produces false failures — a fresh process per file is
     # the reliable isolation boundary. The child emits a "TPCOUNT p f s" line and exits
     # with its FailedCount.
-    $childCmd = "Import-Module Pester -MinimumVersion 5.0; " +
+    $childCmd = "Import-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99; " +
                 "`$c = New-PesterConfiguration; " +
                 "`$c.Run.Path = '$($t.FullName)'; " +
                 "`$c.Run.PassThru = `$true; `$c.Run.Exit = `$false; " +
