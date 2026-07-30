@@ -67,27 +67,77 @@ BeforeAll {
         [System.IO.File]::WriteAllText($script:cfgPath, $patched, (New-Object System.Text.UTF8Encoding($false)))
     }
 
+    # Is some OTHER iisexpress already running a site the fixture's scoped orphan detection would
+    # claim? The fixture's csproj stem is HelloApp, and the scoped matcher accepts
+    # ^HelloApp-<8hex>$ with a hash different from the fixture's -- so a developer's own HelloApp
+    # instance IS a match, and the script would correctly report it as an orphan. That is a real
+    # machine-state collision no sandbox can remove (WMI is machine-wide), so the affected cases
+    # SKIP loudly instead of failing on someone else's running server.
+    function Test-ForeignHelloAppIisRunning {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        try {
+            $procs = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'iisexpress.exe'" -ErrorAction SilentlyContinue)
+        } catch {
+            $procs = @()
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+        foreach ($p in $procs) {
+            if ([string]::IsNullOrWhiteSpace($p.CommandLine)) { continue }
+            if ($p.CommandLine -match '/site:(HelloApp-[0-9a-f]{8})') { return $true }
+        }
+        return $false
+    }
+
     function Invoke-Script {
         param([string]$WorkDir, [string[]]$ExtraArgs = @())
         $tmpStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-out-$([Guid]::NewGuid().ToString('N')).txt")
         $tmpStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-err-$([Guid]::NewGuid().ToString('N')).txt")
+        # Give the script under test its OWN empty %TEMP%. It scans GetTempPath() for stale
+        # turbo-plugin-iis-<hash>.{config,out.log,err.log} sets, so with the real temp dir the
+        # assertions below depend on whatever any earlier IIS Express run happened to leave on this
+        # machine -- a leftover from a developer's own /tp-run turned these cases red once already.
+        # GetTempPath() reads TMP then TEMP, so both must be set; Start-Process inherits this
+        # process's environment block, so setting them here is what reaches the child.
+        $isoTemp = [System.IO.Path]::Combine($script:SandboxBase, "iis-temp-$([Guid]::NewGuid().ToString('N').Substring(0, 8))")
+        $null = New-Item -ItemType Directory -Path $isoTemp -Force
+        $prevTemp = $env:TEMP
+        $prevTmp = $env:TMP
         try {
             # Quote -File (and any spaced ExtraArg) so a spaced repo/parent path (AE8) survives
             # Start-Process's naive space-join of -ArgumentList.
             $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $script:ScriptUnderTest + '"')) + @($ExtraArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+            $env:TEMP = $isoTemp
+            $env:TMP = $isoTemp
             $proc = Start-Process -FilePath 'powershell.exe' `
                 -ArgumentList $argList -WorkingDirectory $WorkDir `
                 -RedirectStandardOutput $tmpStdout -RedirectStandardError $tmpStderr `
                 -NoNewWindow -PassThru -Wait
+            $env:TEMP = $prevTemp
+            $env:TMP = $prevTmp
             $stdout = if (Test-Path -LiteralPath $tmpStdout -PathType Leaf) { [System.IO.File]::ReadAllText($tmpStdout, [System.Text.Encoding]::UTF8) } else { '' }
             $stderr = if (Test-Path -LiteralPath $tmpStderr -PathType Leaf) { [System.IO.File]::ReadAllText($tmpStderr, [System.Text.Encoding]::UTF8) } else { '' }
             return @{ Stdout = $stdout; Stderr = $stderr; Exit = $proc.ExitCode }
         } finally {
+            $env:TEMP = $prevTemp
+            $env:TMP = $prevTmp
             foreach ($t in @($tmpStdout, $tmpStderr)) {
                 if (Test-Path -LiteralPath $t -PathType Leaf) {
                     try { [System.IO.File]::Delete($t) } catch { }
                 }
             }
+            try { [System.IO.Directory]::Delete($isoTemp, $true) } catch { }
+        }
+    }
+
+    # Called at the top of each machine-state-dependent It. Makes the skip visible in the log so
+    # this regression guard cannot silently vanish on a machine that happens to be running a
+    # HelloApp instance.
+    function Skip-IfForeignIis {
+        if ($script:ForeignIis) {
+            Write-Warning 'Remove-OrphanIis no-orphan cases skipped: an iisexpress running a HelloApp-<hash> site is already on this machine, so "no orphan" cannot hold. Stop it (or run /tp-cleanup-orphan-iis) to exercise these.'
+            Set-ItResult -Skipped -Because 'a foreign HelloApp IIS Express instance is running'
         }
     }
 
@@ -98,7 +148,12 @@ Describe 'Remove-OrphanIis' {
 
     Context 'No-orphan behavior + SKILL re-invoke + [iis]=false deviation' {
         BeforeAll {
-            if ($script:FixtureReady) {
+            # The %TEMP% half of "no orphan" is isolated inside Invoke-Script. The PROCESS half
+            # cannot be: the script scans machine-wide WMI, and the fixture's csproj stem
+            # (HelloApp) is a plausible real project name, so a developer's own running
+            # HelloApp-<hash> would legitimately be reported. Detect that and SKIP loudly.
+            $script:ForeignIis = Test-ForeignHelloAppIisRunning
+            if ($script:FixtureReady -and -not $script:ForeignIis) {
                 $script:r1 = Invoke-Script -WorkDir $script:testRoot
                 $script:r2 = Invoke-Script -WorkDir $script:testRoot
                 # Case 3: [iis] enabled = false — script has NO script-level gate.
@@ -114,15 +169,15 @@ Describe 'Remove-OrphanIis' {
 
         It 'setup: fixture present' { $script:FixtureReady | Should -BeTrue }
 
-        It 'case1: no-orphan exit 0' { $script:r1.Exit | Should -Be 0 }
-        It 'case1: stdout 含 No orphan IIS Express' { $script:r1.Stdout | Should -Match 'No orphan IIS Express' }
+        It 'case1: no-orphan exit 0' { Skip-IfForeignIis; $script:r1.Exit | Should -Be 0 }
+        It 'case1: stdout 含 No orphan IIS Express' { Skip-IfForeignIis; $script:r1.Stdout | Should -Match 'No orphan IIS Express' }
 
-        It 'case2: SKILL-entry no-orphan exit 0' { $script:r2.Exit | Should -Be 0 }
-        It 'case2: 訊息一致' { $script:r2.Stdout | Should -Match 'No orphan IIS Express' }
+        It 'case2: SKILL-entry no-orphan exit 0' { Skip-IfForeignIis; $script:r2.Exit | Should -Be 0 }
+        It 'case2: 訊息一致' { Skip-IfForeignIis; $script:r2.Stdout | Should -Match 'No orphan IIS Express' }
 
         # By design: script-level still runs (SKILL is the gatekeeper). exit 0 + No orphan.
-        It 'case3 (deviation): script-level no [iis] gate — still exits 0' { $script:r3.Exit | Should -Be 0 }
-        It 'case3: 訊息仍是 No orphan' { $script:r3.Stdout | Should -Match 'No orphan IIS Express' }
+        It 'case3 (deviation): script-level no [iis] gate — still exits 0' { Skip-IfForeignIis; $script:r3.Exit | Should -Be 0 }
+        It 'case3: 訊息仍是 No orphan' { Skip-IfForeignIis; $script:r3.Stdout | Should -Match 'No orphan IIS Express' }
     }
 
     # ─── R5: regex-metacharacter 誤殺防護 (canonical 斷言) ───────────────────────
