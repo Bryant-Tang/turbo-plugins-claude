@@ -13,12 +13,28 @@ name: Script Tests
 #     PS orchestrator does NOT resolve bash on non-Windows, so .sh never double-runs.
 #   Framework missing (Pester 5 absent / vendored shUnit2 absent) = the job FAILs (R20);
 #   only Unix x Windows-only-tool cases self-SKIP.
+# `push` matters as much as `pull_request`, and its absence was not a small gap: with only the
+# pull_request trigger, a long-lived branch that has not opened a PR yet gets ZERO CI runs, so the
+# ubuntu half of the matrix and the repo-level verify-core-identical job never execute at all. That
+# is exactly what happened on feat/turbo-plugin -- hundreds of commits, not one CI run, and a
+# shared-copy invariant stayed broken the whole time because the only thing that checks it had
+# never been given a chance to run. Local per-plugin orchestrators cover Windows; only CI covers
+# Linux. Run on every push so the feedback arrives while the change is fresh, not at merge time.
 on:
+  push:
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# A push and its pull_request both trigger this workflow, and a branch under active development
+# gets many pushes in a row. Only the newest commit's result is interesting, so supersede the
+# older runs instead of paying for all of them. The default branch is excluded from cancellation
+# so a merge to main always gets a complete recorded result.
+concurrency:
+  group: script-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
   # ── discover ────────────────────────────────────────────────────────────────
