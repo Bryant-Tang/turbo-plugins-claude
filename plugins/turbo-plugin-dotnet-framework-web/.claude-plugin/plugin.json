@@ -1,9 +1,0 @@
-{
-  "name": "turbo-plugin-dotnet-framework-web",
-  "description": ".NET Framework Web 本機開發雜務:build / run / stop / publish / cleanup-orphan-iis(IIS Express + MSBuild)。env-free 設計,集中設定於 .turbo-plugin/;不需要 setup 指令,設定用到才建。",
-  "version": "0.1.0",
-  "license": "MIT",
-  "author": {
-    "name": "Bryant Tang"
-  }
-}

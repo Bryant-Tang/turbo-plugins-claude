@@ -39,12 +39,15 @@ function Test-FilesIdentical {
 # ">=2 copies present" check) catches a copy DELETED from all-but-one plugin --
 # otherwise the lone survivor would silently pass. Canonical = turbo-plugin-git-svn.
 # Adding a plugin that should carry a shared file means adding it here.
+# dotnet-framework is absent from the tp-setup asset specs on purpose: its tp-setup was
+# removed (setup is no longer a step for that plugin), so it carries no copy of those assets.
+# Keep this list byte-for-byte in sync with the sh sibling's shared_specs.
 $sharedSpecs = @(
-    @{ Rel = 'scripts/lib/Core.ps1';                            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework-web', 'turbo-plugin-three-environment-db') },
-    @{ Rel = 'scripts/lib/core.sh';                             Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
-    @{ Rel = 'scripts/lib/ps1-delegate.sh';                     Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework-web') },
-    @{ Rel = 'skills/tp-setup/assets/setup-base.md';            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework-web', 'turbo-plugin-three-environment-db') },
-    @{ Rel = 'skills/tp-setup/assets/claudemd-base-snippet.md'; Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework-web', 'turbo-plugin-three-environment-db') }
+    @{ Rel = 'scripts/lib/Core.ps1';                            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace') },
+    @{ Rel = 'scripts/lib/core.sh';                             Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace') },
+    @{ Rel = 'scripts/lib/ps1-delegate.sh';                     Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework') },
+    @{ Rel = 'skills/tp-setup/assets/setup-base.md';            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
+    @{ Rel = 'skills/tp-setup/assets/claudemd-base-snippet.md'; Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') }
 )
 
 foreach ($spec in $sharedSpecs) {

@@ -18,7 +18,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
    (gitignored,含 credentials)。`tp-db-management` **不**寫進 `conventions.md`,改靠 skill 自身 description 讓 agent 主動觸發。
 
 > 本 plugin **不**處理 git↔SVN bridge(屬 `turbo-plugin-git-svn`)、IIS apphost(屬
-> `turbo-plugin-dotnet-framework-web`)。三個 plugin 共用同一份 base 段、各寫自己的標記區塊,彼此不覆蓋。
+> `turbo-plugin-dotnet-framework`)。三個 plugin 共用同一份 base 段、各寫自己的標記區塊,彼此不覆蓋。
 > db **不碰** `config.toml`(db 在 config.toml 無設定),base 段對 db 會跳過 config.toml 那一項。
 > `.mcp.json`(`tp-dbhub` MCP 宣告)隨**本 plugin** 出貨,不由 setup 寫進專案。
 

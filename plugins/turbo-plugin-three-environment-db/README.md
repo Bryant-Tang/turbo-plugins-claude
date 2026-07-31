@@ -25,7 +25,7 @@
 
 ## 與其它 turbo-plugin 的關係
 
-與 `turbo-plugin-git-svn`、`turbo-plugin-dotnet-framework-web`、`turbo-plugin-code-comment` 三者正交、各自獨立安裝。只需要哪塊就裝哪塊。
+與 `turbo-plugin-git-svn`、`turbo-plugin-dotnet-framework`、`turbo-plugin-code-comment` 三者正交、各自獨立安裝。只需要哪塊就裝哪塊。
 
 ## 測試
 

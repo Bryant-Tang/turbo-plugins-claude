@@ -4,7 +4,7 @@
 > `tp-setup` SKILL 引用。各 plugin 的 SKILL 會「先跑本 base 段,再跑自己的 concern 段」。
 > 這些 plugin 各帶一份**內容相同**的本檔(像 `Core.{ps1,sh}` 一樣 byte-identical);修改時每一份都要同步。
 >
-> `turbo-plugin-dotnet-framework-web` **沒有** setup 指令(所有設定都是用到才建),故不帶本檔。
+> `turbo-plugin-dotnet-framework` **沒有** setup 指令(所有設定都是用到才建),故不帶本檔。
 >
 > base 段**只**處理 concern-neutral 的共用檔骨架,**不**碰任何單一 concern 的設定
 > (git bridge / IIS apphost / dbhub 等一律由各 plugin 的 concern 段處理)。

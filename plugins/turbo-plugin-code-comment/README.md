@@ -22,7 +22,7 @@ C# 與 JavaScript / TypeScript 的**註解撰寫慣例** skill 集。turbo-plugi
 
 ## 與其它 turbo-plugin 的關係
 
-`turbo-plugin-code-comment` 與 `turbo-plugin-git-svn`、`turbo-plugin-dotnet-framework-web`、`turbo-plugin-three-environment-db` 三者正交、各自獨立安裝。只需要哪塊就裝哪塊。
+`turbo-plugin-code-comment` 與 `turbo-plugin-git-svn`、`turbo-plugin-dotnet-framework`、`turbo-plugin-three-environment-db` 三者正交、各自獨立安裝。只需要哪塊就裝哪塊。
 
 ## 測試
 

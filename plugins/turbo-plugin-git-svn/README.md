@@ -82,7 +82,7 @@ hook 是 advisory 不會 block session。
 
 ## 與其它 turbo-plugin 的關係
 
-與 `turbo-plugin-dotnet-framework-web`、`turbo-plugin-three-environment-db`、`turbo-plugin-code-comment` 三者正交、各自獨立安裝。只需要哪塊就裝哪塊（`tp-setup` 目前隨本 plugin 一起發佈）。
+與 `turbo-plugin-dotnet-framework`、`turbo-plugin-three-environment-db`、`turbo-plugin-code-comment` 三者正交、各自獨立安裝。只需要哪塊就裝哪塊（`tp-setup` 目前隨本 plugin 一起發佈）。
 
 ## 測試
 

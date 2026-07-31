@@ -10,9 +10,9 @@
       "source": "./plugins/turbo-plugin-git-svn"
     },
     {
-      "name": "turbo-plugin-dotnet-framework-web",
+      "name": "turbo-plugin-dotnet-framework",
       "description": ".NET Framework Web 本機開發雜務:build / run / stop / publish / cleanup-orphan-iis（IIS Express + MSBuild）。env-free，集中設定於 .turbo-plugin/;不需要 setup 指令,設定用到才建。",
-      "source": "./plugins/turbo-plugin-dotnet-framework-web"
+      "source": "./plugins/turbo-plugin-dotnet-framework"
     },
     {
       "name": "turbo-plugin-three-environment-db",

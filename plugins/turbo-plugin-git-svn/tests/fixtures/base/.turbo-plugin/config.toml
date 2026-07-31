@@ -7,5 +7,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
 [svn]
 
-# 註:IIS / build / publish / run 等 .NET 設定區段已隨四拆移至 turbo-plugin-dotnet-framework-web。
+# 註:IIS / build / publish / run 等 .NET 設定區段已隨四拆移至 turbo-plugin-dotnet-framework。
 # 此 fixture 只保留 git↔SVN bridge 所需的 [svn] 區段。

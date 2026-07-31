@@ -24,8 +24,8 @@
         { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
       ]
     },
-    "plugins/turbo-plugin-dotnet-framework-web": {
-      "component": "turbo-plugin-dotnet-framework-web",
+    "plugins/turbo-plugin-dotnet-framework": {
+      "component": "turbo-plugin-dotnet-framework",
       "extra-files": [
         { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
       ]

@@ -18,7 +18,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 2. **git-svn concern 段**(本檔):git↔SVN bridge bootstrap(case (a)/(b) 委派 `Initialize-GitSvnBridge` 腳本)、
    `[svn]` 設定、`.gitignore` 的 git-svn 區塊。
 
-> 本 plugin **不**處理 IIS apphost(屬 `turbo-plugin-dotnet-framework-web`)、dbhub(屬
+> 本 plugin **不**處理 IIS apphost(屬 `turbo-plugin-dotnet-framework`)、dbhub(屬
 > `turbo-plugin-three-environment-db`)。那些 plugin 各有自己的 `tp-setup`,共用同一份 base 段、
 > 各寫自己的標記區塊,彼此不覆蓋。
 
@@ -274,7 +274,7 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
 - **bridge 結果**(case (a)/(b)):`remote-svn/main` branch + `.turbo-plugin/worktrees/remote-svn-main` worktree、
   svn checkout、固定 `svn:ignore=.git`、連接歷史。
 - **使用者仍須手動處理**:
-  - 若是 .NET Framework Web 專案 → 裝 `turbo-plugin-dotnet-framework-web`。它**沒有 setup 指令**,直接
+  - 若是 .NET Framework Web 專案 → 裝 `turbo-plugin-dotnet-framework`。它**沒有 setup 指令**,直接
     `/tp-build-dotnet-framework-web` / `/tp-run-dotnet-framework-web` 即可(設定用到才建)。
   - 若要用三環境 DB → 裝 `turbo-plugin-three-environment-db` 並跑其 `/tp-setup`(dbhub)。
 - **下一步建議**:

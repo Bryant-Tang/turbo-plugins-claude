@@ -7,7 +7,7 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
 | Plugin | 用途 | 需要 setup? |
 |---|---|---|
 | **`turbo-plugin-git-svn`** | git↔SVN bridge + 設定入口（setup / pull / push / svn-log / reset / merge / suggest-ignore / commit-msg） | 是（`/tp-setup`） |
-| **`turbo-plugin-dotnet-framework-web`** | .NET Framework Web 本機開發（build / run / stop / publish / cleanup-orphan-iis，IIS Express + MSBuild） | 否（設定用到才建，可自我修復） |
+| **`turbo-plugin-dotnet-framework`** | .NET Framework Web 本機開發（build / run / stop / publish / cleanup-orphan-iis，IIS Express + MSBuild） | 否（設定用到才建，可自我修復） |
 | **`turbo-plugin-three-environment-db`** | 三環境 DB 輔助（`tp-db-management` skill + `tp-dbhub` MCP server） | 複製 `dbhub.example.local.toml` → `dbhub.local.toml` 填值 |
 | **`turbo-plugin-code-comment`** | C# / JS / TS 註解撰寫慣例（`tp-csharp-comment` / `tp-js-comment`） | 否（純 skill） |
 | **`turbo-plugin-multi-repo-workspace`** | 「一個資料夾底下並排放著多個獨立 git repo」的工作區設定（`tp-multi-repo-workspace-setup`） | 是（`/tp-multi-repo-workspace-setup`，每個工作區一次） |
@@ -15,7 +15,7 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
 ### 怎麼選
 
 - 只要 git↔SVN 橋接工作流 → 裝 **`turbo-plugin-git-svn`**。
-- 還要在本機跑 .NET Framework Web（IIS Express）→ 加裝 **`turbo-plugin-dotnet-framework-web`**。
+- 還要在本機跑 .NET Framework Web（IIS Express）→ 加裝 **`turbo-plugin-dotnet-framework`**。
 - 要用 DBHub 唯讀檢視三環境 DB + SQL 標準化 → 加裝 **`turbo-plugin-three-environment-db`**。
 - 只想要程式碼註解慣例（不碰 SVN / IIS / DB）→ 單裝 **`turbo-plugin-code-comment`** 即可，無需 setup。
 - session 開在「並排放著多個獨立 repo」的資料夾（`proj-root/proj-1` + `proj-root/proj-2` + …）→ 加裝 **`turbo-plugin-multi-repo-workspace`**；它相依 `turbo-plugin-git-svn`，安裝時會自動一起裝上。
@@ -43,7 +43,7 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
       ```json
       "enabledPlugins": {
         "turbo-plugin-git-svn@turbo-plugins-claude": true,
-        "turbo-plugin-dotnet-framework-web@turbo-plugins-claude": true,
+        "turbo-plugin-dotnet-framework@turbo-plugins-claude": true,
         "turbo-plugin-three-environment-db@turbo-plugins-claude": true,
         "turbo-plugin-code-comment@turbo-plugins-claude": true,
         "turbo-plugin-multi-repo-workspace@turbo-plugins-claude": true

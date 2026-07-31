@@ -40,12 +40,12 @@ err() { echo "FAIL: $*" >&2; fail=1; }
 # Putting a concern helper in Core forces every other plugin to carry code it never calls, and
 # the only way to satisfy this check would be to ship it there.
 #
-# dotnet-framework-web is absent from the tp-setup asset specs on purpose: its tp-setup was
+# dotnet-framework is absent from the tp-setup asset specs on purpose: its tp-setup was
 # removed (setup is no longer a step for that plugin), so it carries no copy of those assets.
 shared_specs=(
-  "scripts/lib/Core.ps1|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
+  "scripts/lib/Core.ps1|turbo-plugin-git-svn turbo-plugin-dotnet-framework turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
   "scripts/lib/core.sh|turbo-plugin-git-svn turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
-  "scripts/lib/ps1-delegate.sh|turbo-plugin-git-svn turbo-plugin-dotnet-framework-web"
+  "scripts/lib/ps1-delegate.sh|turbo-plugin-git-svn turbo-plugin-dotnet-framework"
   "skills/tp-setup/assets/setup-base.md|turbo-plugin-git-svn turbo-plugin-three-environment-db"
   "skills/tp-setup/assets/claudemd-base-snippet.md|turbo-plugin-git-svn turbo-plugin-three-environment-db"
 )

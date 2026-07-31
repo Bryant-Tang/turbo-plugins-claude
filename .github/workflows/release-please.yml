@@ -14,12 +14,13 @@
 #
 # ── 首次啟用(這條 branch merge 進 main 後做一次)──────────────────────────────
 # 初版 0.1.0 是手寫的;為了讓 release-please「忽略 0.1.0 之前的所有歷史」(含已拆掉的
-# 單體 turbo-plugin 幽靈 commit),merge 後在 merge commit 上替四個 component 各打一個
+# 單體 turbo-plugin 幽靈 commit),merge 後在 merge commit 上替五個 component 各打一個
 # 0.1.0 tag,release-please 會以此為基準、只處理之後的 commit:
 #
 #   M=$(git rev-parse origin/main)
-#   for p in turbo-plugin-code-comment turbo-plugin-dotnet-framework-web \
-#            turbo-plugin-git-svn turbo-plugin-three-environment-db; do
+#   for p in turbo-plugin-code-comment turbo-plugin-dotnet-framework \
+#            turbo-plugin-git-svn turbo-plugin-three-environment-db \
+#            turbo-plugin-multi-repo-workspace; do
 #     git tag "$p--v0.1.0" "$M"
 #   done
 #   git push origin --tags
