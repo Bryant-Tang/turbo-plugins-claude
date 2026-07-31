@@ -11,8 +11,8 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ## Purpose
 
 給 agent 用的 VS 2022「Publish」。你(agent)判斷要發佈哪個 `.csproj` 與哪個 `.pubxml` profile,把
-明確參數傳給變薄的 `Publish-Web` 執行器;configuration **以 pubxml 內嵌 `<Configuration>` 為準**,
-預設不另外傳 `/p:Configuration`(這就是 VS 從 profile 發佈的行為)。發佈完逐字轉述產出位置,必要時記回記憶。
+明確參數傳給變薄的 `Publish-Web` 執行器;configuration **以 pubxml 內嵌 `<Configuration>` 為準**——
+你預設不傳,執行器會把它讀出來明確帶給 MSBuild。發佈完逐字轉述產出位置,必要時記回記憶。
 
 ## Procedure
 
@@ -43,14 +43,17 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 - 先查記憶 `[publish].default_pubxml`。有值且檔在 → 用它(`-Pubxml`)。
 - 否則看該 csproj 的 `Properties/PublishProfiles/` 下有幾個 `.pubxml`:剛好一個 → 直接用(script 會自動取單一);多個 → 由你依 context 判斷,無從判斷就 `AskUserQuestion` 列出請使用者選,把選的當 `-Pubxml` 傳。
 
-**Configuration(預設不指定):**
+**Configuration(預設不指定,由執行器從 pubxml 讀):**
 
-- 預設**不要**傳 `--configuration` / `--platform`——讓 pubxml 內嵌的 `<Configuration>` / `<Platform>` 決定(VS 發佈就是讀 profile)。
-- 只有使用者明確指定或 `[publish].configuration` 記憶有值時才傳。
+- 預設**不要**傳 `--configuration` / `--platform`——執行器會自己去 pubxml 讀 `<Configuration>` 並明確帶給 MSBuild。
+- 只有使用者明確指定或 `[publish].configuration` 記憶有值時才傳;你傳的值一律蓋過 pubxml。
+- **注意**:這裡不能只靠「不傳就讓 profile 決定」。實測(2026-07-31)證實,走 `/p:PublishProfile` 時
+  profile 裡的 `<Configuration>` **不會**影響建置階段——csproj 自己的 `Debug` 預設值會贏,結果是把一份
+  Debug 組建放進 `bin\Release\Publish\`。所以執行器改成讀出來明確傳。
 
 ### Step 2 — 執行 publish
 
-跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶明確參數:`-Project <csproj>`、(可選)`-Pubxml <path>`、(可選)`-Configuration`/`-Platform`。Script 會:解析 csproj target(CLI → `[publish].project` → 清楚報錯;**收到 `.sln` 報錯**)、找 MSBuild、解析 pubxml(CLI → `[publish].default_pubxml` → `Properties/PublishProfiles/` 單一)、跑 frontend pack(若 `[frontend]` 齊備)、跑 `msbuild /p:DeployOnBuild=true /p:PublishProfile=<name>`(**有值才附** `/p:Configuration|Platform`)、後處理 parse `<PublishUrl>` + `<WebPublishMethod>` 回報產出位置。
+跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶明確參數:`-Project <csproj>`、(可選)`-Pubxml <path>`、(可選)`-Configuration`/`-Platform`。Script 會:解析 csproj target(CLI → `[publish].project` → 清楚報錯;**收到 `.sln` 報錯**)、找 MSBuild、解析 pubxml(CLI → `[publish].default_pubxml` → `Properties/PublishProfiles/` 單一)、跑 frontend pack(若 `[frontend]` 齊備)、跑 `msbuild /p:DeployOnBuild=true /p:PublishProfile=<name>`(`/p:Configuration` 取「你傳的值 → pubxml 的 `<Configuration>`」,兩者都沒有才省略;`/p:Platform` 仍是**有值才附**)、後處理 parse `<PublishUrl>` + `<WebPublishMethod>` 回報產出位置。
 
 ### Step 3 — 回報結果(逐字、路徑可點擊)
 
@@ -74,7 +77,7 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 `.turbo-plugin/pack-content-trust.local.toml`(格式:`approved_hash = "<h>"`)並重新呼叫 script。使用者選 No → 終止 skill。
 - **target 只能 csproj**:publish 收到 `.sln` 會報錯;發佈是針對單一 web 專案。
-- **config 以 pubxml 為準、預設不傳 `/p:Configuration`**:profile 內嵌值決定;只有使用者明確要求才覆蓋。
+- **config 以 pubxml 為準,但由執行器讀出來明確傳**:你預設不傳 `--configuration`,執行器會從 pubxml 取 `<Configuration>` 帶進 MSBuild;只有使用者明確要求才由你覆蓋。**不要**把它改回「省略讓 profile 決定」——那樣發出來的是 Debug。
 - **pubxml 由你判斷**:多個 profile 無從判斷就 `AskUserQuestion`,別硬猜。
 - Frontend pack 是 publish 鏈的一部份;**不要在 SKILL 內額外呼叫** `pack-content`,script 已包含。
 - **MSBuild 找不到** → script fail loudly,提示在 `.turbo-plugin/config.local.toml` 的 `[tools]` 設 `msbuild_path`。
@@ -91,7 +94,8 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
 
 - **No .pubxml found**: 在無 .pubxml 的 csproj 跑 /tp-publish(傳明確 `-Project`)→ fail loudly 訊息含「No .pubxml found」,建議先用 VS 建 publish profile。
 - **Multiple .pubxml**: 該 csproj 有多個 .pubxml 且沒指定 → script fail loudly 列候選;你應改用 `AskUserQuestion` 選一個再傳 `-Pubxml`。
-- **省略 config 由 pubxml 決定**: 不傳 `--configuration` → MSBuild 命令列**不含** `/p:Configuration`,由 pubxml 內嵌 `<Configuration>` 決定。
+- **config 從 pubxml 讀出來傳**: pubxml 有 `<Configuration>Release</Configuration>` 且不傳 `--configuration` → MSBuild 命令列**含** `/p:Configuration=Release`,產出是 Release 組建。
+- **兩邊都沒有才省略**: pubxml 沒有 `<Configuration>` 且不傳 `--configuration` → 命令列不含 `/p:Configuration`。
 - **`.sln` 被拒**: 傳 `-Project <.sln>` → script 報錯(publish 需 csproj)。
 - **結果模板**: publish 成功後 stdout 含 `PUBLISH_OUTPUT (...)` marker,緊接數行——`Target: <csproj>` / `Profile: <pubxml>`(糾錯閘)+ raw Windows 路徑 + `file:///` URL(非 FileSystem 則只有 URL 一行)。路徑/URL 行**無結尾標點**、各自成行,agent 須**逐字**轉述(不轉述 marker 行)。含空白的路徑仍須完整保留在單行。
 

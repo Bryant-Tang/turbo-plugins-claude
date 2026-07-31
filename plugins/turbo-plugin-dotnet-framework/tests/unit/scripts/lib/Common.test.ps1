@@ -899,3 +899,48 @@ Describe 'Get-PublishOutputLines' {
         $out.DisplayPath | Should -Be 'https://ftp.example.com/site'
     }
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Get-PubxmlProperty - publish reads <Configuration> out of the profile because with
+# /p:PublishProfile the profile does NOT govern the build (real-machine, 2026-07-31).
+Describe 'Get-PubxmlProperty' {
+    BeforeAll {
+        $script:pubxmlDir = New-IsolatedRepoRoot 'pubxmlprop'
+        function New-Pubxml {
+            param([string]$Name, [string]$Body)
+            $p = Join-Path $script:pubxmlDir "$Name.pubxml"
+            [System.IO.File]::WriteAllText($p, "<Project><PropertyGroup>$Body</PropertyGroup></Project>", (New-Object System.Text.UTF8Encoding($false)))
+            return $p
+        }
+    }
+    AfterAll { Remove-IsolatedRepoRoot $script:pubxmlDir }
+
+    It 'reads the named property' {
+        $p = New-Pubxml 'plain' '<Configuration>Release</Configuration><PublishUrl>bin\out\</PublishUrl>'
+        Get-PubxmlProperty -Path $p -Name 'Configuration' | Should -Be 'Release'
+    }
+    It 'matches the element name case-insensitively (VS casing varies across pubxml versions)' {
+        $p = New-Pubxml 'casing' '<configuration>Release</configuration>'
+        Get-PubxmlProperty -Path $p -Name 'Configuration' | Should -Be 'Release'
+    }
+    It 'trims surrounding whitespace' {
+        $p = New-Pubxml 'ws' "<Configuration>`n  Release`n</Configuration>"
+        Get-PubxmlProperty -Path $p -Name 'Configuration' | Should -Be 'Release'
+    }
+    It 'returns empty string when the property is absent' {
+        $p = New-Pubxml 'absent' '<PublishUrl>bin\out\</PublishUrl>'
+        Get-PubxmlProperty -Path $p -Name 'Configuration' | Should -Be ''
+    }
+    It 'returns empty string when the file does not exist' {
+        Get-PubxmlProperty -Path (Join-Path $script:pubxmlDir 'nope.pubxml') -Name 'Configuration' | Should -Be ''
+    }
+    It 'returns empty string on malformed XML instead of throwing' {
+        $bad = Join-Path $script:pubxmlDir 'bad.pubxml'
+        [System.IO.File]::WriteAllText($bad, '<Project><PropertyGroup><Configuration>Release', (New-Object System.Text.UTF8Encoding($false)))
+        Get-PubxmlProperty -Path $bad -Name 'Configuration' | Should -Be ''
+    }
+    It 'last definition wins (matches MSBuild property semantics)' {
+        $p = New-Pubxml 'dup' '<Configuration>Debug</Configuration><Configuration>Release</Configuration>'
+        Get-PubxmlProperty -Path $p -Name 'Configuration' | Should -Be 'Release'
+    }
+}

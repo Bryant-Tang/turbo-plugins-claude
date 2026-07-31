@@ -197,6 +197,30 @@ function Get-PublishOutputLines {
     return @{ Resolved = $resolved; DisplayPath = $displayPath; IsFileSystem = $isFileSystem }
 }
 
+# Read a single MSBuild property out of a .pubxml. Returns '' when the file is unreadable or the
+# property is absent -- callers treat '' as "no value" and fall back to omitting the /p: switch.
+#
+# Case-insensitive on the element name for the same reason the PublishUrl lookup in Publish-Web.ps1
+# is: XPath local-name() is case-sensitive and VS emits a mix of casings across pubxml versions.
+# Last occurrence wins (matches MSBuild's last-definition-wins property semantics).
+function Get-PubxmlProperty {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $lower = $Name.ToLowerInvariant()
+    $xpath = "//*[translate(local-name(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='$lower']"
+    $nodes = @()
+    try {
+        $nodes = @(Select-Xml -Path $Path -XPath $xpath | ForEach-Object { $_.Node })
+    } catch {
+        return ''
+    }
+    if ($nodes.Count -eq 0) { return '' }
+    return $nodes[$nodes.Count - 1].InnerText.Trim()
+}
+
 # ─── per-operation result-template family (KTD5) ────────────────────────────────
 # Each Format-*ResultLines helper returns the ORDERED display lines the executor prints under
 # its result marker. The agent relays the block as the fixed per-operation result template:

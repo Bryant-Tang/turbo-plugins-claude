@@ -48,11 +48,23 @@ try {
         throw "Publish profile does not exist: $pubxmlAbsPath"
     }
 
-    # Configuration / Platform: OMIT when the agent gave no value — the pubxml's embedded
-    # <Configuration>/<Platform> govern the publish (that is how VS publishes from a profile).
-    # Forcing Release/Any CPU (the prior default) overrode the profile and could publish the
-    # wrong configuration. -Default $null keeps "no value" as no value.
+    # Configuration / Platform: agent value first (it always wins), then the pubxml.
+    #
+    # The "just omit /p:Configuration and let the profile govern" assumption that used to live here
+    # is WRONG for publish, disproved on a real machine 2026-07-31: publishing a Release profile via
+    # /p:PublishProfile produced a DEBUG build (/optimize-, DEBUG constant, sources from obj\Debug\)
+    # dropped into bin\Release\Publish. With /p:PublishProfile the profile's <Configuration> does not
+    # reach the BUILD -- the csproj's own `<Configuration Condition="...">Debug</Configuration>`
+    # default wins -- so the profile has to be read here and passed explicitly.
+    #
+    # Do NOT "restore" the omit behaviour by copying it back from Build-Web.ps1: omitting is correct
+    # for build (MSBuild / .sln / Directory.Build.props decide, which is what VS does) and wrong for
+    # publish. Platform is deliberately left alone -- no evidence it misbehaves, and the pubxml's
+    # `Any CPU` vs a csproj's `AnyCPU` are not interchangeable on every project.
     $publishConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'configuration' -CliValue $Configuration -Default $null
+    if ([string]::IsNullOrWhiteSpace($publishConfiguration)) {
+        $publishConfiguration = Get-PubxmlProperty -Path $pubxmlAbsPath -Name 'Configuration'
+    }
     $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default $null
 
     # Pre-publish: run Compress-Content for frontend. Compress-Content.ps1 is shipped in this
@@ -68,8 +80,8 @@ try {
     Write-Output "  Publish profile: $publishProfileName"
     Write-Output "  Profile root:    $publishProfileDir"
 
-    # Pass /p:Configuration | /p:Platform only when the agent supplied a value; otherwise let the
-    # pubxml's embedded values govern (VS-aligned).
+    # /p:Configuration carries the agent's value or, failing that, the pubxml's (resolved above).
+    # /p:Platform is passed only when the agent supplied one.
     $publishArgs = @(
         $projectFile,
         '/p:DeployOnBuild=true',

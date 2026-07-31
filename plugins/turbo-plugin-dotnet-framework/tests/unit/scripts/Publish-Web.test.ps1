@@ -83,7 +83,6 @@ BeforeAll {
             $pubxml = "<Project><PropertyGroup><WebPublishMethod>FileSystem</WebPublishMethod>$cfgNode<PublishUrl>bin\app.publish\</PublishUrl></PropertyGroup></Project>"
             [System.IO.File]::WriteAllText((Join-Path $profilesDir "$name.pubxml"), $pubxml, (New-Object System.Text.UTF8Encoding($false)))
         }
-        if ($WithConfigInPubxml) { } # placeholder to keep param meaningful
         $tpDir = Join-Path $sb '.turbo-plugin'
         $null = New-Item -ItemType Directory -Path $tpDir -Force
         [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.toml'), "[publish]`r`nproject = `"HelloApp.csproj`"`r`n", (New-Object System.Text.UTF8Encoding($false)))
@@ -191,12 +190,18 @@ Describe 'Publish-Web' {
         It 'case3: SKILL-entry exit ≠ 0' { ($script:r3.Exit -ne 0) | Should -BeTrue }
     }
 
-    Context 'U4: arg construction (stub MSBuild) — pubxml governs config, .sln rejected' {
+    Context 'U4: arg construction (stub MSBuild) — configuration read from pubxml, .sln rejected' {
         BeforeAll {
             $script:sbpOmit = New-PublishArgFixture 'publish-arg-omit'
             $script:rpOmit = Invoke-Script -WorkDir $script:sbpOmit
             $script:sbpRel = New-PublishArgFixture 'publish-arg-rel'
             $script:rpRel = Invoke-Script -WorkDir $script:sbpRel -ExtraArgs @('-Configuration', 'Release')
+            # pubxml carries <Configuration>Release</Configuration>, agent supplies nothing.
+            $script:sbpPub = New-PublishArgFixture 'publish-arg-pubxmlcfg' -WithConfigInPubxml
+            $script:rpPub = Invoke-Script -WorkDir $script:sbpPub
+            # Same pubxml, but the agent explicitly asks for Debug -- the agent must win.
+            $script:sbpOverride = New-PublishArgFixture 'publish-arg-override' -WithConfigInPubxml
+            $script:rpOverride = Invoke-Script -WorkDir $script:sbpOverride -ExtraArgs @('-Configuration', 'Debug')
             $script:sbpMulti = New-PublishArgFixture 'publish-arg-multi' -PubxmlCount 2
             $script:rpMulti = Invoke-Script -WorkDir $script:sbpMulti
             $script:rpMultiCombined = $script:rpMulti.Stdout + "`n" + $script:rpMulti.Stderr
@@ -208,15 +213,25 @@ Describe 'Publish-Web' {
         }
         AfterAll {
             Remove-Sandbox $script:sbpOmit; Remove-Sandbox $script:sbpRel
+            Remove-Sandbox $script:sbpPub; Remove-Sandbox $script:sbpOverride
             Remove-Sandbox $script:sbpMulti; Remove-Sandbox $script:sbpSln
         }
 
-        It 'omits /p:Configuration when no value (pubxml governs)' {
+        It 'omits /p:Configuration when neither the agent nor the pubxml names one' {
             $script:rpOmit.Exit | Should -Be 0
             ($script:rpOmit.Stdout + "`n" + $script:rpOmit.Stderr) | Should -Not -Match '/p:Configuration'
         }
         It 'passes /p:Configuration=Release when -Configuration given' {
             $script:rpRel.Stdout | Should -Match '/p:Configuration=Release'
+        }
+        It 'reads <Configuration> out of the pubxml when the agent gave none (real-machine: omitting published Debug)' {
+            $script:rpPub.Exit | Should -Be 0
+            $script:rpPub.Stdout | Should -Match '/p:Configuration=Release'
+        }
+        It 'an explicit -Configuration beats the pubxml' {
+            $script:rpOverride.Exit | Should -Be 0
+            $script:rpOverride.Stdout | Should -Match '/p:Configuration=Debug'
+            $script:rpOverride.Stdout | Should -Not -Match '/p:Configuration=Release'
         }
         It 'still passes the publish profile args' {
             $script:rpOmit.Stdout | Should -Match '/p:PublishProfile=FolderProfile'
