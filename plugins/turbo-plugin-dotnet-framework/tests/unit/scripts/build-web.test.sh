@@ -94,6 +94,46 @@ EOF
     echo "$out" | grep -q 'BUILD_OUTPUT'; assertTrue 'case4: BUILD_OUTPUT template emitted' $?
 }
 
+# Case 4b (U8): `--repo-root` names the project outright, from a cwd that is NOT that project.
+# Also proves the .sh side of the kebab→Pascal translation end to end: `--repo-root` only works if
+# the delegate rewrites it to `-RepoRoot`.
+test_repo_root_targets_other_project() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local target elsewhere out e
+    target="$(new_sb 'build-sh-rr-target')"
+    elsewhere="$(new_sb 'build-sh-rr-cwd')"
+    cat > "$target/HelloApp.csproj" <<'EOF'
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+  </PropertyGroup>
+</Project>
+EOF
+    mkdir -p "$target/.turbo-plugin"
+    printf '[build]\nproject = "HelloApp.csproj"\n' > "$target/.turbo-plugin/config.toml"
+    printf '[tools]\nmsbuild_path = "msbuild-stub.bat"\n' > "$target/.turbo-plugin/config.local.toml"
+    printf '@echo off\r\necho MSBUILD_ARGS: %%*\r\n' > "$target/msbuild-stub.bat"
+    (cd "$target" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+
+    out="$(cd "$elsewhere" && bash "$SCRIPT_UNDER_TEST" --repo-root "$target" 2>&1)"; e=$?
+    assertEquals "case4b: --repo-root build exit 0 (out=${out:0:200})" 0 "$e"
+    echo "$out" | grep -q 'HelloApp.csproj'; assertTrue 'case4b: acted on the NAMED project' $?
+
+    # Without --repo-root the same cwd has no project at all -> must fail. Guards against the
+    # assertion above passing because the script quietly fell back to something else.
+    out="$(cd "$elsewhere" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    assertNotEquals 'case4b: same call without --repo-root fails' 0 "$e"
+
+    # A bad --repo-root fails naming the argument, before MSBuild, creating nothing.
+    out="$(cd "$target" && bash "$SCRIPT_UNDER_TEST" --repo-root "$target/no-such-dir" 2>&1)"; e=$?
+    assertNotEquals 'case4b: nonexistent --repo-root fails' 0 "$e"
+    echo "$out" | grep -qi 'repo root not found'; assertTrue 'case4b: message names the repo root' $?
+    echo "$out" | grep -q 'MSBUILD_ARGS'; assertFalse 'case4b: MSBuild never ran' $?
+    [ -d "$target/no-such-dir" ]; assertFalse 'case4b: nothing was created' $?
+
+    rm_sb "$target"; rm_sb "$elsewhere"
+}
+
 # Case 5: real MSBuild deferred to Phase 2 SKILL-level test (always skipped here).
 test_real_msbuild_deferred() {
     startSkipping

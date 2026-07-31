@@ -246,6 +246,40 @@ Describe 'Build-Web' {
         }
     }
 
+    # -RepoRoot names the project outright. The scenario this exists for: a session opened at a
+    # root that holds several sibling projects, where the cwd is not any of them.
+    Context 'U8: -RepoRoot targets a project other than the current directory' {
+        BeforeAll {
+            # Two independent project sandboxes. Only $sbTarget carries a csproj + stub MSBuild;
+            # $sbElsewhere is a bare directory standing in for "wherever the session happens to be".
+            $script:sbTarget = New-BuildArgFixture 'build-reporoot-target'
+            $script:sbElsewhere = New-Sandbox 'build-reporoot-cwd'
+            $script:rTargeted = Invoke-Script -WorkDir $script:sbElsewhere -ExtraArgs @('-RepoRoot', $script:sbTarget, '-Project', 'HelloApp.csproj')
+            # Same call WITHOUT -RepoRoot: proves the pass above is doing the work, not the cwd.
+            $script:rUntargeted = Invoke-Script -WorkDir $script:sbElsewhere -ExtraArgs @('-Project', 'HelloApp.csproj')
+            $script:rBadRoot = Invoke-Script -WorkDir $script:sbTarget -ExtraArgs @('-RepoRoot', (Join-Path $script:sbTarget 'no-such-dir'))
+            $script:rBadRootCombined = $script:rBadRoot.Stdout + "`n" + $script:rBadRoot.Stderr
+        }
+        AfterAll { Remove-Sandbox $script:sbTarget; Remove-Sandbox $script:sbElsewhere }
+
+        It 'acts on the named project, not the current directory' {
+            $script:rTargeted.Exit | Should -Be 0
+            $script:rTargeted.Stdout | Should -Match ([regex]::Escape($script:sbTarget))
+            $script:rTargeted.Stdout | Should -Match 'Target:.*HelloApp\.csproj'
+        }
+        It 'the same call without -RepoRoot fails (so the case above is not passing by accident)' {
+            ($script:rUntargeted.Exit -ne 0) | Should -BeTrue
+        }
+        It 'a -RepoRoot that does not exist fails loudly naming the argument, before MSBuild' {
+            ($script:rBadRoot.Exit -ne 0) | Should -BeTrue
+            $script:rBadRootCombined | Should -Match '(?i)repo root not found'
+            $script:rBadRootCombined | Should -Not -Match 'MSBUILD_ARGS'
+        }
+        It 'leaves nothing behind when -RepoRoot is bad' {
+            (Test-Path -LiteralPath (Join-Path $script:sbTarget 'no-such-dir')) | Should -BeFalse
+        }
+    }
+
     Context 'Case 4: real-build happy (smoke)' {
         It 'real MSBuild build deferred to SKILL-level test (too heavy + network for unit scope)' -Skip {
             # Phase 2 SKILL territory — intentionally skipped at unit scope.

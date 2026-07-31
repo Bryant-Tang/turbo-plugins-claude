@@ -1,7 +1,7 @@
 ---
 name: tp-publish-dotnet-framework-web
 description: '對 .NET Framework Web 專案跑 MSBuild publish(含 frontend pack)——「給 agent 用的 VS 2022」:由你(agent)判斷要發佈哪個 csproj 與哪個 `.pubxml`,configuration 以 pubxml 內嵌值為準。**publish 產出可能被 CD pipeline 消費,影響部署環境;必須使用者明確要求才執行**;agent 偵測到「完成一輪改動準備部署」時可建議,但需明確確認。'
-argument-hint: '[--pubxml <path>] [--configuration <name>] [--platform <name>] [--project <path-to-csproj>]'
+argument-hint: '[--pubxml <path>] [--configuration <name>] [--platform <name>] [--project <path-to-csproj>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
@@ -15,6 +15,12 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 你預設不傳,執行器會把它讀出來明確帶給 MSBuild。發佈完逐字轉述產出位置,必要時記回記憶。
 
 ## Procedure
+
+> **先決定要對哪個專案動手。** 讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`。
+> 摘要:單一專案的 session 不必傳 `--repo-root`(維持既有行為,當前目錄就是那個專案);
+> session 開在「並排放著多個獨立專案」的資料夾時,**問使用者要動哪一個、用 `--repo-root`
+> 指名**,不要用 `cd` 切過去——`cd` 會把「動了誰」藏在 shell 指令裡。下面每一步的
+> `.turbo-plugin/` 與 csproj 解析都以這個目標為準。
 
 ### Step 0 — 前置檢查 ([iis] enabled)
 

@@ -1,7 +1,7 @@
 ---
 name: tp-stop-dotnet-framework-web
 description: '停止某個 .NET Framework Web 專案對應的 IIS Express instance(透過 project identity 匹配 site name,跨 worktree 都能找到)——「給 agent 用的 VS 2022」:由你(agent)判斷要停哪個 csproj 對應的站台。使用者明確要求 stop 時執行;agent 偵測「使用者結束驗證、port 不再需要」時可建議。'
-argument-hint: '[--project <path-to-csproj>]'
+argument-hint: '[--project <path-to-csproj>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 ---
@@ -15,6 +15,12 @@ target 傳給變薄的 `Stop-Iis` 執行器;即使該 instance 是在別 worktre
 核心 fix)。stop 是 idempotent 操作,**只回報、永不 save-back**。
 
 ## Procedure
+
+> **先決定要對哪個專案動手。** 讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`。
+> 摘要:單一專案的 session 不必傳 `--repo-root`(維持既有行為,當前目錄就是那個專案);
+> session 開在「並排放著多個獨立專案」的資料夾時,**問使用者要動哪一個、用 `--repo-root`
+> 指名**,不要用 `cd` 切過去——`cd` 會把「動了誰」藏在 shell 指令裡。下面每一步的
+> `.turbo-plugin/` 與 csproj 解析都以這個目標為準。
 
 ### Step 0 — 前置檢查 ([iis] enabled)
 

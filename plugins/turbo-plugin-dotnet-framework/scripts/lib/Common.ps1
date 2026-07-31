@@ -197,6 +197,24 @@ function Get-PublishOutputLines {
     return @{ Resolved = $resolved; DisplayPath = $displayPath; IsFileSystem = $isFileSystem }
 }
 
+# Resolve the project root these scripts act on (the folder holding `.turbo-plugin/`).
+#
+# Omitted -RepoRoot keeps the historical behaviour exactly: act on the current directory. Supplied,
+# it names the target outright -- which is what makes a multi-project workspace usable, where the
+# session sits at a root holding several sibling projects and `cd`-ing into one is both fragile and
+# invisible in the transcript. Mirrors -RepoRoot in the git-svn scripts; validation (Git Bash
+# /c/foo normalisation + "is it really a directory") comes from Core's Resolve-GitRoot, so a typo
+# fails naming the argument instead of surfacing later as a confusing missing-csproj error.
+#
+# NOT Get-MainWorktree: these scripts operate on a project folder, which need not be a git worktree
+# root (and Build/Publish work fine outside git entirely).
+function Resolve-DotnetRepoRoot {
+    param([string]$RepoRoot = '')
+    $resolved = Resolve-GitRoot -RepoRoot $RepoRoot
+    if ($resolved -eq '.') { return (Get-Location).Path }
+    return $resolved
+}
+
 # Read a single MSBuild property out of a .pubxml. Returns '' when the file is unreadable or the
 # property is absent -- callers treat '' as "no value" and fall back to omitting the /p: switch.
 #

@@ -1,7 +1,7 @@
 ---
 name: tp-cleanup-orphan-iis
 description: '清除殘留的孤兒 IIS Express process 及 %TEMP% 殘留的 per-launch 暫存檔(設定檔 + 啟動 log),通常在 worktree rename 或 project 搬移後出現。使用者明確要求清除時執行;tp-stop 偵測到同 csproj-stem 但不同 hash 的 orphan instance 時建議。'
-argument-hint: '[--project <path>]'
+argument-hint: '[--project <path>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Grep, AskUserQuestion
 ---
@@ -15,6 +15,12 @@ allowed-tools: Bash, Read, Grep, AskUserQuestion
 實際掃描與移除動作都在 `${CLAUDE_PLUGIN_ROOT}/scripts/Remove-OrphanIis.ps1`(Windows-only;非 Windows 沒有 IIS Express)。Skill 只負責呼叫 script、解析輸出、跟使用者確認後再次呼叫 script 執行刪除。
 
 ## Procedure
+
+> **先決定要對哪個專案動手。** 讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`。
+> 摘要:單一專案的 session 不必傳 `--repo-root`(維持既有行為,當前目錄就是那個專案);
+> session 開在「並排放著多個獨立專案」的資料夾時,**問使用者要動哪一個、用 `--repo-root`
+> 指名**,不要用 `cd` 切過去——`cd` 會把「動了誰」藏在 shell 指令裡。下面每一步的
+> `.turbo-plugin/` 與 csproj 解析都以這個目標為準。
 
 ### Step 0 — 前置檢查 ([iis] enabled)
 

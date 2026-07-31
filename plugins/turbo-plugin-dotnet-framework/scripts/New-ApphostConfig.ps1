@@ -1,7 +1,8 @@
 ﻿[CmdletBinding()]
 param(
     [string]$Project = '',
-    [switch]$Force
+    [switch]$Force,
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -50,7 +51,7 @@ function Test-SslPortBound {
 try {
     Probe-GitVersion
 
-    $repoRoot = (Get-Location).Path
+    $repoRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
 
     $iisEnabled = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'iis' -Key 'enabled' -CliValue $null -Default $true
     if ($iisEnabled -eq $false) {

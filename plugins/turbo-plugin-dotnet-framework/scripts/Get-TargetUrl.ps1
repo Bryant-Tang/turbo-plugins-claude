@@ -1,5 +1,6 @@
 param(
-    [string]$Project = ''
+    [string]$Project = '',
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -9,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'IisHelpers.ps1'))
 
 try {
-    $settings = Resolve-IisSettings -Project $Project
+    $settings = Resolve-IisSettings -Project $Project -RepoRoot $RepoRoot
     Write-Output "IIS URL: $($settings.IisUrl)"
 }
 catch {

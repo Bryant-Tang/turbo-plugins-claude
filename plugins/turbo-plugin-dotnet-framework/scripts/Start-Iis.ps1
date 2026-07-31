@@ -1,6 +1,7 @@
 ﻿param(
     [string]$Project = '',
-    [int]$Timeout = 0
+    [int]$Timeout = 0,
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -115,7 +116,7 @@ try {
 
     # Defensive layer: [iis] enabled = false short-circuits IIS-touching scripts even
     # when invoked directly (SKILL layer also checks; this guards programmatic callers).
-    $repoRootForIisCheck = (Get-Location).Path
+    $repoRootForIisCheck = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
     $iisEnabled = Resolve-ConfigValue -RepoRoot $repoRootForIisCheck -Section 'iis' -Key 'enabled' -CliValue $null -Default $true
     if ($iisEnabled -eq $false) {
         throw @"
@@ -125,7 +126,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 "@
     }
 
-    $settings = Resolve-IisSettings -Project $Project
+    $settings = Resolve-IisSettings -Project $Project -RepoRoot $RepoRoot
 
     # apphost-mode is always required (port-mode removed); ensure the canonical config file is set.
     if ([string]::IsNullOrWhiteSpace($settings.ApplicationhostConfigFile)) {

@@ -2,7 +2,8 @@
     [string]$Pubxml = '',
     [string]$Configuration = '',
     [string]$Platform = '',
-    [string]$Project = ''
+    [string]$Project = '',
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -13,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 try {
     Probe-GitVersion
 
-    $repoRoot = (Get-Location).Path
+    $repoRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
 
     # Target: explicit CLI arg → config.toml [publish].project (no auto-detect). publish needs a
     # .csproj (reads PublishProfiles / publishes one project); a .sln is rejected (no -AllowSolution).
@@ -70,7 +71,7 @@ try {
     # Pre-publish: run Compress-Content for frontend. Compress-Content.ps1 is shipped in this
     # plugin alongside Publish-Web.ps1, so the prior Test-Path guard was redundant —
     # Compress-Content already exits 0 with a skip message when [frontend] isn't configured.
-    & ([System.IO.Path]::Combine($PSScriptRoot, 'Compress-Content.ps1'))
+    & ([System.IO.Path]::Combine($PSScriptRoot, 'Compress-Content.ps1')) -RepoRoot $repoRoot
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $publishProfileName = [System.IO.Path]::GetFileNameWithoutExtension($pubxmlAbsPath)

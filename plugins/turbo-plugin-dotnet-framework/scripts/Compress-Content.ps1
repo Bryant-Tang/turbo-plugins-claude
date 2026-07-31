@@ -1,4 +1,8 @@
-﻿Set-StrictMode -Version Latest
+﻿param(
+    [string]$RepoRoot = ''
+)
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
@@ -11,7 +15,7 @@ function Find-CommandPath {
 }
 
 try {
-    $repoRoot = (Get-Location).Path
+    $repoRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
 
     $frontendDirRel = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'frontend' -Key 'dir' -CliValue $null -Default $null
     if ([string]::IsNullOrWhiteSpace($frontendDirRel)) {

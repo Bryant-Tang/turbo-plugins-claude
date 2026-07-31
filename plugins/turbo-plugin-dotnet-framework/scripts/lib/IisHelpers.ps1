@@ -195,10 +195,11 @@ function Get-IisProjectBinding {
 
 function Resolve-IisSettings {
     param(
-        [string]$Project = ''
+        [string]$Project = '',
+        [string]$RepoRoot = ''
     )
 
-    $repoRoot = (Get-Location).Path
+    $repoRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
 
     # run/stop resolve under the 'run' section (back-compat fallback to [build].project).
     # A .sln is rejected here (no -AllowSolution): IIS settings read csproj XML / project identity.
@@ -211,7 +212,10 @@ function Resolve-IisSettings {
 
     $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot
 
-    $topLevel = (& git rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
+    # `git -C $repoRoot`, not a bare `git`: with -RepoRoot naming a sibling project the ambient cwd
+    # is a different repository, and its toplevel would produce a wrong relative path -> a wrong
+    # identity hash -> a runtime site name that stop / orphan-cleanup cannot match back.
+    $topLevel = (& git -C $repoRoot rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($topLevel)) { throw 'Not inside a git repository.' }
     $topLevel = Get-NormalizedAbsolutePath -Path $topLevel
     $projectAbs = Get-NormalizedAbsolutePath -Path $projectFile

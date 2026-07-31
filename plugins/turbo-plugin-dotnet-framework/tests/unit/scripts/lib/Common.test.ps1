@@ -901,6 +901,47 @@ Describe 'Get-PublishOutputLines' {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Resolve-DotnetRepoRoot - omitted keeps the historical "act on cwd" behaviour; supplied names
+# the project outright (multi-project workspace) and validates before anything is touched.
+Describe 'Resolve-DotnetRepoRoot' {
+    It 'returns the current directory when -RepoRoot is omitted (historical behaviour)' {
+        $dir = New-IsolatedRepoRoot 'dnroot-cwd'
+        try {
+            Push-Location -LiteralPath $dir
+            try {
+                Resolve-DotnetRepoRoot | Should -Be (Get-Location).Path
+            } finally { Pop-Location }
+        } finally { Remove-IsolatedRepoRoot $dir }
+    }
+    It 'returns the empty-string case as the current directory too' {
+        $dir = New-IsolatedRepoRoot 'dnroot-empty'
+        try {
+            Push-Location -LiteralPath $dir
+            try {
+                Resolve-DotnetRepoRoot -RepoRoot '' | Should -Be (Get-Location).Path
+            } finally { Pop-Location }
+        } finally { Remove-IsolatedRepoRoot $dir }
+    }
+    It 'returns the named directory, independent of where the process is standing' {
+        $target = New-IsolatedRepoRoot 'dnroot-target'
+        $other = New-IsolatedRepoRoot 'dnroot-other'
+        try {
+            Push-Location -LiteralPath $other
+            try {
+                $resolved = Resolve-DotnetRepoRoot -RepoRoot $target
+                (Get-NormalizedAbsolutePath -Path $resolved) | Should -Be (Get-NormalizedAbsolutePath -Path $target)
+            } finally { Pop-Location }
+        } finally { Remove-IsolatedRepoRoot $target; Remove-IsolatedRepoRoot $other }
+    }
+    It 'throws naming the argument when the path is not a directory' {
+        $dir = New-IsolatedRepoRoot 'dnroot-bad'
+        try {
+            { Resolve-DotnetRepoRoot -RepoRoot (Join-Path $dir 'nope') } | Should -Throw -ExpectedMessage '*Repo root not found*'
+        } finally { Remove-IsolatedRepoRoot $dir }
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Get-PubxmlProperty - publish reads <Configuration> out of the profile because with
 # /p:PublishProfile the profile does NOT govern the build (real-machine, 2026-07-31).
 Describe 'Get-PubxmlProperty' {

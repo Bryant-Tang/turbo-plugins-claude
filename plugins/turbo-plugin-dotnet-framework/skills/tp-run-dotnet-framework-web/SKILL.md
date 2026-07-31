@@ -1,7 +1,7 @@
 ---
 name: tp-run-dotnet-framework-web
 description: '在本機啟動 IIS Express 跑某個 .NET Framework Web 專案——「給 agent 用的 VS 2022」:由你(agent)判斷要跑哪個 csproj。內含 listening 健康檢查與跨 worktree self-heal(發現同 project 在別 worktree 已啟 → 自動停舊 instance 並重啟)。使用者明確要求 run 時執行;agent 偵測「準備手動驗證、需要本機跑起 IIS」時可建議。'
-argument-hint: '[--project <path-to-csproj>] [--timeout <seconds>]'
+argument-hint: '[--project <path-to-csproj>] [--timeout <seconds>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
@@ -15,6 +15,12 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 listening 健康檢查。run **不涉 configuration**(服務的是已建好的產物)。
 
 ## Procedure
+
+> **先決定要對哪個專案動手。** 讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`。
+> 摘要:單一專案的 session 不必傳 `--repo-root`(維持既有行為,當前目錄就是那個專案);
+> session 開在「並排放著多個獨立專案」的資料夾時,**問使用者要動哪一個、用 `--repo-root`
+> 指名**,不要用 `cd` 切過去——`cd` 會把「動了誰」藏在 shell 指令裡。下面每一步的
+> `.turbo-plugin/` 與 csproj 解析都以這個目標為準。
 
 ### Step 0 — 前置檢查 ([iis] enabled)
 

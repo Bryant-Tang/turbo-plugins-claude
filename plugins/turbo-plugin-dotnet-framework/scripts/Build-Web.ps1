@@ -1,7 +1,8 @@
 ﻿param(
     [string]$Configuration = '',
     [string]$Platform = '',
-    [string]$Project = ''
+    [string]$Project = '',
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -12,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 try {
     Probe-GitVersion
 
-    $repoRoot = (Get-Location).Path
+    $repoRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
 
     # Target: explicit CLI arg → config.toml [build].project (no auto-detect). build accepts a
     # .sln (whole-solution) or a .csproj; the agent (SKILL) decides which and passes it explicitly.

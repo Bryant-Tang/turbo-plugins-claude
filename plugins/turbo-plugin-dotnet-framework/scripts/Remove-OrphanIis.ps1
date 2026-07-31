@@ -2,7 +2,8 @@
 param(
     [string]$Project = '',
     [string]$RemoveSite = '',
-    [switch]$RemoveAll
+    [switch]$RemoveAll,
+    [string]$RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -20,13 +21,13 @@ try {
     #   * NO project (truly no current project, after auto-detect removal) → fall back to the
     #     GENERIC turbo-plugin site pattern, and refuse blanket -RemoveAll so we never kill a
     #     live site we cannot identify (the agent is told to pass -Project when one exists).
-    $repoRoot = (Get-Location).Path
+    $repoRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
     $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'run' -CliProjectValue $Project -AllowMissing
     if ($null -ne $target) {
         # Reuse the already-resolved target path instead of re-passing the raw $Project (which,
         # when the project came from config memory, would make Resolve-IisSettings re-read config
         # and re-resolve to the same csproj). Same result, one fewer config lookup.
-        $settings = Resolve-IisSettings -Project $target.Path
+        $settings = Resolve-IisSettings -Project $target.Path -RepoRoot $repoRoot
         $currentSiteName = $settings.IisConfigSiteName
         $csprojStem      = [System.IO.Path]::GetFileNameWithoutExtension($settings.ProjectFile)
         $scoped = $true
