@@ -285,23 +285,7 @@ try {
         # repo-local, unversioned and idempotent -- and '.svn/' should never be tracked in this repo
         # anyway. Must be the repo's COMMON git dir: git reads info/exclude from there, not from a
         # linked worktree's own gitdir.
-        $gitCommonDir = (& git -C $mainWorktree rev-parse --git-common-dir 2>$null | Out-String).Trim()
-        if (-not [System.IO.Path]::IsPathRooted($gitCommonDir)) {
-            $gitCommonDir = [System.IO.Path]::Combine($mainWorktree, $gitCommonDir)
-        }
-        $excludeDir = [System.IO.Path]::Combine($gitCommonDir, 'info')
-        if (-not (Test-Path -LiteralPath $excludeDir -PathType Container)) {
-            New-Item -ItemType Directory -Path $excludeDir -Force | Out-Null
-        }
-        $excludeFile = [System.IO.Path]::Combine($excludeDir, 'exclude')
-        $excludeLines = @()
-        if (Test-Path -LiteralPath $excludeFile -PathType Leaf) {
-            $excludeLines = @([System.IO.File]::ReadAllLines($excludeFile))
-        }
-        if (-not ($excludeLines | Where-Object { $_.Trim() -eq '.svn/' })) {
-            $excludeLines += '.svn/'
-            [System.IO.File]::WriteAllLines($excludeFile, $excludeLines)
-        }
+        Set-SvnGitExcluded -MainWorktree $mainWorktree
 
         # ---- step 9: untrack .git from the svn working copy (tolerate "not tracked"). ----
         Push-Location $remoteWorktreePath

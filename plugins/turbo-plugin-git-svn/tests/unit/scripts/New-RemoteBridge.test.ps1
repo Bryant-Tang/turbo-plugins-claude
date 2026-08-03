@@ -139,6 +139,58 @@ BeforeAll {
     # edited and committed (not pushed). This is the exact divergence that made the old bootstrap
     # cp main's newer .gitignore into the bridge worktree WITHOUT a git commit -> bridge git-dirty.
     # $Root must already be a git repo with a worktrees dir. Returns the svn repo URI, or $null.
+    # A first-push scenario with a MULTI-FILE LF trunk, under an explicit core.autocrlf setting.
+    #
+    # autocrlf is a PARAMETER because every other fixture here pins it to false, which is precisely
+    # why the CRLF defect below shipped: with conversion off there is nothing to observe. The
+    # Git-for-Windows default is SYSTEM-level `true`, so false is the unrepresentative case.
+    # Returns the repository URI, or $null when the environment cannot build it (caller SKIPs).
+    function Initialize-EolScenario {
+        param([string]$Root, [string]$Sandbox, [string]$AutoCrlf)
+        $worktreesDir = Get-WorktreesDir -Root $Root
+        $svnRepo = [System.IO.Path]::Combine($Sandbox, 'svnrepo')
+        & svnadmin create $svnRepo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $loadCmd = "svnadmin load `"$svnRepo`" < `"$($script:DumpPath)`""
+        & cmd.exe /c $loadCmd > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($svnRepo -replace '\\', '/')
+
+        # Several LF text files, so a whole-tree EOL rewrite shows up as a file COUNT.
+        $twc = [System.IO.Path]::Combine($Sandbox, 'trunkwc')
+        & svn checkout "$uri/trunk" $twc > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        & svn propset svn:ignore '.git' $twc > $null 2>$null
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($twc, '.gitignore'), ".svn/`n")
+        & svn add ([System.IO.Path]::Combine($twc, '.gitignore')) > $null 2>$null
+        foreach ($i in 1..5) {
+            $f = [System.IO.Path]::Combine($twc, "eol$i.txt")
+            # WriteAllText with explicit LF: Set-Content would emit CRLF and defeat the fixture.
+            [System.IO.File]::WriteAllText($f, "alpha`nbravo`ncharlie`n")
+            & svn add $f > $null 2>$null
+        }
+        & svn commit $twc -m 'trunk: multi-file LF content' > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        & git -C $Root config core.autocrlf $AutoCrlf 2>$null | Out-Null
+
+        $remoteMain = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-main')
+        & svn checkout "$uri/trunk" $remoteMain > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        # git main mirrors trunk byte-for-byte; remote-svn/main is the bridge anchor.
+        $tx = [System.IO.Path]::Combine($Sandbox, 'tx')
+        & svn export --force "$uri/trunk" $tx > $null 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        Get-ChildItem -LiteralPath $tx -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $Root -Recurse -Force
+        }
+        $null = Run-Git -Cwd $Root -GitArgs @('add', '-A')
+        $null = Run-Git -Cwd $Root -GitArgs @('commit', '-m', 'main mirrors trunk')
+        $null = Run-Git -Cwd $Root -GitArgs @('branch', 'remote-svn/main', 'main')
+        return $uri
+    }
+
     function Initialize-UnpushedGitignoreScenario {
         param([string]$Root, [string]$Sandbox)
         $worktreesDir = Get-WorktreesDir -Root $Root
@@ -561,8 +613,14 @@ Describe 'New-RemoteBridge' {
                 $ignore = (& svn propget svn:ignore $wtPath 2>$null | Out-String).Trim()
                 $ignore | Should -BeExactly '.git'
 
-                # the bridge git worktree is clean (build-svn-commit's git-clean gate would pass).
-                (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+                # This fixture is deliberately INCONSISTENT: the bridge's git base (remote-svn/main)
+                # carries drift.txt=v2 while the SVN path it mirrors has v1. Since U2 the working
+                # copy takes SVN's bytes (that is what stops autocrlf from rewriting the whole
+                # tree), so git now SEES that mismatch instead of quietly keeping its own copy and
+                # pushing it over the SVN side. The bridge is still created; build-svn-commit's
+                # git-clean gate is what refuses, and the script says why first.
+                (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -Match 'drift\.txt'
+                $res.Combined | Should -Match 'differs from this repo'
             } finally {
                 Remove-Sandbox -Dir $sb
             }
@@ -644,6 +702,137 @@ Describe 'New-RemoteBridge' {
                 (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
                 # And .git stays out of SVN via the inherited svn:ignore.
                 ((& svn propget svn:ignore "$uri/branches/feat-y" 2>$null | Out-String).Trim()) | Should -BeExactly '.git'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 16 (U2): line endings do not pollute a freshly created bridge' {
+        # Real-machine defect 2026-07-31: `git worktree add` writes every text file with CRLF
+        # (core.autocrlf is a SYSTEM-level default of `true` in Git for Windows), and
+        # `svn checkout --force` then adopts those CRLF copies as modifications of SVN's LF
+        # originals -- it does NOT overwrite them. The bridge therefore reported the WHOLE TREE as
+        # locally modified the moment it was created, and a one-line change on the new branch
+        # pushed 11 whole-file rewrites into SVN, permanently, with blame destroyed.
+        It 'a new bridge is SVN-clean and git-clean under core.autocrlf=true' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-16a'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
+                $uri = Initialize-EolScenario -Root $root -Sandbox $sb -AutoCrlf 'true'
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the EOL scenario'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feat-eol', '-SvnUrl', "$uri/branches/feat-eol")
+                if ($res.ExitCode -ne 0) {
+                    Set-ItResult -Skipped -Because "bridge create did not succeed in this env: $($res.Combined)"
+                    return
+                }
+
+                $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feat-eol')
+                # THE assertion: zero SVN-side modifications. Before the fix every eol*.txt was 'M'.
+                $svnStatus = ((& svn status $wtPath 2>$null | Where-Object { $_ -notmatch '^\?' }) -join "`n").Trim()
+                $svnStatus | Should -BeNullOrEmpty
+                # Still git-clean, so build-svn-commit's own gate passes. That gate is why the
+                # `git add -A` has to follow the revert: LF files read as ' M' under autocrlf even
+                # when `git diff` is empty and the blob hash matches HEAD.
+                (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+
+        It 'a one-file change reaches SVN as ONE file' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-16b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
+                $uri = Initialize-EolScenario -Root $root -Sandbox $sb -AutoCrlf 'true'
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the EOL scenario'; return }
+
+                # A working branch that changes exactly ONE line of ONE file.
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', '-b', 'feat-eol')
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, 'eol3.txt'), "alpha`nBRAVO`ncharlie`n")
+                $null = Run-Git -Cwd $root -GitArgs @('add', '-A')
+                $null = Run-Git -Cwd $root -GitArgs @('commit', '-m', 'tweak one line')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feat-eol', '-SvnUrl', "$uri/branches/feat-eol")
+                if ($res.ExitCode -ne 0) {
+                    Set-ItResult -Skipped -Because "bridge create did not succeed in this env: $($res.Combined)"
+                    return
+                }
+
+                # Merge the branch into the bridge exactly the way Build-SvnCommit does, then look
+                # at what SVN would actually receive. Only the touched file may appear.
+                $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feat-eol')
+                $null = Run-Git -Cwd $wtPath -GitArgs @('merge', '--no-ff', '--no-commit', '-m', 'Merge', 'feat-eol')
+                $modified = @(& svn status $wtPath 2>$null | Where-Object { $_ -match '^M' })
+                $modified.Count | Should -Be 1
+                $modified[0] | Should -Match 'eol3\.txt'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+
+        It 'core.autocrlf=false behaves exactly as before (regression)' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-16c'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
+                $uri = Initialize-EolScenario -Root $root -Sandbox $sb -AutoCrlf 'false'
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the EOL scenario'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feat-eol', '-SvnUrl', "$uri/branches/feat-eol")
+                if ($res.ExitCode -ne 0) {
+                    Set-ItResult -Skipped -Because "bridge create did not succeed in this env: $($res.Combined)"
+                    return
+                }
+
+                $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feat-eol')
+                $svnStatus = ((& svn status $wtPath 2>$null | Where-Object { $_ -notmatch '^\?' }) -join "`n").Trim()
+                $svnStatus | Should -BeNullOrEmpty
+                (Run-Git-Capture -Cwd $wtPath -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+
+        # Unexcluded, `git add -A` drags `.svn/pristine/*` through the CRLF filter and the very
+        # next `svn commit` fails with "Working copy text base is corrupt" -- the working copy is
+        # destroyed, not merely dirty. Reproduced 2026-08-03 while proving the fix above.
+        It 'never tracks .svn/ in git, and the working copy stays committable' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'nrb-16d'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root -CreateWorktreesDir
+                & git -C $root config commit.gpgsign false 2>$null | Out-Null
+                $uri = Initialize-EolScenario -Root $root -Sandbox $sb -AutoCrlf 'true'
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the EOL scenario'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root `
+                                       -ScriptArgs @('-Branch', 'feat-eol', '-SvnUrl', "$uri/branches/feat-eol")
+                if ($res.ExitCode -ne 0) {
+                    Set-ItResult -Skipped -Because "bridge create did not succeed in this env: $($res.Combined)"
+                    return
+                }
+
+                $wtPath = [System.IO.Path]::Combine((Get-WorktreesDir -Root $root), 'remote-svn-feat-eol')
+                $tracked = (Run-Git-Capture -Cwd $wtPath -GitArgs @('ls-files'))
+                $tracked | Should -Not -Match '(?m)^\.svn/'
+
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($wtPath, 'proof.txt'), "proof`n")
+                Push-Location $wtPath
+                try {
+                    & svn add proof.txt > $null 2>$null
+                    & svn commit -m 'proof: WC still usable' > $null 2>$null
+                    $LASTEXITCODE | Should -Be 0
+                } finally { Pop-Location }
             } finally {
                 Remove-Sandbox -Dir $sb
             }

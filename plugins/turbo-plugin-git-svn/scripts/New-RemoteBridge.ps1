@@ -123,9 +123,36 @@ try {
         Write-Output "Running: svn checkout --force $SvnUrl $remoteWorktreePath"
         # --force: `git worktree add` already created `.git` (pointer file) + init-commit
         # content in the worktree path; svn would otherwise mark these "obstructed" and
-        # refuse to commit. --force treats existing files as already-versioned.
+        # refuse to commit. --force treats existing files as already-versioned -- but it does
+        # NOT overwrite them: each one is adopted as locally MODIFIED, keeping git's bytes.
         & svn checkout --force $SvnUrl $remoteWorktreePath
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
+
+        # Take SVN's bytes for everything --force just adopted.
+        #
+        # Without this the bridge is born dirty. core.autocrlf=true is the SYSTEM-level default in
+        # Git for Windows, so `git worktree add` writes every text file with CRLF; --force then
+        # adopts those CRLF copies as modifications of SVN's LF originals. Observed on a real
+        # machine 2026-07-31: a one-line README change on a new branch pushed 11 whole-file
+        # rewrites into SVN, permanently, with blame destroyed. `svn revert` is the exact undo --
+        # the working copy was created seconds ago, so the only "local changes" it can throw away
+        # are those adopted copies.
+        #
+        # Deliberately NOT the sibling scripts' shape (empty the worktree, then a plain
+        # `svn checkout`): emptying also deletes files git tracks that SVN does not carry yet --
+        # `.gitignore` is the normal case -- so git would see a deletion and the bridge would need
+        # an extra commit to get clean again. That commit is not free: an unmarked non-merge commit
+        # on remote-svn/<branch> is exactly what the pull path reports as an orphaned sync
+        # (Sync-FromSvn, $Branch..$remoteBranch), because here the working branch does not descend
+        # from the bridge. Reverting touches only SVN-versioned paths and leaves git-only files
+        # alone, so no commit is needed at all.
+        Push-Location $remoteWorktreePath
+        try {
+            & svn revert -R '.'
+            if ($LASTEXITCODE -ne 0) { throw 'svn revert after --force checkout failed' }
+        } finally {
+            Pop-Location
+        }
 
         # Untrack `.git` from the svn working copy BEFORE setting svn:ignore. `--force`
         # added `.git` to svn-managed state; leaving it would push `.git` (pointing at the
@@ -176,9 +203,10 @@ try {
                 & svn propset tp:last-aligned-rev $branchCopyfromRev '.'
                 if ($LASTEXITCODE -ne 0) { throw 'svn propset tp:last-aligned-rev failed' }
             }
-            # Commit ONLY '.' -- the svn:ignore + tp:* properties (--depth empty, so no descendant
-            # drift left by `svn checkout --force` is swept in) -- plus a real .git deletion if one
-            # was scheduled. The tp:* props are new (never inherited from the copy), so this is the
+            # Commit ONLY '.' -- the svn:ignore + tp:* properties (--depth empty, so nothing under
+            # the tree can be swept in) -- plus a real .git deletion if one was scheduled. The
+            # `svn revert` above now leaves nothing to sweep, but the scoping stays: it is the
+            # guard, not a consequence. The tp:* props are new (never inherited from the copy), so this is the
             # ONE dedicated property commit first-push pays (bounded cost, KTD5).
             $commitTargets = @('.')
             # `svn status` may warn to stderr (unversioned/absent path); guard with EAP=Continue.
@@ -192,6 +220,38 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'svn update after infra commit failed' }
         } finally {
             Pop-Location
+        }
+
+        # Re-align git's index with the bytes on disk. The CONTENT is unchanged -- `git diff` is
+        # empty and the blob hashes still match HEAD -- but the files shrank (CRLF -> LF), and
+        # under core.autocrlf=true git reports every one of them as ` M` in
+        # `git status --porcelain` anyway (the other face of its "LF will be replaced by CRLF"
+        # warning). Build-SvnCommit refuses to run on a non-empty `git status --porcelain`, so
+        # without this the push that immediately follows would be blocked by our own guard.
+        # `git add -A` clears it and provably does NOT change the tree.
+        #
+        # `.svn/` MUST be excluded before that runs. The bootstrap already writes this exclusion,
+        # but inheriting it is not good enough for the failure it prevents: unexcluded, `git add -A`
+        # pulls `.svn/pristine/*` through the CRLF filter and the next `svn commit` dies with
+        # "Working copy text base is corrupt" -- a destroyed working copy, not merely a dirty one.
+        Set-SvnGitExcluded -MainWorktree $mainWorktree
+        & git -C $remoteWorktreePath add -A
+        if ($LASTEXITCODE -ne 0) { throw 'git add -A on the bridge worktree failed' }
+
+        # Anything still staged after that is a REAL content difference between the SVN branch path
+        # and this repo's mirror of trunk -- normally because trunk moved on since the last pull, so
+        # the freshly copied branch already carries content this repo has never seen. The bridge is
+        # left in place (the `svn copy` is permanent and re-running is idempotent), but say plainly
+        # what happened: the push that follows will stop on its own git-clean gate, and "uncommitted
+        # git changes" on a worktree the user never touched explains nothing by itself.
+        & git -C $remoteWorktreePath diff --cached --quiet
+        if ($LASTEXITCODE -ne 0) {
+            $differing = (& git -C $remoteWorktreePath diff --cached --name-only | Out-String).Trim()
+            Write-Output ""
+            Write-Output "Note: the SVN branch content differs from this repo's mirror of trunk:"
+            foreach ($line in ($differing -split "`r?`n")) { Write-Output "  $line" }
+            Write-Output "This usually means trunk moved since your last pull. Run '/tp-pull-from-svn' on main,"
+            Write-Output "merge it into '$Branch', then run the push again (the bridge is already created; re-running is safe)."
         }
     } catch {
         # Rollback covers ONLY the local git side (branch + worktree). An already-executed

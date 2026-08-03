@@ -132,8 +132,27 @@ fi
 
 echo "Running: svn checkout --force $SVN_URL $REMOTE_PATH"
 # --force: `git worktree add` already created `.git` + init-commit content; svn would
-# otherwise mark these "obstructed". --force treats existing files as already-versioned.
+# otherwise mark these "obstructed". --force treats existing files as already-versioned --
+# but it does NOT overwrite them: each one is adopted as locally MODIFIED, keeping git's bytes.
 svn checkout --force "$SVN_URL" "$REMOTE_PATH"
+
+# Take SVN's bytes for everything --force just adopted.
+#
+# Without this the bridge is born dirty. `core.autocrlf=true` is the SYSTEM-level default in Git
+# for Windows, so `git worktree add` writes every text file with CRLF; --force then adopts those
+# CRLF copies as modifications of SVN's LF originals. Observed on a real machine 2026-07-31: a
+# one-line README change on a new branch pushed 11 whole-file rewrites into SVN, permanently, with
+# blame destroyed. `svn revert` is the exact undo -- the working copy was created seconds ago, so
+# the only "local changes" it can throw away are those adopted copies.
+#
+# Deliberately NOT the sibling scripts' shape (empty the worktree, then a plain `svn checkout`):
+# emptying also deletes files git tracks that SVN does not carry yet -- `.gitignore` is the normal
+# case -- so git would see a deletion and the bridge would need an extra commit to get clean again.
+# That commit is not free: an unmarked non-merge commit on remote-svn/<branch> is exactly what the
+# pull path reports as an orphaned sync (sync-from-svn.sh, `$BRANCH..$REMOTE_BRANCH`), because here
+# the working branch does not descend from the bridge. Reverting touches only SVN-versioned paths
+# and leaves git-only files alone, so no commit is needed at all.
+(cd "$REMOTE_PATH" && svn revert -R .)
 
 # Untrack `.git` from the svn working copy BEFORE setting svn:ignore (else `.git`, pointing
 # at the original committer's local path, lands in permanent SVN history). --keep-local
@@ -171,8 +190,9 @@ BRANCH_COPYFROM_REV="$(get_svn_branch_copyfrom_rev "$SVN_URL" || true)"
   if [[ -n "$BRANCH_COPYFROM_REV" ]]; then
     svn propset tp:last-aligned-rev "$BRANCH_COPYFROM_REV" '.'
   fi
-  # Commit ONLY '.' -- the svn:ignore + tp:* properties (--depth empty, so no descendant drift left
-  # by `svn checkout --force` is swept in) -- plus a real .git deletion if one was scheduled. The
+  # Commit ONLY '.' -- the svn:ignore + tp:* properties (--depth empty, so nothing under the tree
+  # can be swept in) -- plus a real .git deletion if one was scheduled. The `svn revert` above now
+  # leaves nothing to sweep, but the scoping stays: it is the guard, not a consequence. The
   # tp:* props are new (never inherited from the copy), so this is the ONE dedicated property commit
   # first-push pays (bounded cost, KTD5); the trailing `svn update` clears the mixed-revision lag.
   COMMIT_TARGETS=('.')
@@ -182,6 +202,34 @@ BRANCH_COPYFROM_REV="$(get_svn_branch_copyfrom_rev "$SVN_URL" || true)"
   svn commit --depth empty -m 'svn:ignore=.git (turbo-plugin bridge)' "${COMMIT_TARGETS[@]}"
   svn update >/dev/null
 )
+
+# Re-align git's index with the bytes on disk. The CONTENT is unchanged -- `git diff` is empty and
+# the blob hashes still match HEAD -- but the files shrank (CRLF -> LF), and under
+# `core.autocrlf=true` git reports every one of them as ` M` in `git status --porcelain` anyway
+# (the other face of its "LF will be replaced by CRLF" warning). build-svn-commit refuses to run on
+# a non-empty `git status --porcelain`, so without this the push that immediately follows would be
+# blocked by our own guard. `git add -A` clears it and provably does NOT change the tree.
+#
+# `.svn/` MUST be excluded before that runs. The bootstrap already writes this exclusion, but
+# inheriting it is not good enough for the failure it prevents: unexcluded, `git add -A` pulls
+# `.svn/pristine/*` through the CRLF filter and the next `svn commit` dies with "Working copy text
+# base is corrupt" -- a destroyed working copy, not merely a dirty one. Idempotent.
+ensure_svn_git_excluded "$MAIN_WORKTREE"
+git -C "$REMOTE_PATH" add -A
+
+# Anything still staged after that is a REAL content difference between the SVN branch path and
+# this repo's mirror of trunk -- normally because trunk moved on since the last pull, so the freshly
+# copied branch already carries content this repo has never seen. The bridge is left in place (the
+# `svn copy` is permanent and re-running is idempotent), but say plainly what happened: the push
+# that follows will stop on its own git-clean gate, and "uncommitted git changes" on a worktree the
+# user never touched explains nothing by itself.
+if ! git -C "$REMOTE_PATH" diff --cached --quiet; then
+  echo "" >&2
+  echo "Note: the SVN branch content differs from this repo's mirror of trunk:" >&2
+  git -C "$REMOTE_PATH" diff --cached --name-only | sed 's/^/  /' >&2
+  echo "This usually means trunk moved since your last pull. Run '/tp-pull-from-svn' on main," >&2
+  echo "merge it into '$BRANCH', then run the push again (the bridge is already created; re-running is safe)." >&2
+fi
 
 # All SVN steps succeeded; disable the rollback trap.
 trap - ERR

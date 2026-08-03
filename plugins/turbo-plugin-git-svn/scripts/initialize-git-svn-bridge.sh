@@ -283,15 +283,7 @@ fi
 # `git add -A` needs a different ignore source while the replay runs. info/exclude is repo-local,
 # unversioned and idempotent -- and `.svn/` should never be tracked in this repo anyway. Must be the
 # repo's COMMON git dir: git reads info/exclude from there, not from a linked worktree's own gitdir.
-GIT_COMMON_DIR="$(git -C "$MAIN_WORKTREE" rev-parse --git-common-dir)"
-case "$GIT_COMMON_DIR" in
-  /*|[A-Za-z]:[/\\]*) : ;;
-  *) GIT_COMMON_DIR="$MAIN_WORKTREE/$GIT_COMMON_DIR" ;;
-esac
-mkdir -p "$GIT_COMMON_DIR/info"
-if ! grep -qxF '.svn/' "$GIT_COMMON_DIR/info/exclude" 2>/dev/null; then
-  printf '%s\n' '.svn/' >> "$GIT_COMMON_DIR/info/exclude"
-fi
+ensure_svn_git_excluded "$MAIN_WORKTREE"
 
 # ---- step 9: untrack .git from the svn working copy (tolerate "not tracked"). ----
 if [[ -e "$REMOTE_PATH/.git" ]]; then

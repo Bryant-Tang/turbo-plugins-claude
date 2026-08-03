@@ -47,6 +47,30 @@ get_worktrees_dir() {
   echo "$main_worktree/.turbo-plugin/worktrees"
 }
 
+# Guarantee `.svn/` is excluded from git for THIS repository, independent of any .gitignore.
+#
+# Every bridge worktree is simultaneously a git worktree and an svn working copy, and every script
+# that runs `git add -A` inside one depends on this. It is not a tidiness measure: with autocrlf on,
+# `git add -A` pulls the binary files under `.svn/pristine/` through the CRLF filter, and the next
+# `svn commit` then fails with "Working copy text base is corrupt" -- the working copy is destroyed,
+# not merely dirty (reproduced 2026-08-03).
+#
+# Written to info/exclude rather than a .gitignore so it holds whatever content SVN carries, and to
+# the COMMON git dir because git does not read a linked worktree's own info/exclude. Idempotent.
+# $1: main worktree path.
+ensure_svn_git_excluded() {
+  local main_worktree="$1" common_dir
+  common_dir="$(git -C "$main_worktree" rev-parse --git-common-dir)" || return 1
+  case "$common_dir" in
+    /*|[A-Za-z]:[/\\]*) : ;;
+    *) common_dir="$main_worktree/$common_dir" ;;
+  esac
+  mkdir -p "$common_dir/info"
+  if ! grep -qxF '.svn/' "$common_dir/info/exclude" 2>/dev/null; then
+    printf '%s\n' '.svn/' >> "$common_dir/info/exclude"
+  fi
+}
+
 # Validate a branch name for remote-svn worktree mapping (allowlist).
 # Returns 0 if OK, else prints the reason to stderr and returns 1. 'main' is the
 # canonical trust anchor and always passes; other casings of 'main' are rejected so

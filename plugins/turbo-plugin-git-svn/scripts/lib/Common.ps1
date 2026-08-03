@@ -38,6 +38,39 @@ $script:TpGranularityThreshold = 5
 # git-svn concern (the SVN remote worktree container) -- the SVN script pairs call this
 # instead of each hardcoding a sibling path. If -MainWorktree is supplied it is used as-is;
 # otherwise it is computed via Get-MainWorktree (defined in Core.ps1, sourced above).
+# Guarantee `.svn/` is excluded from git for THIS repository, independent of any .gitignore.
+#
+# Every bridge worktree is simultaneously a git worktree and an svn working copy, and every script
+# that runs `git add -A` inside one depends on this. It is not a tidiness measure: with autocrlf on,
+# `git add -A` pulls the binary files under `.svn/pristine/` through the CRLF filter, and the next
+# `svn commit` then fails with "Working copy text base is corrupt" -- the working copy is destroyed,
+# not merely dirty (reproduced 2026-08-03).
+#
+# Written to info/exclude rather than a .gitignore so it holds whatever content SVN carries, and to
+# the COMMON git dir because git does not read a linked worktree's own info/exclude. Idempotent.
+function Set-SvnGitExcluded {
+    param([Parameter(Mandatory = $true)][string]$MainWorktree)
+
+    $gitCommonDir = (& git -C $MainWorktree rev-parse --git-common-dir 2>$null | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($gitCommonDir)) { throw 'Could not resolve the git common dir.' }
+    if (-not [System.IO.Path]::IsPathRooted($gitCommonDir)) {
+        $gitCommonDir = [System.IO.Path]::Combine($MainWorktree, $gitCommonDir)
+    }
+    $excludeDir = [System.IO.Path]::Combine($gitCommonDir, 'info')
+    if (-not (Test-Path -LiteralPath $excludeDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $excludeDir -Force | Out-Null
+    }
+    $excludeFile = [System.IO.Path]::Combine($excludeDir, 'exclude')
+    $excludeLines = @()
+    if (Test-Path -LiteralPath $excludeFile -PathType Leaf) {
+        $excludeLines = @([System.IO.File]::ReadAllLines($excludeFile))
+    }
+    if (-not @($excludeLines | Where-Object { $_.Trim() -eq '.svn/' }).Count) {
+        $excludeLines += '.svn/'
+        [System.IO.File]::WriteAllLines($excludeFile, $excludeLines)
+    }
+}
+
 function Get-WorktreesDir {
     param([string]$MainWorktree = '')
     if ([string]::IsNullOrWhiteSpace($MainWorktree)) {

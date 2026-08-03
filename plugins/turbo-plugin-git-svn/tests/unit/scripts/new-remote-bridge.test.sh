@@ -430,8 +430,21 @@ test_first_push_scoped_commit_and_up_to_date() {
     ign="$(svn --config-dir "$cfg" propget svn:ignore "$wt" 2>/dev/null | tr -d '\r\n')"
     assertEquals 'bridge svn:ignore is exactly .git' '.git' "$ign"
 
-    # The bridge git worktree is clean (build-svn-commit's git-clean gate would pass).
-    assertTrue 'bridge git worktree clean' "[ -z \"\$(git -C '$wt' status --porcelain)\" ]"
+    # This fixture is deliberately INCONSISTENT: the bridge's git base (remote-svn/main) carries
+    # drift.txt=v2 while the SVN path it mirrors has v1. Since U2 the working copy takes SVN's bytes
+    # (that is what stops autocrlf from rewriting the whole tree), so git now SEES that mismatch
+    # instead of quietly keeping its own copy and pushing it over the SVN side. The bridge is still
+    # created; build-svn-commit's git-clean gate is what refuses, and the script says why first.
+    local st
+    st="$(git -C "$wt" status --porcelain)"
+    case "$st" in
+        *drift.txt*) assertTrue 'base/SVN content mismatch is surfaced, not silently pushed' 0 ;;
+        *) fail "expected the drift to surface in git status, got: [$st]" ;;
+    esac
+    case "$out" in
+        *'differs from this repo'*) assertTrue 'the script explains the mismatch' 0 ;;
+        *) fail "expected an explanatory note about the content mismatch, got: $out" ;;
+    esac
 }
 
 # Build a bridge where main's .gitignore has an UNPUSHED change beyond remote-svn/main:
@@ -550,6 +563,146 @@ test_first_push_writes_branch_metadata() {
     local ign
     ign="$(svn propget svn:ignore "$branch_url" 2>/dev/null | tr -d '\r\n')"
     assertEquals 'svn:ignore is exactly .git (same folded commit)' '.git' "$ign"
+}
+
+# Build a first-push scenario with a MULTI-FILE trunk under `core.autocrlf` set to $2
+# ("true" / "false"). Echoes "ROOT|URI|CFG"; non-zero on any svn failure (caller SKIPs).
+#
+# autocrlf is a PARAMETER here because every other fixture in this file pins it to false, which is
+# precisely why the CRLF defect below shipped: with conversion off there is nothing to observe.
+# The Git-for-Windows default is SYSTEM-level `true`, so false is the unrepresentative case.
+make_eol_scenario() {
+    local sb="$1" autocrlf="$2"
+    local root="$sb/test-turbo-plugin" repo="$sb/svnrepo" cfg="$sb/.svnconfig" uri
+    mkdir -p "$cfg"
+    svnadmin create "$repo" >/dev/null 2>&1 || return 1
+    svnadmin load "$repo" < "$DUMP_PATH" >/dev/null 2>&1 || return 1
+    uri="$(svn_uri "$repo")"
+
+    # trunk gets several LF text files, so a whole-tree EOL rewrite is visible as a file COUNT.
+    local twc="$sb/trunkwc" i
+    svn --config-dir "$cfg" checkout "$uri/trunk" "$twc" >/dev/null 2>&1 || return 1
+    svn --config-dir "$cfg" propset svn:ignore '.git' "$twc" >/dev/null 2>&1 || return 1
+    printf '.svn/\n' > "$twc/.gitignore"
+    svn --config-dir "$cfg" add "$twc/.gitignore" >/dev/null 2>&1 || return 1
+    for i in 1 2 3 4 5; do
+        printf 'alpha\nbravo\ncharlie\n' > "$twc/eol$i.txt"
+        svn --config-dir "$cfg" add "$twc/eol$i.txt" >/dev/null 2>&1 || return 1
+    done
+    svn --config-dir "$cfg" commit "$twc" -m 'trunk: multi-file LF content' >/dev/null 2>&1 || return 1
+
+    mkdir -p "$root"
+    git -C "$root" init -b main >/dev/null 2>&1 || git -C "$root" init >/dev/null 2>&1
+    git -C "$root" config core.autocrlf "$autocrlf" >/dev/null 2>&1
+    git -C "$root" config user.email 'test@turbo' >/dev/null 2>&1
+    git -C "$root" config user.name  'turbo' >/dev/null 2>&1
+    mkdir -p "$root/.turbo-plugin/worktrees"
+    svn --config-dir "$cfg" checkout "$uri/trunk" "$root/.turbo-plugin/worktrees/remote-svn-main" >/dev/null 2>&1 || return 1
+
+    # git main mirrors trunk byte-for-byte; remote-svn/main is the bridge anchor.
+    svn --config-dir "$cfg" export --force "$uri/trunk" "$sb/tx" >/dev/null 2>&1 || return 1
+    cp -r "$sb/tx/." "$root/" 2>/dev/null
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m 'main mirrors trunk' >/dev/null 2>&1 || return 1
+    git -C "$root" branch remote-svn/main main >/dev/null 2>&1 || return 1
+
+    printf '%s|%s|%s' "$root" "$uri" "$cfg"
+    return 0
+}
+
+# ── Case 16 (U2): a new bridge is born SVN-clean even with core.autocrlf=true ──────────────────
+# Real-machine defect 2026-07-31: `git worktree add` writes every text file with CRLF (autocrlf is
+# a SYSTEM-level default of `true` in Git for Windows), and `svn checkout --force` then adopts those
+# CRLF copies as modifications of SVN's LF originals -- it does NOT overwrite them. The result was a
+# bridge that reported the WHOLE TREE as locally modified the moment it was created, so a one-line
+# change on the new branch pushed 11 whole-file rewrites into SVN, permanently.
+test_first_push_autocrlf_true_bridge_is_svn_clean() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root uri cfg out rc wt sst gst
+    spec="$(make_eol_scenario "$SB" true)" || { startSkipping; return 0; }
+    root="${spec%%|*}"; spec="${spec#*|}"
+    uri="${spec%%|*}"; cfg="${spec##*|}"
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-eol --svn-url "$uri/branches/feat-eol" 2>&1)"; rc=$?
+    assertEquals "bootstrap succeeds under core.autocrlf=true (out: $out)" 0 "$rc"
+
+    wt="$root/.turbo-plugin/worktrees/remote-svn-feat-eol"
+    # THE assertion: zero SVN-side modifications. Before the fix every eol*.txt showed as 'M'.
+    sst="$(svn --config-dir "$cfg" status "$wt" 2>/dev/null | grep -v '^?' | tr -d '\r')"
+    assertEquals "bridge svn-clean under autocrlf=true (dirty: $sst)" "" "$sst"
+
+    # And still git-clean, so build-svn-commit's own gate passes (that gate is why `git add -A`
+    # has to follow the revert: LF files read as ' M' under autocrlf even when the blob matches).
+    gst="$(git -C "$wt" status --porcelain)"
+    assertEquals "bridge git-clean under autocrlf=true (dirty: $gst)" "" "$gst"
+}
+
+# ── Case 17 (U2): a one-file change pushes ONE file, not the whole tree ────────────────────────
+test_first_push_autocrlf_true_pushes_only_changed_file() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root uri cfg rc wt sst
+    spec="$(make_eol_scenario "$SB" true)" || { startSkipping; return 0; }
+    root="${spec%%|*}"; spec="${spec#*|}"
+    uri="${spec%%|*}"; cfg="${spec##*|}"
+
+    # A working branch that changes exactly ONE line of ONE file.
+    git -C "$root" checkout -q -b feat-eol >/dev/null 2>&1 || { startSkipping; return 0; }
+    printf 'alpha\nBRAVO\ncharlie\n' > "$root/eol3.txt"
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m 'tweak one line' >/dev/null 2>&1 || { startSkipping; return 0; }
+
+    (cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-eol --svn-url "$uri/branches/feat-eol" >/dev/null 2>&1); rc=$?
+    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi
+
+    # Merge the branch into the bridge exactly the way build-svn-commit does, then look at what SVN
+    # would actually receive. Only the touched file may appear.
+    wt="$root/.turbo-plugin/worktrees/remote-svn-feat-eol"
+    git -C "$wt" merge --no-ff --no-commit -m 'Merge' feat-eol >/dev/null 2>&1 || true
+    sst="$(svn --config-dir "$cfg" status "$wt" 2>/dev/null | grep -v '^?' | sed 's/^[A-Z?! ]*[[:space:]]*//' | sed 's|.*[\\/]||' | sort | tr '\n' ' ' | sed 's/ $//')"
+    assertEquals "only the changed file reaches SVN (got: $sst)" 'eol3.txt' "$sst"
+}
+
+# ── Case 18 (U2): core.autocrlf=false behaves exactly as before (regression) ───────────────────
+test_first_push_autocrlf_false_unchanged() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root uri cfg out rc wt sst gst
+    spec="$(make_eol_scenario "$SB" false)" || { startSkipping; return 0; }
+    root="${spec%%|*}"; spec="${spec#*|}"
+    uri="${spec%%|*}"; cfg="${spec##*|}"
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-eol --svn-url "$uri/branches/feat-eol" 2>&1)"; rc=$?
+    assertEquals "bootstrap succeeds under core.autocrlf=false (out: $out)" 0 "$rc"
+
+    wt="$root/.turbo-plugin/worktrees/remote-svn-feat-eol"
+    sst="$(svn --config-dir "$cfg" status "$wt" 2>/dev/null | grep -v '^?' | tr -d '\r')"
+    assertEquals "bridge svn-clean under autocrlf=false (dirty: $sst)" "" "$sst"
+    gst="$(git -C "$wt" status --porcelain)"
+    assertEquals "bridge git-clean under autocrlf=false (dirty: $gst)" "" "$gst"
+}
+
+# ── Case 19 (U2): `.svn/` is excluded from git before any `git add -A` runs ────────────────────
+# Unexcluded, `git add -A` drags `.svn/pristine/*` through the CRLF filter and the very next
+# `svn commit` fails with "Working copy text base is corrupt" -- the working copy is destroyed,
+# not merely dirty. Reproduced 2026-08-03 while proving the fix above.
+test_first_push_excludes_svn_metadata_from_git() {
+    if [ "$HAS_SVN" -ne 1 ] || [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local spec root uri cfg rc wt staged
+    spec="$(make_eol_scenario "$SB" true)" || { startSkipping; return 0; }
+    root="${spec%%|*}"; spec="${spec#*|}"
+    uri="${spec%%|*}"; cfg="${spec##*|}"
+
+    (cd "$root" && bash "$SCRIPT_UNDER_TEST" --branch feat-eol --svn-url "$uri/branches/feat-eol" >/dev/null 2>&1); rc=$?
+    if [ "$rc" -ne 0 ]; then startSkipping; return 0; fi
+
+    wt="$root/.turbo-plugin/worktrees/remote-svn-feat-eol"
+    staged="$(git -C "$wt" ls-files | grep '^\.svn/' | tr '\n' ' ')"
+    assertEquals "no .svn/ path is tracked by git (got: $staged)" "" "$staged"
+
+    # The working copy must still be usable -- the corruption above only surfaces on the next commit.
+    printf 'proof\n' > "$wt/proof.txt"
+    (cd "$wt" && svn --config-dir "$cfg" add -q proof.txt && svn --config-dir "$cfg" commit -q -m 'proof: WC still usable') >/dev/null 2>&1
+    rc=$?
+    assertEquals 'svn working copy is still committable (text base not corrupt)' 0 "$rc"
 }
 
 # shellcheck disable=SC1090
