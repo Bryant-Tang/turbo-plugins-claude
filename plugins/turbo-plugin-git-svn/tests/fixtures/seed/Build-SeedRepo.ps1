@@ -19,6 +19,13 @@
 # 接受 -Force 重建 (砍掉舊 dump 與工作目錄)。
 # 不接受 -Force 時若 dump 已存在 → idempotent skip 並 echo 「dump already exists」。
 #
+# ⚠ 重建之後**務必把 svn:author 中性化再 commit**。svn 是拿當下的 OS 使用者名稱當 author,所以
+#    重建會把「建它的那個人的真實姓名」寫進這個進版控的 fixture——repo 規約明文禁止提交僅限本機
+#    才有的東西,真實姓名就是其中一項(2026-08-03 清掉過一次:20 筆 author 全是某個人的名字)。
+#    dump 的格式是 `K 10\nsvn:author\nV <len>\n<value>\n`,`V` 是**位元組長度**,所以只要換成
+#    長度相同的字串就不必重算任何標頭;現用的值是 `tester`(6 bytes)。改完用
+#    `svnadmin load` 到暫存 repo 驗一次能不能載入。
+#
 # 為 PS 5.1 + 中文 Windows 寫;以 UTF-8 BOM 存檔。
 
 [CmdletBinding()]
@@ -40,7 +47,7 @@ $scriptDir = $PSScriptRoot
 $dumpPath  = [System.IO.Path]::Combine($scriptDir, 'svn-repo-r1-r20.dump')
 # Work root = repo-relative, gitignored tests/.sandbox/seed-build/ (Build-SeedRepo lives at
 # tests/fixtures/seed/, so tests/ is ../..). Resolved to LONG form via GetFullPath so 8.3
-# short-names (e.g. 'MELWU~1') never appear — the historical PS 5.1 tilde-expansion bug that
+# short-names (e.g. 'FIRSTL~1') never appear — the historical PS 5.1 tilde-expansion bug that
 # this file used to dodge with a hardcoded machine-local work root is solved generally here
 # (Push-Location uses -LiteralPath and every svnadmin/cmd path is quoted). The committed dump
 # is unaffected;

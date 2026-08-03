@@ -51,7 +51,7 @@ try {
     if (-not (Test-Path -LiteralPath $root -PathType Container)) {
         throw "Workspace root not found (or not a directory): $WorkspaceRoot"
     }
-    # Expand any 8.3 short-name segment (e.g. MELWU~1 from %TEMP%) to its long form. Resolve-Path,
+    # Expand any 8.3 short-name segment (e.g. FIRSTL~1 from %TEMP%) to its long form. Resolve-Path,
     # which Get-NormalizedAbsolutePath uses, leaves short names alone, while Get-ChildItem below
     # reports long names -- so without this the token line and the PROJECT lines would disagree on
     # how the same directory is spelled, which reads as two different places.

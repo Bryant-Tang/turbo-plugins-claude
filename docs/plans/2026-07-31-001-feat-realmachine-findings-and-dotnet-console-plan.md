@@ -493,8 +493,8 @@ execution: code
 - 全部 orchestrator 綠、`verify-core-identical` 綠、CI 綠。
 - D1 已定案並在 U10 的 commit 訊息裡記錄選了哪個方向與理由。
 - `CLAUDE.md` 記錄了 description 語言規約（U13）。
-- 實機驗證環境（`C:\Turbo\test-turbo-plugin`）跑一次 `tools/reset-fixture.sh` 之後，重跑本計畫涵蓋的
-  情境不再出現這 14 個症狀。
+- 實機驗證環境（`<MACHINE-PATH>`，在 repo 外、不進版控）跑一次它的 `tools/reset-fixture.sh` 之後，
+  重跑本計畫涵蓋的情境不再出現這 14 個症狀。
 - merge 進 `main` 時**禁止 squash**（既有規約：合併後要在 merge commit 上打各 plugin 的 `0.1.0` 基準 tag）。
 
 ---

@@ -77,7 +77,7 @@ try {
     #
     #    Matching is done on the IDENTITY HASH parsed out of the file name, not on the full path.
     #    Comparing paths was wrong twice over: the log files never appear on any command line at
-    #    all, and %TEMP% routinely contains a space ("C:\Users\Mel Wu\..."), which the old
+    #    all, and %TEMP% routinely contains a space (a user folder like "First Last"), which the old
     #    non-greedy path pattern truncated at the first space -- so no live process ever matched
     #    and every temp file was reported as an orphan.
     $referencedHashes = @{}

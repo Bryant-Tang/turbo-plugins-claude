@@ -23,7 +23,7 @@ BeforeAll {
     # therefore has to sit outside any repo. Still path-free -- derived at runtime, never hardcoded,
     # and removed in the finally block of each It.
     function New-WorkspaceSandbox {
-        # Expand 8.3 short-name segments in %TEMP% (e.g. MELWU~1): Remove-Item -LiteralPath on
+        # Expand 8.3 short-name segments in %TEMP% (e.g. FIRSTL~1): Remove-Item -LiteralPath on
         # PS 5.1 fails against a short-named parent, and Resolve-Path does not expand them.
         # GetTempPath(), not $env:TEMP: TEMP is a Windows-only variable and is unset under pwsh on
         # Linux, so Combine() would receive $null and yield a RELATIVE path -- the sandbox would be

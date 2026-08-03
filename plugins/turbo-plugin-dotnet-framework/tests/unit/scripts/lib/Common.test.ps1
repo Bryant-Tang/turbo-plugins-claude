@@ -31,7 +31,7 @@ BeforeAll {
     function New-IsolatedRepoRoot {
         param([string]$Tag = 'common')
         # Each scenario gets its own sandbox dir so previous state never bleeds in.
-        # Expand any 8.3 short-name segments in $env:TEMP (e.g. MELWU~1) — Remove-Item
+        # Expand any 8.3 short-name segments in $env:TEMP (e.g. FIRSTL~1) — Remove-Item
         # -LiteralPath on PS 5.1 + a short-named parent dir trips an "object at path does
         # not exist" error.
         # GetTempPath(), not $env:TEMP: TEMP is a Windows-only variable and is unset under pwsh on
