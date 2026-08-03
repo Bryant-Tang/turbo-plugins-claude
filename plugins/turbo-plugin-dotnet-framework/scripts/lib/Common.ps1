@@ -215,13 +215,14 @@ function Resolve-DotnetRepoRoot {
     return $resolved
 }
 
-# Read a single MSBuild property out of a .pubxml. Returns '' when the file is unreadable or the
-# property is absent -- callers treat '' as "no value" and fall back to omitting the /p: switch.
+# Read a single MSBuild property out of any MSBuild XML file -- a .pubxml (publish reads
+# <Configuration>) or a .csproj (run reads <OutputType> to tell a console project from a web one).
+# Returns '' when the file is unreadable or the property is absent; callers treat '' as "no value".
 #
 # Case-insensitive on the element name for the same reason the PublishUrl lookup in Publish-Web.ps1
 # is: XPath local-name() is case-sensitive and VS emits a mix of casings across pubxml versions.
 # Last occurrence wins (matches MSBuild's last-definition-wins property semantics).
-function Get-PubxmlProperty {
+function Get-MsbuildProperty {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Name
@@ -276,6 +277,50 @@ function Format-RunResultLines {
     )
     # URL stays bare at end of line so the terminal keeps it clickable (no trailing punctuation).
     return @("Target: $ResolvedTarget", "URL: $WebUrl")
+}
+
+# A console run has no URL, so it reports what it actually produced instead: which exe ran, and
+# either the exit code (one-shot, the common shape -- a report tool, a migration) or the PID and
+# log path (still running past the wait). Same 糾錯閘 lead as the rest of the family: Target is the
+# csproj the executor RESOLVED, so the user can see it acted on the project they meant.
+function Format-ConsoleRunResultLines {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedTarget,
+        [Parameter(Mandatory = $true)][string]$ExePath,
+        [int]$ExitCode = -1,
+        [int]$ProcessId = 0,
+        [string]$LogPath = ''
+    )
+    $lines = @("Target: $ResolvedTarget", "Executable: $ExePath")
+    if ($ProcessId -gt 0) {
+        $lines += "Status: still running (PID $ProcessId)"
+        # Bare path on its own line, no trailing punctuation, so the terminal keeps it clickable.
+        if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
+            $lines += 'Output so far:'
+            $lines += $LogPath
+        }
+    } else {
+        $lines += "Exit code: $ExitCode"
+    }
+    return $lines
+}
+
+# "Stopped" is stated explicitly rather than implied, because "nothing was running" is the NORMAL
+# outcome for a one-shot console project and must not read as a failure.
+function Format-ConsoleStopResultLines {
+    param(
+        [string]$ResolvedTarget = '',
+        [bool]$Stopped = $false,
+        [int]$ProcessId = 0
+    )
+    $lines = @()
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedTarget)) { $lines += "Target: $ResolvedTarget" }
+    if ($Stopped) {
+        $lines += "Stopped: yes (PID $ProcessId)"
+    } else {
+        $lines += 'Stopped: nothing was running'
+    }
+    return $lines
 }
 
 function Format-StopResultLines {

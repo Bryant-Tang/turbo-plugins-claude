@@ -1,7 +1,7 @@
 ---
 name: tp-run-dotnet-framework-web
 description: '在本機啟動 IIS Express 跑某個 .NET Framework Web 專案——「給 agent 用的 VS 2022」:由你(agent)判斷要跑哪個 csproj。內含 listening 健康檢查與跨 worktree self-heal(發現同 project 在別 worktree 已啟 → 自動停舊 instance 並重啟)。使用者明確要求 run 時執行;agent 偵測「準備手動驗證、需要本機跑起 IIS」時可建議。'
-argument-hint: '[--project <path-to-csproj>] [--timeout <seconds>] [--repo-root <path>]'
+argument-hint: '[--project <path-to-csproj>] [--timeout <seconds>] [--arguments <args>] [--working-directory <path>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
@@ -34,6 +34,8 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 否則進入下方步驟。
 
+> **這道閘只管 IIS。** `[iis] enabled = false` 的意思是「這台機器不跑 IIS Express」,與 console 專案無關——console 不碰 IIS。所以若 Step 1.5 判定是 console 專案,**忽略這道閘**繼續往下。
+
 ### Step 1 — 判斷要跑哪個 csproj
 
 你是這個專案的 VS,由你決定 run 的對象,**不靠 script 自動偵測**。
@@ -44,7 +46,25 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 - 沒記憶(或 fallback 撈到 `.sln`)時用 Glob 找 `*.csproj`(跳過 `bin/`、`obj/`、`node_modules/`、`.vs/`、`.git/`),判斷哪個是要在本機跑起來的 web 專案;多個合理且無從判斷 → `AskUserQuestion` 請使用者選。
 - run **不要**傳 configuration——它服務的是上次 build 的產物。
 
-### Step 2 — 啟動 IIS Express
+### Step 1.5 — 這是 web 專案還是 console 專案?
+
+**先分流,再往下走。** 這個 plugin 服務兩種 .NET Framework 專案,兩種的「跑起來」是完全不同的事。
+
+判準:讀那個 csproj 的 `<OutputType>`。
+
+| `<OutputType>` | 是什麼 | 走哪條 |
+|---|---|---|
+| `Exe` / `WinExe` | console 專案 | **console 路徑**(執行建置出來的 exe) |
+| `Library` | 類別庫或 web 專案 | web 專案 → **IIS Express 路徑**;純類別庫 → 跑不起來,直說 |
+
+`Library` 還要再分:web 專案的 csproj 會有 web 專案型別 GUID(`<ProjectTypeGuids>` 含
+`349C5851-65DF-11DA-9384-00065B846F21`)或 `<IISUrl>` / `<DevelopmentServerPort>` 這類設定;
+兩者都沒有的 `Library` 就是純類別庫,沒有東西可以跑。
+
+**判不出來就問使用者,不要猜。** 猜錯的兩個方向都很糟:對 console 專案起 IIS 會拿到看不懂的錯誤,
+對 web 專案找 exe 則永遠找不到。
+
+### Step 2 — 啟動 IIS Express(web 專案)
 
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Start-Iis.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/start-iis.sh`)帶 `-Project <csproj>`、(可選)`-Timeout <seconds>`。Script 流程:
 
@@ -68,6 +88,20 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
   polling `netstat` 直到 port LISTENING 或超時(`-Timeout` → `[run].listening_timeout_seconds` → default 30)
 - 啟動失敗時會把 IIS Express **自己的訊息**一起印出來(它的 stdout/stderr 導到 per-launch log),那通常直接
   就是原因;照樣逐字轉述給使用者
+
+### Step 2b — console 專案:執行 exe
+
+console 走這裡,**不要**碰 IIS。跑
+`${CLAUDE_PLUGIN_ROOT}/scripts/Start-Console.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/start-console.sh`):
+`-Project <csproj>`、(可選)`-Arguments <引數字串>`、(可選)`-WorkingDirectory <路徑>`、
+(可選)`-Timeout <秒>`、(可選)`-RepoRoot <路徑>`。
+
+- **引數與工作目錄比照 VS 存在本機**:VS 存在 `<專案>.csproj.user`(不進版控,因為那是某一個開發者的),
+  我們存在 `.turbo-plugin/config.local.toml` 的 `[run]` 區塊(`arguments` / `working_directory`),
+  同樣不進版控。使用者這次給的值優先。
+- **多數 console 專案是一次性的**(報表、轉檔),所以腳本會等它跑完,把 stdout / stderr 與離開碼一起回報。
+  超過等待時間還在跑,就回報「還在跑」與 PID,並把它記下來給 stop 用。
+- **離開碼要原樣轉述**,不要看到非零就自己判斷成「壞掉了」——console 工具用離開碼表達結果是常態。
 
 ### Step 3 — 回報結果模板
 
@@ -103,6 +137,12 @@ run 成功後,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.md`:�
 - Manual: 主 worktree 跑 `Get-ProjectIdentity.ps1` 記下 IDENTITY_HASH → 切到 peer worktree 跑同一個 → 兩值完全相同。
 
 ## Test Scenarios
+
+- **console 一次性**:對 `<OutputType>Exe` 的專案跑 run → 執行 exe、stdout 完整轉述、離開碼原樣傳回(**非零也照實講**,不要自行改判成失敗或成功)。
+- **console 的引數與工作目錄**:`.turbo-plugin/config.local.toml` 的 `[run] arguments` / `working_directory` 有值時生效;使用者這次給的值優先。
+- **console 常駐**:超過等待時間仍在跑 → 回報「還在跑」與 PID;接著 stop 停掉它。
+- **型別判不出來**:`<OutputType>` 缺、或 `Library` 但看不出是不是 web → 問使用者,**不猜**。
+- **web 專案回歸**:web 專案的 run 行為完全不變(仍走 IIS Express)。
 
 - **Cross-worktree self-heal**: 主 worktree 跑 /tp-run 啟 iisexpress → 切到 peer worktree 跑 /tp-run,確認 (a) 舊 instance 被 Stop-Process、(b) 新 instance 啟在 peer worktree path、(c) `Started IIS Express` + `Listening on` + `RUN_OUTPUT` 都出現。
 - **Port collision different project**: 啟 project A → 另開 project B 設同 port `<IISUrl>` → /tp-run project B fail loudly,不殺 A 的 instance、netstat A's port 仍 LISTENING。

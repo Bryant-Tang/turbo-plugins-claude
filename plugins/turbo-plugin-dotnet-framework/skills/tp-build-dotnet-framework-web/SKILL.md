@@ -68,6 +68,8 @@ build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.
 
 ## Decision Rules
 
+- **build 兩種專案型別都適用,不必分流**:MSBuild 不在乎 `<OutputType>`,console 專案(`Exe` / `WinExe`)與 web 專案走的是同一條建置路徑,同一支腳本、同一組參數。要分流的是 **run / stop**(跑起來的方式完全不同),以及 **publish**(.NET Framework console 根本沒有發佈這個概念)。
+
 - **執行路由(挑 `.ps1` 還是 `.sh`)**:依環境選工具,**不要用 Bash 工具去呼叫 `pwsh` / `powershell`**——
   - Windows + 有 Git Bash → 用 **Bash 工具**跑 `.sh`。
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。

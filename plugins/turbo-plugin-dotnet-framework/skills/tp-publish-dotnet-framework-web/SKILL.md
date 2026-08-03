@@ -83,6 +83,7 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
 - **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 `.turbo-plugin/pack-content-trust.local.toml`(格式:`approved_hash = "<h>"`)並重新呼叫 script。使用者選 No → 終止 skill。
 - **target 只能 csproj**:publish 收到 `.sln` 會報錯;發佈是針對單一 web 專案。
+- **console 專案沒有發佈**:`<OutputType>` 是 `Exe` / `WinExe` 時不要跑 publish。Visual Studio 對 .NET Framework console **沒有** publish 這個概念(右鍵選單那個 Publish 是 ClickOnce,跟 web 的 Publish 是兩回事)。使用者要的通常是「把建置產物交出去」——直說:直接複製 `bin\<Configuration>\` 底下的內容即可,並提議用 build 指定 Release 重建一次。**不要**硬跑任何 MSBuild publish target。
 - **config 以 pubxml 為準,但由執行器讀出來明確傳**:你預設不傳 `--configuration`,執行器會從 pubxml 取 `<Configuration>` 帶進 MSBuild;只有使用者明確要求才由你覆蓋。**不要**把它改回「省略讓 profile 決定」——那樣發出來的是 Debug。
 - **pubxml 由你判斷**:多個 profile 無從判斷就 `AskUserQuestion`,別硬猜。
 - Frontend pack 是 publish 鏈的一部份;**不要在 SKILL 內額外呼叫** `pack-content`,script 已包含。

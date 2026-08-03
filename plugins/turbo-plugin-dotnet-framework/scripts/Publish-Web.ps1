@@ -64,7 +64,7 @@ try {
     # `Any CPU` vs a csproj's `AnyCPU` are not interchangeable on every project.
     $publishConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'configuration' -CliValue $Configuration -Default $null
     if ([string]::IsNullOrWhiteSpace($publishConfiguration)) {
-        $publishConfiguration = Get-PubxmlProperty -Path $pubxmlAbsPath -Name 'Configuration'
+        $publishConfiguration = Get-MsbuildProperty -Path $pubxmlAbsPath -Name 'Configuration'
     }
     $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default $null
 
