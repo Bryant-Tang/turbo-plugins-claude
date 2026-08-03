@@ -206,12 +206,52 @@ try {
     # headRev=0 (empty repo) or an empty log => LEGACY single import commit (today's shape). <=5
     # revisions => per-revision (silent). >5 => needs a granularity choice; absent one, emit the
     # structured token + exit 0 with nothing created (so the SKILL can prompt, then re-invoke).
+    # Two failures hide behind one `svn info`, and they need opposite responses: the server being
+    # unreachable is an environment problem, while the PATH not existing is normal and fixable right
+    # here (nothing in this plugin ever ran `svn mkdir`, so a project's landing spot had to be
+    # created by hand first -- even though case (a) of tp-setup advertises "brand new git + SVN").
+    #
+    # The old code collapsed both into "Is the URL reachable?" AND swallowed stderr, so pointing it
+    # at a perfectly reachable repository with a typo'd path produced a message about reachability.
+    # svn's own answer is precise -- `W170000: URL ... non-existent in revision N` -- it was just
+    # discarded. So: keep svn's message, classify on it, and emit a token the SKILL can act on.
+    # Both arms exit before anything is created, so a re-run after fixing is clean.
+    $eaSvn = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    # Reading the message back off $Error is not paranoia -- it is the only thing that works here.
+    # `svn` is a PowerShell FUNCTION (the --non-interactive shim in lib/Common.ps1), and on PS 5.1
+    # a `2>&1` on a function call does NOT capture stderr produced by a native exe nested inside it:
+    # the capture comes back empty and every failure then classifies as "unreachable" (measured).
+    # $Error still receives the records, so diff it around the call. Newest-first, hence the reverse.
+    $errBefore = $Error.Count
+    & svn info $SvnUrl 2>$null | Out-Null
+    $svnInfoRc = $LASTEXITCODE
+    $svnInfoErr = ''
+    if ($Error.Count -gt $errBefore) {
+        $newErrors = @($Error[0..($Error.Count - $errBefore - 1)])
+        [array]::Reverse($newErrors)
+        $svnInfoErr = (($newErrors | ForEach-Object { $_.ToString() }) -join "`n")
+    }
+    $ErrorActionPreference = $eaSvn
+    if ($svnInfoRc -ne 0) {
+        if ($svnInfoErr -match 'non-existent in revision|W170000|E200009') {
+            Write-Output "TP_TOKEN:SVN_PATH_MISSING url=$SvnUrl"
+            [Console]::Error.WriteLine("Error: the repository is reachable, but '$SvnUrl' does not exist in it.")
+        } else {
+            Write-Output "TP_TOKEN:SVN_UNREACHABLE url=$SvnUrl"
+            [Console]::Error.WriteLine("Error: could not reach the SVN repository for '$SvnUrl'.")
+        }
+        # svn's own words, verbatim -- they name the actual cause (auth, DNS, a typo'd path).
+        [Console]::Error.WriteLine($svnInfoErr.Trim())
+        exit 1
+    }
+
     $eaSvn = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     $headRevRaw = & svn info --show-item revision $SvnUrl 2>$null
     $svnInfoRc = $LASTEXITCODE
     $ErrorActionPreference = $eaSvn
-    if ($svnInfoRc -ne 0) { throw "Could not read SVN revision from '$SvnUrl'. Is the URL reachable?" }
+    if ($svnInfoRc -ne 0) { throw "Could not read SVN revision from '$SvnUrl'." }
     $headRev = [int](($headRevRaw | Out-String).Trim())
 
     $firstRev = 0
@@ -280,11 +320,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
 
         # ---- step 9b: keep svn metadata out of git for the WHOLE import, independent of .gitignore.
-        # The bridge .gitignore can only be written AFTER the import (step 10 below explains why), so
-        # `git add -A` needs a different ignore source while the replay runs. info/exclude is
-        # repo-local, unversioned and idempotent -- and '.svn/' should never be tracked in this repo
-        # anyway. Must be the repo's COMMON git dir: git reads info/exclude from there, not from a
-        # linked worktree's own gitdir.
+        # `git add -A` needs an ignore source that does not depend on whatever .gitignore SVN
+        # happens to carry. info/exclude is repo-local, unversioned and idempotent -- and '.svn/'
+        # should never be tracked in this repo anyway.
         Set-SvnGitExcluded -MainWorktree $mainWorktree
 
         # ---- step 9: untrack .git from the svn working copy (tolerate "not tracked"). ----
@@ -327,23 +365,24 @@ try {
             Invoke-SvnReplayDispatch -RemotePath $remoteWorktreePath -RemoteName $remoteWorktreeName -Cur ($firstRev - 1) -HeadRev $headRev -Mode $mode -Range $Range
         }
 
-        # ---- step 10 (was BEFORE the import; moved AFTER it): ensure '.svn/' is in the bridge
-        # .gitignore. Ordering is load-bearing. Writing this file while the WC sat at the OLDEST
-        # revision created an UNVERSIONED .gitignore, and the replay then hit a tree conflict the
-        # moment a later revision added its own ("An unversioned file was found in the working
-        # copy") -- which used to HANG on svn's interactive conflict prompt. Done here the WC is
-        # already at HEAD, so this is a plain modification (or a create SVN will never collide
-        # with). Keeping '.svn/' out of the import commits no longer depends on this file -- the
-        # replay helpers exclude it at `git add` time.
-        $peerGitignore = Join-Path $remoteWorktreePath '.gitignore'
-        $ignoreLines = @()
-        if (Test-Path -LiteralPath $peerGitignore -PathType Leaf) {
-            $ignoreLines = @([System.IO.File]::ReadAllLines($peerGitignore))
-        }
-        if (-not ($ignoreLines | Where-Object { $_.Trim() -eq '.svn/' })) {
-            $ignoreLines += '.svn/'
-            [System.IO.File]::WriteAllLines($peerGitignore, $ignoreLines)
-        }
+        # ---- step 10 (REMOVED): the bridge no longer invents a .gitignore. ----
+        # It used to append '.svn/' to the bridge worktree's .gitignore here. That single line was
+        # the sole cause of a guaranteed first-time conflict: the bridge branch and the project's
+        # branch share no history, so `merge --allow-unrelated-histories` compares them with an
+        # EMPTY base -- and git conflicts on add/add unless the two sides are byte-identical. A
+        # project with any .gitignore at all (proj-2 had one line, `*.log`) therefore ALWAYS
+        # conflicted, on a file whose only difference was the line this tool had just written.
+        # Verified against git: identical content merges clean, a strict superset still conflicts.
+        #
+        # Nothing is lost by dropping it. '.svn/' must stay out of git for the import's
+        # `git add -A`, and that is guaranteed independently by Set-SvnGitExcluded above
+        # (info/exclude, which does not care what SVN carries); the project's own .gitignore gets
+        # '.svn/' and '.turbo-plugin/worktrees/' appended by tp-setup right after this script
+        # returns, and reaches SVN through the normal push. The bridge now mirrors exactly what SVN
+        # has -- which is what a bridge is for.
+        #
+        # Keep the capture below: it is a fail-safe for anything the import left in the worktree,
+        # not a consequence of the write that used to be here.
         # Fold it into the LAST import commit rather than adding one of its own: an extra non-merge
         # bridge commit with no 'svn-revision:' trailer is exactly the shape the pull path treats as
         # an orphaned sync, and a second commit carrying the HEAD trailer would break the floor

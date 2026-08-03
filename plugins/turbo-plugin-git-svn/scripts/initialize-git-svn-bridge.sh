@@ -208,8 +208,32 @@ fi
 # HEAD_REV=0 (empty repo) or an empty log => LEGACY single import commit (today's shape). <=5
 # revisions => per-revision (silent). >5 => needs a granularity choice; absent one, emit the
 # structured token + exit 0 with nothing created (so the SKILL can prompt, then re-invoke).
+# Two failures hide behind one `svn info`, and they need opposite responses: the server being
+# unreachable is an environment problem, while the PATH not existing is normal and fixable right
+# here (nothing in this plugin ever ran `svn mkdir`, so a project's landing spot had to be created
+# by hand first -- even though case (a) of tp-setup advertises "brand new git + SVN").
+#
+# The old code collapsed both into "Is the URL reachable?" AND swallowed stderr, so pointing it at
+# a perfectly reachable repository with a typo'd path produced a message about reachability. svn's
+# own answer is precise -- `W170000: URL ... non-existent in revision N` -- it was just discarded.
+# So: keep svn's message, classify on it, and emit a token the SKILL can act on. Both arms exit
+# before anything is created, so a re-run after fixing is clean.
+SVN_INFO_ERR=''
+if ! SVN_INFO_ERR="$(svn info "$SVN_URL" 2>&1 >/dev/null)"; then
+  if printf '%s' "$SVN_INFO_ERR" | grep -qE 'non-existent in revision|W170000|E200009'; then
+    echo "TP_TOKEN:SVN_PATH_MISSING url=$SVN_URL"
+    echo "Error: the repository is reachable, but '$SVN_URL' does not exist in it." >&2
+  else
+    echo "TP_TOKEN:SVN_UNREACHABLE url=$SVN_URL"
+    echo "Error: could not reach the SVN repository for '$SVN_URL'." >&2
+  fi
+  # svn's own words, verbatim -- they name the actual cause (auth, DNS, a typo'd path).
+  printf '%s\n' "$SVN_INFO_ERR" >&2
+  exit 1
+fi
+
 HEAD_REV="$(svn info --show-item revision "$SVN_URL" 2>/dev/null | tr -d '[:space:]')" \
-  || { echo "Error: could not read SVN revision from '$SVN_URL'. Is the URL reachable?" >&2; exit 1; }
+  || { echo "Error: could not read SVN revision from '$SVN_URL'." >&2; exit 1; }
 
 FIRST_REV=0
 IMPORT_COUNT=0
@@ -306,18 +330,23 @@ else
   svn_replay_dispatch "$REMOTE_PATH" "$REMOTE_NAME" "$((FIRST_REV - 1))" "$HEAD_REV" "$MODE" "$RANGE"
 fi
 
-# ---- step 10 (was BEFORE the import; moved AFTER it): ensure `.svn/` is in the bridge .gitignore.
-# Ordering is load-bearing. Writing this file while the WC sat at the OLDEST revision created an
-# UNVERSIONED .gitignore, and the replay then hit a tree conflict the moment a later revision added
-# its own .gitignore ("An unversioned file was found in the working copy") -- which used to HANG on
-# svn's interactive conflict prompt. Done here the WC is already at HEAD, so this is a plain
-# modification (or a create SVN will never collide with). `.svn/` staying out of the import commits
-# no longer depends on this file at all -- the replay helpers exclude it at `git add` time.
-PEER_GI="$REMOTE_PATH/.gitignore"
-if ! grep -qxF '.svn/' "$PEER_GI" 2>/dev/null; then
-  printf '%s\n' '.svn/' >> "$PEER_GI"
-fi
-# Fold it into the LAST import commit rather than adding a commit of its own: an extra non-merge
+# ---- step 10 (REMOVED): the bridge no longer invents a .gitignore. ----
+# It used to append `.svn/` to the bridge worktree's .gitignore here. That single line was the sole
+# cause of a guaranteed first-time conflict: the bridge branch and the project's branch share no
+# history, so `merge --allow-unrelated-histories` compares them with an EMPTY base -- and git
+# conflicts on add/add unless the two sides are byte-identical. A project with any .gitignore at all
+# (proj-2 had one line, `*.log`) therefore ALWAYS conflicted, on a file whose only difference was
+# the line this tool had just written. Verified against git: identical content merges clean, a
+# strict superset still conflicts.
+#
+# Nothing is lost by dropping it. `.svn/` must stay out of git for the import's `git add -A`, and
+# that is guaranteed independently by ensure_svn_git_excluded above (info/exclude, which does not
+# care what SVN carries); the project's own .gitignore gets `.svn/` and `.turbo-plugin/worktrees/`
+# appended by tp-setup right after this script returns, and reaches SVN through the normal push.
+# The bridge now mirrors exactly what SVN has -- which is what a bridge is for.
+#
+# Keep the capture below: it is a fail-safe for anything the import left in the worktree, not a
+# consequence of the write that used to be here.
 # bridge commit with no `svn-revision:` trailer is exactly the shape the pull path treats as an
 # orphaned sync, and a second commit carrying the HEAD trailer would break the floor lookup's
 # fail-loud-on-duplicate rule. Amending keeps the message (trailer), author and date intact, so the

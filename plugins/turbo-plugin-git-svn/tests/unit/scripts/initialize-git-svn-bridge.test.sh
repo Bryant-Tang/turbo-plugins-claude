@@ -168,8 +168,10 @@ test_case_a_empty_svn() {
     local ign
     ign="$(svn propget --config-dir "$CFG" svn:ignore "$bridge" 2>/dev/null | tr -d '\r\n')"
     assertEquals 'bridge svn:ignore is exactly .git' '.git' "$ign"
-    # main is empty: only the merged .gitignore, no svn project files.
-    assertEquals 'main has only .gitignore' '.gitignore' "$(git -C "$root" ls-files | tr -d '\r')"
+    # main is empty and STAYS empty. Since U4 the bridge no longer invents a .gitignore, so an
+    # empty SVN URL contributes nothing at all -- the project's own .gitignore is tp-setup's job,
+    # after this script returns.
+    assertEquals 'main has no files (the bridge invents nothing)' '' "$(git -C "$root" ls-files | tr -d '\r')"
 }
 
 # ── Scenario 2: case (a) + NON-EMPTY svn (/trunk, >5 revs) + squash -> single lump on main ─────
@@ -191,7 +193,11 @@ test_case_a_nonempty_svn() {
     if git -C "$root" ls-files | grep -q 'README.txt'; then assertTrue 'main has svn content' 0; else fail 'main missing README.txt'; fi
     bridge="$(bridge_path "$root")"
     assertTrue 'bridge worktree clean' "[ -z \"\$(git -C '$bridge' status --porcelain)\" ]"
-    if grep -qxF '.svn/' "$bridge/.gitignore" 2>/dev/null; then assertTrue 'bridge .gitignore has .svn/' 0; else fail 'bridge .gitignore missing .svn/'; fi
+    # The bridge mirrors SVN exactly. This seed's /trunk carries no .gitignore, so neither does the
+    # bridge -- before U4 the bootstrap invented one containing '.svn/', which is what made a
+    # first-time takeover conflict with any project that had a .gitignore of its own.
+    # Keeping '.svn/' out of git is info/exclude's job now, checked by the assertion after this one.
+    if [ -e "$bridge/.gitignore" ]; then fail "bridge invented a .gitignore SVN does not have: $(cat "$bridge/.gitignore")"; else assertTrue 'bridge invented no .gitignore' 0; fi
     if git -C "$bridge" ls-files | grep -q '^\.svn'; then fail '.svn is tracked in git'; else assertTrue '.svn not tracked' 0; fi
 }
 
@@ -213,6 +219,117 @@ test_case_b_conflict() {
     case "$out" in *"README.txt"*) assertTrue 'names the conflicted file' 0 ;; *) fail "conflict file not named: $out" ;; esac
     # Merge left in progress (NOT aborted).
     assertTrue 'MERGE_HEAD present (merge in progress)' "[ -f '$root/.git/MERGE_HEAD' ]"
+}
+
+# ── Scenario 3b (U4): case (b) where the project ALREADY has a .gitignore -> no conflict ───────
+# The real-machine symptom (2026-07-31): proj-1 had no .gitignore and connected cleanly; proj-2 had
+# ONE line (`*.log`) and hit a merge conflict every time. Cause: the bootstrap wrote `.svn/` into
+# the bridge's .gitignore and committed it, so both unrelated histories "added" that file with
+# different content -- and git conflicts on add/add unless the two sides are byte-identical
+# (verified: a strict superset conflicts too). Since practically every real project has a
+# .gitignore, first-time takeover conflicted essentially always, on a file the tool itself dirtied.
+test_case_b_existing_gitignore_does_not_conflict() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root uri out rc
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    # The project's own .gitignore -- one ordinary line, nothing to do with SVN.
+    printf '*.log\n' > "$root/.gitignore"
+    printf 'app\n'   > "$root/app-git.txt"
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m 'initial with gitignore' >/dev/null 2>&1
+    # An SVN side with content but NO .gitignore of its own -- proj-2's exact shape, and the reason
+    # the old code conflicted: with SVN contributing none, the ONLY .gitignore on the bridge side
+    # was the `.svn/` line the bootstrap wrote itself.
+    svnadmin create "$SB/svnrepo" >/dev/null 2>&1 || { startSkipping; return 0; }
+    uri="$(svn_uri "$SB/svnrepo")"
+    mkdir -p "$SB/seed-nogi"
+    printf 'svn-side\n' > "$SB/seed-nogi/app-svn.txt"
+    svn import "$SB/seed-nogi" "$uri" -m 'import (no gitignore)' --config-dir "$CFG" >/dev/null 2>&1 || { startSkipping; return 0; }
+    # One revision, so no granularity choice is involved -- this case is purely about the merge.
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$uri" 2>&1)"; rc=$?
+    assertEquals "takeover of a project that already has .gitignore exits 0 (out: $out)" 0 "$rc"
+    case "$out" in *"TP_TOKEN:MERGE_CONFLICT"*) fail "manufactured a .gitignore conflict: $out" ;; *) assertTrue 'no merge conflict' 0 ;; esac
+    # The project's rule survived untouched -- the fix must not silently rewrite the user's file.
+    if grep -qxF '*.log' "$root/.gitignore" 2>/dev/null; then assertTrue "project's own .gitignore rule kept" 0; else fail "project .gitignore lost its rule: $(cat "$root/.gitignore" 2>/dev/null)"; fi
+    if git -C "$root" ls-files | grep -q 'app-git.txt'; then assertTrue 'project files kept' 0; else fail 'project files lost'; fi
+}
+
+# ── Scenario 3c (U5): "cannot reach" and "path does not exist" are told apart ──────────────────
+# Both used to collapse into "could not read SVN revision from '<url>'. Is the URL reachable?" with
+# svn's own stderr thrown away -- so pointing it at a perfectly reachable repository with a typo'd
+# or not-yet-created path produced a message about reachability, which is simply false. They need
+# opposite responses: unreachable is an environment problem, a missing path is normal and offerable
+# to create (nothing in this plugin ever ran `svn mkdir`, so the landing spot had to exist first).
+test_svn_unreachable_is_classified() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root out rc
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/no-such-repo")" 2>&1)"; rc=$?
+    assertNotEquals "unreachable exits non-zero (out: $out)" 0 "$rc"
+    case "$out" in *"TP_TOKEN:SVN_UNREACHABLE"*) assertTrue 'emits SVN_UNREACHABLE' 0 ;; *) fail "no SVN_UNREACHABLE token: $out" ;; esac
+    case "$out" in *"TP_TOKEN:SVN_PATH_MISSING"*) fail "misclassified as a missing path: $out" ;; *) assertTrue 'not misclassified' 0 ;; esac
+    # svn's own words must survive -- they name the actual cause (auth, DNS, a typo).
+    case "$out" in *"svn: "*) assertTrue "svn's message is passed through" 0 ;; *) fail "svn stderr was swallowed: $out" ;; esac
+    # Zero residue: nothing created, so a re-run after fixing the URL is clean.
+    assertEquals 'no bridge branch created' 0 "$(bridge_branch_count "$root")"
+    assertTrue 'no bridge worktree created' "[ ! -e '$(bridge_path "$root")' ]"
+}
+
+test_svn_path_missing_is_classified() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root out rc
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    if ! make_svn_repo "$SB/svnrepo" 0; then startSkipping; return 0; fi
+    # The repository is reachable; only the project's landing path is absent.
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")/proj-3/trunk" 2>&1)"; rc=$?
+    assertNotEquals "missing path exits non-zero (out: $out)" 0 "$rc"
+    case "$out" in *"TP_TOKEN:SVN_PATH_MISSING"*) assertTrue 'emits SVN_PATH_MISSING' 0 ;; *) fail "no SVN_PATH_MISSING token: $out" ;; esac
+    case "$out" in *"TP_TOKEN:SVN_UNREACHABLE"*) fail "misclassified as unreachable: $out" ;; *) assertTrue 'not misclassified' 0 ;; esac
+    case "$out" in *"reachable"*) assertTrue 'says the repository IS reachable' 0 ;; *) fail "did not distinguish reachability: $out" ;; esac
+    assertEquals 'no bridge branch created' 0 "$(bridge_branch_count "$root")"
+    assertTrue 'no bridge worktree created' "[ ! -e '$(bridge_path "$root")' ]"
+}
+
+# ── Scenario 3d (U5): New-SvnPath creates the landing path, only when asked ────────────────────
+test_new_svn_path_creates_layout() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local mk uri out rc
+    mk="$PLUGIN_ROOT/scripts/new-svn-path.sh"
+    if ! make_svn_repo "$SB/svnrepo" 0; then startSkipping; return 0; fi
+    uri="$(svn_uri "$SB/svnrepo")"
+
+    # --dry-run touches nothing: the whole point of "we ask before writing" is that asking is free.
+    out="$(bash "$mk" --svn-url "$uri/proj-3/trunk" --standard-layout --dry-run 2>&1)"; rc=$?
+    assertEquals "dry-run exits 0 (out: $out)" 0 "$rc"
+    case "$out" in *"proj-3/branches"*) assertTrue 'dry-run lists branches/' 0 ;; *) fail "dry-run missed branches/: $out" ;; esac
+    svn info "$uri/proj-3" --config-dir "$CFG" >/dev/null 2>&1
+    assertNotEquals 'dry-run wrote nothing to SVN' 0 $?
+
+    out="$(bash "$mk" --svn-url "$uri/proj-3/trunk" --standard-layout 2>&1)"; rc=$?
+    assertEquals "create exits 0 (out: $out)" 0 "$rc"
+    # trunk / branches / tags all exist -- and `branches` is not decoration: creating a branch is an
+    # `svn copy` WITHOUT --parents, so an absent branches/ makes the first branch push fail outright.
+    local missing=''
+    for leaf in trunk branches tags; do
+        svn info "$uri/proj-3/$leaf" --config-dir "$CFG" >/dev/null 2>&1 || missing="$missing $leaf"
+    done
+    assertEquals "trunk/branches/tags all created (missing:$missing)" '' "$missing"
+    # One revision for the whole layout, so a half-created structure is not reachable.
+    assertEquals 'the layout landed in a single revision' 1 "$(svn info --show-item revision "$uri" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+
+    # Creating something that already exists is an error, not a silent no-op.
+    out="$(bash "$mk" --svn-url "$uri/proj-3/trunk" 2>&1)"; rc=$?
+    assertNotEquals 'creating an existing path fails' 0 "$rc"
+    case "$out" in *"already exists"*) assertTrue 'says it already exists' 0 ;; *) fail "unclear message: $out" ;; esac
+
+    # --standard-layout only has an unambiguous meaning under /trunk.
+    out="$(bash "$mk" --svn-url "$uri/proj-4" --standard-layout 2>&1)"; rc=$?
+    assertNotEquals '--standard-layout without /trunk is refused' 0 "$rc"
+    svn info "$uri/proj-4" --config-dir "$CFG" >/dev/null 2>&1
+    assertNotEquals 'refusal wrote nothing' 0 $?
 }
 
 # ── Scenario 4: case (b) + NON-overlapping svn -> clean merge of both sides ────
@@ -491,8 +608,8 @@ test_gitignore_added_later_does_not_conflict() {
     esac
     assertEquals 'three per-revision replay commits' 3 "$(count_trailer_commits "$root")"
     bridge="$(bridge_path "$root")"
-    # End state matches the squash path: bridge .gitignore carries .svn/ AND svn's own content.
-    if grep -qxF '.svn/' "$bridge/.gitignore" 2>/dev/null; then assertTrue 'bridge .gitignore has .svn/' 0; else fail 'bridge .gitignore missing .svn/'; fi
+    # End state matches the squash path: the bridge carries SVN's .gitignore and only that.
+    if grep -qxF '.svn/' "$bridge/.gitignore" 2>/dev/null; then fail 'bridge invented a .gitignore line (the U4 conflict cause)'; else assertTrue 'bridge added nothing to .gitignore' 0; fi
     if grep -qxF '*.log' "$bridge/.gitignore" 2>/dev/null; then assertTrue "svn's own .gitignore content preserved" 0; else fail "svn .gitignore content clobbered"; fi
     if git -C "$bridge" ls-files | grep -q '^\.svn'; then fail '.svn tracked in git'; else assertTrue '.svn not tracked' 0; fi
     # A dirty bridge breaks the next push (regression e2ad936), so the .gitignore edit must be committed.

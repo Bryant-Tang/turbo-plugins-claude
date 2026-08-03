@@ -32,6 +32,7 @@ $SvnReady = ($SvnAvailable -and [System.IO.File]::Exists($script:DumpPath))
 
 BeforeAll {
     $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
+    $script:PluginRoot = $pluginRoot
     $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-GitSvnBridge.ps1')
     $script:DumpPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'seed', 'svn-repo-r1-r20.dump'))
 
@@ -95,8 +96,9 @@ BeforeAll {
     }
 
     # case (b) fixture: a git repo with identity + committed files (from -Files name->content).
-    # Deliberately commits NO .gitignore so the bridge's own .gitignore (.svn/) merges without an
-    # add/add conflict -- conflicts in these tests come only from the seeded overlap file.
+    # Conflicts in these tests come only from a seeded overlap file. (Before U4 a .gitignore here
+    # would ALSO have conflicted, because the bridge invented one of its own -- that is exactly the
+    # defect, and 'Scenario 3b' below now pins the fixed behaviour.)
     function New-CaseBRepo {
         param([string]$Root, [hashtable]$Files)
         $null = New-Item -ItemType Directory -Path $Root -Force
@@ -124,6 +126,19 @@ BeforeAll {
             $ErrorActionPreference = $prev
         }
         return ($out | Out-String).Trim()
+    }
+
+    # Does this URL resolve in the repository? Isolated via --config-dir (KTD8).
+    function Test-SvnPathExists {
+        param([string]$Url, [string]$ConfigDir)
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        try {
+            & svn info --config-dir $ConfigDir $Url 2>$null | Out-Null
+            return ($LASTEXITCODE -eq 0)
+        } finally {
+            $ErrorActionPreference = $prev
+        }
     }
 
     function Get-BridgeBranchCount {
@@ -245,9 +260,11 @@ Describe 'Initialize-GitSvnBridge' {
                 # svn:ignore on the bridge WC is exactly .git.
                 (Get-SvnIgnore -WcPath $bridge -ConfigDir $cfg) | Should -BeExactly '.git'
 
-                # main is empty: only the merged .gitignore, no SVN project files.
+                # main is empty and STAYS empty. Since U4 the bridge no longer invents a
+                # .gitignore, so an empty SVN URL contributes nothing at all -- the project's own
+                # .gitignore is tp-setup's job, after this script returns.
                 $mainFiles = Run-Git-Capture -Cwd $root -GitArgs @('ls-files')
-                $mainFiles | Should -BeExactly '.gitignore'
+                $mainFiles | Should -BeNullOrEmpty
             } finally {
                 Remove-Sandbox -Dir $sb
             }
@@ -277,10 +294,13 @@ Describe 'Initialize-GitSvnBridge' {
                 $bridge = Get-BridgePath -Root $root
                 (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
 
-                # bridge .gitignore contains .svn/
+                # The bridge mirrors SVN exactly. This seed's /trunk carries no .gitignore, so
+                # neither does the bridge -- before U4 the bootstrap invented one containing
+                # '.svn/', which is what made a first-time takeover conflict with any project that
+                # had a .gitignore of its own. Keeping '.svn/' out of git is info/exclude's job now,
+                # which the next assertion checks.
                 $gi = [System.IO.Path]::Combine($bridge, '.gitignore')
-                [System.IO.File]::Exists($gi) | Should -BeTrue
-                @([System.IO.File]::ReadAllLines($gi) | Where-Object { $_.Trim() -eq '.svn/' }).Count | Should -BeGreaterThan 0
+                [System.IO.File]::Exists($gi) | Should -BeFalse -Because 'the bridge must not invent a .gitignore SVN does not have'
 
                 # .svn metadata is NOT tracked by git in the bridge.
                 $bridgeFiles = Run-Git-Capture -Cwd $bridge -GitArgs @('ls-files')
@@ -658,6 +678,128 @@ Describe 'Initialize-GitSvnBridge' {
         }
     }
 
+    # -- Scenario 3b (U4): a project that ALREADY has a .gitignore must not conflict --------------
+    # Real-machine symptom (2026-07-31): proj-1 had no .gitignore and connected cleanly; proj-2 had
+    # ONE line (`*.log`) and conflicted every time. Cause: the bootstrap wrote '.svn/' into the
+    # bridge's .gitignore and committed it, so both unrelated histories "added" that file with
+    # different content -- and git conflicts on add/add unless the sides are byte-identical
+    # (verified: a strict superset conflicts too). Practically every real project has a .gitignore,
+    # so first-time takeover conflicted essentially always, on a file the tool itself dirtied.
+    Context 'Scenario 3b (U4): taking over a project that already has a .gitignore' {
+        It 'merges without a manufactured conflict and keeps the project rule' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-3b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseBRepo -Root $root -Files @{ '.gitignore' = "*.log`n"; 'app-git.txt' = "app`n" }
+
+                # An SVN side with content but NO .gitignore of its own -- proj-2's exact shape, and
+                # the reason the old code conflicted: with SVN contributing none, the ONLY .gitignore
+                # on the bridge side was the '.svn/' line the bootstrap wrote itself.
+                $uri = New-SvnRepo -Sandbox $sb
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build empty svn repo'; return }
+                $seed = [System.IO.Path]::Combine($sb, 'seed-nogi')
+                $null = New-Item -ItemType Directory -Path $seed -Force
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($seed, 'app-svn.txt'), "svn-side`n")
+                $cfg = [System.IO.Path]::Combine($sb, '.svnconfig')
+                $prev = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
+                try {
+                    & svn import $seed $uri -m 'import (no gitignore)' --config-dir $cfg 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'svn import failed'; return }
+                } finally { $ErrorActionPreference = $prev }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0 -Because "a project with a .gitignore must connect cleanly: $($res.Combined)"
+                $res.Combined | Should -Not -Match 'TP_TOKEN:MERGE_CONFLICT'
+
+                # The project's rule survives untouched -- the fix must not rewrite the user's file.
+                $gi = @([System.IO.File]::ReadAllLines([System.IO.Path]::Combine($root, '.gitignore')))
+                @($gi | Where-Object { $_.Trim() -eq '*.log' }).Count | Should -BeGreaterThan 0
+                (Run-Git-Capture -Cwd $root -GitArgs @('ls-files')) | Should -Match 'app-git\.txt'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    # -- Scenario 3c (U5): "cannot reach" and "path does not exist" are told apart ----------------
+    # Both used to collapse into "Could not read SVN revision from '<url>'. Is the URL reachable?"
+    # with svn's own stderr thrown away -- so a perfectly reachable repository with a typo'd or
+    # not-yet-created path produced a message about reachability, which is simply false. They need
+    # opposite responses: unreachable is an environment problem, a missing path is normal and
+    # offerable to create (nothing in this plugin ever ran `svn mkdir`).
+    Context 'Scenario 3c (U5): SVN preflight classification' {
+        It 'classifies an unreachable repository, keeps the svn message, creates nothing' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-3c1'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseARepo -Root $root
+                $missing = 'file:///' + (([System.IO.Path]::Combine($sb, 'no-such-repo')) -replace '\\', '/')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $missing)
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'TP_TOKEN:SVN_UNREACHABLE'
+                $res.Combined | Should -Not -Match 'TP_TOKEN:SVN_PATH_MISSING'
+                # The svn client's own words must survive -- they name the actual cause.
+                $res.Combined | Should -Match 'svn: '
+                (Get-BridgeBranchCount -Root $root) | Should -Be 0
+                (Test-Path -LiteralPath (Get-BridgePath -Root $root)) | Should -BeFalse
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        It 'classifies a reachable repository with a missing path' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-3c2'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-CaseARepo -Root $root
+                $uri = New-SvnRepo -Sandbox $sb
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build empty svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/proj-3/trunk")
+                $res.ExitCode | Should -Not -Be 0
+                $res.Combined | Should -Match 'TP_TOKEN:SVN_PATH_MISSING'
+                $res.Combined | Should -Not -Match 'TP_TOKEN:SVN_UNREACHABLE'
+                $res.Combined | Should -Match 'reachable'
+                (Get-BridgeBranchCount -Root $root) | Should -Be 0
+                (Test-Path -LiteralPath (Get-BridgePath -Root $root)) | Should -BeFalse
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    # -- Scenario 3d (U5): New-SvnPath creates the landing path, only when asked ------------------
+    Context 'Scenario 3d (U5): New-SvnPath' {
+        It 'dry-runs for free, creates trunk/branches/tags, refuses the rest' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-3d'
+            try {
+                $mk = [System.IO.Path]::Combine($script:PluginRoot, 'scripts', 'New-SvnPath.ps1')
+                $uri = New-SvnRepo -Sandbox $sb
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build empty svn repo'; return }
+                $cfg = [System.IO.Path]::Combine($sb, '.svnconfig')
+
+                # -DryRun touches nothing: the point of "we ask before writing" is that asking is free.
+                $dry = Invoke-PsScript -ScriptPath $mk -Cwd $sb -ScriptArgs @('-SvnUrl', "$uri/proj-3/trunk", '-StandardLayout', '-DryRun')
+                $dry.ExitCode | Should -Be 0
+                $dry.Stdout | Should -Match 'proj-3/branches'
+                (Test-SvnPathExists -Url "$uri/proj-3" -ConfigDir $cfg) | Should -BeFalse
+
+                $mkRes = Invoke-PsScript -ScriptPath $mk -Cwd $sb -ScriptArgs @('-SvnUrl', "$uri/proj-3/trunk", '-StandardLayout')
+                $mkRes.ExitCode | Should -Be 0 -Because $mkRes.Combined
+                # branches/ is not decoration: creating a branch is an `svn copy` WITHOUT --parents,
+                # so an absent branches/ makes the first branch push fail outright.
+                foreach ($leaf in @('trunk', 'branches', 'tags')) {
+                    (Test-SvnPathExists -Url "$uri/proj-3/$leaf" -ConfigDir $cfg) | Should -BeTrue -Because "proj-3/$leaf should exist"
+                }
+
+                # Creating something that already exists is an error, not a silent no-op.
+                $again = Invoke-PsScript -ScriptPath $mk -Cwd $sb -ScriptArgs @('-SvnUrl', "$uri/proj-3/trunk")
+                $again.ExitCode | Should -Not -Be 0
+                $again.Combined | Should -Match 'already exists'
+
+                # -StandardLayout only has an unambiguous meaning under /trunk.
+                $bad = Invoke-PsScript -ScriptPath $mk -Cwd $sb -ScriptArgs @('-SvnUrl', "$uri/proj-4", '-StandardLayout')
+                $bad.ExitCode | Should -Not -Be 0
+                (Test-SvnPathExists -Url "$uri/proj-4" -ConfigDir $cfg) | Should -BeFalse
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
     Context 'Regression: a LATER revision adding .gitignore must not conflict/deadlock the import' {
         # Real-world failure: the bootstrap wrote the bridge .gitignore while the WC was at r1, so
         # replaying forward to the revision that ADDS .gitignore raised "An unversioned file was found
@@ -679,8 +821,9 @@ Describe 'Initialize-GitSvnBridge' {
 
                 $bridge = Get-BridgePath -Root $root
                 $gi = @([System.IO.File]::ReadAllLines([System.IO.Path]::Combine($bridge, '.gitignore')))
-                # End state matches the squash path: .svn/ present AND svn's own content preserved.
-                @($gi | Where-Object { $_.Trim() -eq '.svn/' }).Count | Should -BeGreaterThan 0
+                # End state matches the squash path: the bridge carries SVN's .gitignore and only
+                # that -- nothing this tool added (the U4 conflict cause).
+                @($gi | Where-Object { $_.Trim() -eq '.svn/' }).Count | Should -Be 0
                 @($gi | Where-Object { $_.Trim() -eq '*.log' }).Count | Should -BeGreaterThan 0
                 (Run-Git-Capture -Cwd $bridge -GitArgs @('ls-files')) | Should -Not -Match '(^|\n)\.svn'
                 # A dirty bridge breaks the next push, so the .gitignore edit must be committed.
