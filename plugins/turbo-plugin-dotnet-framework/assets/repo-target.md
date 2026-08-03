@@ -1,7 +1,7 @@
 # 這個指令要對哪個專案動手 —— 判準（給 agent 用）
 
-> 這份檔案被 `tp-build-dotnet-framework-web`、`tp-run-dotnet-framework-web`、
-> `tp-stop-dotnet-framework-web`、`tp-publish-dotnet-framework-web`、`tp-cleanup-orphan-iis`
+> 這份檔案被 `tp-build-dotnet-framework`、`tp-run-dotnet-framework`、
+> `tp-stop-dotnet-framework`、`tp-publish-dotnet-framework-web`、`tp-cleanup-orphan-iis`
 > 共用。**只有這一份**，改就改這裡。
 >
 > `turbo-plugin-git-svn` 有一份同名檔案，但**內容刻意不同**：那邊的目標是 git repo 的主

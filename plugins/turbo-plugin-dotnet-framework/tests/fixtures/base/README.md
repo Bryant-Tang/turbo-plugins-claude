@@ -37,5 +37,5 @@ base/
 
 1. 改 `.csproj` 後請確認 MSBuild 仍可 build(在當前 fixture 上手動跑 MSBuild 測一次)。
 2. 改 `applicationhost.config` 不要動掉 `__TURBO_PLUGIN_PHYSICAL_PATH__` placeholder 字面值
-   — tp-run-dotnet-framework-web 與 start-iis 等 script 都會檢查這個字串。
+   — tp-run-dotnet-framework 與 start-iis 等 script 都會檢查這個字串。
 3. 加新檔請列入此 README 的「內容」section。

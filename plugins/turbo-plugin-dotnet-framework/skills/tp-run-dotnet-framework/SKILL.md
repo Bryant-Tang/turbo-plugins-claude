@@ -1,12 +1,12 @@
 ---
-name: tp-run-dotnet-framework-web
+name: tp-run-dotnet-framework
 description: 'Run a .NET Framework project locally. You pick the csproj, then dispatch on `<OutputType>`: web starts under IIS Express (health check + cross-worktree self-heal), console runs its built exe with remembered arguments. Run on request, or suggest when something needs checking by hand.'
 argument-hint: '[--project <path-to-csproj>] [--timeout <seconds>] [--arguments <args>] [--working-directory <path>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
 
-# tp-run-dotnet-framework-web
+# tp-run-dotnet-framework
 
 ## Purpose
 

@@ -10,9 +10,9 @@ env-free 設計，集中設定於專案根的 `.turbo-plugin/`（與其它 turbo
 > 也是第一次執行專案時才出現,不是裝好 VS 就有)。`applicationhost.config` 由第一次 `/tp-run` 依 csproj 產生;
 > 設定檔與其中的區塊由「要寫它的那一方」自己建。詳見〈設定〉。
 
-- **`tp-build-dotnet-framework-web`** — 用 MSBuild 建置 .NET Framework Web 專案(csproj 或整個 `.sln`)。
-- **`tp-run-dotnet-framework-web`** — 以 IIS Express 啟動某個 csproj 的站台。
-- **`tp-stop-dotnet-framework-web`** — 停止某個 csproj 對應的 IIS Express 站台。
+- **`tp-build-dotnet-framework`** — 用 MSBuild 建置 .NET Framework Web 專案(csproj 或整個 `.sln`)。
+- **`tp-run-dotnet-framework`** — 以 IIS Express 啟動某個 csproj 的站台。
+- **`tp-stop-dotnet-framework`** — 停止某個 csproj 對應的 IIS Express 站台。
 - **`tp-publish-dotnet-framework-web`** — 發佈某個 csproj,並以固定模板輸出終端可點擊的路徑。
 - **`tp-cleanup-orphan-iis`** — 清理孤兒 IIS Express 程序 / 站台。
 

@@ -1,12 +1,12 @@
 ---
-name: tp-stop-dotnet-framework-web
+name: tp-stop-dotnet-framework
 description: 'Stop what tp-run started. You pick the csproj, then dispatch on `<OutputType>`: a web project''s IIS Express instance is matched by project identity across worktrees; a console project is stopped by PID, only if this tool started it. Run on request, or suggest when the port is no longer needed.'
 argument-hint: '[--project <path-to-csproj>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 ---
 
-# tp-stop-dotnet-framework-web
+# tp-stop-dotnet-framework
 
 ## Purpose
 

@@ -10,7 +10,7 @@
 
 ### Added
 
-- 5 支 skill:`tp-build-dotnet-framework-web`、`tp-run-dotnet-framework-web`、`tp-stop-dotnet-framework-web`、`tp-publish-dotnet-framework-web`、`tp-cleanup-orphan-iis`(保 `tp-*` 前綴)。**沒有 setup 指令**——所有設定都是用到才建、且能自我修復,跟 Visual Studio 一樣(VS 的 `applicationhost.config` 也是第一次執行專案才出現)。
+- 5 支 skill:`tp-build-dotnet-framework`、`tp-run-dotnet-framework`、`tp-stop-dotnet-framework`、`tp-publish-dotnet-framework-web`、`tp-cleanup-orphan-iis`(保 `tp-*` 前綴)。**沒有 setup 指令**——所有設定都是用到才建、且能自我修復,跟 Visual Studio 一樣(VS 的 `applicationhost.config` 也是第一次執行專案才出現)。
 - **「給 agent 用的 VS 2022」行為模型**:build / run / stop / publish 的 skill 由 agent 探索候選(Glob csproj/`.sln`、跳過 `bin`/`obj`/`node_modules`/`.vs`/`.git`、讀 `.sln`)、查記憶、不確定就 `AskUserQuestion`,再傳明確 `-Project`;executor 只有 CLI 或記憶有值才附 `/p:Configuration|Platform`、否則省略(對齊 VS);publish 的 configuration 以 pubxml 內嵌 `<Configuration>` 為準。build 可建整個 `.sln`(`SolutionDir` 由 `.sln` 目錄推導);run / stop / publish 只能 csproj,收到 `.sln` 清楚報錯。
 - **per-operation 記憶(兩層設定查找)**:`[build].project`(可為 `.sln`)、`[run].project`(無值時 fallback `[build].project`,向後相容)、`[publish].project` / `[publish].default_pubxml`;各操作讀寫自己的 key,沿用 `Resolve-ConfigValue` 的 CLI → config.toml → config.local.toml → 預設 四層(local 蓋 committed)。
 - **記憶 save-back**:`assets/memory-save-back.md` 共用片段(read-the-file 機制),build / publish / run 執行後讀並遵循它,比對 agent 這次選定的 target / config / pubxml 與已存記憶,有差異就 `AskUserQuestion` 問四去向(存 committed / 存 local / 撤回省略〔刪 key〕/ 不存)。stop 不 save-back。存回時自己確保 `.turbo-plugin/`、設定檔、dotnet 標記區塊與對應 `[section]` 存在;寫 `config.local.toml` 之前先確保 `.gitignore` 擋住 `*.local.*`(誰寫這種檔誰負責)。

@@ -16,7 +16,7 @@
 enabled = true
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [build] — tp-build-dotnet-framework-web 用
+# [build] — tp-build-dotnet-framework 用
 # project 是明確 target(csproj 或 .sln);run/stop 無自己的 [run].project 時 fallback 讀此。
 # configuration / platform 省略 → 交 MSBuild / .sln / Directory.Build.props 決定(對齊 VS)。
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ project = "HelloApp.csproj"
 # platform       = "Any CPU"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [run] — tp-run-dotnet-framework-web 用
+# [run] — tp-run-dotnet-framework 用
 # ─────────────────────────────────────────────────────────────────────────────
 # [run]
 # listening_timeout_seconds = 30

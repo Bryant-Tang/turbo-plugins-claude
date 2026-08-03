@@ -1,12 +1,12 @@
 ---
-name: tp-build-dotnet-framework-web
+name: tp-build-dotnet-framework
 description: 'MSBuild build for a .NET Framework project, web or console. You pick the csproj/`.sln` and configuration; omit what the user did not name. Run on request, or suggest it to verify a code change builds (reversible).'
 argument-hint: '[--configuration <name>] [--platform <name>] [--project <path-to-csproj-or-sln>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
 
-# tp-build-dotnet-framework-web
+# tp-build-dotnet-framework
 
 ## Purpose
 
