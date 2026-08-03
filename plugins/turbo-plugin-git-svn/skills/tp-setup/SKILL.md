@@ -181,6 +181,29 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      `-AllowNestedRepos` / `--allow-nested-repos` 重呼叫。
    - **不得**把 token 名或旗標名丟給使用者。
 
+3e. **SVN 那邊連不到(`TP_TOKEN:SVN_UNREACHABLE url=<url>`)→ 這是環境問題,不要自己想辦法繞**。
+   腳本在**動任何東西之前**就停了(零變更、可乾淨重跑)。把 svn 自己給的原始訊息一起顯示給使用者,
+   常見原因是 URL 打錯、VPN 沒開、伺服器沒起、或需要認證。修好之後重跑。
+
+3f. **版本庫連得到、但這個路徑不存在(`TP_TOKEN:SVN_PATH_MISSING url=<url>`)→ 問要不要幫忙建**。
+   一樣是零變更、可乾淨重跑。這個情況很常見:專案在版本庫裡的落腳點得先有人建出來,而本 plugin 的
+   其它腳本一律不會自己建。agent:
+   - 用 `AskUserQuestion` 以**白話**問兩件事(**不得**把 token 名丟給使用者),而且問句裡要**原樣寫出完整 URL**——
+     URL 打錯時自動建會安靜地造出一個錯路徑,而 **SVN 上建出來的路徑是永久的,沒有真正的刪除**。
+     1.「版本庫連得到,但裡面還沒有 `<url>` 這個位置。要幫你建嗎?」(**預設不建**;使用者也可能只是打錯字)
+     2. 使用者要建、且 URL 是以 `/trunk` 結尾時,再問:「要不要一併建 `branches` 與 `tags`?」
+        **這不是裝飾**:之後用本工具開分支是 `svn copy` 到 `branches/` 底下,而那個 `svn copy` 沒有帶
+        `--parents`,`branches` 不存在就直接失敗。URL 不是以 `/trunk` 結尾時**不要問這題**(沒有明確的解讀)。
+   - 使用者同意後跑建立腳本(它**只**做這件事,不會順手建別的):
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/New-SvnPath.ps1" -SvnUrl <url> [-StandardLayout]
+     ```
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/new-svn-path.sh" --svn-url <url> [--standard-layout]
+     ```
+   - 建好之後**重新呼叫** `Initialize-GitSvnBridge`,照常往下走。
+   - 使用者選不建 → 乾淨結束,SVN 零寫入,告訴他可以自己建好之後再跑一次。
+
 4. **腳本成功後 → base 骨架後置**(疊在 merge 進來的 SVN 內容上,全 idempotent):
    - **順序硬性要求:先 append `.gitignore` 的 git-svn patterns(4b),才做任何 `git add`(4d)**。否則巢狀
      bridge worktree(`.turbo-plugin/worktrees/`)與其 `.svn/` 在 main 尚未被 ignore,`git add -A` 會誤把 `.svn`
@@ -312,6 +335,15 @@ setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一�
   (exit 0、零 commit、bridge 未建)時,agent **白話**問粒度(一顆一顆/壓成一顆/指定範圍,預設一顆一顆;**不外洩** token /
   `refs/tp/svn/<n>` / 修訂號給使用者),再帶 `-Granularity`/`--granularity`(+ 範圍時 `-Range`/`--range`)**重呼叫同一支腳本**。
   ≤5 修訂不發此 token。見 case (a) sub-step 3b。
+- **「連不到」與「路徑不存在」是兩件事,給的指引也不同** — 腳本前置檢查分兩段:先確認版本庫本身連得到,
+  再確認這個路徑存在。連不到 → `TP_TOKEN:SVN_UNREACHABLE`(環境問題:URL 打錯 / VPN / 伺服器 / 認證)。
+  連得到但路徑不存在 → `TP_TOKEN:SVN_PATH_MISSING`,agent **要問使用者要不要幫忙建**(見 sub-step 3f)。
+  兩種都是零變更、可乾淨重跑,而且都要把 **svn 自己給的原始訊息**一起顯示——舊版把 stderr 吞掉、
+  一律回「Is the URL reachable?」,在版本庫明明連得到時完全誤導。
+- **建 SVN 路徑一定要問過,而且要把完整 URL 寫出來** — `svn mkdir` 只在 `New-SvnPath` 這一支裡,沒有任何
+  其它腳本會隱含地建路徑。**SVN 上建出來的路徑是永久的**,URL 打錯時自動建會安靜地造出一個錯位置,
+  所以預設不建、一定先問,且問句要原樣附上完整 URL 讓使用者核對。URL 以 `/trunk` 結尾時才另外問要不要
+  一併建 `branches` / `tags`——那不是裝飾,開分支的 `svn copy` **沒有** `--parents`,`branches` 不存在就直接失敗。
 - **目標明確指定優先於 cwd 推導** — 腳本收 `-RepoRoot` / `--repo-root`;**不帶**時才從 cwd 往上推導(既有行為)。
   Phase 1.0 決定要不要帶,決定後**每一次重呼叫都帶同一個值**。三道守門判的都是**指名的那個目標**(不是你站在哪):
   指到 linked worktree 一樣被①擋、指到並排工作區一樣被③擋。
@@ -379,6 +411,11 @@ setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一�
   SVN、身分 throw 重呼叫、MERGE_CONFLICT 回報、rollback;見 `tests/unit/scripts/Initialize-GitSvnBridge.test.*`);
   SKILL 端的編排(收 URL/身分重呼叫/骨架後置/衝突收尾)為 agent-prose,以一次真實 `/tp-setup` case (a)(空與非空
   SVN)+ 一次 case (b)人工驗證為準。
+- **連不到 vs 路徑不存在**:① 給一個連不到的版本庫 URL → 訊息說「連不到」且含 svn 原文;② 給一個版本庫
+  存在、但路徑不存在的 URL → 訊息說「路徑不存在」並提供建立選項;兩者都必須**零殘留可乾淨重跑**
+  (見 `tests/unit/scripts/Initialize-GitSvnBridge.test.*` 的對應案例)。
+- **建立路徑**:使用者選建立 + 建標準結構 → `trunk` / `branches` / `tags` 都出現且在**同一個修訂**裡,
+  接著 bootstrap 正常往下走;使用者選不建 → 乾淨結束、SVN 零寫入(`svn info` 仍查不到該路徑)。
 - **base 骨架 idempotent**:乾淨 sandbox 跑 case (c) 兩次,`.turbo-plugin/` 內容與 `.gitignore` /
   `CLAUDE.md` 的標記區塊不重複、不變動。
 - **標記區塊不互蓋**:在已有 dotnet 標記區塊的 `config.toml` 上跑 git-svn setup,只更新 git-svn 區塊,dotnet 區塊與標記外內容不變。
