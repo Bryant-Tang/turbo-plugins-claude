@@ -76,6 +76,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 
 ## Procedure
 
+0. 先確認 `tp-dbhub` 的 MCP tool 這個 session 有沒有暴露出來。**沒有也照樣往下做**：跳過所有查詢步驟，依 repo 內既有的結構定義（`db/*.sql`、migration、entity 類別等）產出 SQL，並在腳本與回報裡標明「未經實際資料庫驗證」。詳見 Decision Rules 的「連不到資料庫時」。
 1. 釐清本次工作相關的是哪個 connected 資料庫。
 2. 若 table / column / procedure / function / index 名稱不確定，先用 `tp-dbhub` 的物件搜尋 MCP tool。
 3. 用 `tp-dbhub` 的查詢 MCP tool **只查最小必要資料**（唯讀）。
@@ -105,7 +106,10 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 - local 查到的結果可能與 test / production 物件定義不符 → 停止假設一致，請使用者在目標環境跑最小驗證查詢回傳結果。
 - 多個資料庫要改 → 依資料庫或執行步驟拆檔。
 - 腳本依賴手動後處理 / trigger 重建 / 環境特定 review → 在 SQL 註解明寫。
-- **dbhub MCP 不可用時 fail loudly**：若當前 session 沒有 `tp-dbhub` MCP tool（未跑 `/tp-setup` 設好 `dbhub.local.toml`、或 docker 未起）→ 明確告知使用者「dbhub MCP server 不可用，請先跑 `/tp-setup` 設定 `.turbo-plugin/dbhub.local.toml` 並確認 docker 在跑」，**不** 靜默改用猜測或其它方式假裝查到資料庫。
+- **連不到資料庫時，先產腳本、不要停下來問**：當前 session 沒有 `tp-dbhub` MCP tool（`dbhub.local.toml` 沒設好、docker 沒起，或 session 開在多專案工作區的根）時，**照樣把 SQL 產出來**，依據改成 repo 內既有的 `db/*.sql` 等結構定義。理由：這支 skill 的定位是「SQL 腳本撰寫」，而表結構通常在 repo 裡就有；停下來等連線會讓它在最常見的情境下直接不可用。
+  - 產出的腳本開頭與回報裡都要明寫一行：**未經實際資料庫驗證，依據是 repo 內的 `<實際依據的檔案>`**。
+  - 一併說明這代表什麼風險（例如查不到現有索引 / 欄位型別可能已在該環境改過），並提議「要接上連線驗證嗎」讓使用者決定，但**不要**把它當成前置條件。
+  - 這**不是**放寬唯讀原則：連得上時一樣只讀不寫。也**不是**允許猜測——猜不出來的就在 SQL 註解裡明寫不確定處，不要編造欄位。
 - **逐步執行 side-effect 指令**：需要 terminal 指令時，每個會改狀態的步驟（建資料夾、寫檔、cleanup）分開跑，**不** 用單一多行 shell block 或 `&&` 串接。
 
 ## Completion Checks
@@ -117,6 +121,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 - 產出檔遵循 [assets/sql-script-template.sql](./assets/sql-script-template.sql) 的版面，檔名遵循 `<order>-<database>-<purpose>.sql`。
 - 產出的 SQL 出現在 `git status`（`.turbo-plugin/sql/` 非 gitignored），落點與命名可重現。
 - 最終回報清楚區分「唯讀檢視驗證到的事實」與「準備供手動執行的 SQL 變更」。
+- 沒有連線就產出的腳本，其開頭與回報**都**帶了「未經實際資料庫驗證」以及實際依據的檔案。
 
 ## Tool Preference
 
