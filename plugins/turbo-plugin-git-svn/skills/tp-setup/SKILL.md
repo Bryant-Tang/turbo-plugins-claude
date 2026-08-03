@@ -186,7 +186,8 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      bridge worktree(`.turbo-plugin/worktrees/`)與其 `.svn/` 在 main 尚未被 ignore,`git add -A` 會誤把 `.svn`
      內容 stage 進 main。
    - 4a. **base 骨架**(見 base 段「Base 檔骨架」):建 `.turbo-plugin/`、複製 `config.toml` 殼、`.gitignore`
-     base 區塊(`.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`)、注入 `CLAUDE.md` base 區塊。
+     base 區塊(`.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`,以及放行範本的 `!*.example.local.*`)、
+     注入 `CLAUDE.md` base 區塊。
    - 4b. **git-svn `.gitignore` 追加**(idempotent,缺則加):
      ```
      .turbo-plugin/worktrees/
@@ -335,7 +336,7 @@ setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一�
 - **不自動代填使用者身分或設定** — git `user.name`/`user.email`、SVN URL 等缺漏一律先 `AskUserQuestion` 再做;
   **絕不**拿 Claude 帳號 email / 本機使用者名稱 / 臆測值代填。寫 git 身分一律 repo-local(不加 `--global`)。
 - **兩類 ignore、責任不同** — 4b 寫死的只有 **plugin 自造的基礎設施**(`.turbo-plugin/worktrees/`、`.svn/`,
-  加上 base 的兩條 `*.local.*`):形狀固定、且必須在任何 `git add` 之前就位。**這個專案自己的**建置產物 /
+  加上 base 的兩條 `*.local.*` 與那條 `!*.example.local.*` 放行):形狀固定、且必須在任何 `git add` 之前就位。**這個專案自己的**建置產物 /
   本機設定 / 機密**沒有寫死清單**,由 agent 依 `skills/tp-suggest-ignore/assets/ignore-rubric.md` 的判準,
   在 4c-2(仍在 `git add -A` 之前)逐項判斷後 append。寫死清單只會同時漏掉這個專案真正的產物、又硬塞
   不適用的項目;而時機不能往後挪,因為第一顆 commit 掃進去的東西補 `.gitignore` 也拿不掉。
@@ -358,7 +359,8 @@ setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一�
 ## Completion Checks
 
 - `.turbo-plugin/` 存在,內含 `config.toml`(含 `git-svn` 標記區塊內的 `[svn]`)。
-- `.gitignore` 含 base(`.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`)+ git-svn(`.turbo-plugin/worktrees/`、`.svn/`)patterns。
+- `.gitignore` 含 base(`.claude/**/*.local.*`、`.turbo-plugin/**/*.local.*`、`!*.example.local.*`)+ git-svn(`.turbo-plugin/worktrees/`、`.svn/`)patterns。
+- `git check-ignore` 對 `*.example.local.*` 範本回非零(**不**被忽略),對真正的 `*.local.*` 回零(被忽略)。
 - `CLAUDE.md` 含 `base` 標記區塊。
 - Case (a)/(b):`git branch -a` 含 `remote-svn/main`,`git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-main`,
   該 worktree 內含 `.svn/`;**腳本後置的 base 骨架已 commit**,故主 worktree `git status --porcelain` 乾淨。

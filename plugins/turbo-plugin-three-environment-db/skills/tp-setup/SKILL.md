@@ -48,10 +48,13 @@ db 的動作都是 repo-only,無「動到外部」副作用。
 
 1. **`.turbo-plugin/dbhub.example.local.toml`**(db **owns**)— 不存在則複製
    `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/dbhub.example.local.toml`(此檔進 git,是給同事看的範本);
-   **已存在則不覆寫**。
+   **已存在則不覆寫**。部署完**確認它真的沒有被 ignore**(`git check-ignore` 應回非零):base 的
+   `.turbo-plugin/**/*.local.*` 會連範本一起擋掉,靠 base 骨架裡那條 `!*.example.local.*` 放行。
+   若這個專案的 `.gitignore` 是舊版、缺那一行,就照 base 骨架補上——否則範本永遠傳不到同事手上。
 2. **`.turbo-plugin/dbhub.local.toml`** — **永不自動建立**(避免使用者誤以為已 ready)。不存在則提醒:
    「dbhub 需要你自填 credentials:`cp .turbo-plugin/dbhub.example.local.toml .turbo-plugin/dbhub.local.toml`
-   後編輯填入連線資訊」(`.gitignore` base 已排除 `*.local.*`,不會進 git)。
+   後編輯填入連線資訊」(`.gitignore` base 已排除 `*.local.*`,**真正含密碼的這一份不會進 git**;
+   只有 `*.example.local.*` 範本被放行)。
 3. **docker probe**(僅提示,不阻塞):`docker --version`。失敗 → Phase 4 記「dbhub MCP server 需要 docker;
    未偵測到,請確認 docker 已安裝並在跑」。
 

@@ -52,7 +52,12 @@
    # turbo-plugin
    .claude/**/*.local.*
    .turbo-plugin/**/*.local.*
+   !*.example.local.*
    ```
+   - **那條 `!` 放行是必要的,不是裝飾**:`*.example.local.*` 是刻意要進版控的**範本**(例如
+     `dbhub.example.local.toml`),讓同事看得到該填哪些欄位。少了它,前一條規則會把範本一起擋掉,
+     於是「附一份範本給同事」這件事永遠不會成立——而真正含密碼的 `dbhub.local.toml` 仍然被擋住,
+     因為它不含 `.example.`。改動這三行時務必兩邊都驗:範本**不**被忽略、真檔**被**忽略。
    - git bridge 的 ignore 規則(`.turbo-plugin/worktrees/`、`.svn/`)由 git-svn 的 concern 段追加,不在 base。
    - **專案自己的建置產物沒有寫死清單**:由 agent 依
      `turbo-plugin-git-svn` 的 `skills/tp-suggest-ignore/assets/ignore-rubric.md` 判斷後追加。
