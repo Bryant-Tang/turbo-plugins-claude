@@ -152,7 +152,15 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      `refs/tp/svn/<n>` / 修訂號等內部語彙丟給使用者;用情境化描述(可用 `<N>` 個「更新紀錄」這類白話):
      - **一顆一顆保留(建議)**——每筆更新各成一顆 commit,歷史與 blame 最完整。
      - **壓成一顆**——只匯最新內容成一顆 commit(最快;適合歷史很深、不需逐筆歷史時)。
-     - **指定一段逐筆、其餘壓一顆**——請使用者給一段範圍(落在腳本回報的可選範圍內),範圍內逐筆、範圍外壓一顆。
+     - **最近幾筆逐筆保留、更早的壓成一顆**——問使用者要保留**最近幾筆**(用序數,例如「最近 5 筆」),
+       不是問修訂號。
+
+   > **絕對不要把 token 裡的 `range=r<lo>:r<hi>` 原樣搬給使用者。** 那是版本庫全域的修訂號,而版本庫是
+   > 多個專案共用的——**對單一路徑而言它是稀疏的**。實測看過這個組合:同一題裡主文寫「已經有 8 筆更新
+   > 紀錄」、選項說明寫「可選範圍:第 15 到 27 號更新」,兩套數字對不起來,使用者只會困惑。
+   > 使用者講「最近 N 筆」之後,**由你自己換算**成腳本要的修訂號:對那個 SVN URL 跑
+   > `svn log -q --xml <url>`(XML 恆為 UTF-8)取得**這條路徑自己**的修訂清單,倒數第 N 筆的修訂號就是
+   > `<lo>`,`<hi>` 用 token 給的上界。換算完才呼叫腳本。
    - 依選擇**重新呼叫**同一支腳本並帶粒度參數(乾淨重跑;此時腳本走到粒度階段後直接匯入):
      - 一顆一顆:PowerShell `-Granularity per-revision` / bash `--granularity per-revision`
      - 壓成一顆:PowerShell `-Granularity squash` / bash `--granularity squash`
@@ -257,6 +265,10 @@ case (b) arm(不建空 commit、用當前分支、merge 進**有內容**的分�
    - **不**重呼叫 bootstrap 腳本(會撞「bridge 已存在」死路)。
    - 列出衝突檔(token 後的清單),引導使用者手動解衝突 + `git add` 已解檔 + `git commit` 完成該 merge
      (**不自動 abort**,同先前 case (b) 行為)。
+3b. **merge 失敗但**不是**衝突(`TP_TOKEN:MERGE_FAILED branch=<name>`)→ 不要說成衝突**。這個 token 只在
+   `git merge` 非零退出、而衝突檔清單是**空的**時出現,代表 merge 是為了別的原因被拒(例如橋接分支還沒有
+   任何 commit)。**不要**叫使用者去找衝突檔——一個都沒有。把 git 自己印在 stderr 的原文轉述給使用者,說明
+   bridge 已建成、SVN 端的寫入是永久的,並詢問要怎麼處理;**不要**重呼叫 bootstrap 腳本。
    - merge commit 完成後,**由 agent 直接接 case (a) sub-step 4「base 骨架後置」收尾**(套 `.gitignore` /
      `CLAUDE.md` / config 並 commit)。
 4. **腳本成功(merge 乾淨)→ base 骨架後置**:同 case (a) sub-step 4(疊在當前分支上,先 append `.gitignore`

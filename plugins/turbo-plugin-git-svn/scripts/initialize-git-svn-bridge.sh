@@ -372,6 +372,17 @@ if [[ -n "$(git -C "$REMOTE_PATH" status --porcelain)" ]]; then
   fi
 fi
 
+# ---- step 11b: the bridge branch MUST exist as a commit before step 13 can merge it. ----
+# An SVN path that EXISTS BUT IS EMPTY imports no files and dirties nothing, so none of the commit
+# paths above fire and `remote-svn/<branch>` stays unborn -- step 13 then dies on "not something we
+# can merge". That state used to be unreachable: the (now removed) step 10 always wrote a .gitignore
+# into the bridge, which made the tree dirty and sent us down the fail-safe below. It became
+# reachable the moment `new-svn-path` let a user create a trunk and bootstrap straight into it, so
+# the guard has to be unconditional rather than a branch of the dirty-tree check.
+if ! git -C "$REMOTE_PATH" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+  git -C "$REMOTE_PATH" -c commit.gpgsign=false commit --allow-empty -m "init: remote-svn/$BRANCH branch"
+fi
+
 # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs), then
 # `svn update` so the whole WC sits uniformly at SVN HEAD -- a subsequent tp-pull-from-svn then
 # resolves cur=HEAD and imports nothing (no double-import; KTD4 mixed-revision floor). ----
@@ -394,7 +405,15 @@ trap - ERR
 if ! git -C "$MAIN_WORKTREE" merge --allow-unrelated-histories -m "chore: connect SVN bridge via turbo-plugin" "$REMOTE_BRANCH"; then
   CONFLICTS="$(git -C "$MAIN_WORKTREE" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
   CONFLICTS="${CONFLICTS% }"
-  echo "TP_TOKEN:MERGE_CONFLICT $CONFLICTS"
+  if [[ -n "$CONFLICTS" ]]; then
+    echo "TP_TOKEN:MERGE_CONFLICT $CONFLICTS"
+  else
+    # The merge was refused for a reason that is NOT a content conflict. Reporting a conflict here
+    # sends the reader hunting for conflicted files that do not exist -- observed on a real machine,
+    # where the actual cause (an unborn bridge branch) was two steps upstream. Git's own message is
+    # already on stderr; do not overwrite it with a wrong diagnosis.
+    echo "TP_TOKEN:MERGE_FAILED branch=$REMOTE_BRANCH"
+  fi
   exit 1
 fi
 

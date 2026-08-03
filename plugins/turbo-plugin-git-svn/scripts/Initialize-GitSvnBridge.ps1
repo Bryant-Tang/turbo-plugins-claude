@@ -417,6 +417,20 @@ try {
             }
         }
 
+        # ---- step 11b: the bridge branch MUST exist as a commit before step 13 can merge it. ----
+        # An SVN path that EXISTS BUT IS EMPTY imports no files and dirties nothing, so none of the
+        # commit paths above fire and `remote-svn/<branch>` stays unborn -- step 13 then dies on
+        # "not something we can merge". That state used to be unreachable: the (now removed) step 10
+        # always wrote a .gitignore into the bridge, which made the tree dirty and sent us down the
+        # fail-safe above. It became reachable the moment New-SvnPath let a user create a trunk and
+        # bootstrap straight into it, so the guard has to be unconditional rather than a branch of
+        # the dirty-tree check.
+        & git -C $remoteWorktreePath rev-parse --verify --quiet HEAD 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            & git -C $remoteWorktreePath -c commit.gpgsign=false commit --allow-empty -m "init: remote-svn/$Branch branch"
+            if ($LASTEXITCODE -ne 0) { throw 'git commit (empty bridge init) failed' }
+        }
+
         # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs),
         # then `svn update` so the whole WC sits uniformly at SVN HEAD -- a subsequent
         # tp-pull-from-svn then resolves cur=HEAD and imports nothing (no double-import). ----
@@ -469,7 +483,15 @@ try {
     if ($mergeRc -ne 0) {
         $conflicts = (& git -C $mainWorktree diff --name-only --diff-filter=U | Out-String)
         $conflictList = (@($conflicts -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ' ')
-        Write-Output "TP_TOKEN:MERGE_CONFLICT $conflictList"
+        if ($conflictList) {
+            Write-Output "TP_TOKEN:MERGE_CONFLICT $conflictList"
+        } else {
+            # The merge was refused for a reason that is NOT a content conflict. Reporting a conflict
+            # here sends the reader hunting for conflicted files that do not exist -- observed on a
+            # real machine, where the actual cause (an unborn bridge branch) was two steps upstream.
+            # Git's own message is already on stderr; do not overwrite it with a wrong diagnosis.
+            Write-Output "TP_TOKEN:MERGE_FAILED branch=$remoteBranch"
+        }
         exit 1
     }
 

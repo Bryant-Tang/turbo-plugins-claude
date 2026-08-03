@@ -181,6 +181,37 @@ BeforeAll {
         return $uri
     }
 
+    # Build an svn repo that HAS HISTORY, plus a landing path that EXISTS BUT IS EMPTY. That is the
+    # exact shape New-SvnPath produces: a brand-new project gets its trunk created inside a
+    # repository several other projects already share, so the repo HEAD is well past r0 while the
+    # path itself has never had a single file. Returns the URI OF THE EMPTY TRUNK, or $null.
+    #
+    # NOT the same as Scenario 1's empty repo: there HEAD is r0 and the import has no revisions to
+    # consider at all; here the import walks real revisions and finds none of them touched this
+    # path -- a different branch of the bootstrap, which left the bridge branch unborn (step 13 then
+    # died on "not something we can merge", misreported as a conflict).
+    function New-SvnRepoWithEmptyTrunk {
+        param([string]$Sandbox, [string]$Name = 'svnrepo', [string]$ConfigDir)
+        $repo = [System.IO.Path]::Combine($Sandbox, $Name)
+        & svnadmin create $repo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($repo -replace '\\', '/')
+        & svn mkdir --parents -m 'layout' "$uri/other/trunk" "$uri/proj-new/trunk" --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $co = [System.IO.Path]::Combine($Sandbox, "co-other-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+        & svn checkout "$uri/other/trunk" $co --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $enc = New-Object Text.UTF8Encoding($false)
+        for ($n = 1; $n -le 3; $n++) {
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, "other$n.txt"), "other $n`n", $enc)
+            & svn add ([System.IO.Path]::Combine($co, "other$n.txt")) --config-dir $ConfigDir 2>$null | Out-Null
+            Push-Location $co
+            try { & svn commit -m "other change $n" --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) { return $null }
+        }
+        return "$uri/proj-new/trunk"
+    }
+
     # Build an svn repo whose FIRST revision has NO .gitignore and where a LATER revision ADDS one.
     # This is the shape that used to deadlock a per-revision bootstrap: the bridge .gitignore was
     # written while the WC sat at r1, so the incoming add at r3 raised a tree conflict and svn sat on
@@ -235,6 +266,35 @@ Describe 'Initialize-GitSvnBridge' {
 
     It 'script-under-test exists' {
         [System.IO.File]::Exists($script:ScriptUnderTest) | Should -BeTrue
+    }
+
+    Context 'Scenario 1b: case (a) + a landing path that EXISTS BUT IS EMPTY, in a repo with history' {
+        It 'connects instead of dying on an unborn bridge branch' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-1b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SvnRepoWithEmptyTrunk -Sandbox $sb -ConfigDir $cfg
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0
+                $res.Stdout | Should -Match 'SVN bridge connected\.'
+                # The failure this locks down reported a conflict with an EMPTY conflict list.
+                $res.Stdout | Should -Not -Match 'MERGE_CONFLICT'
+                $res.Stdout | Should -Not -Match 'MERGE_FAILED'
+
+                (Get-BridgeBranchCount -Root $root) | Should -Be 1
+                $bridge = Get-BridgePath -Root $root
+                # The bridge branch must be a real commit, not an unborn ref: step 13 merges it.
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('rev-parse', '--verify', 'HEAD')) | Should -Not -BeNullOrEmpty
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+                (Run-Git-Capture -Cwd $root -GitArgs @('ls-files')) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
     }
 
     Context 'Scenario 1: case (a) + EMPTY svn -> clean connect, empty main' {

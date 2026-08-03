@@ -174,6 +174,56 @@ test_case_a_empty_svn() {
     assertEquals 'main has no files (the bridge invents nothing)' '' "$(git -C "$root" ls-files | tr -d '\r')"
 }
 
+# Build an svn repo that HAS HISTORY, plus a landing path that EXISTS BUT IS EMPTY. That is the
+# exact shape `new-svn-path` produces: a brand-new project gets its trunk created inside a
+# repository several other projects already share, so the repo HEAD is well past r0 while the path
+# itself has never had a single file. Echoes the file:/// URI OF THE EMPTY TRUNK.
+#
+# This is NOT the same as Scenario 1's empty repo. There, HEAD is r0 and the import has no
+# revisions to consider at all; here the import walks real revisions and finds that none of them
+# touched this path -- which lands in a different branch of the bootstrap and left the bridge
+# branch unborn (step 13 then died on "not something we can merge", misreported as a conflict).
+make_svn_repo_with_empty_trunk() {
+    local repo="$1" seed co uri n
+    svnadmin create "$repo" >/dev/null 2>&1 || return 1
+    uri="$(svn_uri "$repo")"
+    svn mkdir --parents -m 'layout' "$uri/other/trunk" "$uri/proj-new/trunk" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    co="$SB/co-other-$RANDOM"
+    svn checkout "$uri/other/trunk" "$co" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    for (( n = 1; n <= 3; n++ )); do
+        printf 'other %s\n' "$n" > "$co/other$n.txt"
+        svn add "$co/other$n.txt" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+        ( cd "$co" && svn commit -m "other change $n" --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+    done
+    printf '%s' "$uri/proj-new/trunk"
+}
+
+# ── Scenario 1b: case (a) + a landing path that EXISTS BUT IS EMPTY, in a repo with history ────
+test_case_a_empty_trunk_in_populated_repo() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root bridge url out rc
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    url="$(make_svn_repo_with_empty_trunk "$SB/svnrepo")"
+    if [ -z "$url" ]; then startSkipping; return 0; fi
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$url" 2>&1)"; rc=$?
+    assertEquals "empty landing path exits 0 (out: $out)" 0 "$rc"
+    case "$out" in *"SVN bridge connected."*) assertTrue 'reports connected' 0 ;; *) fail "no connect line: $out" ;; esac
+    # The failure this locks down reported a conflict with an EMPTY conflict list.
+    case "$out" in *MERGE_CONFLICT*) fail "claimed a merge conflict: $out" ;; esac
+    case "$out" in *MERGE_FAILED*)  fail "merge was refused: $out" ;; esac
+
+    assertEquals 'exactly one remote-svn/main' 1 "$(bridge_branch_count "$root")"
+    bridge="$(bridge_path "$root")"
+    # The bridge branch must be a real commit, not an unborn ref: that is what step 13 merges.
+    git -C "$bridge" rev-parse --verify --quiet HEAD >/dev/null 2>&1
+    assertTrue 'bridge branch has at least one commit' $?
+    assertTrue 'bridge worktree clean' "[ -z \"\$(git -C '$bridge' status --porcelain)\" ]"
+    assertTrue 'main has a commit' "git -C '$root' rev-parse --verify --quiet HEAD >/dev/null 2>&1"
+    assertEquals 'main has no files (the empty path contributes nothing)' '' "$(git -C "$root" ls-files | tr -d '\r')"
+}
+
 # ── Scenario 2: case (a) + NON-EMPTY svn (/trunk, >5 revs) + squash -> single lump on main ─────
 # The seed /trunk carries >5 revisions, so the first import needs a granularity choice; `squash`
 # reproduces today's single-commit shape (one lump). Also pins the setup invariants.
