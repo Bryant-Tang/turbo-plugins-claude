@@ -46,7 +46,17 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--re
 
 **首推 bootstrap(僅 `BRIDGE_ABSENT`)**:
 
-1. 需要 `--svn-url <url>`(該分支對應的 SVN 路徑)。未提供 → 要求使用者提供後再續。
+1. 需要 `--svn-url <url>`(該分支對應的 SVN 路徑)。使用者已經給了就用他給的;**沒給的話先自己推導
+   一個預設值,拿去問,不要一開口就要人手打完整 URL。**
+   - 推導方式:讀主線橋接的 SVN URL(`svn info --show-item url <主 worktree>/.turbo-plugin/worktrees/remote-svn-main`)。
+     它以 `/trunk` 結尾時 → 預設值是把 `/trunk` 換成 `/branches/<消毒過的分支名>`
+     (消毒＝斜線換短橫,與 worktree 目錄同一套規則,例如 `feature/x` → `feature-x`)。
+   - 用 `AskUserQuestion` 把這個預設值當**第一個選項**讓使用者確認或改。
+   - **推導不出來就退回原本作法**:主線 URL 不是以 `/trunk` 結尾(非標準佈局)時不要硬猜,直接請使用者提供。
+   - **`branches/` 這一層必須已經存在**:建立分支用的 `svn copy` 沒有帶 `--parents`,中間層不存在會直接失敗。
+     同理,`.../branches/team-a/feat-x` 這種多層路徑要先有 `team-a` 才建得起來。
+   - 這裡沒有任何「一定要放在 `branches/` 底下」的強制:URL 給什麼就建在哪,漏掉 `branches` 也照建,
+     而且 **SVN 的歷史是永久的**。所以下一步的確認一定要把完整 URL 原樣寫出來給使用者看。
 2. `AskUserQuestion` 明示風險:「這會建立一個**永久** SVN 路徑 `<url>`(SVN 路徑建立後無法刪除)。若建立過程後段失敗,該 SVN 路徑可能已經留下,可由**重跑首推** idempotent 接續(偵測到既有路徑→checkout,不重複建立);本機 git 端(分支/worktree)失敗會自動 rollback。確認建立?」
    - **取消** → 結束 skill,不建任何東西。
    - **確認** → 依執行路由跑 New-RemoteBridge(**PowerShell 用單破折號參數**):
