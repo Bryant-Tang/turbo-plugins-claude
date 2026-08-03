@@ -1,6 +1,6 @@
 ---
 name: tp-db-management
-description: '做任何資料庫 / SQL 相關工作時主動使用:查 schema、查資料、查物件,或準備 seed / migration / 部署 SQL,或任何需要先理解資料庫結構才能改 code 的情況。用 DBHub MCP server（read-only）檢視,並把標準化 SQL 寫到 .turbo-plugin/sql/<env>-db/<branch>/*.sql（<branch> 取自當前 git branch,斜線換短橫）。不要繞過本 skill 直接手寫 SQL 或用其它方式查資料庫。'
+description: 'Use proactively for any database or SQL work: inspecting schema/data/objects, or preparing seed, migration or deployment SQL. Inspect read-only through the DBHub MCP server and write standardised SQL to `.turbo-plugin/sql/<env>-db/<branch>/`. Do not bypass this skill by hand-writing SQL or querying another way.'
 argument-hint: 'Optional: database name 或 target environment（local-db / test-db / main-db）'
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbhub__execute_sql, mcp__tp-dbhub__run_sql, mcp__tp-dbhub__search_objects, mcp__tp-dbhub__list_tables, mcp__tp-dbhub__list_schemas, mcp__tp-dbhub__get_table_schema

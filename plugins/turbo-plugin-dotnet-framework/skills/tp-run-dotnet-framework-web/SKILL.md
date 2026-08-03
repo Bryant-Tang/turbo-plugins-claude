@@ -1,6 +1,6 @@
 ---
 name: tp-run-dotnet-framework-web
-description: '在本機啟動 IIS Express 跑某個 .NET Framework Web 專案——「給 agent 用的 VS 2022」:由你(agent)判斷要跑哪個 csproj。內含 listening 健康檢查與跨 worktree self-heal(發現同 project 在別 worktree 已啟 → 自動停舊 instance 並重啟)。使用者明確要求 run 時執行;agent 偵測「準備手動驗證、需要本機跑起 IIS」時可建議。'
+description: 'Run a .NET Framework project locally. You pick the csproj, then dispatch on `<OutputType>`: web starts under IIS Express (health check + cross-worktree self-heal), console runs its built exe with remembered arguments. Run on request, or suggest when something needs checking by hand.'
 argument-hint: '[--project <path-to-csproj>] [--timeout <seconds>] [--arguments <args>] [--working-directory <path>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion

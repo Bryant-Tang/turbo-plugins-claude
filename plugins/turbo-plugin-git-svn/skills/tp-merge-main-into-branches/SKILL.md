@@ -1,6 +1,6 @@
 ---
 name: tp-merge-main-into-branches
-description: '把最新的 main merge 進指定的本地分支(預設:全部非 remote-svn/* 分支,排除 main 本身與 remote-svn/* 橋接分支)。使用者明確要求「把 main 同步到分支」/「merge main 進某些分支」時執行。會改動 branch 狀態,不 auto-trigger。'
+description: 'Merge the latest main into local branches (default: all but main and the remote-svn/* bridges). Run on explicit request only; it changes branch state, so do NOT auto-trigger.'
 argument-hint: '[--branch <name>]...'
 user-invocable: true
 allowed-tools: Bash, Read

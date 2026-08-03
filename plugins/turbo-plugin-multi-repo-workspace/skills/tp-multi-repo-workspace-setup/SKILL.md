@@ -1,6 +1,6 @@
 ---
 name: tp-multi-repo-workspace-setup
-description: '為「一個資料夾底下並排放著多個獨立 git repo」的工作區做設定:注入工作區根 CLAUDE.md,說明各子專案自成一個 repo、動手前先讀它自己的 CLAUDE.md、不要跨專案 commit;並可逐一帶著明確的專案路徑跑各子專案的 git↔SVN setup。使用者在這種資料夾開 session 並要求設定時執行;agent 偵測到「當前目錄不是 repo、但底下有多個含 .git 的子資料夾」時可**建議**執行,**不要自動觸發**(會寫 CLAUDE.md)。'
+description: 'Set up a workspace holding several independent git repos side by side: inject a root CLAUDE.md (each subfolder is its own repo, read its CLAUDE.md first, never commit across projects), then optionally run each subproject''s git<->SVN setup. Run on request; you may SUGGEST it when the current directory is not a repo but subdirectories are, but **do NOT auto-trigger** -- it writes CLAUDE.md.'
 argument-hint: 'optional: --workspace-root <path>'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion

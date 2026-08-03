@@ -52,6 +52,28 @@ plugins/<plugin-name>/
 └── tests/                       # 必要 — 自動化測試套件（見「測試標準」）
 ```
 
+### SKILL 的 `description` 用英文、body 用繁中（常駐規約）
+
+`skills/*/SKILL.md` 的 frontmatter **`description` 一律用英文**；SKILL 的 body（Purpose / Procedure /
+Decision Rules …）**維持繁體中文**。
+
+分界的理由是**載入時機不同**：`description` 是唯一會被**前載**的部分——每一支已安裝 skill 的
+description 都常駐在 context 裡，供模型決定要不要叫它；body 只有真的用到那支 skill 才會載入。所以
+description 是**給機器做路由的中繼資料**，body 才是給 agent 讀的作業說明。實測 18 支的 description
+從繁中改成英文，估計約 2040 tokens → 1143（**省下約 44%**，中文一字約一個 token，英文約四字元一個）。
+
+寫的時候：
+
+- **只寫三件事**：這支做什麼、什麼時候該觸發、以及硬性的觸發限定語。解釋、範例、細節一律進 body——
+  第一版翻譯把解釋也寫進 description，字數變兩倍、token 幾乎沒省到，那就白改了。
+- **限定觸發行為的語句是契約，一個都不能漏**：「主動套用、不需使用者明講」、「使用者明確要求才執行」、
+  「可建議但**不要自動觸發**」、「需明確確認」、「read-only，可安全 auto-trigger」。翻掉一個限定詞，
+  觸發行為就變了。
+- 改完用乾淨 session 抽驗觸發行為（同一個 session 裡跑過一次之後就不會再自動觸發，在那裡驗等於白驗）。
+
+> 這條**不含** `.claude-plugin/marketplace.json` 的 plugin description 與 `commands/*.md`；那些不受
+> skill 前載機制影響。
+
 ### Skill ↔ Command ↔ Script 三層分工
 
 - **Skill**（`skills/<name>/SKILL.md`）：用 frontmatter 宣告 `name` / `description` / `argument-hint` / `user-invocable`，內容是給 agent 讀的「Procedure / Decision Rules / Completion Checks」式說明。Skill 不直接執行指令，會委派給 subagent 或叫 user-level 工具。**選 SKILL 的時機**：當 agent 看到某種狀態（例如新 untracked 檔案）時應主動建議該指令（典型範例：偵測到 untracked 檔案時建議加 ignore）。

@@ -1,6 +1,6 @@
 ---
 name: tp-cleanup-orphan-iis
-description: '清除殘留的孤兒 IIS Express process 及 %TEMP% 殘留的 per-launch 暫存檔(設定檔 + 啟動 log),通常在 worktree rename 或 project 搬移後出現。使用者明確要求清除時執行;tp-stop 偵測到同 csproj-stem 但不同 hash 的 orphan instance 時建議。'
+description: 'Remove orphaned IIS Express processes and their leftover per-launch temp files, typically after a worktree rename or project move. Run on request; tp-stop suggests it when it finds one.'
 argument-hint: '[--project <path>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Grep, AskUserQuestion

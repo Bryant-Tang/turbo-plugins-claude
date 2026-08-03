@@ -1,6 +1,6 @@
 ---
 name: tp-suggest-ignore
-description: '管理 `.gitignore`:直接增刪 pattern,或互動分析找出「該被 git ignore」與「該從 SVN untrack」的檔案——由你(agent)看專案實際內容判斷什麼是產物 / 本機設定 / 機密,不套固定清單。**Add / remove ignore pattern 可逆**(寫錯可拿掉),偵測到新的 untracked 檔案像是建置產物或機密時可主動建議執行;使用者明確要求全 repo 掃描時也可跑。'
+description: 'Manage `.gitignore`: add/remove patterns, or analyse which files should be git-ignored and which untracked from SVN -- judged from the project''s actual contents, not a fixed list. **Reversible**, so proactively suggest it on spotting untracked build output or secrets; also runs on request.'
 argument-hint: 'Direct: --add-git|--remove-git <pattern>… | Analysis: (no args)'
 user-invocable: true
 allowed-tools: Bash, Read, Edit, Glob, Grep, AskUserQuestion

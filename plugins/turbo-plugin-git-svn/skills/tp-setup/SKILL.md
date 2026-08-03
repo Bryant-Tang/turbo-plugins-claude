@@ -1,6 +1,6 @@
 ---
 name: tp-setup
-description: '設定 turbo-plugin-git-svn 環境(git↔SVN bridge)。使用者明確要求 setup 時執行;agent 偵測到 .turbo-plugin/ marker 不存在 / SessionStart 提示需 setup 時可建議使用者執行,**不要自動觸發**。兩層:共用 base 段(.turbo-plugin/ + concern-neutral 共用檔)與 git↔SVN bridge bootstrap;case (a)/(b) 的 bridge bootstrap 由 Initialize-GitSvnBridge 腳本承接、base 骨架腳本後置。涵蓋四個 case:(a) 新建 git+SVN / (b) 接管既有 git+SVN / (c) 主 worktree 補設定 / (d) peer worktree。'
+description: 'Set up turbo-plugin-git-svn (the git<->SVN bridge). Run on explicit request; you may SUGGEST it when `.turbo-plugin/` is missing, but **do NOT auto-trigger**. Covers four cases: new git+SVN, taking over an existing repo, adding config to the main worktree, and peer worktrees.'
 argument-hint: 'optional: --svn-url <url>'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion

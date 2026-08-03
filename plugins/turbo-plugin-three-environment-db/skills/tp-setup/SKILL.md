@@ -1,6 +1,6 @@
 ---
 name: tp-setup
-description: '設定 turbo-plugin-three-environment-db 環境(dbhub / 三環境 DB)。使用者明確要求 setup 時執行;**不要自動觸發**。先跑共用 base 段(建 .turbo-plugin/ + concern-neutral 共用檔),再做 db concern:dbhub.example.local.toml 範本、提示填 dbhub.local.toml。需要 git repo 而不存在時 fail-loud(不自行 git init)。'
+description: 'Set up turbo-plugin-three-environment-db (dbhub / three database environments): shared base files, then the `dbhub.example.local.toml` template and a prompt to fill `dbhub.local.toml`. Run on explicit request; **do NOT auto-trigger**. Fails loudly when a git repo is required but absent.'
 argument-hint: ''
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion

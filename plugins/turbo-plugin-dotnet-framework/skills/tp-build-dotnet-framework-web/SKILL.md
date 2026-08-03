@@ -1,6 +1,6 @@
 ---
 name: tp-build-dotnet-framework-web
-description: '對 .NET Framework Web 專案跑 MSBuild build——「給 agent 用的 VS 2022」:由你(agent)判斷要建哪個 csproj / `.sln` 與 configuration/platform,沒指定的 config 省略交 MSBuild 決定。使用者明確要求 build 時執行;agent 偵測到「程式碼變更後驗證可建置」需求時也可建議執行(build 失敗可重跑,可逆操作)。'
+description: 'MSBuild build for a .NET Framework project, web or console. You pick the csproj/`.sln` and configuration; omit what the user did not name. Run on request, or suggest it to verify a code change builds (reversible).'
 argument-hint: '[--configuration <name>] [--platform <name>] [--project <path-to-csproj-or-sln>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion

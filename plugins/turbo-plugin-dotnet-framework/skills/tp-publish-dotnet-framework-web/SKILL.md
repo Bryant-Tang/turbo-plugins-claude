@@ -1,6 +1,6 @@
 ---
 name: tp-publish-dotnet-framework-web
-description: '對 .NET Framework Web 專案跑 MSBuild publish(含 frontend pack)——「給 agent 用的 VS 2022」:由你(agent)判斷要發佈哪個 csproj 與哪個 `.pubxml`,configuration 以 pubxml 內嵌值為準。**publish 產出可能被 CD pipeline 消費,影響部署環境;必須使用者明確要求才執行**;agent 偵測到「完成一輪改動準備部署」時可建議,但需明確確認。'
+description: 'MSBuild publish for a .NET Framework WEB project (frontend pack included). You pick the csproj and `.pubxml`. **Publish output can reach a deployed environment: run ONLY on explicit request**; may be suggested, but requires explicit confirmation. Console projects have no publish.'
 argument-hint: '[--pubxml <path>] [--configuration <name>] [--platform <name>] [--project <path-to-csproj>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion

@@ -1,6 +1,6 @@
 ---
 name: tp-checkout-svn-branch
-description: '一步把「既有的 SVN 分支」匯入成本機 git↔SVN bridge + 一條已填好內容的工作分支,讓使用者直接在 git 上接著開發、日後用 /tp-pull-from-svn 同步。**對 SVN 端唯讀**(不建立、不寫入任何 SVN 路徑);只在本機 git 端建立 bridge / worktree / 工作分支,失敗會完全回滾。使用者說「把某個 SVN 分支拉下來 / checkout 既有 SVN branch 開始開發」時適用。'
+description: 'Import an existing SVN branch into a local git<->SVN bridge plus a ready-to-use working branch. **Read-only against SVN**; only local git objects are created, and a failure rolls them back. Use when the user wants to check out an existing SVN branch.'
 argument-hint: '--svn-url <existing-svn-branch-url> [--branch <work-branch-name>]'
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion

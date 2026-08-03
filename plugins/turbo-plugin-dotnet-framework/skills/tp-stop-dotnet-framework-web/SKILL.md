@@ -1,6 +1,6 @@
 ---
 name: tp-stop-dotnet-framework-web
-description: '停止某個 .NET Framework Web 專案對應的 IIS Express instance(透過 project identity 匹配 site name,跨 worktree 都能找到)——「給 agent 用的 VS 2022」:由你(agent)判斷要停哪個 csproj 對應的站台。使用者明確要求 stop 時執行;agent 偵測「使用者結束驗證、port 不再需要」時可建議。'
+description: 'Stop what tp-run started. You pick the csproj, then dispatch on `<OutputType>`: a web project''s IIS Express instance is matched by project identity across worktrees; a console project is stopped by PID, only if this tool started it. Run on request, or suggest when the port is no longer needed.'
 argument-hint: '[--project <path-to-csproj>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion

@@ -1,6 +1,6 @@
 ---
 name: tp-push-to-svn
-description: '把本地工作分支推上 SVN(透過 remote-svn/<branch> worktree)。SVN message body 由 prepare 腳本鎖定為這次範圍內所有非-merge commit subject 的條列(`- ` 開頭、無 hash、無 commit-type 過濾),agent 只負責寫一行 title。**SVN 寫操作影響永久 history,必須由使用者明確要求才執行;agent 偵測到「使用者完成一輪改動準備 push」時可建議,但需明確確認**。'
+description: 'Push a local working branch to SVN. The message body is locked by the prepare script to the in-range non-merge commit subjects; you write only the title. **An SVN write is permanent: run ONLY on explicit request**; may be suggested, but requires explicit confirmation.'
 argument-hint: '--branch <branch> [--svn-url <url>]'
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion

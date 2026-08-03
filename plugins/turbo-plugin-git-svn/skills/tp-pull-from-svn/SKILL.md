@@ -1,6 +1,6 @@
 ---
 name: tp-pull-from-svn
-description: '從 SVN 拉新 revision 到 remote-svn/<branch>(`remote-svn-main` / `remote-svn-<branch>` worktree)並 merge 進對應本地工作分支。使用者明確要求 pull / 偵測到 remote 有新 SVN commit 而本地 working branch 落後時建議執行;**不要自動觸發**(merge 衝突需使用者介入)。'
+description: 'Pull new SVN revisions into remote-svn/<branch> and merge them into the matching working branch. Run on request; suggest when the working branch is behind SVN. **Do NOT auto-trigger** -- conflicts need the user.'
 argument-hint: '--branch <branch>'
 user-invocable: true
 allowed-tools: Bash, Read

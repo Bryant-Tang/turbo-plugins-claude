@@ -1,6 +1,6 @@
 ---
 name: tp-csharp-comment
-description: '撰寫或修改 C# 程式碼(`.cs`,含 `.cshtml` 內 C#)時主動套用:新增 / 改動 class / record / struct / interface / enum / method / property 後,依本專案 convention 補上 XML doc 與解釋註解(寫給未來不在現場的新進工程師,說明意圖與 why)。只要這次工作有動到 C# 就適用,不需使用者另外明講「加註解」。'
+description: 'Apply proactively whenever C# is added or changed (`.cs`, including C# in `.cshtml`): add XML doc and explanatory comments per this project''s convention, stating intent and why. No explicit request needed.'
 argument-hint: 'Optional: target C# file, symbol, or comment scope'
 user-invocable: true
 allowed-tools: Read, Edit, Glob, Grep

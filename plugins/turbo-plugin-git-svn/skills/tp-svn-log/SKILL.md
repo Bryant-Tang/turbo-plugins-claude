@@ -1,6 +1,6 @@
 ---
 name: tp-svn-log
-description: '在指定 remote-<branch> worktree 跑 svn log,顯示 SVN history。使用者明確要求查 SVN history 時執行;agent 在需要對齊 SVN revision / 確認新 SVN commit 時也可建議執行(read-only,可安全 auto-trigger)。'
+description: 'Show SVN history via svn log in the named remote-<branch> worktree. Run on request, or whenever an SVN revision needs confirming (read-only, safe to auto-trigger).'
 argument-hint: '[--branch <branch>] [--limit <n>] [-r/--revision <spec>] [--verbose]'
 user-invocable: true
 allowed-tools: Bash, Read

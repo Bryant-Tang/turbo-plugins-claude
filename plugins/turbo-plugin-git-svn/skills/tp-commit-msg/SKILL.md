@@ -1,6 +1,6 @@
 ---
 name: tp-commit-msg
-description: '撰寫或檢查 git commit message 時主動使用:依本專案語意規範產出 / 檢查訊息(祈使句、what + why、語言一致;不得引用 git SHA 或僅本地識別碼)。**本 skill 不驗證、不限制 commit type**(type 沿用該 repo 既有慣例即可)。準備 commit 一段改動時就套用,不需使用者另外明講「幫我寫 commit message」。'
+description: 'Use proactively when writing or reviewing a git commit message: imperative mood, what + why, consistent language, never a git SHA or machine-local identifier. **Does not validate or restrict the commit type.** No explicit request needed.'
 argument-hint: 'Optional: draft commit message or the change to summarize'
 user-invocable: true
 allowed-tools: Read, Bash, Grep, Glob

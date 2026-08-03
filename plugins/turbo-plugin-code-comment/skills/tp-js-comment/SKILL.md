@@ -1,6 +1,6 @@
 ---
 name: tp-js-comment
-description: '撰寫或修改 JavaScript / TypeScript 程式碼時主動套用,涵蓋 `.js` / `.ts` 與 `.vue` / `.cshtml` / `.html` 內 `<script>` 區塊:新增 / 改動 function / class / interface / type / 匯出常數後,依本專案 convention 補上 JSDoc 與解釋註解(說明意圖與 why)。只要這次工作有動到 JS/TS 就適用,不需使用者另外明講。'
+description: 'Apply proactively whenever JavaScript/TypeScript is added or changed, including `<script>` blocks in `.vue` / `.cshtml` / `.html`: add JSDoc and explanatory comments per this project''s convention, stating intent and why. No explicit request needed.'
 argument-hint: 'Optional: target JS/TS file, symbol, or comment scope'
 user-invocable: true
 allowed-tools: Read, Edit, Glob, Grep
