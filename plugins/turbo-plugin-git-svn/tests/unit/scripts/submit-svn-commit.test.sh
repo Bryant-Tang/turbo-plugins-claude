@@ -177,5 +177,66 @@ test_ordinary_push_does_not_advance() {
     assertEquals 'ordinary push adds no extra property commit (exactly one new revision)' "1" "$(( rev_after - rev_before ))"
 }
 
+# ── Case 7 (U3): a commit under a SIBLING path must not block this path's push ────────────────
+# Real-machine deadlock 2026-07-31: SVN revision numbers are repository-wide, so in a repository
+# holding several projects a colleague's (or your own other project's) commit bumps HEAD without
+# touching anything of ours. submit measured staleness against the repository HEAD and refused with
+# "SVN HEAD changed since prepare (local r85, head r87)" -- then sent the user to /tp-pull-from-svn,
+# which correctly replayed nothing for this path and answered "Already up to date at SVN r85".
+# Two commands contradicting each other, with no way out but a manual `svn update`.
+test_sibling_path_commit_does_not_block_push() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local repos_root sibling_wc out rc
+
+    # Stage this path's push FIRST, so the sibling commit lands strictly between prepare and submit.
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-sibling\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add app.txt >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: change for the sibling case' >/dev/null 2>&1
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+
+    # Bump repository HEAD from a path we do NOT own (trunk is a sibling of branches/feat-x).
+    repos_root="$(svn info --show-item repos-root-url "$BRANCH_URL" --config-dir "$CFG" 2>/dev/null | tr -d '\r\n')"
+    sibling_wc="$SB/siblingwc"
+    svn checkout "$repos_root/trunk" "$sibling_wc" --config-dir "$CFG" >/dev/null 2>&1 || { startSkipping; return 0; }
+    printf 'someone-elses-project\n' > "$sibling_wc/sibling.txt"
+    svn add "$sibling_wc/sibling.txt" --config-dir "$CFG" >/dev/null 2>&1
+    svn commit "$sibling_wc" -m 'another project moves HEAD' --config-dir "$CFG" >/dev/null 2>&1 || { startSkipping; return 0; }
+
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'push despite sibling commit' 2>&1 )"; rc=$?
+    assertEquals "submit succeeds despite a sibling-path commit (out: $out)" 0 "$rc"
+    case "$out" in
+        *'HEAD changed'*) fail "still refusing on repository HEAD: $out" ;;
+        *) assertTrue 'no repository-HEAD refusal' 0 ;;
+    esac
+}
+
+# ── Case 8 (U3): a commit to THIS path still blocks, and points at pull ───────────────────────
+# The guard must keep doing its job: the loosening is "ignore sibling paths", not "ignore everyone".
+test_same_path_commit_still_blocks_push() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local branch_wc out rc
+
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-mine\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add app.txt >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: change for the same-path case' >/dev/null 2>&1
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+
+    # Someone commits to OUR branch path between prepare and submit.
+    branch_wc="$SB/branchwc"
+    svn checkout "$BRANCH_URL" "$branch_wc" --config-dir "$CFG" >/dev/null 2>&1 || { startSkipping; return 0; }
+    printf 'teammate\n' > "$branch_wc/teammate.txt"
+    svn add "$branch_wc/teammate.txt" --config-dir "$CFG" >/dev/null 2>&1
+    svn commit "$branch_wc" -m 'teammate commits to this very branch' --config-dir "$CFG" >/dev/null 2>&1 || { startSkipping; return 0; }
+
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'should be refused' 2>&1 )"; rc=$?
+    assertNotEquals "submit refuses when THIS path changed (out: $out)" 0 "$rc"
+    echo "$out" | grep -q 'tp-pull-from-svn'; assertTrue 'refusal points at pull' $?
+    echo "$out" | grep -q 'this path last changed at'; assertTrue 'refusal names the path revision, not repo HEAD' $?
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

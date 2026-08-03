@@ -54,10 +54,22 @@ try {
 
     $svnUrl = (& svn info --show-item url $remote.Path | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not get SVN URL from '$($remote.Name)'." }
-    $localRev = (& svn info --show-item revision $remote.Path | Out-String).Trim()
-    $headRev = (& svn info --show-item revision $svnUrl | Out-String).Trim()
-    if ($localRev -ne $headRev) {
-        throw "SVN HEAD changed since prepare (local r$localRev, head r$headRev). Abort the merge with 'git -C $($remote.Path) merge --abort', then run '/tp-pull-from-svn --branch $Branch'."
+    # Staleness is measured against the last revision that touched THIS branch path, never against
+    # the repository HEAD -- the same rule Build-SvnCommit states at length and follows. This end
+    # had the older repository-HEAD version, so only half the fix was ever applied, and it showed:
+    # in a repository holding several projects, `setup` commits under sibling paths bumped HEAD and
+    # this guard refused the push with "SVN HEAD changed since prepare (local r85, head r87)" while
+    # r86/r87 had not touched a single byte of ours. It then sent the user to /tp-pull-from-svn,
+    # which correctly found nothing to replay for this path and answered "Already up to date at SVN
+    # r85" -- the two commands contradicting each other with no way forward but a manual svn update.
+    #
+    # Cast to [int] and compare with `-lt`, not `-ne` on strings: the working copy legitimately sits
+    # ABOVE the path's last-changed-revision (a sibling path moved HEAD on), and '9' sorts after
+    # '10' as a string.
+    $localRev = [int]((& svn info --show-item revision $remote.Path | Out-String).Trim())
+    $pathRev = [int]((& svn info --show-item last-changed-revision $svnUrl | Out-String).Trim())
+    if ($localRev -lt $pathRev) {
+        throw "This SVN path changed since prepare (local r$localRev, this path last changed at r$pathRev). Abort the merge with 'git -C $($remote.Path) merge --abort', then run '/tp-pull-from-svn --branch $Branch'."
     }
 
     # Verify no new commits were added to the branch since prepare (SHA pinning check).

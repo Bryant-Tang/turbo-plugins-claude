@@ -241,4 +241,80 @@ Describe 'Submit-SvnCommit' {
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
+
+    Context 'Case 7 (U3): staleness is measured on THIS path, not the repository HEAD' {
+        # Real-machine deadlock 2026-07-31: SVN revision numbers are repository-wide, so in a
+        # repository holding several projects a commit under a sibling path bumps HEAD without
+        # touching anything of ours. Submit measured staleness against the repository HEAD and
+        # refused with "SVN HEAD changed since prepare (local r85, head r87)" -- then sent the user
+        # to /tp-pull-from-svn, which correctly replayed nothing for this path and answered
+        # "Already up to date at SVN r85". Two commands contradicting each other, with no way out
+        # but a manual `svn update`. Build-SvnCommit already measured it on the path; only this end
+        # was left on the old rule.
+        It 'a sibling-path commit does not block this path''s push' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag 'sibling'
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+
+                # Stage this path's push FIRST, so the sibling commit lands strictly between
+                # prepare and submit -- which is the window this guard covers.
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'app.txt')) -Value 'app-sibling' -NoNewline
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', 'app.txt')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: change for the sibling case')
+                $b = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                if ($b.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'prepare did not succeed in this env'; return }
+
+                # Bump repository HEAD from a path we do NOT own (trunk is a sibling of branches/feat-x).
+                $siblingWc = [System.IO.Path]::Combine($sb, 'siblingwc')
+                $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                try {
+                    & svn checkout "$($fx.Uri)/trunk" $siblingWc 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'sibling checkout failed'; return }
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($siblingWc, 'sibling.txt')) -Value 'someone-elses-project' -NoNewline
+                    & svn add ([System.IO.Path]::Combine($siblingWc, 'sibling.txt')) 2>$null | Out-Null
+                    & svn commit $siblingWc -m 'another project moves HEAD' 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'sibling commit failed'; return }
+                } finally { $ErrorActionPreference = $old }
+
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'push despite sibling commit')
+                $s.ExitCode | Should -Be 0 -Because "submit must ignore sibling paths: $($s.Combined)"
+                $s.Combined | Should -Not -Match 'HEAD changed'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # The loosening is "ignore sibling paths", not "ignore everyone" -- a commit to OUR path
+        # must still stop the push and point at pull.
+        It 'a commit to this very path still blocks, and points at pull' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag 'samepath'
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'app.txt')) -Value 'app-mine' -NoNewline
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', 'app.txt')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: change for the same-path case')
+                $b = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                if ($b.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'prepare did not succeed in this env'; return }
+
+                $branchWc = [System.IO.Path]::Combine($sb, 'branchwc')
+                $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                try {
+                    & svn checkout $fx.BranchUrl $branchWc 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'branch checkout failed'; return }
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($branchWc, 'teammate.txt')) -Value 'teammate' -NoNewline
+                    & svn add ([System.IO.Path]::Combine($branchWc, 'teammate.txt')) 2>$null | Out-Null
+                    & svn commit $branchWc -m 'teammate commits to this very branch' 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) { Set-ItResult -Skipped -Because 'branch commit failed'; return }
+                } finally { $ErrorActionPreference = $old }
+
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'should be refused')
+                $s.ExitCode | Should -Not -Be 0
+                $s.Combined | Should -Match 'tp-pull-from-svn'
+                $s.Combined | Should -Match 'this path last changed at'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
 }

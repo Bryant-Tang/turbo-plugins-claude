@@ -45,11 +45,22 @@ if ! git -C "$REMOTE_PATH" rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1; the
   exit 1
 fi
 
+# Staleness is measured against the last revision that touched THIS branch path, never against the
+# repository HEAD -- the same rule build-svn-commit.sh states at length and follows. This end had
+# the older repository-HEAD version, so only half the fix was ever applied, and it showed: in a
+# repository holding several projects, `setup` commits under sibling paths bumped HEAD and this
+# guard refused the push with "SVN HEAD changed since prepare (local r85, head r87)" while r86/r87
+# had not touched a single byte of ours. It then sent the user to /tp-pull-from-svn, which
+# correctly found nothing to replay for this path and answered "Already up to date at SVN r85" --
+# the two commands contradicting each other with no way forward but a manual `svn update`.
+#
+# Arithmetic `<`, not string `!=`: the working copy legitimately sits ABOVE the path's
+# last-changed-revision (a sibling path moved HEAD on), and "9" sorts after "10" as a string.
 SVN_URL="$(svn info --show-item url "$REMOTE_PATH")"
-LOCAL_REV="$(svn info --show-item revision "$REMOTE_PATH")"
-HEAD_REV="$(svn info --show-item revision "$SVN_URL")"
-if [[ "$LOCAL_REV" != "$HEAD_REV" ]]; then
-  echo "Error: SVN HEAD changed since prepare (local r$LOCAL_REV, head r$HEAD_REV). Abort the merge with 'git -C $REMOTE_PATH merge --abort', then run '/tp-pull-from-svn --branch $BRANCH'." >&2; exit 1
+LOCAL_REV="$(svn info --show-item revision "$REMOTE_PATH" | tr -d '[:space:]')"
+PATH_REV="$(svn info --show-item last-changed-revision "$SVN_URL" | tr -d '[:space:]')"
+if (( LOCAL_REV < PATH_REV )); then
+  echo "Error: this SVN path changed since prepare (local r$LOCAL_REV, this path last changed at r$PATH_REV). Abort the merge with 'git -C $REMOTE_PATH merge --abort', then run '/tp-pull-from-svn --branch $BRANCH'." >&2; exit 1
 fi
 
 # Verify no new commits were added to the branch since prepare (SHA pinning check).
