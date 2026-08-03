@@ -311,7 +311,7 @@ git-svn **無 per-peer 專屬檔**(dbhub per-peer 設定屬 `turbo-plugin-three-
   svn checkout、固定 `svn:ignore=.git`、連接歷史。
 - **使用者仍須手動處理**:
   - 若是 .NET Framework Web 專案 → 裝 `turbo-plugin-dotnet-framework`。它**沒有 setup 指令**,直接
-    `/tp-build-dotnet-framework-web` / `/tp-run-dotnet-framework-web` 即可(設定用到才建)。
+    `/tp-build-dotnet-framework` / `/tp-run-dotnet-framework` 即可(設定用到才建)。
   - 若要用三環境 DB → 裝 `turbo-plugin-three-environment-db` 並跑其 `/tp-setup`(dbhub)。
 - **下一步建議**:
   - case (a)/(b):「bridge 已連接、初次 SVN 內容已在當前分支;之後用 `/tp-pull-from-svn --branch main` 同步 SVN
