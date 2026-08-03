@@ -84,6 +84,8 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
   **選 command 的時機**：使用者主動觸發為主，agent 沒有「該主動建議」的場景。`/<plugin>:<name>` 觸發路徑與 SKILL 完全相同，差別只在於 agent 是否會自動依 description 觸發。
 - **Script**：實際做事的地方。**所有 script 都要同時提供 `.ps1` 和 `.sh` 兩個版本**，行為一致；Windows 走 PowerShell、其它平台走 Bash。命名為配對，**`.ps1` 用 PascalCase（Verb-Noun）、`.sh` 用小寫連字**（如 `Build-SvnCommit.ps1` + `build-svn-commit.sh`、`Remove-OrphanIis.ps1` + `remove-orphan-iis.sh`）。
 
+  > **唯一的例外：`.mcp.json` 直接啟動的腳本寫成一支 `.js`。** plugin 的 `.mcp.json` 只吃字面的 `command`、沒有平台條件式，而且 Claude Code 是**直接 spawn** 它（不像 hook 那樣走 Claude Code 自己的 shell）——Windows PATH 上的 `bash` 是 WSL 轉接器、`sh` 不存在，所以 `"command": "bash"` 在標準 Git for Windows 機器上必然起不來。`node` 是三平台同名都在 PATH 上的唯一選擇。這條規則的目的是「兩個平台不會漂移」，單一實作更直接達成它；仍要用 Pester + shUnit2 兩套測試驅動同一支腳本。現況只有 `turbo-plugin-three-environment-db/scripts/start-dbhub.js`，理由寫在該 plugin 的 README。**不要「順手」幫它補一組 `.ps1` + `.sh`。**
+
 ### Cross-platform script 約定
 
 - PowerShell script 一律用 `Set-StrictMode -Version Latest` + `$ErrorActionPreference = 'Stop'` 開頭。

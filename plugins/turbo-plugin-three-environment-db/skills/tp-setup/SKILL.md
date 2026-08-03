@@ -55,8 +55,12 @@ db 的動作都是 repo-only,無「動到外部」副作用。
    「dbhub 需要你自填 credentials:`cp .turbo-plugin/dbhub.example.local.toml .turbo-plugin/dbhub.local.toml`
    後編輯填入連線資訊」(`.gitignore` base 已排除 `*.local.*`,**真正含密碼的這一份不會進 git**;
    只有 `*.example.local.*` 範本被放行)。
-3. **docker probe**(僅提示,不阻塞):`docker --version`。失敗 → Phase 4 記「dbhub MCP server 需要 docker;
-   未偵測到,請確認 docker 已安裝並在跑」。
+3. **node probe**(僅提示,不阻塞):`node --version`。失敗 → Phase 4 記「dbhub MCP server 需要 Node.js;
+   未偵測到,裝好後重開 session」。
+   **這一項不能省。** `tp-dbhub` 的啟動器是 node 腳本(`.mcp.json` 的 `command` 是被**直接 spawn**
+   的,不經過 shell,所以只能用三平台同名都在 PATH 上的指令),沒有 node 時它連一行錯誤都印不出來——
+   使用者只會在 `/mcp` 看到一個紅叉,原因埋在 debug log 裡。**設定當下是唯一講得清楚的時機**;
+   錯過就只剩本 plugin 的 SessionStart hook 會補講一次。
 
 > db 在 `config.toml` 不寫入(db 在 config.toml 無設定);`tp-db-management` 改靠 skill 自身 description 讓 agent
 > 主動觸發(`conventions.md` 機制已退役)。`CLAUDE.md` 由 base 段注入 base 區塊(「不得提交僅限本機之物」),db 不另加。
@@ -81,9 +85,10 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 - **寫入位置**:base 骨架 + db 項目(`dbhub.example.local.toml`)各標「新建 / 已存在 / 補設定」。
 - **使用者仍須手動處理**:
   - `dbhub.local.toml` credentials(複製 example 後填)。
-  - docker 未偵測到時的安裝提示。
+  - node 未偵測到時的安裝提示。
   - 若要用 git↔SVN bridge / .NET Framework Web → 裝對應 plugin 並跑其 setup。
-- **下一步**:「填好 `.turbo-plugin/dbhub.local.toml`、確認 docker 在跑後,可 `/tp-db-management`」。
+- **下一步**:「填好 `.turbo-plugin/dbhub.local.toml`、確認裝了 Node.js 之後**重開 session**,
+  `tp-dbhub` 才會連上,接著可 `/tp-db-management`」。
 
 ## Decision Rules
 
@@ -113,4 +118,4 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 ## Tool Preference
 
 所有檔案 read / write / search / edit 優先用 Read / Write / Edit / Glob / Grep / LSP,避開 Bash / PowerShell / Python /
-Node.js 做檔案操作。shell 操作只限:`git` / `docker --version` 等 probe / 跑 plugin script。
+Node.js 做檔案操作。shell 操作只限:`git` / `node --version` 等 probe / 跑 plugin script。
