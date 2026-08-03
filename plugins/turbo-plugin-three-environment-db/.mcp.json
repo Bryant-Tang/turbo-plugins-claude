@@ -2,19 +2,10 @@
     "mcpServers": {
         "tp-dbhub": {
             "type": "stdio",
-            "command": "docker",
+            "command": "bash",
             "args": [
-                "run",
-                "-i",
-                "--rm",
-                "--init",
-                "-v",
-                "${CLAUDE_PROJECT_DIR}/.turbo-plugin/dbhub.local.toml:/dbhub.toml",
-                "bytebase/dbhub:latest",
-                "--transport",
-                "stdio",
-                "--config",
-                "/dbhub.toml"
+                "${CLAUDE_PLUGIN_ROOT}/scripts/start-dbhub.sh",
+                "${CLAUDE_PROJECT_DIR}"
             ],
             "env": {}
         }
