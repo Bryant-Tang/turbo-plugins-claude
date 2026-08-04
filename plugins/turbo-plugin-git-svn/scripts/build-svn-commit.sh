@@ -99,6 +99,11 @@ if [[ -z "$SVN_BODY" ]]; then
   exit 1
 fi
 
+# Bridges created before this pin exists still carry the inherited core.autocrlf, and THIS is
+# the step that actually writes CRLF out: the merge checks the changed files out into the
+# bridge, and `svn commit` ships whatever landed. Pinning here (idempotent) fixes those too.
+ensure_bridge_eol_faithful "$MAIN_WORKTREE" "$REMOTE_PATH"
+
 if ! git -C "$REMOTE_PATH" merge --no-ff --no-commit -m "Merge branch '$BRANCH' into $REMOTE_BRANCH" "$BRANCH" >/dev/null 2>&1; then
   CONFLICTS="$(git -C "$REMOTE_PATH" diff --name-only --diff-filter=U)"
   echo "Error: merge conflict in remote worktree. Resolve the following files in '$REMOTE_NAME', then re-run, or abort with 'git -C $REMOTE_PATH merge --abort':" >&2

@@ -71,6 +71,32 @@ ensure_svn_git_excluded() {
   fi
 }
 
+# Make a bridge worktree byte-faithful to what git stores.
+#
+# `core.autocrlf=true` is the SYSTEM-level default in Git for Windows -- not global, not local, so
+# it is on for essentially every Windows user and invisible in `git config --global --list`. Under
+# it EVERY checkout inside the bridge rewrites LF blobs as CRLF on disk: `git worktree add` at
+# creation, and later every `git merge` the push path runs there. `svn commit` then ships those
+# CRLF bytes to SVN.
+#
+# Nothing warns. Afterwards git reports clean (it normalises on read) and svn reports clean (it
+# committed exactly what was on disk). Observed 2026-08-03: a push of two edited files landed both
+# on SVN with CRLF while every untouched file stayed LF -- so a teammate's next diff shows those
+# two files rewritten end to end, blame destroyed, with nothing in either tool to point at.
+#
+# A bridge exists to carry content between git and SVN unchanged, so it must not transform it.
+# Scoped to the bridge worktree via git's per-worktree config, leaving the user's own worktree
+# exactly as they configured it. Idempotent.
+#
+# $1: main worktree path. $2: bridge worktree path.
+ensure_bridge_eol_faithful() {
+  local main_worktree="$1" bridge="$2"
+  # extensions.worktreeConfig is repo-wide and must be on before --worktree writes are honoured.
+  # Enabling it is non-destructive: existing config stays in the shared file.
+  git -C "$main_worktree" config extensions.worktreeConfig true || return 1
+  git -C "$bridge" config --worktree core.autocrlf false || return 1
+}
+
 # Validate a branch name for remote-svn worktree mapping (allowlist).
 # Returns 0 if OK, else prints the reason to stderr and returns 1. 'main' is the
 # canonical trust anchor and always passes; other casings of 'main' are rejected so

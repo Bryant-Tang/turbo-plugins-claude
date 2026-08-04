@@ -100,8 +100,17 @@ try {
         & git -C $mainWorktree branch $remoteBranch $baseRef
         if ($LASTEXITCODE -ne 0) { throw "git branch $remoteBranch failed" }
 
-        & git -C $mainWorktree worktree add $remoteWorktreePath $remoteBranch
+        & git -C $mainWorktree worktree add --no-checkout $remoteWorktreePath $remoteBranch
         if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
+        # Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order
+        # matters: with core.autocrlf still true, the checkout writes CRLF and the files on disk
+        # no longer match their blobs -- and for a bridge whose SVN side does not carry them yet,
+        # that turns a harmless "phantom M" into a real diff the drift check would report.
+        Set-BridgeEolFaithful -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
+        # --no-checkout leaves the index EMPTY, so populate explicitly; now the bytes on disk
+        # are the bytes git stores.
+        & git -C $remoteWorktreePath reset --hard --quiet
+        if ($LASTEXITCODE -ne 0) { throw "git reset --hard in $remoteWorktreeName failed" }
 
         $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = 'SilentlyContinue'

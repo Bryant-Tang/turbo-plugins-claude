@@ -287,6 +287,11 @@ trap _rollback ERR
 
 # ---- step 7: build the EMPTY bridge worktree (orphan branch, empty index + working tree). ----
 git -C "$MAIN_WORKTREE" worktree add --detach --no-checkout "$REMOTE_PATH"
+# Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order matters:
+# with core.autocrlf still true, `worktree add` would write CRLF and the files on disk would no
+# longer match their blobs -- and for a bridge whose SVN side does not carry them yet, that turns
+# a harmless "phantom M" into a real diff the drift check would report.
+ensure_bridge_eol_faithful "$MAIN_WORKTREE" "$REMOTE_PATH"
 git -C "$REMOTE_PATH" checkout --orphan "$REMOTE_BRANCH"
 # Clear the index. Tolerate "pathspec '.' did not match" when the index is already empty.
 git -C "$REMOTE_PATH" rm -rf --cached . >/dev/null 2>&1 || true

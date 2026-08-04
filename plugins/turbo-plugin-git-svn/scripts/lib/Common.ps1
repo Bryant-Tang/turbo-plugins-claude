@@ -48,6 +48,35 @@ $script:TpGranularityThreshold = 5
 #
 # Written to info/exclude rather than a .gitignore so it holds whatever content SVN carries, and to
 # the COMMON git dir because git does not read a linked worktree's own info/exclude. Idempotent.
+# Make a bridge worktree byte-faithful to what git stores.
+#
+# `core.autocrlf=true` is the SYSTEM-level default in Git for Windows -- not global, not local, so
+# it is on for essentially every Windows user and invisible in `git config --global --list`. Under
+# it EVERY checkout inside the bridge rewrites LF blobs as CRLF on disk: `git worktree add` at
+# creation, and later every `git merge` the push path runs there. `svn commit` then ships those
+# CRLF bytes to SVN.
+#
+# Nothing warns. Afterwards git reports clean (it normalises on read) and svn reports clean (it
+# committed exactly what was on disk). Observed 2026-08-03: a push of two edited files landed both
+# on SVN with CRLF while every untouched file stayed LF -- so a teammate's next diff shows those
+# two files rewritten end to end, blame destroyed, with nothing in either tool to point at.
+#
+# A bridge exists to carry content between git and SVN unchanged, so it must not transform it.
+# Scoped to the bridge worktree via git's per-worktree config, leaving the user's own worktree
+# exactly as they configured it. Idempotent.
+function Set-BridgeEolFaithful {
+    param(
+        [Parameter(Mandatory = $true)][string]$MainWorktree,
+        [Parameter(Mandatory = $true)][string]$Bridge
+    )
+    # extensions.worktreeConfig is repo-wide and must be on before --worktree writes are honoured.
+    # Enabling it is non-destructive: existing config stays in the shared file.
+    & git -C $MainWorktree config extensions.worktreeConfig true
+    if ($LASTEXITCODE -ne 0) { throw 'Could not enable extensions.worktreeConfig.' }
+    & git -C $Bridge config --worktree core.autocrlf false
+    if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.autocrlf=false on the bridge worktree.' }
+}
+
 function Set-SvnGitExcluded {
     param([Parameter(Mandatory = $true)][string]$MainWorktree)
 

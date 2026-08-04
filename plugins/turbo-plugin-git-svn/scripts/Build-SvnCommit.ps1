@@ -110,6 +110,10 @@ try {
     $mergeMsg = "Merge branch '$Branch' into $($remote.Branch)"
     $ea3 = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
+    # Bridges created before this pin exists still carry the inherited core.autocrlf, and THIS
+    # is the step that actually writes CRLF out: the merge checks the changed files out into the
+    # bridge, and `svn commit` ships whatever landed. Pinning here (idempotent) fixes those too.
+    Set-BridgeEolFaithful -MainWorktree $mainWorktree -Bridge $remote.Path
     & git -C $remote.Path merge --no-ff --no-commit -m $mergeMsg $Branch 2>$null | Out-Null
     $mergeExit = $LASTEXITCODE
     $ErrorActionPreference = $ea3
