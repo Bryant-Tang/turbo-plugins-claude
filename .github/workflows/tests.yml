@@ -90,9 +90,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      # `sliksvn`, NOT the `svn` package. Chocolatey's `svn` is win32svn, last published in 2015 and
+      # pinned at Subversion 1.8.15 -- which predates `svn info --show-item` (added in 1.9). These
+      # scripts use --show-item in a dozen places, so with that package the suite runs and fails 40
+      # cases with "invalid option: --show-item", which looks like a product bug and is not one.
+      # sliksvn tracks the 1.14 LTS line, the same one TortoiseSVN ships.
       - name: Install Subversion
         shell: pwsh
-        run: choco install svn --no-progress -y
+        run: choco install sliksvn --no-progress -y
         continue-on-error: true
 
       # choco updates the machine PATH, but a step's environment is captured when the step starts,
@@ -110,6 +115,16 @@ jobs:
       - name: Put Subversion on PATH for later steps
         shell: pwsh
         run: |
+          # For git-svn, a missing or too-old svn is not a degraded run, it is no run at all: the
+          # whole plugin is a git<->SVN bridge. Fail loudly there rather than shipping a green job
+          # that tested nothing. The other plugins never touch svn, so for them it stays a warning.
+          $svnIsRequired = '${{ matrix.plugin }}'.EndsWith('turbo-plugin-git-svn')
+          function Complain([string]$message) {
+            if ($svnIsRequired) { Write-Host "::error::$message"; exit 1 }
+            Write-Host "::warning::$message svn-dependent cases will SKIP on this run."
+            exit 0
+          }
+
           $env:Path = @(
             [System.Environment]::GetEnvironmentVariable('Path', 'Machine'),
             [System.Environment]::GetEnvironmentVariable('Path', 'User')
@@ -133,22 +148,28 @@ jobs:
 
           if ($svnPath) {
             $dir = Split-Path -Parent $svnPath
-            Add-Content -Path $env:GITHUB_PATH -Value $dir
             # Running it is the assertion; a file existing at that path is not the same as a usable
             # svn (wrong architecture, missing runtime, broken install all pass Test-Path).
             $version = (& $svnPath --version --quiet)
             Write-Host "svn $version found at $dir"
+
+            # Same reasoning as the Pester 5.x pin below: a green run on the wrong tool version is
+            # worse than a red one. `svn info --show-item` arrived in 1.9 and these scripts depend
+            # on it throughout, so anything older cannot exercise them -- it just fails every case
+            # with "invalid option" and buries the real signal.
+            $MIN_SVN = [version]'1.9'
+            $parsed = $null
+            if (-not [version]::TryParse(($version -replace '[^0-9.].*$', ''), [ref]$parsed)) {
+              Write-Host "::warning::could not parse svn version '$version'; continuing."
+            } elseif ($parsed -lt $MIN_SVN) {
+              Complain "svn $version is older than the required $MIN_SVN (svn info --show-item arrived in 1.9)."
+            }
+
+            Add-Content -Path $env:GITHUB_PATH -Value $dir
             exit 0
           }
 
-          # For git-svn, "no svn" is not a degraded run, it is no run at all: the whole plugin is a
-          # git<->SVN bridge. Fail loudly there rather than shipping a green job that tested nothing.
-          # Other plugins do not use svn, so a missing one is genuinely harmless for them.
-          if ('${{ matrix.plugin }}'.EndsWith('turbo-plugin-git-svn')) {
-            Write-Host '::error::svn.exe not found after `choco install svn`. The git-svn suite cannot be meaningfully tested on Windows without it.'
-            exit 1
-          }
-          Write-Host '::warning::svn.exe not found after `choco install svn`; svn-dependent cases will SKIP on this run.'
+          Complain 'svn.exe not found after `choco install sliksvn`.'
 
       - name: Configure git identity (defensive)
         shell: bash
