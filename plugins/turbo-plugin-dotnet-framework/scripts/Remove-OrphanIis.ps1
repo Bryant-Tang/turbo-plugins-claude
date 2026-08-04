@@ -181,11 +181,13 @@ try {
     #    name, so we can't reliably correlate to a single requested site.)
     if ($RemoveAll -and $orphanTempFiles.Count -gt 0) {
         foreach ($tf in $orphanTempFiles) {
-            try {
-                Remove-Item -LiteralPath $tf -Force -ErrorAction Stop
+            # Same retry as the stop path: this sweep can run right after killing an orphan, and
+            # the just-killed process still holds its redirected .out.log / .err.log for a moment.
+            $removal = Remove-PerLaunchTempFile -Path $tf
+            if ($removal.Removed) {
                 Write-Output "Removed orphan temp file: $tf"
-            } catch {
-                [Console]::Error.WriteLine("Warning: failed to remove orphan temp file '$tf': $($_.Exception.Message)")
+            } else {
+                [Console]::Error.WriteLine("Warning: failed to remove orphan temp file '$tf': $($removal.Error)")
             }
         }
     }

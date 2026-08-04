@@ -222,3 +222,107 @@ Describe 'IisHelpers Resolve-IisSettings' {
         It 'no-target exits != 0 (no auto-detect)' { ($script:r5.Exit -ne 0) | Should -BeTrue }
     }
 }
+
+# ── Remove-PerLaunchTempFile ────────────────────────────────────────────────────────────
+#
+# 這支 helper 存在的理由是一個實機抓到的競態:`Stop-Process -Force` 只是**送出**終止要求就返回,
+# 被殺的 IIS Express 還握著 Start-Iis 重導向出去的 .out.log / .err.log。緊接著刪檔就會撞上
+# 「檔案正由另一個處理序使用」——實測長相是「.config 刪掉了、兩個 .log 留著」,於是一次乾淨的
+# 停止之後,清理工具照樣宣告有殘骸,使用者分不出那是殘留還是真的還在跑。
+#
+# 這裡直接 dot-source library 本體來測(不像上面那個 Describe 走 child powershell),因為要驗的
+# 是「鎖住的檔案會不會重試到成功」——鎖必須由測試自己持有並在中途放掉,那需要同一個行程裡的
+# FileStream 與一個真的持鎖的背景 job。
+Describe 'IisHelpers Remove-PerLaunchTempFile' {
+
+    BeforeAll {
+        # IisHelpers.ps1 自己會 dot-source Common.ps1 → Core.ps1;放在 Describe 的 BeforeAll 裡
+        # dot-source,讓它帶進來的 StrictMode / EAP 只作用在這個 scope,不影響上面的 Describe。
+        . $script:ScriptUnderTest
+        $script:tmpDir = New-Sandbox 'rpltf'
+    }
+    AfterAll { Remove-Sandbox $script:tmpDir }
+
+    Context 'Case 6: 沒被鎖住的檔 → 刪掉' {
+        BeforeAll {
+            $script:f6 = [System.IO.Path]::Combine($script:tmpDir, 'turbo-plugin-iis-deadbeef.out.log')
+            [System.IO.File]::WriteAllText($script:f6, 'x')
+            $script:r6 = Remove-PerLaunchTempFile -Path $script:f6
+        }
+
+        It 'case6: 回報已移除' { $script:r6.Removed | Should -BeTrue }
+        It 'case6: 沒有錯誤訊息' { $script:r6.Error | Should -BeNullOrEmpty }
+        It 'case6: 檔案真的不在了' { (Test-Path -LiteralPath $script:f6) | Should -BeFalse }
+    }
+
+    Context 'Case 7: 檔案本來就不存在 → 算成功,不是錯誤' {
+        BeforeAll {
+            $script:f7 = [System.IO.Path]::Combine($script:tmpDir, 'turbo-plugin-iis-deadbeef.err.log')
+            $script:r7 = Remove-PerLaunchTempFile -Path $script:f7
+        }
+
+        It 'case7: 回報已移除(冪等)' { $script:r7.Removed | Should -BeTrue }
+        It 'case7: 沒有錯誤訊息' { $script:r7.Error | Should -BeNullOrEmpty }
+    }
+
+    Context 'Case 8: 鎖在中途被放掉 → 重試會等到' {
+        BeforeAll {
+            $script:f8 = [System.IO.Path]::Combine($script:tmpDir, 'turbo-plugin-iis-cafebabe.out.log')
+            $script:sentinel8 = [System.IO.Path]::Combine($script:tmpDir, 'locked.flag')
+            [System.IO.File]::WriteAllText($script:f8, 'held')
+
+            # 背景 job 持鎖 1.5 秒後放掉。拿到鎖之後寫一個 sentinel 檔通知測試——不要用「測試自己
+            # 試開看看」來偵測,那會跟 job 的開檔互搶,反而可能讓 job 開不成、整個 case 失去意義。
+            $script:job8 = Start-Job -ScriptBlock {
+                param($path, $flag, $holdMs)
+                $fs = [System.IO.File]::Open($path, 'Open', 'ReadWrite', 'None')
+                [System.IO.File]::WriteAllText($flag, 'locked')
+                Start-Sleep -Milliseconds $holdMs
+                $fs.Close(); $fs.Dispose()
+            } -ArgumentList $script:f8, $script:sentinel8, 1500
+
+            $deadline = (Get-Date).AddSeconds(60)
+            while ((-not (Test-Path -LiteralPath $script:sentinel8)) -and ((Get-Date) -lt $deadline)) {
+                Start-Sleep -Milliseconds 50
+            }
+            $script:lockObserved8 = Test-Path -LiteralPath $script:sentinel8
+
+            # 預算 10 秒,遠大於 1.5 秒的持鎖時間。
+            $script:r8 = Remove-PerLaunchTempFile -Path $script:f8 -RetryCount 100 -RetryDelayMilliseconds 100
+        }
+        AfterAll {
+            if ($script:job8) {
+                Wait-Job -Job $script:job8 -Timeout 30 | Out-Null
+                Remove-Job -Job $script:job8 -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'case8: 鎖真的被持有過(沒有的話這個 case 什麼都沒證明)' { $script:lockObserved8 | Should -BeTrue }
+        It 'case8: 撐過暫時的鎖之後刪掉了' { $script:r8.Removed | Should -BeTrue }
+        It 'case8: 檔案真的不在了' { (Test-Path -LiteralPath $script:f8) | Should -BeFalse }
+    }
+
+    Context 'Case 9: 鎖比重試預算久 → 誠實回報,不丟例外' {
+        BeforeAll {
+            $script:f9 = [System.IO.Path]::Combine($script:tmpDir, 'turbo-plugin-iis-cafebabe.err.log')
+            [System.IO.File]::WriteAllText($script:f9, 'held')
+            $script:fs9 = [System.IO.File]::Open($script:f9, 'Open', 'ReadWrite', 'None')
+            $script:threw9 = $false
+            try {
+                $script:r9 = Remove-PerLaunchTempFile -Path $script:f9 -RetryCount 2 -RetryDelayMilliseconds 50
+            } catch {
+                $script:threw9 = $true
+                $script:r9 = $null
+            }
+        }
+        AfterAll {
+            if ($script:fs9) { $script:fs9.Close(); $script:fs9.Dispose() }
+            Remove-Item -LiteralPath $script:f9 -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'case9: 不丟例外(呼叫端自己決定要多大聲)' { $script:threw9 | Should -BeFalse }
+        It 'case9: 回報沒移除' { $script:r9.Removed | Should -BeFalse }
+        It 'case9: 帶著失敗原因' { $script:r9.Error | Should -Not -BeNullOrEmpty }
+        It 'case9: 檔案還在' { (Test-Path -LiteralPath $script:f9) | Should -BeTrue }
+    }
+}

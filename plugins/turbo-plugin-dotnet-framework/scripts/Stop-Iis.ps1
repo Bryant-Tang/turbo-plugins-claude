@@ -73,6 +73,12 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         } catch {
             Write-Output "PID $($p.ProcessId) already exited: $($_.Exception.Message)"
         }
+        # Stop-Process only *requests* termination and returns immediately -- the process is still
+        # alive, still holding the stdout/stderr files Start-Iis redirected into %TEMP%. Deleting
+        # them on the next line therefore races the teardown and loses. Wait for the process to
+        # actually be gone first; that is the cause, and the retry inside
+        # Remove-PerLaunchTempFile only covers the tail after it.
+        Wait-Process -Id $p.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
     }
 
     # Clean up EVERY per-launch temp file this launch created, so a subsequent start-iis round
@@ -88,13 +94,12 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     # touch another project's.
     $tempBase = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash)")
     foreach ($leftover in @("$tempBase.config", "$tempBase.out.log", "$tempBase.err.log")) {
-        if (Test-Path -LiteralPath $leftover -PathType Leaf) {
-            try {
-                Remove-Item -LiteralPath $leftover -Force -ErrorAction Stop
-                Write-Output "Removed per-launch temp file: $leftover"
-            } catch {
-                Write-Output "Note: failed to remove per-launch temp file '$leftover': $($_.Exception.Message)"
-            }
+        if (-not (Test-Path -LiteralPath $leftover -PathType Leaf)) { continue }
+        $removal = Remove-PerLaunchTempFile -Path $leftover
+        if ($removal.Removed) {
+            Write-Output "Removed per-launch temp file: $leftover"
+        } else {
+            Write-Output "Note: failed to remove per-launch temp file '$leftover': $($removal.Error)"
         }
     }
 

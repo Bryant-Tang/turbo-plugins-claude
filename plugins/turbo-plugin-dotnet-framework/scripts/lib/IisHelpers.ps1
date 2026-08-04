@@ -251,3 +251,51 @@ function Resolve-IisSettings {
         Binding = $binding
     }
 }
+
+function Remove-PerLaunchTempFile {
+    <#
+    .SYNOPSIS
+        Delete one per-launch temp file (.config / .out.log / .err.log), tolerating the brief
+        window right after a kill where the file is still held open.
+
+    .DESCRIPTION
+        Stop-Process only *requests* termination and returns immediately -- the OS releases the
+        process's inherited stdout/stderr handles a moment later. Deleting straight after the kill
+        therefore races that teardown and loses: observed in practice as "the .config went away but
+        both .log files stayed", which then made cleanup-orphan-iis announce leftovers after a
+        perfectly clean stop, with no way for the user to tell that apart from "something really is
+        still running".
+
+        Callers should also wait for the process itself to exit (Wait-Process) -- that removes the
+        cause. This retry covers the tail where the handle outlives the process object.
+
+        Returns an object with Removed (bool) and Error (last failure message, $null on success).
+        A file that is already absent counts as removed. Never throws: the caller decides how loud
+        a genuine, persistent lock should be.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$RetryCount = 10,
+        [int]$RetryDelayMilliseconds = 100
+    )
+
+    $attempts = [Math]::Max(1, $RetryCount)
+    $lastError = $null
+
+    for ($i = 0; $i -lt $attempts; $i++) {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            return [pscustomobject]@{ Removed = $true; Error = $null }
+        }
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            return [pscustomobject]@{ Removed = $true; Error = $null }
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+        # Don't sleep after the final attempt -- that delay buys nothing and only makes a
+        # genuinely stuck file cost the user an extra tick before the honest report.
+        if ($i -lt ($attempts - 1)) { Start-Sleep -Milliseconds $RetryDelayMilliseconds }
+    }
+
+    return [pscustomobject]@{ Removed = $false; Error = $lastError }
+}

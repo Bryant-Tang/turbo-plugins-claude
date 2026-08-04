@@ -131,6 +131,31 @@ Describe 'Stop-Iis' {
         }
     }
 
+    Context 'Case 5: per-launch 暫存檔清理的回歸鎖' {
+        # 這一段沒辦法用行為測 —— 要重現的是「殺掉 IIS Express 之後那一瞬間,檔案還被握著」,
+        # 而自動化測試不啟動真的 IIS Express(見 Start-Iis.test.ps1 的同類做法)。實機長相:
+        # .config 刪掉了、.out.log / .err.log 留著,於是一次乾淨的停止之後,清理工具照樣宣告
+        # 有殘骸。所以這裡鎖住「修法本身」:先等程序真的結束,再走會重試的刪除。
+        BeforeAll {
+            $script:StopSrc = [System.IO.File]::ReadAllText($script:ScriptUnderTest)
+        }
+
+        It 'case5: 殺完之後有等程序真的結束(Stop-Process 只是送出要求就返回)' {
+            $script:StopSrc | Should -Match 'Wait-Process\s+-Id'
+        }
+        It 'case5: 等待有上限,不會卡住使用者' {
+            $script:StopSrc | Should -Match 'Wait-Process[^\r\n]*-Timeout\s+\d+'
+        }
+        It 'case5: 刪除走會重試的 helper,不是裸的 Remove-Item' {
+            $script:StopSrc | Should -Match 'Remove-PerLaunchTempFile'
+        }
+        It 'case5: 三個 per-launch 檔都清(.config 與兩個 log)' {
+            $script:StopSrc | Should -Match '\$tempBase\.config'
+            $script:StopSrc | Should -Match '\$tempBase\.out\.log'
+            $script:StopSrc | Should -Match '\$tempBase\.err\.log'
+        }
+    }
+
     Context 'Case 3: SKILL entry re-invoke (no-running) → 一致' {
         BeforeAll { $script:r3 = Invoke-Script -WorkDir $script:TestRoot }
 
