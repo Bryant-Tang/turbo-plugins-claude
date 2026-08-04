@@ -63,6 +63,14 @@ Describe 'Svn non-ASCII filename encoding' {
                 Set-ItResult -Skipped -Because 'svn/svnadmin not available on this runner'
                 return
             }
+            # The header above claimed "on a UTF-8 runner it passes either way" and forgot the third
+            # kind of host: one whose ANSI codepage simply has no bytes for these characters. The
+            # GitHub Windows runner is windows-1252, exactly that case. See the note on
+            # Test-AnsiCodepageCanHold; name the codepage so the skip is legible.
+            if (-not (Test-AnsiCodepageCanHold -Text $script:ZhName)) {
+                Set-ItResult -Skipped -Because "the host ANSI codepage ($(Get-AnsiCodepageName)) cannot represent this filename"
+                return
+            }
             $sb = New-Sandbox -Tag 'ssx'
             $prevEnc = [Console]::OutputEncoding
             try {

@@ -22,6 +22,35 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# ─── Host ANSI codepage capability ───────────────────────────────────────────
+#
+# PowerShell 5.1 encodes native-command ARGV with the SYSTEM ANSI codepage, so any case that
+# re-passes a non-ASCII filename to svn.exe is bounded by that codepage. That bound is the
+# product's documented model, not a defect -- Test-EncodingSupport.ps1 reports it as
+# "characters outside the ANSI codepage cannot be passed as argv", and tp-setup asks the user
+# about it during setup.
+#
+# Why this exists: the CJK cases assumed a host whose codepage can hold Chinese. On zh-TW
+# (windows-950) it can, and the cases run for real. The GitHub Windows runner is windows-1252,
+# where those characters have NO representation at all -- the round trip yields "??????" and the
+# case can only ever fail. Those cases had been invisible (svn was missing, so they self-SKIPped);
+# the moment svn was installed they went red and looked like a product regression.
+#
+# Skipping on such a host is the honest outcome: the assertion is about a platform capability the
+# host does not have. Skipping SILENTLY would not be -- callers must state the codepage in the
+# reason so a reader can tell "cannot be tested here" from "not tested".
+function Get-AnsiCodepageName {
+    return [System.Text.Encoding]::GetEncoding(
+        [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage).WebName
+}
+
+function Test-AnsiCodepageCanHold {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $ansi = [System.Text.Encoding]::GetEncoding(
+        [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage)
+    return ($ansi.GetString($ansi.GetBytes($Text)) -eq $Text)
+}
+
 # ─── Git wrappers ────────────────────────────────────────────────────────────
 
 function Run-Git {

@@ -243,6 +243,15 @@ Describe 'Remove-SvnFile' {
             try {
                 # CJK name built from code points so THIS test file stays pure-ASCII (no BOM needed).
                 $cjk = ([string][char]0x6E2C) + ([string][char]0x8A66) + '.txt'   # U+6E2C U+8A66 = a CJK word
+
+                # A host whose ANSI codepage has no bytes for these characters cannot pass the name
+                # to svn.exe as argv at all -- see the note on Test-AnsiCodepageCanHold. Say which
+                # codepage, so this reads as "cannot be tested here", not "quietly not tested".
+                if (-not (Test-AnsiCodepageCanHold -Text $cjk)) {
+                    Set-ItResult -Skipped -Because "the host ANSI codepage ($(Get-AnsiCodepageName)) cannot represent this filename"
+                    return
+                }
+
                 $ctx = New-BridgeWithFiles -Sandbox $sb -ExtraFiles @{ $cjk = "cjk`n" }
                 if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build bridge'; return }
 
