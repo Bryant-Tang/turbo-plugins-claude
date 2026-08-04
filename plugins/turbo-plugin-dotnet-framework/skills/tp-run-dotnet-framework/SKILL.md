@@ -78,6 +78,15 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
   可以放多個專案的站台,補的時候不會動到別的站台。既有內容若是 IIS Express 載不進去的形狀,會自動重建並
   保留原有站台。補完會多印一行說明,照樣轉述給使用者
   - 產生的檔以 **IIS Express 自帶的範本**為底,所以會有一千行左右——那是它真的需要的內容,不是冗餘
+  - **第一次產生時(而且只有這一次)問使用者要不要把它加進版控**。腳本印
+    `Generated applicationhost.config` 才算「第一次產生」;印 `Added site` / `Rebuilt` 都**不要**問。
+    這個檔**刻意做成可共用**——裡面沒有任何機器專屬路徑(`physicalPath` 是佔位符,啟動時才替換),
+    所以提交之後同事不必各自重產一份。但工具從來沒提過這件事,於是它就一直掛在 `git status` 裡當雜訊。
+    用 `AskUserQuestion` 問一次,同意就**單獨一顆 commit** 加進去(訊息講清楚是什麼、為什麼可以共用),
+    不同意就說明「之後想加隨時可以」並繼續,**不要記狀態、也不要再問**——檔案只產生一次,
+    所以不問第二次是自然的結果,而不是靠記憶去壓抑。
+    > 只在**產生的那一次**問,是為了不要變成每次執行都來一輪的騷擾;
+    > 一個 session 裡已經有好幾個「要不要記住這個選擇」在問了。
 - 找已執行的 iisexpress.exe instance:
   - **同 port + site name 也 match(同 project,可能在別 worktree 啟)** → 自動 `Stop-Process` 舊 instance,繼續啟新
   - **同 port + site name 不 match(別 project 撞 port)** → fail loudly,提示停掉別 project 的 instance 或改 port

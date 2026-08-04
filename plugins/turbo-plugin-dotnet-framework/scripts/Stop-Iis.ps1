@@ -75,15 +75,26 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         }
     }
 
-    # clean up the per-launch temp applicationhost.config so subsequent
-    # start-iis rounds always start from a fresh copy of canonical.
-    $tempApphost = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash).config")
-    if (Test-Path -LiteralPath $tempApphost -PathType Leaf) {
-        try {
-            Remove-Item -LiteralPath $tempApphost -Force -ErrorAction Stop
-            Write-Output "Removed temp applicationhost.config: $tempApphost"
-        } catch {
-            Write-Output "Note: failed to remove temp applicationhost.config '$tempApphost': $($_.Exception.Message)"
+    # Clean up EVERY per-launch temp file this launch created, so a subsequent start-iis round
+    # begins from a fresh copy of canonical -- and so a later cleanup-orphan-iis has nothing left
+    # to report.
+    #
+    # The two redirect logs used to be left behind: only the .config was removed here, and the logs
+    # were swept solely by remove-orphan-iis -RemoveAll. So after a perfectly clean stop, running
+    # the orphan cleanup announced leftovers (ORPHAN_TEMP x2) -- and the user has no way to tell
+    # "residue from the run I just shut down properly" from "something really is still running".
+    # A stop that reports success must leave nothing for the cleanup tool to find. All three names
+    # derive from the same IdentityHash, so this removes exactly this launch's files and cannot
+    # touch another project's.
+    $tempBase = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "turbo-plugin-iis-$($settings.IdentityHash)")
+    foreach ($leftover in @("$tempBase.config", "$tempBase.out.log", "$tempBase.err.log")) {
+        if (Test-Path -LiteralPath $leftover -PathType Leaf) {
+            try {
+                Remove-Item -LiteralPath $leftover -Force -ErrorAction Stop
+                Write-Output "Removed per-launch temp file: $leftover"
+            } catch {
+                Write-Output "Note: failed to remove per-launch temp file '$leftover': $($_.Exception.Message)"
+            }
         }
     }
 
