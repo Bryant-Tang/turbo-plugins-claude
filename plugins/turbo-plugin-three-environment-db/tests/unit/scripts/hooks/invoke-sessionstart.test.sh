@@ -80,6 +80,45 @@ test_non_git_cwd() {
     rm_sandbox "$sb"
 }
 
+# Case 5: multi-project workspace root -- NOT a git repo, marker lives one level down.
+#
+# This is the shape the db plugin's multi-project support exists for, and the hook could not fire
+# in it: two separate gates each assumed "the session root IS the project". It bailed on
+# `git rev-parse --is-inside-work-tree` (a workspace root is never a repo), and even past that its
+# concern gate looked for the marker in the cwd rather than in the projects. Observed on a real
+# machine 2026-08-03: a session with no node on PATH said nothing at all, and the user had to ask
+# why the MCP server was red.
+#
+# Do NOT strip PATH to simulate a missing `node` here: on Windows this .sh is only a delegator to
+# the .ps1, so a stripped PATH loses `powershell` and tests the wrapper instead of the logic. The
+# node branch is asserted in the Pester twin, which runs the native implementation and can control
+# the child's PATH cleanly. What this pair locks down is the GATE: the hook must get past
+# "not a git repository" and find the marker one level down.
+test_multiproject_root_reaches_the_gate() {
+    local sb out e
+    sb="$(mk_nongit_sandbox 'ss-multiproj')"
+    mkdir -p "$sb/proj-2/.turbo-plugin" "$sb/proj-1"
+    : > "$sb/proj-2/.turbo-plugin/dbhub.example.local.toml"
+
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e=$?
+    assertEquals 'case5: exit 0 (a hook must never break the session)' 0 "$e"
+    echo "$out" | grep -q '^{'; assertTrue 'case5: emitted JSON from a NON-repo workspace root' $?
+    # The old code printed git's "fatal: not a git repository" on this path; it is meant to be silent.
+    echo "$out" | grep -qi 'fatal'; assertFalse 'case5: no git error leaked into stdout' $?
+    rm_sandbox "$sb"
+}
+
+# Case 6: same shape, but NO project uses db -> still a silent no-op.
+test_multiproject_root_without_db_is_silent() {
+    local sb out e
+    sb="$(mk_nongit_sandbox 'ss-multiproj-nodb')"
+    mkdir -p "$sb/proj-1" "$sb/proj-2/.turbo-plugin"
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e=$?
+    assertEquals 'case6: exit 0' 0 "$e"
+    echo "$out" | grep -Eq '^\{[[:space:]]*\}[[:space:]]*$'; assertTrue 'case6: stdout empty JSON {}' $?
+    rm_sandbox "$sb"
+}
+
 # Case 2: db in use + Pattern B + 缺 dbhub.local.toml → 警示
 test_db_in_use_pattern_b_warns() {
     local pair sb_main sb_peer out e
