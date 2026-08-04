@@ -328,6 +328,72 @@ Describe 'New-ApphostConfig' {
         }
     }
 
+    # The generated file is meant to be committed, and the run SKILL asks the user to do exactly
+    # that. But it is ~1000 lines of IIS internals including <configProtectedData sessionKey="...">,
+    # and a reader has no way to tell those keys are constants copied out of IIS Express's own
+    # template. Observed for real (2026-08-04): a push flow stopped and warned the user about
+    # "encryption keys produced by this machine" on a file with nothing machine-specific in it.
+    # The explanation therefore lives in the artifact, where every reader hits it -- including tools
+    # in other plugins that only ever see the file.
+    Context 'Case 9: 產生的設定檔自帶「這確實可以進版控」的說明' {
+        BeforeAll {
+            $script:r9Root = New-ProjectSandbox -Tag 'note' -IisElements '    <IISUrl>http://localhost:5000/</IISUrl>'
+            $script:r9 = Invoke-Script -WorkDir $script:r9Root -ExtraArgs @('-Project', 'HelloApp.csproj')
+            $script:r9Path = [System.IO.Path]::Combine($script:r9Root, '.turbo-plugin', 'applicationhost.config')
+            $script:r9Text = [System.IO.File]::ReadAllText($script:r9Path, [System.Text.Encoding]::UTF8)
+
+            $script:r9Xml = New-Object System.Xml.XmlDocument
+            $script:r9Xml.Load($script:r9Path)
+
+            # 第二個專案接進同一份設定檔 —— 說明不該被複製第二份。
+            $second = @"
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <AssemblyName>AdminApp</AssemblyName>
+    <UseIISExpress>true</UseIISExpress>
+    <IISUrl>http://localhost:5001/</IISUrl>
+  </PropertyGroup>
+</Project>
+"@
+            [System.IO.File]::WriteAllText(
+                [System.IO.Path]::Combine($script:r9Root, 'AdminApp.csproj'), $second,
+                (New-Object System.Text.UTF8Encoding($false)))
+            $null = Invoke-Script -WorkDir $script:r9Root -ExtraArgs @('-Project', 'AdminApp.csproj')
+            $script:r9TextAfter = [System.IO.File]::ReadAllText($script:r9Path, [System.Text.Encoding]::UTF8)
+        }
+        AfterAll { Remove-ProjectSandbox -Dir $script:r9Root }
+
+        It 'case9: exit 0' { $script:r9.Exit | Should -Be 0 -Because $script:r9.Combined }
+
+        It 'case9: 說明就在 <configuration> 的第一個子節點(讀的人第一眼會看到)' {
+            $first = $script:r9Xml.DocumentElement.FirstChild
+            $first.NodeType | Should -Be ([System.Xml.XmlNodeType]::Comment)
+            $first.Value | Should -Match 'turbo-plugin:applicationhost'
+        }
+
+        # 這兩個字串是契約,不是文案。它們正是掃描工具會誤判的兩個東西:改寫說明時如果把它們
+        # 拿掉,說明就不再回答讀者真正的疑問,而這個修正等於默默失效。
+        It 'case9: 說明有交代 sessionKey 是原廠固定值' {
+            $script:r9Xml.DocumentElement.FirstChild.Value | Should -Match 'sessionKey'
+        }
+        It 'case9: 說明有交代 physicalPath 是佔位符' {
+            $script:r9Xml.DocumentElement.FirstChild.Value | Should -Match '__TURBO_PLUGIN_PHYSICAL_PATH__'
+        }
+
+        It 'case9: 說明只出現一次' {
+            ([regex]::Matches($script:r9Text, 'turbo\-plugin:applicationhost')).Count | Should -Be 1
+        }
+        It 'case9: 補上第二個專案之後仍然只有一份說明' {
+            ([regex]::Matches($script:r9TextAfter, 'turbo\-plugin:applicationhost')).Count | Should -Be 1
+        }
+        It 'case9: 加了說明之後檔案仍是合法 XML,站台照樣讀得出來' {
+            $after = New-Object System.Xml.XmlDocument
+            { $after.Load($script:r9Path) } | Should -Not -Throw
+            @($after.SelectNodes('/configuration/system.applicationHost/sites/site')).Count | Should -Be 2
+        }
+    }
+
     Context 'Case 5: csproj without any IIS setting fails loudly' {
         BeforeAll {
             # Mirrors a project where VS kept the server settings in the gitignored .csproj.user.

@@ -63,6 +63,70 @@ function Save-ApplicationhostConfigAtomically {
     }
 }
 
+# Put the "yes, this really is safe to commit" explanation INSIDE the generated file.
+#
+# The file is generated to be shared, and the run SKILL asks the user exactly that. But whoever
+# opens it next sees ~1000 lines of IIS internals, including
+# <configProtectedData ... sessionKey="<64 hex chars>">, with no way to tell that those keys are
+# constants copied verbatim from IIS Express's own template rather than something this machine
+# generated. Observed for real (2026-08-04): a push flow stopped and warned the user about
+# "encryption keys produced by this machine" on a file that contains nothing machine-specific at
+# all. The warning was reasonable and wrong, and the user had to adjudicate it.
+#
+# A note in the file itself is the only fix that reaches every reader: the alarm was raised by a
+# different plugin's push flow, which only ever sees the artifact, never this code. Idempotent via a
+# marker token, and only ever added when the caller is already writing the file -- a config the user
+# already committed is never rewritten just to carry a comment.
+#
+# Returns $true when the note was added, $false when one was already there.
+function Add-ApplicationhostConfigNote {
+    param([Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml)
+
+    $marker = 'turbo-plugin:applicationhost'
+    $root = $Xml.DocumentElement
+    if ($null -eq $root) { return $false }
+
+    foreach ($node in @($root.ChildNodes)) {
+        if ($node.NodeType -eq [System.Xml.XmlNodeType]::Comment -and $node.Value -like "*$marker*") {
+            return $false
+        }
+    }
+
+    # Assembled line by line rather than as a here-string: a here-string terminator has to sit at
+    # column 0, which inside an indented function reads as a mistake and invites someone to "fix"
+    # the indentation and break the parse.
+    #
+    # No line may contain a literal double hyphen -- XML forbids it inside a comment, and
+    # XmlDocument would throw on CreateComment rather than produce an invalid file.
+    $noteLines = @(
+        '',
+        "  $marker",
+        '',
+        '  這個檔由 turbo-plugin-dotnet-framework 產生,設計上就是要進版控、跟同事共享。',
+        '  內容 = IIS Express 內建的 applicationhost.config 範本(<安裝目錄>\AppServer\)',
+        '  再加上這個 repo 每個 web 專案的 <site>。所以:',
+        '',
+        '  * <configProtectedData> 裡的 sessionKey 是「範本原廠帶的固定值」,每一台裝了同版',
+        '    IIS Express 的機器都是同樣兩個值。它不是這台機器產生的金鑰,也不是機密;',
+        '    掃描工具把它當成憑證外洩是誤判。',
+        '  * <site> 的 physicalPath 一律是 __TURBO_PLUGIN_PHYSICAL_PATH__ 佔位符。真正的路徑',
+        '    只會寫進啟動時產生的暫存副本(在 %TEMP%),不會留在這個檔裡。',
+        '  * 站台名就是專案名。帶專案識別碼的執行期名稱同樣只出現在那份暫存副本裡。',
+        '',
+        '  換句話說,這個檔裡沒有任何機器專屬或個人的東西。可以手動編輯:已經在裡面的',
+        '  <site> 不會被覆寫,只有還缺的專案會被補上。',
+        ''
+    )
+
+    $comment = $Xml.CreateComment(($noteLines -join "`r`n"))
+    if ($root.HasChildNodes) {
+        [void]$root.InsertBefore($comment, $root.FirstChild)
+    } else {
+        [void]$root.AppendChild($comment)
+    }
+    return $true
+}
+
 # The applicationhost.config template to generate from: IIS Express's OWN default config, which
 # ships next to iisexpress.exe at <install>\AppServer\applicationhost.config.
 #
@@ -162,6 +226,11 @@ function Initialize-ApplicationhostSite {
         $xml.Load($TemplatePath)
         $created = $true
     }
+
+    # Added to the in-memory document here so it covers every path below that actually writes
+    # (create / rebuild / append a site). The "site already present, nothing to do" path returns
+    # without saving, so an existing config the user has already committed stays byte-identical.
+    $null = Add-ApplicationhostConfigNote -Xml $xml
 
     $sitesNode = $xml.SelectSingleNode('/configuration/system.applicationHost/sites')
     if ($null -eq $sitesNode) {
