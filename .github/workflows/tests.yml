@@ -96,33 +96,59 @@ jobs:
         continue-on-error: true
 
       # choco updates the machine PATH, but a step's environment is captured when the step starts,
-      # so later steps in the SAME job never saw svn. The effect was quiet rather than loud: the
-      # svn-gated cases all self-SKIPped and the job still went green-ish, so 70 tests in the git-svn
-      # suite were never actually exercised on Windows CI while appearing to be covered. Append the
-      # install dir to GITHUB_PATH so the following steps really can run svn.
+      # so later steps in the SAME job never saw svn. Append the install dir to GITHUB_PATH so the
+      # following steps really can run svn.
+      #
+      # Do NOT guess the install directory. The previous version of this step listed
+      # "C:\Program Files\Subversion\bin" and the choco `svn` package (win32svn) installs to
+      # "C:\Program Files (x86)\Subversion\bin" -- a one-token miss that cost 96 svn-gated Pester
+      # cases in the git-svn suite, silently, for as long as this step has existed: the install
+      # succeeded, the probe found nothing, the cases self-SKIPped and the job stayed green. choco
+      # itself prints the directory it added to the machine PATH, so read PATH back out of the
+      # registry and let `Get-Command` answer. The hardcoded list survives only as a fallback for a
+      # provider that does not touch PATH at all.
       - name: Put Subversion on PATH for later steps
         shell: pwsh
         run: |
-          $candidates = @(
-            'C:\Program Files\TortoiseSVN\bin',
-            'C:\Program Files\Subversion\bin',
-            "$env:ProgramData\chocolatey\bin"
-          )
-          $found = $false
-          foreach ($c in $candidates) {
-            if (Test-Path (Join-Path $c 'svn.exe')) {
-              Add-Content -Path $env:GITHUB_PATH -Value $c
-              Write-Host "svn found at $c"
-              $found = $true
-              break
+          $env:Path = @(
+            [System.Environment]::GetEnvironmentVariable('Path', 'Machine'),
+            [System.Environment]::GetEnvironmentVariable('Path', 'User')
+          ) -join ';'
+
+          $svnPath = ''
+          $cmd = Get-Command svn.exe -ErrorAction SilentlyContinue
+          if ($cmd) { $svnPath = @($cmd)[0].Source }
+
+          if (-not $svnPath) {
+            foreach ($c in @(
+              'C:\Program Files (x86)\Subversion\bin',
+              'C:\Program Files\Subversion\bin',
+              'C:\Program Files\SlikSvn\bin',
+              'C:\Program Files\TortoiseSVN\bin'
+            )) {
+              $candidate = Join-Path $c 'svn.exe'
+              if (Test-Path -LiteralPath $candidate) { $svnPath = $candidate; break }
             }
           }
-          if (-not $found) {
-            # Not fatal: the suites self-SKIP their svn cases. Say so plainly instead of leaving
-            # a silent gap that reads as coverage.
-            Write-Host '::warning::svn.exe not found in the expected locations; svn-dependent cases will SKIP on this run.'
+
+          if ($svnPath) {
+            $dir = Split-Path -Parent $svnPath
+            Add-Content -Path $env:GITHUB_PATH -Value $dir
+            # Running it is the assertion; a file existing at that path is not the same as a usable
+            # svn (wrong architecture, missing runtime, broken install all pass Test-Path).
+            $version = (& $svnPath --version --quiet)
+            Write-Host "svn $version found at $dir"
+            exit 0
           }
-        continue-on-error: true
+
+          # For git-svn, "no svn" is not a degraded run, it is no run at all: the whole plugin is a
+          # git<->SVN bridge. Fail loudly there rather than shipping a green job that tested nothing.
+          # Other plugins do not use svn, so a missing one is genuinely harmless for them.
+          if ('${{ matrix.plugin }}'.EndsWith('turbo-plugin-git-svn')) {
+            Write-Host '::error::svn.exe not found after `choco install svn`. The git-svn suite cannot be meaningfully tested on Windows without it.'
+            exit 1
+          }
+          Write-Host '::warning::svn.exe not found after `choco install svn`; svn-dependent cases will SKIP on this run.'
 
       - name: Configure git identity (defensive)
         shell: bash
