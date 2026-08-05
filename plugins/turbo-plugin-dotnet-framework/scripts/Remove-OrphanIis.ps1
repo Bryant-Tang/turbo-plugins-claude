@@ -163,6 +163,10 @@ try {
             } else {
                 try {
                     Stop-Process -Id $info.Pid -Force -ErrorAction Stop
+                    # Stop-Process returns before the process is gone, and step 6 below deletes the
+                    # temp files it still holds. Remove-PerLaunchTempFile retries, but waiting here
+                    # removes the cause instead of absorbing it.
+                    Wait-Process -Id $info.Pid -Timeout 10 -ErrorAction SilentlyContinue
                     Write-Output "Stopped orphan IIS Express PID $($info.Pid) (site: $siteName)"
                 } catch {
                     [Console]::Error.WriteLine("Warning: failed to stop PID $($info.Pid) for site '$siteName': $($_.Exception.Message)")

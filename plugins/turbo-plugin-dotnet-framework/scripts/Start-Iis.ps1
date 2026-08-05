@@ -206,8 +206,15 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
                 } catch {
                     Write-Output "  PID $($proc.ProcessId) already exited or unstoppable: $($_.Exception.Message)"
                 }
+                # Wait for the process to actually be gone rather than hoping a fixed sleep covers
+                # it. This restart re-renders the SAME per-launch temp files and re-redirects onto
+                # the same .out.log / .err.log paths, so a previous instance that has not yet
+                # released its handles makes the relaunch fail on "file in use".
+                Wait-Process -Id $proc.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
             }
-            Start-Sleep -Milliseconds 500
+            # Small settle on top of the waits: the port itself takes a moment to be released even
+            # after the owning process is gone.
+            Start-Sleep -Milliseconds 200
         } else {
             $otherSites = ($occupants | ForEach-Object { $_.SiteName }) -join ', '
             throw "Port $($settings.IisPort) occupied by different project: PIDs $($occupants.ProcessId -join ', ') (sites: $otherSites). Stop the other instance or change this project's IIS port."

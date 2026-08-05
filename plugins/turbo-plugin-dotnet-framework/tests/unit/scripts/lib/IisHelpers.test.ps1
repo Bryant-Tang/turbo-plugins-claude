@@ -233,7 +233,11 @@ Describe 'IisHelpers Resolve-IisSettings' {
 # 這裡直接 dot-source library 本體來測(不像上面那個 Describe 走 child powershell),因為要驗的
 # 是「鎖住的檔案會不會重試到成功」——鎖必須由測試自己持有並在中途放掉,那需要同一個行程裡的
 # FileStream 與一個真的持鎖的背景 job。
-Describe 'IisHelpers Remove-PerLaunchTempFile' {
+#
+# 函式本體現在住在 **Common.ps1**,不在 IisHelpers.ps1 —— console 啟動器也要用同一套重試,而它
+# 沒理由為此載入 IIS helpers。測試留在這個檔案是因為 IisHelpers.ps1 會 dot-source Common.ps1,
+# 拿得到;搬檔只是製造沒必要的風險。
+Describe 'Remove-PerLaunchTempFile (Common.ps1, reached via IisHelpers dot-source)' {
 
     BeforeAll {
         # IisHelpers.ps1 自己會 dot-source Common.ps1 → Core.ps1;放在 Describe 的 BeforeAll 裡

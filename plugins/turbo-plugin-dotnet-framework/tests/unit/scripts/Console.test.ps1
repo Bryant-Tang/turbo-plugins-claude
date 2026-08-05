@@ -201,6 +201,17 @@ Describe 'Start-Console / Stop-Console (U11)' {
             $state.startTime | Should -Not -BeNullOrEmpty
             (Get-Process -Id $recordedPid -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
 
+            # The per-launch redirect logs the stop path is supposed to clean up. Captured BEFORE
+            # the stop, because the stop deletes the state file that names them.
+            $launchLogs = @()
+            foreach ($k in @('stdout', 'stderr')) {
+                if ($state.PSObject.Properties.Name -contains $k) {
+                    $v = [string]$state.$k
+                    if (-not [string]::IsNullOrWhiteSpace($v)) { $launchLogs += $v }
+                }
+            }
+            $launchLogs.Count | Should -BeGreaterThan 0 -Because 'otherwise the no-leak assertion below proves nothing'
+
             $s = Invoke-ConsoleScript -ScriptPath $script:StopScript -WorkDir $sb
             $s.Exit | Should -Be 0
             $s.Stdout | Should -Match 'STOP_OUTPUT'
@@ -208,10 +219,42 @@ Describe 'Start-Console / Stop-Console (U11)' {
             Start-Sleep -Milliseconds 300
             (Get-Process -Id $recordedPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
             (Test-Path -LiteralPath $stateFile) | Should -BeFalse
+
+            # Stop-Process returns BEFORE the killed process releases these handles, so deleting
+            # them on the next line loses the race -- and the old code swallowed the failure, so the
+            # leak was silent. A stop that reports success must leave nothing behind.
+            foreach ($lg in $launchLogs) {
+                (Test-Path -LiteralPath $lg) | Should -BeFalse -Because "stop must not leak the per-launch log $lg"
+            }
+            $s.Stdout | Should -Not -Match 'failed to remove per-launch temp file'
         } finally {
             if ($recordedPid -gt 0) { try { Stop-Process -Id $recordedPid -Force -ErrorAction SilentlyContinue } catch { } }
             Remove-ConsoleSandbox -Dir $sb
         }
+    }
+
+    # A source lock, not a behavioral test -- and it exists because the behavioral one is not
+    # enough. The long-running case above asserts "the stop leaves no per-launch log behind", but
+    # on a dev machine that assertion stays GREEN with the fix removed: ping.exe tears down far
+    # faster than iisexpress.exe, so the race never fires there. Keep that assertion as a
+    # regression net (it will catch a leak on a slower host), but it cannot prove the fix is
+    # needed, so "wait for the process to really exit" and "say so when removal fails" are pinned
+    # here instead.
+    #
+    # Background: Stop-Process only requests termination and returns; the killed process still
+    # holds the stdout/stderr files Start-Console redirected. The IIS path was fixed for exactly
+    # this (Stop-Iis.ps1) and this sibling script was missed -- caught in PR review, not by tests.
+    It 'Stop-Console waits for the process to exit and reports a removal it could not do' {
+        $src = [System.IO.File]::ReadAllText($script:StopScript)
+
+        $src | Should -Match 'Wait-Process\s+-Id'
+        $src | Should -Match 'Wait-Process[^\r\n]*-Timeout\s+\d+'
+
+        # Removal must go through the retrying helper, and must no longer swallow the failure with
+        # `catch { }`: a stop that reports success while quietly leaking a file leaves the user
+        # with no way to even know something leaked.
+        $src | Should -Match 'Remove-PerLaunchTempFile'
+        $src | Should -Match 'failed to remove per-launch temp file'
     }
 
     It 'stopping when nothing is running is a normal outcome, not an error' -Skip:(-not $script:CanRunConsoleCases) {

@@ -88,11 +88,22 @@ try {
     Stop-Process -Id $proc.Id -Force -ErrorAction Stop
     Write-Output "Stopped the console process started by this tool (PID: $($proc.Id))."
 
+    # Stop-Process only *requests* termination and returns immediately -- the process is still alive
+    # and still holding the stdout/stderr files Start-Console redirected into %TEMP%. Deleting them
+    # on the next line races that teardown and loses. Exactly the bug fixed in the IIS stop path;
+    # this sibling has the identical shape and was missed by that fix.
+    Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
+
     foreach ($k in @('stdout', 'stderr')) {
         if ($state.PSObject.Properties.Name -contains $k) {
             $f = [string]$state.$k
             if (-not [string]::IsNullOrWhiteSpace($f) -and (Test-Path -LiteralPath $f -PathType Leaf)) {
-                try { Remove-Item -LiteralPath $f -Force -ErrorAction Stop } catch { }
+                # ...and when it still fails, say so. The previous `catch { }` swallowed it, so a
+                # leaked log left the user nothing to act on -- not even a line admitting it leaked.
+                $removal = Remove-PerLaunchTempFile -Path $f
+                if (-not $removal.Removed) {
+                    Write-Output "Note: failed to remove per-launch temp file '$f': $($removal.Error)"
+                }
             }
         }
     }
