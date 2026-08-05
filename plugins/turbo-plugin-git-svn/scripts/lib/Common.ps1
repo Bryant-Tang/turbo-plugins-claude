@@ -863,3 +863,46 @@ function Set-TpBranchProp {
     }
 }
 
+# Resolve a caller-supplied relative path against a worktree root, refusing anything that escapes
+# it. Returns the resolved absolute path.
+#
+# Why this is worth a guard even though the value is not attacker-supplied in practice: the caller
+# (Remove-SvnFile) uses the result for `svn delete` + `svn commit` against the SHARED repository,
+# and that is irreversible -- deleting the wrong path costs everyone on the team a recovery, and
+# SVN history keeps the mistake forever. The path arrives from an agent reading `git status` /
+# `svn status` output, so a `..` segment means something upstream is already wrong; the point is to
+# stop there rather than to discover it after the commit. Mirrors the existing fail-closed stance
+# of the SVN URL trust check above, which rejects `..` outright rather than trying to sanitize it.
+function Resolve-PathWithinWorktree {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$RelativePath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
+        throw "Refusing an empty path."
+    }
+    if ([System.IO.Path]::IsPathRooted($RelativePath)) {
+        throw "Refusing an absolute path: '$RelativePath'. Paths are relative to the worktree root."
+    }
+    # Check the segments, not a substring: a filename may legitimately contain '..' (e.g. "a..b.txt")
+    # and rejecting that would be wrong.
+    $segments = ($RelativePath -replace '\\', '/') -split '/'
+    if ($segments -contains '..') {
+        throw "Refusing a path containing '..': '$RelativePath'."
+    }
+
+    $rootFull = [System.IO.Path]::GetFullPath($Root)
+    if (-not $rootFull.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $rootFull += [System.IO.Path]::DirectorySeparatorChar
+    }
+    # GetFullPath (not GetRelativePath -- that one is .NET Core only and absent on PS 5.1) collapses
+    # any remaining oddities, so the prefix test below sees the real destination.
+    $targetFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Root, $RelativePath))
+
+    if (-not $targetFull.StartsWith($rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing a path that resolves outside the worktree: '$RelativePath' -> $targetFull"
+    }
+    return $targetFull
+}
+

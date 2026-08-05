@@ -237,6 +237,22 @@ Describe 'Remove-SvnFile' {
         }
     }
 
+    # The helper itself is covered both ways in lib/Common.test.ps1 (+ the .sh twin). What those
+    # cannot see is the WIRING: a single call, in a script whose next steps are `svn delete` +
+    # `svn commit` against the shared repository. Driving a traversal path end-to-end would need a
+    # live bridge and svn, so pin the call instead -- losing it would silently reopen the hole.
+    Context 'Case 11: the irreversible path is guarded before anything is deleted' {
+        It 'both implementations contain the path to the bridge worktree before deleting' {
+            $ps1 = [System.IO.File]::ReadAllText($script:ScriptUnderTest)
+            $ps1 | Should -Match 'Resolve-PathWithinWorktree'
+
+            $shPath = [System.IO.Path]::Combine(
+                [System.IO.Path]::GetDirectoryName($script:ScriptUnderTest), 'remove-svn-file.sh')
+            (Test-Path -LiteralPath $shPath) | Should -BeTrue
+            [System.IO.File]::ReadAllText($shPath) | Should -Match 'resolve_path_within_worktree'
+        }
+    }
+
     Context 'Case 6: non-ASCII (CJK) filename reconciles + removes cleanly' {
         It 'removes a git-tracked CJK-named file from SVN via UTF-8 commit' -Skip:(-not $SvnAvailable) {
             $sb = New-Sandbox -Tag 'rmsvn-6'

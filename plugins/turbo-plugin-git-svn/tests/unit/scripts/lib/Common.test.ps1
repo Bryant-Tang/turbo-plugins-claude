@@ -384,6 +384,55 @@ Describe 'Assert-TrustedSvnUrl' {
 # lib helper unit coverage (U7)
 # =============================================================================
 
+# Guards an IRREVERSIBLE operation: Remove-SvnFile feeds the result to `svn delete` + `svn commit`
+# against the shared repository. A path that escapes the bridge worktree has to stop before that,
+# not be discovered in the history afterwards.
+Describe 'Resolve-PathWithinWorktree' {
+    BeforeAll {
+        $script:PwRoot = [System.IO.Path]::Combine(
+            [System.IO.Path]::GetTempPath(), "tp-pwr-$([Guid]::NewGuid().ToString('N').Substring(0, 8))")
+        $null = New-Item -ItemType Directory -Path $script:PwRoot -Force
+    }
+    AfterAll {
+        if (Test-Path -LiteralPath $script:PwRoot) {
+            Remove-Item -LiteralPath $script:PwRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'resolves an ordinary relative path under the root' {
+        $r = Resolve-PathWithinWorktree -Root $script:PwRoot -RelativePath 'docs/a.txt'
+        $r.StartsWith($script:PwRoot) | Should -BeTrue
+        $r | Should -Match 'a\.txt$'
+    }
+
+    It 'refuses a leading .. segment' {
+        { Resolve-PathWithinWorktree -Root $script:PwRoot -RelativePath '../outside.txt' } |
+            Should -Throw -ExpectedMessage "*'..'*"
+    }
+    It 'refuses a .. buried deeper in the path' {
+        { Resolve-PathWithinWorktree -Root $script:PwRoot -RelativePath 'docs/../../outside.txt' } |
+            Should -Throw
+    }
+    It 'refuses a backslash-separated .. too (Windows callers write it that way)' {
+        { Resolve-PathWithinWorktree -Root $script:PwRoot -RelativePath '..\outside.txt' } |
+            Should -Throw
+    }
+    It 'refuses an absolute path' {
+        { Resolve-PathWithinWorktree -Root $script:PwRoot -RelativePath 'C:\Windows\notepad.exe' } |
+            Should -Throw -ExpectedMessage '*absolute*'
+    }
+    It 'refuses an empty path' {
+        { Resolve-PathWithinWorktree -Root $script:PwRoot -RelativePath '  ' } | Should -Throw
+    }
+
+    # '..' inside a FILENAME is legal. Checking for the substring instead of the path segments would
+    # reject real files like "notes..bak" -- a guard that breaks valid input is its own bug.
+    It 'allows a filename that merely contains ..' {
+        $r = Resolve-PathWithinWorktree -Root $script:PwRoot -RelativePath 'notes..bak'
+        $r | Should -Match 'notes\.\.bak$'
+    }
+}
+
 Describe 'Get-RelativePathSafe' {
 
     It 'child path resolves to sub then file.txt' {

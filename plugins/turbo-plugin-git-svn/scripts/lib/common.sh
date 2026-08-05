@@ -917,3 +917,47 @@ set_tp_branch_prop() {
   )
 }
 
+# resolve_path_within_worktree <root> <relative-path>
+#
+# Echo the resolved absolute path, or fail (non-zero, message on stderr) if it escapes <root>.
+#
+# Why this is worth a guard even though the value is not attacker-supplied in practice: the caller
+# (remove-svn-file.sh) uses the result for `svn delete` + `svn commit` against the SHARED
+# repository, and that is irreversible -- deleting the wrong path costs everyone on the team a
+# recovery, and SVN history keeps the mistake forever. The path arrives from an agent reading
+# `git status` / `svn status` output, so a `..` segment means something upstream is already wrong;
+# the point is to stop there rather than to discover it after the commit. Mirrors the fail-closed
+# stance of the SVN URL trust check above, which rejects `..` outright rather than sanitizing it.
+resolve_path_within_worktree() {
+  local root="$1" rel="$2"
+
+  if [[ -z "$rel" ]]; then
+    echo "Error: refusing an empty path." >&2; return 1
+  fi
+  case "$rel" in
+    /*|[A-Za-z]:[\\/]*)
+      echo "Error: refusing an absolute path: '$rel'. Paths are relative to the worktree root." >&2
+      return 1 ;;
+  esac
+
+  # Check SEGMENTS, not a substring: a filename may legitimately contain '..' (e.g. "a..b.txt").
+  local normalized="${rel//\\//}"
+  local IFS='/' seg
+  for seg in $normalized; do
+    if [[ "$seg" == '..' ]]; then
+      echo "Error: refusing a path containing '..': '$rel'." >&2; return 1
+    fi
+  done
+  unset IFS
+
+  # Deliberately LEXICAL, like the PowerShell twin: with absolute paths and '..' segments already
+  # rejected, a plain join cannot escape, and staying lexical means the check does not depend on the
+  # target existing yet (the caller reports "not found" itself, with a better message). Canonicalise
+  # the root via the shell rather than realpath, which is not on every Git-for-Windows install.
+  local root_real
+  root_real="$(cd -- "$root" 2>/dev/null && pwd -P)" || {
+    echo "Error: worktree root not readable: $root" >&2; return 1; }
+
+  printf '%s\n' "$root_real/$normalized"
+}
+

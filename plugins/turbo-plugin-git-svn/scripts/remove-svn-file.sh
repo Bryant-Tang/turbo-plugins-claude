@@ -61,6 +61,11 @@ if [[ -n "$BRIDGE_STATUS" ]]; then
   exit 1
 fi
 
+# Contain the path BEFORE anything irreversible. Everything below this point leads to
+# `svn delete` + `svn commit` against the SHARED repository, so a path that escapes the bridge
+# worktree must stop here, not be discovered afterwards.
+resolve_path_within_worktree "$REMOTE_PATH" "$REL_PATH" >/dev/null || exit 1
+
 # The target must exist on disk in the bridge.
 if [[ ! -e "$REMOTE_PATH/$REL_PATH" ]]; then
   echo "Error: path not found in bridge worktree: '$REL_PATH' (looked under $REMOTE_PATH)." >&2; exit 1

@@ -781,5 +781,65 @@ test_get_svn_push_body_groups_merged_main() {
     case "$body" in *"- chore: main two"*) assertTrue 'merged-in trunk commit present' 0 ;; *) fail "m2 missing: $body" ;; esac
 }
 
+# ── resolve_path_within_worktree ─────────────────────────────────────────────
+#
+# Guards an IRREVERSIBLE operation: remove-svn-file.sh feeds the result to `svn delete` +
+# `svn commit` against the shared repository. A path that escapes the bridge worktree has to stop
+# before that, not be discovered in the history afterwards.
+
+test_resolve_path_within_worktree_accepts_ordinary_relative() {
+    local root out
+    root="$(mktemp -d)"
+    out="$(resolve_path_within_worktree "$root" 'docs/a.txt')" || fail 'ordinary relative path rejected'
+    case "$out" in
+        */docs/a.txt) assertTrue 'resolves under the root' 0 ;;
+        *) fail "unexpected resolution: $out" ;;
+    esac
+    rm -rf "$root"
+}
+
+test_resolve_path_within_worktree_refuses_dotdot() {
+    local root
+    root="$(mktemp -d)"
+    if resolve_path_within_worktree "$root" '../outside.txt' >/dev/null 2>&1; then
+        fail 'a leading .. was accepted'
+    fi
+    if resolve_path_within_worktree "$root" 'docs/../../outside.txt' >/dev/null 2>&1; then
+        fail 'a buried .. was accepted'
+    fi
+    if resolve_path_within_worktree "$root" '..\outside.txt' >/dev/null 2>&1; then
+        fail 'a backslash-separated .. was accepted'
+    fi
+    rm -rf "$root"
+}
+
+test_resolve_path_within_worktree_refuses_absolute_and_empty() {
+    local root
+    root="$(mktemp -d)"
+    if resolve_path_within_worktree "$root" '/etc/passwd' >/dev/null 2>&1; then
+        fail 'a POSIX absolute path was accepted'
+    fi
+    if resolve_path_within_worktree "$root" 'C:\Windows\notepad.exe' >/dev/null 2>&1; then
+        fail 'a Windows absolute path was accepted'
+    fi
+    if resolve_path_within_worktree "$root" '' >/dev/null 2>&1; then
+        fail 'an empty path was accepted'
+    fi
+    rm -rf "$root"
+}
+
+# '..' inside a FILENAME is legal. Checking for the substring instead of the path segments would
+# reject real files like "notes..bak" -- a guard that breaks valid input is its own bug.
+test_resolve_path_within_worktree_allows_dotdot_inside_filename() {
+    local root out
+    root="$(mktemp -d)"
+    out="$(resolve_path_within_worktree "$root" 'notes..bak')" || fail 'notes..bak was rejected'
+    case "$out" in
+        */notes..bak) assertTrue 'filename containing .. is allowed' 0 ;;
+        *) fail "unexpected resolution: $out" ;;
+    esac
+    rm -rf "$root"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

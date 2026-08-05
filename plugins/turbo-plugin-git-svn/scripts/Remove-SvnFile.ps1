@@ -56,8 +56,12 @@ try {
         throw "Remote worktree '$remotePath' has uncommitted changes; resolve before removing a path.`n$bridgeStatus"
     }
 
+    # Contain the path BEFORE anything irreversible. Everything below this point leads to
+    # `svn delete` + `svn commit` against the SHARED repository, so a path that escapes the bridge
+    # worktree must stop here, not be discovered afterwards.
+    $targetFull = Resolve-PathWithinWorktree -Root $remotePath -RelativePath $Path
+
     # The target must exist on disk in the bridge.
-    $targetFull = [System.IO.Path]::Combine($remotePath, $Path)
     if (-not (Test-Path -LiteralPath $targetFull)) {
         throw "Path not found in bridge worktree: '$Path' (looked under $remotePath)."
     }
