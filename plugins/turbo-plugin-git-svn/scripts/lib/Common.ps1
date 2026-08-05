@@ -23,8 +23,63 @@
 # has no business in a plugin that never touches svn. Every script here that can invoke svn
 # dot-sources THIS file, so the choke point is unchanged. Same reasoning as the earlier move of
 # Get-WorktreesDir out of universal Core.
+
+# --- svn must be new enough to have --show-item (single choke point) -----------
+# `svn info --show-item` arrived in Subversion 1.9 and is used across build-svn-commit,
+# checkout-svn-branch, initialize-git-svn-bridge, new-remote-bridge and this lib. On an older
+# client every one of those dies with `svn: invalid option: --show-item` -- a message that says
+# nothing about the actual problem, leaving the user to work out whether their environment is
+# broken or the plugin is. That diagnosis time is exactly what this gate exists to remove.
+#
+# Not hypothetical: chocolatey's `svn` package is win32svn, last released 2015 and pinned at
+# 1.8.15. It is also the likely shape of the problem in the field -- this plugin exists because a
+# team is stuck on SVN, and those environments are the most likely to be running an old client.
+#
+# Checked ONCE per process from inside the shim, so every caller is covered without each script
+# having to remember a pre-check, and the cost is one `svn --version` per run.
+$script:TpSvnMinVersion = '1.9'
+$script:TpSvnVersionChecked = $false
+
+function Assert-SvnVersion {
+    param([Parameter(Mandatory = $true)][string]$SvnExe)
+
+    # try/catch around the native call: under EAP=Stop anything svn writes to stderr becomes a
+    # terminating NativeCommandError before the emptiness check can run (repo CLAUDE.md, PS 5.1 #4).
+    $raw = ''
+    try {
+        $raw = (& $SvnExe --version --quiet 2>$null | Out-String).Trim()
+    } catch {
+        $raw = ''
+    }
+
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        throw "Could not determine the Subversion version (ran: $SvnExe --version --quiet). Subversion $script:TpSvnMinVersion or newer is required."
+    }
+    if ($raw -notmatch '(\d+)\.(\d+)') {
+        throw "Could not parse the Subversion version from '$raw'. Subversion $script:TpSvnMinVersion or newer is required."
+    }
+
+    $major = [int]$Matches[1]
+    $minor = [int]$Matches[2]
+    if ($major -lt 1 -or ($major -eq 1 -and $minor -lt 9)) {
+        throw @"
+Subversion $script:TpSvnMinVersion or newer is required, but this client is $raw ($SvnExe).
+Reason: turbo-plugin-git-svn uses 'svn info --show-item', which does not exist before 1.9;
+on this client it fails with "svn: invalid option: --show-item".
+Fix: install a current client -- SlikSVN or TortoiseSVN (with command line tools) on Windows.
+Note: the chocolatey 'svn' package is win32svn and is pinned at 1.8.15, so it will not do.
+"@
+    }
+}
+
 function svn {
     $exe = (Get-Command svn -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    if (-not $script:TpSvnVersionChecked) {
+        Assert-SvnVersion -SvnExe $exe
+        # Set only AFTER a passing check, so a failure is re-reported on the next call instead of
+        # being silently swallowed by a "already checked" flag.
+        $script:TpSvnVersionChecked = $true
+    }
     & $exe --non-interactive @args
 }
 
@@ -316,6 +371,49 @@ function Assert-TrustedSvnUrl {
 # Capture happens OUTSIDE the ANSI OutputEncoding scope used for svn — commit subjects are UTF-8
 # (KTD6); callers must invoke this while the console encoding is still the default (UTF-8 capable).
 # Returns the body string ('' when the range has no non-merge commit).
+# Expand an unversioned DIRECTORY into one "A|<tracked|ignored>|<relpath>" line per file inside it.
+#
+# `svn status` reports a directory that is not yet under version control as a SINGLE '?' entry and
+# never recurses into it -- svn's own behaviour, not a defect here. The commit step, however, runs
+# `svn add --parents` (recursive), so every file inside IS committed. That gap made the
+# consolidated confirmation list show 3 folders where 14 files were actually going to SVN
+# (issue #24). The confirmation exists so the user sees the full scope BEFORE the commit rather
+# than reading it back out of the commit output afterwards.
+#
+# Paths are emitted relative to the working copy, matching what `svn status` itself prints, so the
+# SKILL's list never mixes two path shapes.
+#
+# Args: -RemotePath = the bridge working copy; -RelativeDir = the unversioned dir, relative to it.
+function Get-UnversionedDirectoryFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][string]$RelativeDir
+    )
+
+    $absDir = [System.IO.Path]::Combine($RemotePath, $RelativeDir)
+    if (-not (Test-Path -LiteralPath $absDir -PathType Container)) { return @() }
+
+    # .git / .svn are metadata, never content to be pushed. A bridge worktree always has both.
+    $children = @(Get-ChildItem -LiteralPath $absDir -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\\.(git|svn)\\' } |
+        Sort-Object -Property FullName)
+
+    $lines = @()
+    foreach ($child in $children) {
+        $childRel = Get-RelativePathSafe -From $RemotePath -To $child.FullName
+
+        $eaChild = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        & git -C $RemotePath check-ignore -q $childRel 2>$null | Out-Null
+        $childIgnored = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $eaChild
+
+        $childKind = if ($childIgnored) { 'ignored' } else { 'tracked' }
+        $lines += "A|$childKind|$childRel"
+    }
+    return $lines
+}
+
 function Get-SvnPushBody {
     param(
         [Parameter(Mandatory = $true)][string]$RepoDir,

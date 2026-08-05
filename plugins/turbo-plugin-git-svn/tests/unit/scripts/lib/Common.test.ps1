@@ -774,3 +774,154 @@ Describe 'Get-SvnPushBody' {
         }
     }
 }
+
+Describe 'Assert-SvnVersion (issue #26)' {
+
+    BeforeAll {
+        # NOT $IsWindows: that automatic variable is read-only under pwsh and undefined under
+        # Windows PowerShell 5.1. Same expression the test orchestrator uses.
+        $script:SvOnWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
+    }
+
+    It 'rejects a pre-1.9 client, naming --show-item and the upgrade path' {
+        # Set-ItResult inside the It, never -Skip:, because -Skip: is evaluated during Pester's
+        # DISCOVERY phase where a flag set in BeforeAll is still $null -- the file would then skip
+        # silently while reporting green.
+        if (-not $script:SvOnWindows) {
+            Set-ItResult -Skipped -Because 'the fake svn stub is a .cmd (Windows only); the .sh suite covers bash'
+            return
+        }
+        $root = New-IsolatedRepoRoot 'svnver18'
+        try {
+            $stub = Join-Path $root 'fakesvn.cmd'
+            # 1.8.15 is not an arbitrary number: it is exactly what chocolatey's win32svn pins to,
+            # which is how this reaches real users.
+            Set-Content -LiteralPath $stub -Value '@echo 1.8.15' -Encoding ASCII
+            { Assert-SvnVersion -SvnExe $stub } | Should -Throw -ExpectedMessage '*--show-item*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'accepts a 1.9+ client' {
+        if (-not $script:SvOnWindows) {
+            Set-ItResult -Skipped -Because 'the fake svn stub is a .cmd (Windows only); the .sh suite covers bash'
+            return
+        }
+        $root = New-IsolatedRepoRoot 'svnver114'
+        try {
+            $stub = Join-Path $root 'fakesvn.cmd'
+            Set-Content -LiteralPath $stub -Value '@echo 1.14.2' -Encoding ASCII
+            { Assert-SvnVersion -SvnExe $stub } | Should -Not -Throw
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'accepts exactly 1.9 (boundary)' {
+        if (-not $script:SvOnWindows) {
+            Set-ItResult -Skipped -Because 'the fake svn stub is a .cmd (Windows only); the .sh suite covers bash'
+            return
+        }
+        $root = New-IsolatedRepoRoot 'svnver19'
+        try {
+            $stub = Join-Path $root 'fakesvn.cmd'
+            Set-Content -LiteralPath $stub -Value '@echo 1.9.0' -Encoding ASCII
+            { Assert-SvnVersion -SvnExe $stub } | Should -Not -Throw
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'fails loudly when the version cannot be determined' {
+        if (-not $script:SvOnWindows) {
+            Set-ItResult -Skipped -Because 'the fake svn stub is a .cmd (Windows only); the .sh suite covers bash'
+            return
+        }
+        $root = New-IsolatedRepoRoot 'svnverJunk'
+        try {
+            $stub = Join-Path $root 'fakesvn.cmd'
+            Set-Content -LiteralPath $stub -Value '@echo not-a-version' -Encoding ASCII
+            { Assert-SvnVersion -SvnExe $stub } | Should -Throw
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+}
+
+Describe 'Get-UnversionedDirectoryFiles (issue #24)' {
+
+    It 'lists every file under a new folder, recursively' {
+        $repo = New-IsolatedRepoRoot 'unvExpand'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            $newDir = Join-Path $repo 'NewFolder'
+            $subDir = Join-Path $newDir 'sub'
+            $null = New-Item -ItemType Directory -Path $subDir -Force
+            Set-Content -LiteralPath (Join-Path $newDir 'a.txt') -Value 'a' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $subDir 'b.txt') -Value 'b' -Encoding ASCII
+
+            $lines = @(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'NewFolder')
+
+            # svn status alone would have reported only the folder -- these two files are exactly
+            # what used to be missing from the confirmation list while still being committed.
+            $lines.Count | Should -Be 2
+            ($lines -join "`n") | Should -Match 'A\|tracked\|NewFolder.a\.txt'
+            ($lines -join "`n") | Should -Match 'A\|tracked\|NewFolder.sub.b\.txt'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'marks git-ignored children as ignored rather than dropping or mislabelling them' {
+        $repo = New-IsolatedRepoRoot 'unvIgnored'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Set-Content -LiteralPath (Join-Path $repo '.gitignore') -Value 'NewFolder/skip/' -Encoding ASCII
+            $newDir = Join-Path $repo 'NewFolder'
+            $skipDir = Join-Path $newDir 'skip'
+            $null = New-Item -ItemType Directory -Path $skipDir -Force
+            Set-Content -LiteralPath (Join-Path $newDir 'keep.txt') -Value 'k' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $skipDir 'junk.txt') -Value 'j' -Encoding ASCII
+
+            $joined = (@(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'NewFolder') -join "`n")
+
+            $joined | Should -Match 'A\|tracked\|NewFolder.keep\.txt'
+            $joined | Should -Match 'A\|ignored\|NewFolder.skip.junk\.txt'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'skips .git and .svn metadata' {
+        $repo = New-IsolatedRepoRoot 'unvMeta'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            $newDir = Join-Path $repo 'NewFolder'
+            $svnMeta = Join-Path $newDir '.svn'
+            $null = New-Item -ItemType Directory -Path $svnMeta -Force
+            Set-Content -LiteralPath (Join-Path $newDir 'real.txt') -Value 'r' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $svnMeta 'entries') -Value 'x' -Encoding ASCII
+
+            $lines = @(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'NewFolder')
+
+            $lines.Count | Should -Be 1
+            ($lines -join "`n") | Should -Match 'real\.txt'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'returns nothing for a path that is not a directory' {
+        $repo = New-IsolatedRepoRoot 'unvNotDir'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Set-Content -LiteralPath (Join-Path $repo 'plain.txt') -Value 'p' -Encoding ASCII
+
+            @(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'plain.txt').Count | Should -Be 0
+            @(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'DoesNotExist').Count | Should -Be 0
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+}

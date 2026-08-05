@@ -19,7 +19,11 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 
 ## 設定
 
-- 需 git + SVN client(`svn` / `svnadmin` 在 PATH)。
+- 需 git + SVN client(`svn` / `svnadmin` 在 PATH)。**SVN 需 1.9 以上**——腳本用 `svn info --show-item`,
+  那是 1.9 才有的選項。版本不足時第一次呼叫 svn 就會直接說明原因與升級方式,不會讓你去猜
+  `svn: invalid option: --show-item` 是什麼意思。
+  > Windows 上請裝 SlikSVN 或 TortoiseSVN(勾 command line tools)。**chocolatey 的 `svn` 套件不行**:
+  > 那是 win32svn,2015 年最後發佈、停在 1.8.15。
 - `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml`(+ `CLAUDE.md` base 區塊);machine-specific 偏好寫進 gitignored `config.local.toml`。
 - case (a)(新建)/(b)(接管現有 git+SVN)的 git↔SVN bridge bootstrap 由固定腳本 `Initialize-GitSvnBridge`(`.ps1` / `.sh`)承接(空 main 先行 → orphan bridge + `svn checkout` → 固定 `svn:ignore=.git` → `git merge --allow-unrelated-histories` 進當前分支),agent 只留收 SVN URL / 收 git 身分 / 確認;base 骨架在腳本成功後才疊上。
 

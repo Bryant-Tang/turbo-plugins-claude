@@ -25,7 +25,57 @@ source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
 # shim has no business in a plugin that never touches svn. Every script here that can invoke
 # svn sources THIS file, so the choke point is unchanged. Same reasoning as the earlier move
 # of get_worktrees_dir out of universal core.
+# --- svn must be new enough to have --show-item (single choke point) -----------
+# `svn info --show-item` arrived in Subversion 1.9 and is used across build-svn-commit,
+# checkout-svn-branch, initialize-git-svn-bridge, new-remote-bridge and this lib. On an older
+# client every one of those dies with `svn: invalid option: --show-item` -- a message that says
+# nothing about the actual problem, leaving the user to work out whether their environment is
+# broken or the plugin is. That diagnosis time is exactly what this gate exists to remove.
+#
+# Not hypothetical: chocolatey's `svn` package is win32svn, last released 2015 and pinned at
+# 1.8.15. It is also the likely shape of the problem in the field -- this plugin exists because a
+# team is stuck on SVN, and those environments are the most likely to be running an old client.
+#
+# Checked ONCE per process from inside the shim, so every caller is covered without each script
+# having to remember a pre-check, and the cost is one `svn --version` per run.
+TP_SVN_MIN_VERSION="1.9"
+_tp_svn_version_checked=""
+
+assert_svn_version() {
+  local raw major minor
+  raw="$(command svn --version --quiet 2>/dev/null)" || raw=""
+  raw="$(printf '%s' "$raw" | tr -d '[:space:]')"
+
+  if [[ -z "$raw" ]]; then
+    echo "Error: could not determine the Subversion version (ran: svn --version --quiet). Subversion ${TP_SVN_MIN_VERSION} or newer is required." >&2
+    return 1
+  fi
+  # grep -oE, never grep -P: PCRE mode refuses to run under the non-UTF-8 locales common on
+  # zh-TW Git Bash installs.
+  if [[ ! "$raw" =~ ^([0-9]+)\.([0-9]+) ]]; then
+    echo "Error: could not parse the Subversion version from '$raw'. Subversion ${TP_SVN_MIN_VERSION} or newer is required." >&2
+    return 1
+  fi
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+
+  if (( major < 1 || ( major == 1 && minor < 9 ) )); then
+    echo "Error: Subversion ${TP_SVN_MIN_VERSION} or newer is required, but this client is ${raw}." >&2
+    echo "  Reason: turbo-plugin-git-svn uses 'svn info --show-item', which does not exist before 1.9;" >&2
+    echo "  on this client it fails with \"svn: invalid option: --show-item\"." >&2
+    echo "  Fix: install a current client -- SlikSVN or TortoiseSVN (with command line tools) on Windows." >&2
+    echo "  Note: the chocolatey 'svn' package is win32svn and is pinned at 1.8.15, so it will not do." >&2
+    return 1
+  fi
+}
+
 svn() {
+  if [[ -z "$_tp_svn_version_checked" ]]; then
+    assert_svn_version || return 1
+    # Set only AFTER a passing check, so a failure is re-reported on the next call instead of
+    # being silently swallowed by an "already checked" flag.
+    _tp_svn_version_checked=1
+  fi
   command svn --non-interactive "$@"
 }
 
@@ -439,6 +489,37 @@ svn_log_format_xml() {
 # Args: <repo_dir> <range>   (range e.g. "remote-svn/main..feat/x")
 # Prints the body to stdout (empty output when the range has no non-merge commit). Returns the
 # git exit code, so a genuine git failure propagates under `set -e`.
+# Expand an unversioned DIRECTORY into one "A|<tracked|ignored>|<relpath>" line per file inside it.
+#
+# `svn status` reports a directory that is not yet under version control as a SINGLE '?' entry and
+# never recurses into it -- svn's own behaviour, not a defect here. The commit step, however, runs
+# `svn add --parents` (recursive), so every file inside IS committed. That gap made the
+# consolidated confirmation list show 3 folders where 14 files were actually going to SVN
+# (issue #24). The confirmation exists so the user sees the full scope BEFORE the commit rather
+# than reading it back out of the commit output afterwards.
+#
+# Paths are emitted relative to the working copy, matching what `svn status` itself prints, so the
+# SKILL's list never mixes two path shapes.
+#
+# Args: $1 = the bridge working copy; $2 = the unversioned dir, relative to it.
+expand_unversioned_dir() {
+  local remote_path="$1" rel_dir="$2"
+  local abs_dir="$remote_path/$rel_dir"
+  [[ -d "$abs_dir" ]] || return 0
+
+  local child_abs child_rel
+  # .git / .svn are metadata, never content to be pushed. A bridge worktree always has both.
+  while IFS= read -r child_abs; do
+    [[ -z "$child_abs" ]] && continue
+    child_rel="${child_abs#"$remote_path/"}"
+    if git -C "$remote_path" check-ignore -q "$child_rel" 2>/dev/null; then
+      echo "A|ignored|$child_rel"
+    else
+      echo "A|tracked|$child_rel"
+    fi
+  done < <(find "$abs_dir" -type f -not -path '*/.git/*' -not -path '*/.svn/*' | LC_ALL=C sort)
+}
+
 get_svn_push_body() {
   local repo_dir="$1" range="$2"
   local tip="${range##*..}"
