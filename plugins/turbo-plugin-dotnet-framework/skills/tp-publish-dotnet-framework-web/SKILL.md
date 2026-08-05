@@ -57,6 +57,14 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
   profile 裡的 `<Configuration>` **不會**影響建置階段——csproj 自己的 `Debug` 預設值會贏,結果是把一份
   Debug 組建放進 `bin\Release\Publish\`。所以執行器改成讀出來明確傳。
 
+### Step 1.5 — 前端打包偵測(**沒設定就要問,不要默默略過**)
+
+讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/frontend-pack-check.md`。
+
+publish 這條路徑比 build 更要緊:發佈產出會送到**部署環境**,「前端沒被打包」卻沒人吭聲,
+代價是把缺件的東西發出去。已設定 / 使用者已說過不用 → 直接往下;都沒有且專案裡找得到
+`package.json` → 問一次再繼續。
+
 ### Step 2 — 執行 publish
 
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶明確參數:`-Project <csproj>`、(可選)`-Pubxml <path>`、(可選)`-Configuration`/`-Platform`。Script 會:解析 csproj target(CLI → `[publish].project` → 清楚報錯;**收到 `.sln` 報錯**)、找 MSBuild、解析 pubxml(CLI → `[publish].default_pubxml` → `Properties/PublishProfiles/` 單一)、跑 frontend pack(若 `[frontend]` 齊備)、跑 `msbuild /p:DeployOnBuild=true /p:PublishProfile=<name>`(`/p:Configuration` 取「你傳的值 → pubxml 的 `<Configuration>`」,兩者都沒有才省略;`/p:Platform` 仍是**有值才附**)、後處理 parse `<PublishUrl>` + `<WebPublishMethod>` 回報產出位置。
@@ -66,6 +74,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 腳本成功後印一行 `PUBLISH_OUTPUT (...)` marker,**緊接其後數行**即結果模板,把它們**逐字**轉述給使用者(與 build/run/stop 同一套):
 
 - `Target: <csproj>`、`Profile: <pubxml>` ——**糾錯閘**,讓使用者確認發佈的是不是對的專案 / profile(尤其 target 來自記憶、你沒明傳 `-Project` 時)。這兩行是標籤、照常轉述即可。
+- `Frontend: 已執行 (<dir>)` 或 `Frontend: 未設定 (未執行前端打包)` ——讓「這次發佈有沒有帶前端」**一定會被說出口**。同樣照常轉述,不要因為它看起來像雜訊就略過:發佈缺前端資產正是靠這行才看得見。
 - 接著是產出位置:第一行 raw Windows 絕對路徑、第二行 `file:///` URL(非 FileSystem 發佈方式則只有一行 URL)。這(些)路徑/URL 行必須**各自單獨成行、前後不接任何散文或標點**(不要包成「產出在:…」、也不要在行尾加句號),終端機才會把它算成可點擊連結。
 
 **不要轉述 marker 行本身**;`Target:` / `Profile:` 照常轉述,只有路徑/URL 那幾行要保持光禿可點擊。
@@ -101,6 +110,8 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
 - `msbuild` 結束 exit code 為 0、stdout 含 `PUBLISH_OUTPUT` 模板(`Target:` / `Profile:` + 產出位置路徑/URL)。
 - `<PublishUrl>` 路徑含新 artifact。
 - 若 frontend 設定齊備:`<PublishUrl>/<frontend-output-dir>/` 含 frontend build 結果。
+- **前端狀態有被說出口**:轉述的結果含 `Frontend:` 那一行。若它是「未設定」,而這個專案其實有
+  `package.json`,代表 Step 1.5 沒做——**發佈前**回去補問,別讓缺前端資產的產出送到部署環境。
 - save-back:若這次選擇與記憶不同,已問過使用者並寫對 `[publish]` 的 per-op key。
 
 ## Test Scenarios

@@ -17,9 +17,12 @@ function Find-CommandPath {
 try {
     $repoRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
 
-    $frontendDirRel = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'frontend' -Key 'dir' -CliValue $null -Default $null
+    # Resolve-FrontendPackDir, not a direct [frontend] dir read: Build-Web / Publish-Web fill the
+    # result template's Frontend line from the SAME function, so what the template states and what
+    # this script does cannot drift apart (issue #30). It also honours [frontend] enabled = false.
+    $frontendDirRel = Resolve-FrontendPackDir -RepoRoot $repoRoot
     if ([string]::IsNullOrWhiteSpace($frontendDirRel)) {
-        Write-Output '[frontend] dir not configured in .turbo-plugin/config.toml. Skipping frontend pack.'
+        Write-Output '[frontend] not configured (or disabled) in .turbo-plugin/config.toml. Skipping frontend pack.'
         exit 0
     }
 

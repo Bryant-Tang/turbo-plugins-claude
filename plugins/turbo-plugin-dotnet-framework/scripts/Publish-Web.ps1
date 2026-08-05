@@ -68,6 +68,11 @@ try {
     }
     $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default $null
 
+    # Read [frontend] dir for the result template. Publish is the costlier place for a silently
+    # skipped frontend pack: the output can reach a deployed environment, so "was the frontend
+    # packed?" must be stated, not left to a stdout line nobody relays (issue #30).
+    $frontendDir = Resolve-FrontendPackDir -RepoRoot $repoRoot
+
     # Pre-publish: run Compress-Content for frontend. Compress-Content.ps1 is shipped in this
     # plugin alongside Publish-Web.ps1, so the prior Test-Path guard was redundant —
     # Compress-Content already exits 0 with a skip message when [frontend] isn't configured.
@@ -134,7 +139,7 @@ try {
     # bare path/URL line(s) so the agent relays "which project" the same way build/run/stop do
     # (Format-*ResultLines / KTD5), while the path/URL lines stay bare for terminal clickability.
     $publishMarker = 'PUBLISH_OUTPUT (relay these lines to the user as the publish result; keep the path/URL line(s) bare so they stay clickable):'
-    $publishLead   = @("Target: $projectFile", "Profile: $publishProfileName")
+    $publishLead   = @("Target: $projectFile", "Profile: $publishProfileName", (Format-FrontendStatusLine -FrontendDir $frontendDir))
 
     if ($publishUrlRaw -match '\$\(') {
         [Console]::Error.WriteLine('Warning: <PublishUrl> contains MSBuild properties; cannot resolve statically.')

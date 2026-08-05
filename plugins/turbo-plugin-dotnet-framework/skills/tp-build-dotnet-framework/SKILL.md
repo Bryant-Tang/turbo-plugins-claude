@@ -52,6 +52,15 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 - 預設**不要**傳 `--configuration` / `--platform`——讓 MSBuild / `.sln` / `Directory.Build.props` 自己決定(對齊 VS,VS 也沒要你選 config 才能 build)。
 - 只有使用者明確指定、或記憶(`[build].configuration` / `[build].platform`)有值時才傳。
 
+### Step 1.5 — 前端打包偵測(**沒設定就要問,不要默默略過**)
+
+讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/frontend-pack-check.md`。
+
+摘要:`Compress-Content` 在沒有前端設定時會**安靜跳過**,而那行 skip 訊息不在你會轉述的結果模板裡,
+使用者只會看到「build 成功」、不會知道前端沒打包。所以由**你**在跑之前判斷——已設定 / 使用者已說過不用
+→ 直接往下;都沒有且專案裡找得到 `package.json` → 問一次(白話問句,別丟設定 key 名),把答案寫進
+`.turbo-plugin/config.toml` 的 `[frontend]`,之後不再重問。
+
 ### Step 2 — 執行 build
 
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Build-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/build-web.sh`)帶你判斷出的明確參數:`-Project <csproj 或 .sln>`、(可選)`-Configuration <name>`、`-Platform <name>`。`.sh` 是 thin wrapper 轉呼叫 `.ps1`。
@@ -60,7 +69,10 @@ Script 會:解析 target(CLI `-Project` → `config.toml [build].project` → �
 
 ### Step 3 — 回報結果模板
 
-腳本結尾印一行 `BUILD_OUTPUT (...)` marker + 數行:**解析後的實際 target**、configuration、platform(未指定者標「未指定 (由 MSBuild / solution / Directory.Build.props 決定)」)。把這些**逐字轉述**給使用者當結果。其中「解析後 target」是**糾錯閘**——讓使用者確認建的是不是對的專案;若建錯了,改 `-Project` 重跑。
+腳本結尾印一行 `BUILD_OUTPUT (...)` marker + 數行:**解析後的實際 target**、configuration、platform(未指定者標「未指定 (由 MSBuild / solution / Directory.Build.props 決定)」)、**Frontend**(有打包標「已執行 (<dir>)」、沒有標「未設定 (未執行前端打包)」)。把這些**逐字轉述**給使用者當結果,**一行都不要略過**。
+
+其中兩行各自是一道閘:「解析後 target」讓使用者確認建的是不是對的專案(建錯了就改 `-Project` 重跑);
+「Frontend」讓「前端沒被打包」這件事**一定會被說出口**——那正是它會被漏掉的原因(Step 1.5)。
 
 ### Step 4 — 記憶存回(save-back)
 
@@ -87,11 +99,15 @@ build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.
 - `msbuild` 結束 exit code 為 0,且 stdout 出現 `BUILD_OUTPUT` 模板、解析後 target 是預期的專案 / 方案。
 - 產物落在 `<project>\bin\...`(實際 Configuration 由 MSBuild / solution 決定,**不假設** Debug)。
 - 若 `[frontend]` 設定齊備:`<frontend.dir>/` 內 build 輸出齊備。
+- **前端狀態有被說出口**:轉述的結果含 `Frontend:` 那一行。若它是「未設定」,而這個專案其實有
+  `package.json`,代表 Step 1.5 沒做——回去補問,別讓使用者以為前端打包過了。
 - save-back:若這次選擇與記憶不同,已問過使用者並寫對 `[build]` 的 per-op key(或使用者選不存)。
 
 ## Test Scenarios
 
-- **[frontend] config absent**: 沒設 `[frontend]` 段 → /tp-build 略過 frontend 步驟、直接 MSBuild、`BUILD_OUTPUT` 模板出現。
+- **[frontend] config absent**: 沒設 `[frontend]` 段 → /tp-build 略過 frontend 步驟、直接 MSBuild、`BUILD_OUTPUT` 模板出現,且模板含 `Frontend: 未設定 (未執行前端打包)`。
+- **有 package.json 但沒設定**: 專案內有 `package.json`、`[frontend]` 未設且 `[frontend] enabled` 不是 `false` → Step 1.5 用 `AskUserQuestion` 主動問要不要打包前端,**不會**默默略過。
+- **已表態不用**: `[frontend] enabled = false` → 不再詢問,直接 build,模板仍顯示 `Frontend: 未設定`。
 - **[frontend] config present**: 設 `[frontend] dir = "src/web/frontend"; install_command = "npm install"; build_command = "npm run build"` → /tp-build 先跑 frontend 兩個 command,再 MSBuild。
 - **省略 config 對齊 VS**: 不傳 `--configuration` 且 `[build]` 無 configuration 記憶 → MSBuild 命令列**不含** `/p:Configuration`,讓 csproj 的 `<Configuration Condition>` 預設生效(非硬帶 Debug)。
 - **多個 csproj、無記憶**: worktree 有多個 csproj 又沒設 `[build].project` → 你用 `AskUserQuestion` 列候選請使用者選(script 不會 throw「multiple」,而是在完全沒 target 時才清楚報錯)。

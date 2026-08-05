@@ -48,8 +48,17 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
     `[iis] enabled` 未設定即視為啟用;要停用 IIS 相關 skill 才需要手動寫 `enabled = false`。
   - MSBuild / IIS Express 路徑寫在 `.turbo-plugin/config.local.toml` 的 `[tools]`(gitignored、機器專屬),
     **只在自動探測失敗時才需要**;skill 會自己探測標準安裝路徑,找不到才 throw 並引導你手動填。
-- **需要 git repo**:專案識別用 `git --git-common-dir` 算,不在 git work tree 內的話 skill 會 fail loudly。
+- **不強制 git repo**:專案識別(IIS Express 站台名的後綴)優先用 `git --git-common-dir` 算——那是 repo
+  裡所有 worktree 共用的根,所以同一個專案在不同 worktree 下拿到同一個身分。**不在 git work tree 內時
+  改用專案資料夾自己的絕對路徑**,一樣穩定,只是失去跨 worktree 共用(沒有 worktree 的資料夾本來也用不到)。
+  所以沒有版控的專案 build / run / stop / publish 都能用。
   要建 git + SVN 環境請裝 `turbo-plugin-git-svn` 跑它的 `/tp-setup`(那些動作會碰外部伺服器,不能 lazy)。
+- **前端打包**(可選):在 `.turbo-plugin/config.toml` 的 `[frontend]` 設 `dir` / `install_command` /
+  `build_command`(可選 `node_version`),build 與 publish 成功後會在該目錄跑安裝與打包。**沒設定也不會
+  默默跳過**——skill 偵測到專案裡有 `package.json` 就會主動問要不要設定,而結果模板一律回報
+  `Frontend: 已執行 (<dir>)` 或 `Frontend: 未設定`。確定不需要前端打包就寫 `[frontend] enabled = false`,
+  之後不再詢問。首次執行(或指令改過)會要求確認實際要跑的指令,核准記在
+  `.turbo-plugin/pack-content-trust.local.toml`。
 - **哪些檔案不該進版控**(`bin/` / `obj/` / `.vs/` / 本機設定 …)由 `turbo-plugin-git-svn` 的
   `/tp-suggest-ignore` 判斷,本 plugin 不寫死清單。唯一的例外是 `*.local.*`:記憶存回在寫
   `config.local.toml` 之前會先確保 `.gitignore` 擋住它(誰寫這種檔誰負責)。
