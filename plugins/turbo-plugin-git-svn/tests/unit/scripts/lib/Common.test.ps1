@@ -869,6 +869,65 @@ Describe 'ConvertTo-SvnTarget (issue #34)' {
     }
 }
 
+Describe 'Write-SvnTargetsFile (issue #35)' {
+
+    It 'writes one path per line' {
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            Write-SvnTargetsFile -Path $f -Targets @('Content/one.txt@', 'Content/two.txt@')
+            $lines = @([System.IO.File]::ReadAllLines($f) | Where-Object { $_ -match '\S' })
+            $lines.Count | Should -Be 2
+            $lines[0] | Should -Be 'Content/one.txt@'
+            $lines[1] | Should -Be 'Content/two.txt@'
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'handles a target list far beyond the command-line limit' {
+        # The whole point of the targets file: 3000 paths as argv is what blew up.
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            $many = 1..3000 | ForEach-Object { "bulk/file$_.txt@" }
+            Write-SvnTargetsFile -Path $f -Targets $many
+            @([System.IO.File]::ReadAllLines($f) | Where-Object { $_ -match '\S' }).Count | Should -Be 3000
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'writes in the ANSI codepage, not UTF-8, so svn reads the paths back correctly' {
+        # svn reads a --targets file through CP_ACP on Windows. A UTF-8 file makes it look for a
+        # mojibake path and fail "is not under version control" -- verified against a local repo.
+        $onWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
+        if (-not $onWindows) {
+            Set-ItResult -Skipped -Because 'no CP_ACP off Windows; svn reads the locale encoding there'
+            return
+        }
+        $acp = [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage
+        if ($acp -le 0 -or $acp -eq 65001) {
+            Set-ItResult -Skipped -Because "ANSI codepage is $acp (UTF-8 host); nothing to distinguish"
+            return
+        }
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            # A CJK path is the case that actually differs between the two encodings.
+            # Built from code points (U+4E2D U+6587) rather than literal characters so this
+            # assertion does not itself depend on how the test file is encoded.
+            $cjk = "Content/$([char]0x4E2D)$([char]0x6587).txt@"
+            Write-SvnTargetsFile -Path $f -Targets @($cjk)
+
+            $ansi = [System.Text.Encoding]::GetEncoding($acp)
+            $expected = $ansi.GetBytes("$cjk`n")
+            $actual = [System.IO.File]::ReadAllBytes($f)
+            # Byte-for-byte: reading it back as UTF-8 would silently "work" and prove nothing.
+            [System.Convert]::ToBase64String($actual) | Should -Be ([System.Convert]::ToBase64String($expected))
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe 'Get-UnversionedDirectoryFiles (issue #24)' {
 
     It 'lists every file under a new folder, recursively' {

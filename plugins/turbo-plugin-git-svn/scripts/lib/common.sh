@@ -505,6 +505,56 @@ svn_log_format_xml() {
 # Use it for FILE targets. Do NOT wrap fixed targets like '.', which have their own meaning to svn.
 svn_target() { printf '%s@' "$1"; }
 
+# Echo the system ANSI codepage (CP_ACP) on Windows; empty elsewhere.
+#
+# NOT `chcp`: that reports the CONSOLE (OEM) codepage, which differs from CP_ACP on plenty of
+# systems -- an en-US Windows is OEM 437 / ANSI 1252. svn reads a --targets file through CP_ACP, so
+# the console codepage would be the wrong answer exactly where it matters.
+#
+# MSYS2_ARG_CONV_EXCL is required: without it MSYS mangles the `HKLM\...` argument into a path and
+# reg.exe answers "invalid syntax".
+_svn_ansi_codepage() {
+  [[ "${OS:-}" == 'Windows_NT' ]] || return 0
+  MSYS2_ARG_CONV_EXCL='*' reg.exe query 'HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage' /v ACP 2>/dev/null \
+    | tr -d '\r' | awk '/^[[:space:]]*ACP[[:space:]]/ { print $NF }' | tail -1
+}
+
+# Write a --targets file for svn: one path per line, in the encoding svn will read it back with.
+#
+# Why a targets file at all: passing each path as its own argv entry blows the command-line length
+# limit once a push touches enough files ("Argument list too long" at ~2.9k targets; a first import
+# of an existing project is usually far more than that, so that scenario simply could not work).
+#
+# Why the ANSI codepage and not UTF-8: verified against a local repository -- a UTF-8 targets file
+# makes svn look for a mojibake path and fail with "is not under version control", while the same
+# list written in CP_ACP commits correctly. This is the same channel the command line already went
+# through (argv is CP_ACP too), so it is not a new limitation -- but it does mean a filename using
+# characters outside the active codepage cannot be expressed here, exactly as it could not be
+# expressed on the command line.
+#
+# Paths must ALREADY be escaped with svn_target: a targets file is peg-parsed line by line, just
+# like argv (verified -- an unescaped `banner@2x.jpg` in a targets file still fails E200009).
+# Args: <out_file> <path>...
+write_svn_targets_file() {
+  local out="$1"; shift
+  local cp
+  cp="$(_svn_ansi_codepage)"
+
+  if [[ -n "$cp" && "$cp" != '65001' ]] && command -v iconv >/dev/null 2>&1; then
+    if printf '%s\n' "$@" | iconv -f UTF-8 -t "CP$cp" > "$out" 2>/dev/null; then
+      return 0
+    fi
+    # A path carries characters the ANSI codepage cannot represent. Say so plainly instead of
+    # writing bytes svn will misread: the failure would otherwise surface as a confusing
+    # "is not under version control" naming a mangled path.
+    echo "Error: a path in this commit uses characters your system codepage (CP$cp) cannot represent," >&2
+    echo "  so it cannot be passed to svn on this host. See the encoding notes in /tp-setup." >&2
+    return 1
+  fi
+
+  printf '%s\n' "$@" > "$out"
+}
+
 # Expand an unversioned DIRECTORY into one "A|<tracked|ignored>|<relpath>" line per file inside it.
 #
 # `svn status` reports a directory that is not yet under version control as a SINGLE '?' entry and

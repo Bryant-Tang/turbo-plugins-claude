@@ -90,6 +90,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--re
 - merge 衝突 → 列出衝突檔,**不自動 abort**(由使用者解或手動 `git merge --abort`)
 - `PENDING_MERGE_DETECTED <remote-path>` → Script 輸出此 token 並 exit 0;SKILL 進入下方三選一 prompt
 - `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<current> requested=<requested>` → Build-SvnCommit 的 backstop(主要偵測已在 Step 0 pre-flight;此為正常 push 路徑上的二次防線),token 同以 `TP_TOKEN:` 前綴。Script 輸出此 token 並**繼續執行**;SKILL 進入下方確認 prompt
+- `Error: a path in this commit uses characters your system codepage (CP<n>) cannot represent` → 這次推送裡有檔名用到**你這台機器的字碼頁裝不下的文字**(例如繁中 cp950 系統上的日文假名或 emoji)。這不是 bug,是這台主機傳不進 svn 的字元。**在 SVN 端零寫入**。用白話說明:那個檔名在這台電腦上沒辦法送進 SVN,請改檔名,或依 `/tp-setup` 的編碼說明改用 PowerShell 7+ / 開啟 Windows UTF-8 設定。**不要**照唸 codepage 代號給使用者聽,講「你目前的系統語言設定」即可
 - `TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE` → **svn commit 失敗,但本機留下半完成狀態**(merge commit 已建、新增/刪除仍排程在 bridge、pin 檔保留)。token 後面幾行是腳本印的兩條出路與還原步驟。**這個 token 與那幾行都不可原樣丟給使用者** → 進入下方「commit 失敗處理」
 
 **commit 失敗處理(`SVN_COMMIT_FAILED_HALF_DONE`)** — 腳本**不會**自動還原,因為「該重試還是該還原」取決於 svn 為什麼拒絕,腳本判斷不了:暫時性原因(網路、鎖、憑證)重試就好,還原反而白白丟掉一次正確的 merge;真的被拒絕則重試幾次都一樣。所以由**你**看 svn 的錯誤訊息判斷,再用白話講給使用者:

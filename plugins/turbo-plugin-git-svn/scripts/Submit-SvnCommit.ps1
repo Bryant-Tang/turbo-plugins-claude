@@ -159,6 +159,11 @@ try {
     $noCommit = $false
     # UTF-8 (no BOM) message file: critical to keep Big5/CP_ACP from mangling non-ASCII.
     $msgFile = [System.IO.Path]::GetTempFileName()
+    # Pre-created so the finally block can clean them up even if we throw before they are used
+    # (StrictMode makes referencing an unset variable an error, not an empty string).
+    $targetsAdd = [System.IO.Path]::GetTempFileName()
+    $targetsDel = [System.IO.Path]::GetTempFileName()
+    $targetsCommit = [System.IO.Path]::GetTempFileName()
     Push-Location $remote.Path
     try {
         Write-Utf8NoBom -Path $msgFile -Content $fullMessage
@@ -197,14 +202,19 @@ try {
 
         # `--` terminates option parsing so a filename beginning with '-' is never read as a flag.
         # It does NOT cover peg revisions -- that is what ConvertTo-SvnTarget above is for.
+        # --targets, not argv: a push large enough (a first import of an existing project is
+        # typically thousands of files) overflows the command-line length limit (issue #35). The
+        # file carries the same escaped paths -- a targets file is peg-parsed line by line like argv.
         if ($toAdd.Count -gt 0) {
             Write-Output "SVN adding $($toAdd.Count) new file(s)..."
-            & svn add --parents -- $toAdd
+            Write-SvnTargetsFile -Path $targetsAdd -Targets $toAdd
+            & svn add --parents --targets $targetsAdd
             if ($LASTEXITCODE -ne 0) { throw 'svn add failed' }
         }
         if ($toDel.Count -gt 0) {
             Write-Output "SVN deleting $($toDel.Count) removed file(s)..."
-            & svn delete -- $toDel
+            Write-SvnTargetsFile -Path $targetsDel -Targets $toDel
+            & svn delete --targets $targetsDel
             if ($LASTEXITCODE -ne 0) { throw 'svn delete failed' }
         }
 
@@ -225,14 +235,19 @@ try {
             # --depth empty (proven by new-remote-bridge.sh's svn:ignore + '.git' commit). An ordinary
             # feature push ($tpAdvance = $false) leaves the commit byte-identical -- no '.', no --depth.
             $depthArgs = @()
+            $dotTarget = @()
             if ($tpAdvance) {
                 & svn propset tp:last-aligned-rev $tpNewAligned '.'
                 if ($LASTEXITCODE -ne 0) { throw 'svn propset tp:last-aligned-rev failed' }
-                $commitTargets += '.'
+                # '.' stays on the COMMAND LINE rather than going into the targets file: it is svn's
+                # "this directory" token, not a collected path, so it must not pick up the peg
+                # escape every real path gets. Verified working alongside --targets + --depth empty.
+                $dotTarget = @('.')
                 $depthArgs = @('--depth', 'empty')
             }
             Write-Output "Committing to SVN..."
-            $commitLines = & svn commit @depthArgs --file $msgFile --encoding UTF-8 -- $commitTargets
+            Write-SvnTargetsFile -Path $targetsCommit -Targets $commitTargets
+            $commitLines = & svn commit @depthArgs --file $msgFile --encoding UTF-8 --targets $targetsCommit @dotTarget
             if ($LASTEXITCODE -ne 0) {
                 # A failed svn commit leaves a half-finished state that nothing else reports: the
                 # merge commit was already made above, the adds/deletes are still SCHEDULED in the
@@ -299,8 +314,10 @@ UNWIND (the commit was rejected and would be rejected again):
         }
     } finally {
         Pop-Location
-        if (Test-Path -LiteralPath $msgFile) {
-            Remove-Item -LiteralPath $msgFile -Force -ErrorAction SilentlyContinue
+        foreach ($tmp in @($msgFile, $targetsAdd, $targetsDel, $targetsCommit)) {
+            if (-not [string]::IsNullOrWhiteSpace($tmp) -and (Test-Path -LiteralPath $tmp)) {
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

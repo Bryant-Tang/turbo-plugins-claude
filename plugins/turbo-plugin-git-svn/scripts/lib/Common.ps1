@@ -616,6 +616,47 @@ function ConvertTo-SvnTarget {
     return "$Path@"
 }
 
+# Write a --targets file for svn: one path per line, in the encoding svn will read it back with.
+#
+# Why a targets file at all: passing each path as its own argument overflows the command-line length
+# limit once a push touches enough files (issue #35). On Windows that limit is CreateProcess's 32767
+# characters, and the failure mode is worse than bash's "Argument list too long" -- arguments get
+# truncated and svn complains about paths that look fine.
+#
+# Why the ANSI codepage and not UTF-8: verified against a local repository -- a UTF-8 targets file
+# makes svn look for a mojibake path and fail with "is not under version control", while the same
+# list written in CP_ACP commits correctly. This is the same channel the command line already went
+# through (argv is CP_ACP too), so it is not a new limitation -- but a filename using characters
+# outside the active codepage cannot be expressed here, exactly as it could not be on the command
+# line.
+#
+# ANSICodePage rather than [Text.Encoding]::Default: Default IS CP_ACP under Windows PowerShell 5.1
+# but is UTF-8 under PowerShell 7+, so relying on it would silently write the wrong bytes on the
+# newer host -- the kind of difference that only shows up on someone else's machine.
+#
+# Paths must ALREADY be escaped with ConvertTo-SvnTarget: a targets file is peg-parsed line by line,
+# just like argv (verified -- an unescaped `banner@2x.jpg` in a targets file still fails E200009).
+function Write-SvnTargetsFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Targets
+    )
+
+    $enc = $null
+    try {
+        $acp = [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage
+        if ($acp -gt 0) { $enc = [System.Text.Encoding]::GetEncoding($acp) }
+    } catch {
+        $enc = $null
+    }
+    # Non-Windows hosts have no CP_ACP; there svn reads the file in the locale encoding, i.e. UTF-8.
+    if ($null -eq $enc) { $enc = New-Object System.Text.UTF8Encoding($false) }
+
+    $content = ''
+    if (@($Targets).Count -gt 0) { $content = (@($Targets) -join "`n") + "`n" }
+    [System.IO.File]::WriteAllText($Path, $content, $enc)
+}
+
 # Return the URL that -BaseUrl (pegged at -PegRev) had at -Rev, or '' when svn cannot answer, so a
 # caller never mistakes "unknown" for "unchanged".
 #

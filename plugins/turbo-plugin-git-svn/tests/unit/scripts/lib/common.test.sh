@@ -913,6 +913,30 @@ test_svn_target_handles_trailing_at() {
     assertEquals 'a path already ending in @ still gets one more' 'weird@@' "$(svn_target 'weird@')"
 }
 
+# --- write_svn_targets_file (issue #35) ---------------------------------------
+# svn reads a --targets file through CP_ACP on Windows, NOT UTF-8: a UTF-8 file makes svn look for
+# a mojibake path and report "is not under version control". These lock the line-per-path shape and
+# the ASCII round-trip; the encoding itself is covered end-to-end by the push test.
+
+test_write_svn_targets_file_one_path_per_line() {
+    local out
+    out="$(mktemp)"
+    write_svn_targets_file "$out" 'Content/one.txt@' 'Content/two.txt@'
+    assertEquals 'two lines written' '2' "$(grep -c . "$out" || true)"
+    assertEquals 'first line intact'  'Content/one.txt@' "$(sed -n '1p' "$out" | tr -d '\r')"
+    assertEquals 'second line intact' 'Content/two.txt@' "$(sed -n '2p' "$out" | tr -d '\r')"
+    rm -f "$out"
+}
+
+test_write_svn_targets_file_handles_many_paths() {
+    local out n args=()
+    out="$(mktemp)"
+    for (( n = 1; n <= 3000; n++ )); do args+=("bulk/file$n.txt@"); done
+    write_svn_targets_file "$out" "${args[@]}"
+    assertEquals '3000 lines written' '3000' "$(grep -c . "$out" || true)"
+    rm -f "$out"
+}
+
 # --- expand_unversioned_dir (issue #24) ---------------------------------------
 # svn status collapses an unversioned directory into a single '?' line; the commit step adds it
 # recursively. These cover the expansion that closes that gap in the confirmation list.
