@@ -70,13 +70,35 @@ parse stdout 的 `ARGV_SAFE_FOR_UNICODE`:
 - `True` → 略過。
 - `False` → **本機與跨平台對「codepage 內的檔名」都無虞**;只有「要用超出系統 codepage 的字元當檔名」才需處理。用 `AskUserQuestion` 問**實際情境**(不用技術術語):
 
-  **Question text**(對新使用者**直接講限制**就好——不要鋪陳「你本來沒問題」這種他根本不知道存在的問題):
-  > 小提醒:在你目前的環境(Windows 中文版 + PowerShell 5.1)下,**SVN 檔名不能用「中文以外」的特殊文字**——例如日文假名、韓文、emoji(一般中文與英數字檔名不受影響)。你之後會需要用這類文字當**檔名**嗎?
+  **Question text ——「哪些字可以用」必須依偵測到的 codepage 渲染,不可假設主機語系。**
+
+  先從 stdout 讀出 `ANSI_CODEPAGE=<name> (<cp>)`,用下表決定這台機器的檔名能用什麼字:
+
+  | 偵測到的 codepage | 檔名可安全使用 | 會壞掉的 |
+  |---|---|---|
+  | `950` / `big5` | 英數 + **繁體中文** | 日文假名、韓文、簡體專用字、emoji |
+  | `936` / `gb2312` / `gbk` | 英數 + **簡體中文** | 日文假名、韓文、繁體專用字、emoji |
+  | `932` / `shift_jis` | 英數 + **日文** | 韓文、中文專用字、emoji |
+  | `949` / `ks_c_5601` | 英數 + **韓文** | 日文假名、中文專用字、emoji |
+  | `1252` / `windows-1252` | 英數 + **西歐字母**(é ü ñ 等) | **中文、日文、韓文、emoji 全部會壞** |
+  | 其他 | 英數 + 該 codepage 涵蓋的語言文字 | 該 codepage 涵蓋不到的所有文字 |
+
+  > **`windows-1252` 那一列不是邊角情況**:那是英文版 Windows 的預設,而台灣公司用英文版映像檔並不罕見。
+  > 在那種機器上**中文檔名正是會壞的那一種**——2026-08-04 於 CI(GitHub Windows runner,windows-1252)
+  > 實測:Big5 主機裝得下中文檔名,windows-1252 主機得到 `??????.txt`。
+  > 所以**絕對不要**照搬「中文沒問題」這句話。講反了,使用者會把壞掉的檔名推上 SVN,而 SVN 的提交是永久的。
+
+  依上表取「可安全使用」與「會壞」兩段文字填進下面的模板。**填進去的是那兩欄的白話內容本身**
+  (例如「英數字與繁體中文」),不要把角括號、欄位名或 codepage 代號原封不動唸給使用者聽。
+  對新使用者**直接講限制**就好——不要鋪陳「你本來沒問題」這種他根本不知道存在的問題:
+
+  > 小提醒:在你目前的環境下,**SVN 檔名只能用 ⟨可安全使用⟩**;⟨會壞⟩ 這類文字傳給 svn 時會遺失。
+  > 你之後會需要用這類文字當**檔名**嗎?
 
   | 選項 | 動作 |
   |---|---|
-  | (a) 不會(只用中文 / 英數 / ASCII 檔名)— 預設、絕大多數情況 | 在 `.turbo-plugin/encoding-status.local.md` 記「codepage-representable + ASCII filenames only;push/pull 本機正確處理;SVN 存可攜 UTF-8;無需額外設定」。**不寫**任何 routing/force_bash。 |
-  | (b) 會用到中文以外的特殊文字(日文 / 韓文 / emoji 等) | nested `AskUserQuestion` 二選一:**(b1) 裝 PowerShell 7+**(`winget install --id Microsoft.PowerShell --silent ...`;winget 缺則導向 https://aka.ms/powershell;裝後在 `.claude/settings.local.json` 寫 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`、請使用者改用 pwsh.exe 重啟)。**(b2) 開 Windows UTF-8 設定**(`Start-Process intl.cpl -Verb RunAs`,引導勾「Beta:UTF-8」後重開機)。 |
+  | (a) 不會(只用 ⟨可安全使用⟩ 當檔名)— 預設、絕大多數情況 | 在 `.turbo-plugin/encoding-status.local.md` 記「codepage-representable + ASCII filenames only;push/pull 本機正確處理;SVN 存可攜 UTF-8;無需額外設定」,並**記下實際偵測到的 codepage**。**不寫**任何 routing/force_bash。 |
+  | (b) 會用到 ⟨會壞⟩ 那類文字 | nested `AskUserQuestion` 二選一:**(b1) 裝 PowerShell 7+**(`winget install --id Microsoft.PowerShell --silent ...`;winget 缺則導向 https://aka.ms/powershell;裝後在 `.claude/settings.local.json` 寫 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`、請使用者改用 pwsh.exe 重啟)。**(b2) 開 Windows UTF-8 設定**(`Start-Process intl.cpl -Verb RunAs`,引導勾「Beta:UTF-8」後重開機)。 |
 
   純資訊性、不阻塞;完成印一句確認後繼續。
 
