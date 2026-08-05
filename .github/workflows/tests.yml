@@ -1,0 +1,281 @@
+name: Script Tests
+
+# Convention-based auto-discovery (KTD6 / R7): any plugin that ships the standard
+# tests/ entrypoint is discovered automatically. Adding a new plugin that follows
+# the layout needs NO change to this workflow.
+#
+# v0.5.0 (U18): the suite runs on Pester 5 (.ps1) + vendored shUnit2 (.sh).
+#   - test-windows: ONE orchestrator (Invoke-ScriptTests.ps1, Windows PowerShell 5.1)
+#     runs .ps1 via Pester and .sh via shUnit2 (git-bash present on windows runners).
+#   - test-ubuntu: TWO orchestrators — the bash orchestrator runs the .sh suite via the
+#     vendored shUnit2, and a pwsh step runs the PowerShell orchestrator for the .ps1 suite
+#     (with -SkipPreflight, since the lint pre-flight hardcodes Windows powershell.exe). The
+#     PS orchestrator does NOT resolve bash on non-Windows, so .sh never double-runs.
+#   Framework missing (Pester 5 absent / vendored shUnit2 absent) = the job FAILs (R20);
+#   only Unix x Windows-only-tool cases self-SKIP.
+# `push` matters as much as `pull_request`, and its absence was not a small gap: with only the
+# pull_request trigger, a long-lived branch that has not opened a PR yet gets ZERO CI runs, so the
+# ubuntu half of the matrix and the repo-level verify-core-identical job never execute at all. That
+# is exactly what happened on feat/turbo-plugin -- hundreds of commits, not one CI run, and a
+# shared-copy invariant stayed broken the whole time because the only thing that checks it had
+# never been given a chance to run. Local per-plugin orchestrators cover Windows; only CI covers
+# Linux. Run on every push so the feedback arrives while the change is fresh, not at merge time.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A push and its pull_request both trigger this workflow, and a branch under active development
+# gets many pushes in a row. Only the newest commit's result is interesting, so supersede the
+# older runs instead of paying for all of them. The default branch is excluded from cancellation
+# so a merge to main always gets a complete recorded result.
+concurrency:
+  group: script-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+jobs:
+  # ── discover ────────────────────────────────────────────────────────────────
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      count: ${{ steps.set.outputs.count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Discover plugins with a standard test entrypoint
+        id: set
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugins=()
+          for dir in plugins/*/tests/; do
+            [ -d "$dir" ] || continue
+            plugin="${dir%/tests/}"
+            if [ -f "${dir}Invoke-ScriptTests.ps1" ] || [ -f "${dir}invoke-script-tests.sh" ]; then
+              plugins+=("$plugin")
+            fi
+          done
+          json='{"plugin":['
+          first=1
+          for p in "${plugins[@]+"${plugins[@]}"}"; do
+            if [ $first -eq 1 ]; then first=0; else json="${json},"; fi
+            json="${json}\"${p}\""
+          done
+          json="${json}]}"
+          echo "Discovered ${#plugins[@]} plugin(s): ${plugins[*]+"${plugins[*]}"}"
+          echo "matrix=${json}" >> "$GITHUB_OUTPUT"
+          echo "count=${#plugins[@]}" >> "$GITHUB_OUTPUT"
+
+  # ── test-windows ────────────────────────────────────────────────────────────
+  # Windows PowerShell 5.1 (powershell.exe) runs the ONE orchestrator, which covers
+  # BOTH .ps1 (Pester 5) and .sh (vendored shUnit2 via git-bash). Pester 5 is installed
+  # side-by-side with the WinPS-builtin 3.4; shUnit2 is vendored (no install).
+  test-windows:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      # `sliksvn`, NOT the `svn` package. Chocolatey's `svn` is win32svn, last published in 2015 and
+      # pinned at Subversion 1.8.15 -- which predates `svn info --show-item` (added in 1.9). These
+      # scripts use --show-item in a dozen places, so with that package the suite runs and fails 40
+      # cases with "invalid option: --show-item", which looks like a product bug and is not one.
+      # sliksvn tracks the 1.14 LTS line, the same one TortoiseSVN ships.
+      - name: Install Subversion
+        shell: pwsh
+        run: choco install sliksvn --no-progress -y
+        continue-on-error: true
+
+      # choco updates the machine PATH, but a step's environment is captured when the step starts,
+      # so later steps in the SAME job never saw svn. Append the install dir to GITHUB_PATH so the
+      # following steps really can run svn.
+      #
+      # Do NOT guess the install directory. The previous version of this step listed
+      # "C:\Program Files\Subversion\bin" and the choco `svn` package (win32svn) installs to
+      # "C:\Program Files (x86)\Subversion\bin" -- a one-token miss that cost 96 svn-gated Pester
+      # cases in the git-svn suite, silently, for as long as this step has existed: the install
+      # succeeded, the probe found nothing, the cases self-SKIPped and the job stayed green. choco
+      # itself prints the directory it added to the machine PATH, so read PATH back out of the
+      # registry and let `Get-Command` answer. The hardcoded list survives only as a fallback for a
+      # provider that does not touch PATH at all.
+      - name: Put Subversion on PATH for later steps
+        shell: pwsh
+        run: |
+          # For git-svn, a missing or too-old svn is not a degraded run, it is no run at all: the
+          # whole plugin is a git<->SVN bridge. Fail loudly there rather than shipping a green job
+          # that tested nothing. The other plugins never touch svn, so for them it stays a warning.
+          $svnIsRequired = '${{ matrix.plugin }}'.EndsWith('turbo-plugin-git-svn')
+          function Complain([string]$message) {
+            if ($svnIsRequired) { Write-Host "::error::$message"; exit 1 }
+            Write-Host "::warning::$message svn-dependent cases will SKIP on this run."
+            exit 0
+          }
+
+          $env:Path = @(
+            [System.Environment]::GetEnvironmentVariable('Path', 'Machine'),
+            [System.Environment]::GetEnvironmentVariable('Path', 'User')
+          ) -join ';'
+
+          $svnPath = ''
+          $cmd = Get-Command svn.exe -ErrorAction SilentlyContinue
+          if ($cmd) { $svnPath = @($cmd)[0].Source }
+
+          if (-not $svnPath) {
+            foreach ($c in @(
+              'C:\Program Files (x86)\Subversion\bin',
+              'C:\Program Files\Subversion\bin',
+              'C:\Program Files\SlikSvn\bin',
+              'C:\Program Files\TortoiseSVN\bin'
+            )) {
+              $candidate = Join-Path $c 'svn.exe'
+              if (Test-Path -LiteralPath $candidate) { $svnPath = $candidate; break }
+            }
+          }
+
+          if ($svnPath) {
+            $dir = Split-Path -Parent $svnPath
+            # Running it is the assertion; a file existing at that path is not the same as a usable
+            # svn (wrong architecture, missing runtime, broken install all pass Test-Path).
+            $version = (& $svnPath --version --quiet)
+            Write-Host "svn $version found at $dir"
+
+            # Same reasoning as the Pester 5.x pin below: a green run on the wrong tool version is
+            # worse than a red one. `svn info --show-item` arrived in 1.9 and these scripts depend
+            # on it throughout, so anything older cannot exercise them -- it just fails every case
+            # with "invalid option" and buries the real signal.
+            $MIN_SVN = [version]'1.9'
+            $parsed = $null
+            if (-not [version]::TryParse(($version -replace '[^0-9.].*$', ''), [ref]$parsed)) {
+              Write-Host "::warning::could not parse svn version '$version'; continuing."
+            } elseif ($parsed -lt $MIN_SVN) {
+              Complain "svn $version is older than the required $MIN_SVN (svn info --show-item arrived in 1.9)."
+            }
+
+            Add-Content -Path $env:GITHUB_PATH -Value $dir
+            exit 0
+          }
+
+          Complain 'svn.exe not found after `choco install sliksvn`.'
+
+      - name: Configure git identity (defensive)
+        shell: bash
+        run: |
+          git config --global user.email "ci@turbo-plugin"
+          git config --global user.name "turbo-plugin-ci"
+
+      - name: Install Pester 5 (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          # Pin to the Pester 5 line. `-MinimumVersion 5.0` means "at least 5.0", so it installed
+          # whatever was newest -- which is now Pester 6.0.1, a different major with breaking
+          # changes. CI was therefore running these tests on a framework nobody had ever run them
+          # on locally (5.7.1), and the mismatch showed up as test failures that reproduce nowhere
+          # else. `-MaximumVersion 5.99.99` keeps CI and local on the same major; moving to Pester 6
+          # should be a deliberate change with the tests migrated, not something a release picks up.
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -Force -SkipPublisherCheck -Scope CurrentUser -AllowClobber
+
+      - name: Run orchestrator (Windows PowerShell 5.1; .ps1 Pester + .sh shUnit2)
+        shell: cmd
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${{ matrix.plugin }}/tests/Invoke-ScriptTests.ps1
+
+  # ── test-ubuntu ─────────────────────────────────────────────────────────────
+  # Two orchestrators: bash (shUnit2 .sh) + pwsh (Pester .ps1, -SkipPreflight). The .sh
+  # ps1-delegate / .NET / IIS cases self-SKIP on a runner without those tools; the SVN/git
+  # cases RUN. Pester 5 is installed for pwsh; shUnit2 is vendored.
+  test-ubuntu:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install Subversion
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y subversion
+
+      - name: Configure git identity (defensive)
+        run: |
+          git config --global user.email "ci@turbo-plugin"
+          git config --global user.name "turbo-plugin-ci"
+
+      - name: Run bash orchestrator (shUnit2 .sh suite)
+        shell: bash
+        run: |
+          set -o pipefail
+          bash ${{ matrix.plugin }}/tests/invoke-script-tests.sh 2>&1 | tee orchestrator-output.txt
+
+      - name: Install Pester 5 (pwsh)
+        shell: pwsh
+        run: |
+          # Pin to the Pester 5 line. `-MinimumVersion 5.0` means "at least 5.0", so it installed
+          # whatever was newest -- which is now Pester 6.0.1, a different major with breaking
+          # changes. CI was therefore running these tests on a framework nobody had ever run them
+          # on locally (5.7.1), and the mismatch showed up as test failures that reproduce nowhere
+          # else. `-MaximumVersion 5.99.99` keeps CI and local on the same major; moving to Pester 6
+          # should be a deliberate change with the tests migrated, not something a release picks up.
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Run PowerShell orchestrator (pwsh; .ps1 Pester only, -SkipPreflight)
+        shell: pwsh
+        run: |
+          # -SkipPreflight: the lint pre-flight invokes Windows powershell.exe (a PS 5.1 /
+          # Windows concern already covered by the windows job). The framework gate + fixture
+          # handling still run, so Pester 5 absence still FAILs here. BashPath does not resolve
+          # on non-Windows, so the .sh suite SKIPs in this step (owned by the bash orchestrator).
+          ./${{ matrix.plugin }}/tests/Invoke-ScriptTests.ps1 -SkipPreflight
+
+      - name: SKIP visibility (R20)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          # The .sh orchestrator's tool-incompatible cases self-SKIP via shUnit2 startSkipping.
+          # Surface the count so SKIP is distinguishable from PASS in the log. Non-fatal.
+          if [ -f orchestrator-output.txt ]; then
+            n=$(grep -c -i "skip" orchestrator-output.txt || true)
+            echo "Lines mentioning skip on ubuntu: ${n}"
+          else
+            echo "No bash orchestrator output captured."
+          fi
+
+  # ── verify-core-identical (cross-plugin consistency, U8 / KTD3) ──────────────
+  # Repo-level invariant the per-plugin orchestrators cannot check: files copied
+  # byte-identical into multiple plugins (universal Core.{ps1,sh} + shared tp-setup
+  # base assets) must not drift, and marketplace.json must stay installable. Runs the
+  # locale-safe bash tool (the .ps1 sibling is for local Windows use). Independent of
+  # plugin discovery — always runs. This is the ONE workflow job that adding a plugin
+  # may need to be aware of (R21 exception); the tool auto-discovers copies, so no edit
+  # is needed per plugin.
+  verify-core-identical:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify cross-plugin shared-copy consistency + marketplace installability
+        shell: bash
+        run: bash tools/verify-core-identical.sh

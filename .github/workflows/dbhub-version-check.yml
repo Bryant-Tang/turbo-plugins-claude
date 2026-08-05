@@ -1,0 +1,96 @@
+# dbhub-version-check
+#
+# turbo-plugin-three-environment-db pins the dbhub npm package to an exact version in
+# plugins/turbo-plugin-three-environment-db/scripts/start-dbhub.js (DBHUB_SPEC).
+#
+# Pinning is deliberate: a floating tag trades "may go stale" for "may break one morning with no
+# diagnosis", and an MCP server that fails to start shows the user nothing but a red cross in /mcp
+# -- the reason lands in a debug log. Only the "goes stale" half can be covered by a reminder, so
+# this is that reminder. It opens ONE issue with a stable title and keeps updating it, and stays
+# completely silent while the pin is current.
+#
+# Upgrading: bump DBHUB_SPEC, run the plugin's test orchestrators, then start it once against a
+# real database (the tests assert the argv, not dbhub's own behaviour).
+
+name: dbhub version check
+
+on:
+  schedule:
+    # 06:00 UTC on the 1st of each month.
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the pinned version against the npm registry
+        id: compare
+        run: |
+          set -euo pipefail
+          LAUNCHER='plugins/turbo-plugin-three-environment-db/scripts/start-dbhub.js'
+          PKG='@bytebase/dbhub'
+
+          # The pin lives in one place on purpose; read it rather than duplicating it here.
+          PINNED="$(grep -oE "${PKG}@[0-9]+\.[0-9]+\.[0-9]+" "$LAUNCHER" | head -1 | sed "s|.*@||")"
+          if [ -z "$PINNED" ]; then
+            echo "Could not read an exact pinned version out of $LAUNCHER." >&2
+            echo "Either the constant moved or the pin was loosened -- both need a human." >&2
+            exit 1
+          fi
+
+          LATEST="$(npm view "$PKG" version)"
+          echo "pinned=$PINNED" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+
+          if [ "$PINNED" = "$LATEST" ]; then
+            echo "behind=false" >> "$GITHUB_OUTPUT"
+            echo "Pinned $PINNED is current. Nothing to do."
+          else
+            echo "behind=true" >> "$GITHUB_OUTPUT"
+            echo "Pinned $PINNED, latest is $LATEST."
+          fi
+
+      - name: Open or update the reminder issue
+        if: steps.compare.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.compare.outputs.pinned }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+        run: |
+          set -euo pipefail
+          TITLE='chore(db): @bytebase/dbhub 有新版本'
+          BODY=$(cat <<EOF
+          \`turbo-plugin-three-environment-db\` 釘住的 dbhub 版本落後了。
+
+          | | 版本 |
+          |---|---|
+          | 目前釘住 | \`$PINNED\` |
+          | npm 最新 | \`$LATEST\` |
+
+          **要升的話**：
+
+          1. 改 \`plugins/turbo-plugin-three-environment-db/scripts/start-dbhub.js\` 的 \`DBHUB_SPEC\`
+          2. 跑該 plugin 的 \`tests/Invoke-ScriptTests.ps1\` 與 \`tests/invoke-script-tests.sh\`
+          3. **手動對真實資料庫起一次確認** — 測試斷言的是「會下什麼指令」，不驗 dbhub 自己的行為
+
+          不升也可以，關掉這張即可；下個月有更新版時會再開一張。
+          EOF
+          )
+
+          # Stable title => update the existing thread instead of opening a new one every month.
+          EXISTING="$(gh issue list --state open --search "$TITLE in:title" --json number,title \
+                      --jq ".[] | select(.title == \"$TITLE\") | .number" | head -1)"
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Commented on existing issue #$EXISTING."
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

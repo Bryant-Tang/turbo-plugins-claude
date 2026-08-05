@@ -1,0 +1,17 @@
+# turbo-plugin 集中設定
+# 進 git，跨同事 / 跨 worktree 共享。
+# 不要把 credentials 寫進這裡 — 那是 dbhub.local.toml 的工作。
+#
+# [tools](machine-specific 工具路徑,如 msbuild_path / iis_express_path)請寫到
+# .turbo-plugin/config.local.toml(gitignored 的 sibling 檔案),不要寫在這裡。
+#
+# 下面的 "# >>> turbo-plugin:<concern> >>>" / "# <<< ... <<<" 是各 plugin setup 的
+# 標記區塊;每個 plugin 只會更新自己的區塊,彼此不覆蓋。標記是 TOML 註解(# 開頭),
+# config reader 會略過,不影響解析。
+
+# >>> turbo-plugin:git-svn >>>
+[svn]
+# <<< turbo-plugin:git-svn <<<
+
+# >>> turbo-plugin:dotnet >>>
+# <<< turbo-plugin:dotnet <<<

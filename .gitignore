@@ -1,6 +1,10 @@
 .claude/**/*.local.*
 .claude/worktrees/
 
+# Per-plugin test sandbox work roots (repo-relative, never committed). Glob covers
+# every plugin's tests/.sandbox/ so the four-split plugins are ignored without per-name edits.
+plugins/*/tests/.sandbox/
+
 # OS
 .DS_Store
 Thumbs.db

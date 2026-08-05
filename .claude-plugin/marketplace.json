@@ -5,24 +5,29 @@
   },
   "plugins": [
     {
-      "name": "tdp",
-      "description": "Web project development workflows.",
-      "source": "./plugins/turbo-dev-pack"
+      "name": "turbo-plugin-git-svn",
+      "description": "git↔SVN bridge 本機開發工具集（8 個 skill:setup / pull / push / checkout-svn-branch / svn-log / merge / suggest-ignore / commit-msg）。env-free，集中設定於 .turbo-plugin/。",
+      "source": "./plugins/turbo-plugin-git-svn"
     },
     {
-      "name": "tnf",
-      "description": ".NET Framework web build/run/publish commands.",
-      "source": "./plugins/turbo-dotnet-framework-commands"
+      "name": "turbo-plugin-dotnet-framework",
+      "description": ".NET Framework 本機開發雜務:build / run / stop / publish / cleanup-orphan-iis(IIS Express + MSBuild)。Web 與主控台專案皆可,依 <OutputType> 分派。env-free 設計,集中設定於 .turbo-plugin/;不需要 setup 指令,設定用到才建。",
+      "source": "./plugins/turbo-plugin-dotnet-framework"
     },
     {
-      "name": "tgs",
-      "description": "Git workflows bridging a remote SVN repository.",
-      "source": "./plugins/turbo-git-with-remote-svn"
+      "name": "turbo-plugin-three-environment-db",
+      "description": "三環境 DB 開發輔助:tp-setup + tp-db-management skill + tp-dbhub MCP server（經 DBHub 容器連 SQL Server）。",
+      "source": "./plugins/turbo-plugin-three-environment-db"
     },
     {
-      "name": "tpi",
-      "description": "Cross-plugin integration.",
-      "source": "./plugins/turbo-plugins-integration"
+      "name": "turbo-plugin-code-comment",
+      "description": "C# 與 JavaScript / TypeScript 的註解撰寫慣例 skill 集（tp-csharp-comment / tp-js-comment）。純 skill，無需 setup。",
+      "source": "./plugins/turbo-plugin-code-comment"
+    },
+    {
+      "name": "turbo-plugin-multi-repo-workspace",
+      "description": "「一個資料夾底下並排放著多個獨立 git repo」的工作區設定（tp-multi-repo-workspace-setup）:注入工作區根 CLAUDE.md，並逐一帶著明確的專案路徑委派各子專案的 git↔SVN setup。相依 turbo-plugin-git-svn。",
+      "source": "./plugins/turbo-plugin-multi-repo-workspace"
     }
   ]
 }

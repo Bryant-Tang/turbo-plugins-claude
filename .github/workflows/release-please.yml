@@ -1,0 +1,48 @@
+# release-please:merge 進 main 時,依 conventional commit 自動為「版本有變更」的 plugin
+# 開一個 Release PR(更新 plugin.json version + CHANGELOG);merge 那個 PR 即發版 + 打 tag。
+#
+# 設定檔(repo 根,自動偵測):
+#   - release-please-config.json     四個 plugin 各自一個 component、版本寫進各自 plugin.json
+#   - .release-please-manifest.json  記錄每個 plugin 現在的版本(初始全 0.1.0)
+#
+# ── tag 名稱格式:`<plugin>--v<version>`(兩個減號)────────────────────────────
+# 這不是隨便選的:Claude Code 解析 plugin 相依的版本約束時,是去 marketplace repo 列
+# tag、篩出開頭為 `<plugin-name>--v` 的那些,再取滿足 semver range 的最高版。用單一減號
+# 的話一個都篩不到,帶約束的相依會直接讓依賴方被停用(no-matching-tag)。所以
+# release-please-config.json 的 `tag-separator` 必須是 `--`,才跟官方 `claude plugin tag`
+# 產生的 tag 同名。
+#
+# ── 首次啟用(這條 branch merge 進 main 後做一次)──────────────────────────────
+# 初版 0.1.0 是手寫的;為了讓 release-please「忽略 0.1.0 之前的所有歷史」(含已拆掉的
+# 單體 turbo-plugin 幽靈 commit),merge 後在 merge commit 上替五個 component 各打一個
+# 0.1.0 tag,release-please 會以此為基準、只處理之後的 commit:
+#
+#   M=$(git rev-parse origin/main)
+#   for p in turbo-plugin-code-comment turbo-plugin-dotnet-framework \
+#            turbo-plugin-git-svn turbo-plugin-three-environment-db \
+#            turbo-plugin-multi-repo-workspace; do
+#     git tag "$p--v0.1.0" "$M"
+#   done
+#   git push origin --tags
+#
+# 之後每次 push 進 main,本 workflow 自動跑。
+
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # config-file / manifest-file 預設就是 release-please-config.json
+          # 與 .release-please-manifest.json,放在 repo 根即自動採用。
+          token: ${{ secrets.GITHUB_TOKEN }}

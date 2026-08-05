@@ -1,0 +1,284 @@
+[CmdletBinding()]
+param(
+    [string]$Branch = '',
+    [string]$SvnUrl = '',
+    # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
+    [string]$RepoRoot = ''
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+. ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
+
+# Internal helper: create the git<->SVN bridge for an EXISTING local branch
+# on its first push. Generalized from the old New-RemoteTest (no test-<n> numbering;
+# takes an explicit -Branch + -SvnUrl). It does NOT create a working branch -- the
+# working branch is already the caller's current branch; this only creates the
+# remote-svn/<branch> bridge branch + worktree + svn checkout.
+
+try {
+    Probe-GitVersion
+
+    if ([string]::IsNullOrWhiteSpace($Branch)) { throw '-Branch is required' }
+    if ([string]::IsNullOrWhiteSpace($SvnUrl)) { throw '-SvnUrl is required' }
+
+    $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
+    $worktreesDir = Get-WorktreesDir -MainWorktree $mainWorktree
+
+    if (-not (Test-Path -LiteralPath $worktreesDir)) {
+        throw "Worktrees directory not found: $worktreesDir. Run /tp-setup first to bootstrap."
+    }
+
+    # Resolve + sanitize the branch: rejects unsafe names and computes the bridge
+    # ref + worktree dir, with the MAX_PATH guard.
+    $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir
+    $remoteBranch       = $remote.Branch   # remote-svn/<branch>
+    $remoteWorktreeName = $remote.Name     # remote-svn-<branch-dash>
+    $remoteWorktreePath = $remote.Path
+
+    # Collision: reject if a DIFFERENT existing remote-svn branch maps to the same
+    # worktree dir name (e.g. feat/login vs feat-login). Enumerate live bridges and
+    # strip the 'remote-svn/' prefix to recover the original branch names.
+    $existingRemote = @(
+        & git -C $mainWorktree branch --list 'remote-svn/*' |
+        ForEach-Object { $_.TrimStart('*', ' ').Trim() } |
+        Where-Object { $_ -like 'remote-svn/*' } |
+        ForEach-Object { $_.Substring('remote-svn/'.Length) }
+    )
+    $collision = Find-RemoteWorktreeCollision -BranchName $Branch -ExistingBranches $existingRemote
+    if ($null -ne $collision) {
+        throw "Worktree name '$remoteWorktreeName' is already taken by branch '$collision' (maps to the same directory). Rename your branch to avoid the collision."
+    }
+
+    # Bridge-only already-exists guard. No working-branch creation in the push-bootstrap
+    # model -- the working branch IS the caller's current branch. Detect the inconsistent
+    # partial states (ref XOR dir) left by an interrupted run and give explicit recovery
+    # steps instead of a dead-end "already exists" that blocks the advertised re-run.
+    # NOTE: the unit tests distinguish the two arms by their UNIQUE wording -- the ref-without-dir
+    # arm says 'git branch -D', the dir-without-ref arm says 'delete that directory'. If you
+    # reword these two throws, update New-RemoteBridge.test.ps1 / new-remote-bridge.test.sh to match.
+    $existingBridge = (& git -C $mainWorktree branch --list $remoteBranch | Out-String).Trim()
+    $worktreeExists = Test-Path -LiteralPath $remoteWorktreePath
+    if ($existingBridge -and -not $worktreeExists) {
+        throw "Inconsistent bridge state: branch '$remoteBranch' exists but its worktree directory is missing ($remoteWorktreePath) -- likely a leftover from an interrupted first push. To recover, run in the main worktree ($mainWorktree): 'git worktree prune', then 'git branch -D $remoteBranch'; then re-run the first push."
+    }
+    if ($worktreeExists -and -not $existingBridge) {
+        throw "Inconsistent bridge state: the worktree directory exists ($remoteWorktreePath) but branch '$remoteBranch' is missing -- likely a leftover from an interrupted first push. To recover, delete that directory and run 'git worktree prune' in the main worktree ($mainWorktree); then re-run the first push."
+    }
+    if ($existingBridge) { throw "Bridge branch '$remoteBranch' already exists." }
+    if ($worktreeExists) { throw "Worktree '$remoteWorktreeName' already exists at: $remoteWorktreePath" }
+
+    # SECURITY (KTD-8): validate $SvnUrl under the trusted repos-root BEFORE any git/svn
+    # mutation. Trust base = remote-svn-main's repos-root-url. This MUST run outside
+    # (before) the rollback try below so a rejected URL produces ZERO side effects.
+    $remotemainPath = [System.IO.Path]::Combine($worktreesDir, 'remote-svn-main')
+    $null = Assert-TrustedSvnUrl -TrustedWorkingCopy $remotemainPath -CandidateUrl $SvnUrl
+
+    Write-Output "Creating SVN bridge for branch '$Branch'..."
+
+    # Base the new bridge branch on remote-svn/main's tip (the git mirror of trunk). The SVN feature
+    # path below is `svn copy`d from trunk, so its git side must start from trunk's mirror -- this
+    # keeps the post-checkout worktree content matching the branch tree (no untracked-overwrite on
+    # the first push merge) and gives the merge-back a recent common ancestor.
+    # NOT `rev-list --max-parents=0 HEAD`: once the repo has been through a bridge merge it has
+    # MULTIPLE root commits (the empty native root + each `sync:` import root), so that returned a
+    # multi-line value that broke `git branch` with "not a valid object name". remote-svn/main is
+    # always a single commit and always exists here (it is the trust anchor validated above).
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $baseRef = (& git -C $mainWorktree rev-parse --verify -q 'refs/heads/remote-svn/main' 2>$null | Out-String).Trim()
+    $baseOk = ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($baseRef))
+    $ErrorActionPreference = $prevEAP
+    if (-not $baseOk) { throw "Bridge anchor branch 'remote-svn/main' not found. Run /tp-setup first to bootstrap the main bridge." }
+
+    # Use the SANITIZED dash-form (not raw user input) for the svn copy commit message
+    # so control characters can never enter SVN's permanent history.
+    $svnMsgBranch = $remoteWorktreeName
+
+    try {
+        & git -C $mainWorktree branch $remoteBranch $baseRef
+        if ($LASTEXITCODE -ne 0) { throw "git branch $remoteBranch failed" }
+
+        & git -C $mainWorktree worktree add --no-checkout $remoteWorktreePath $remoteBranch
+        if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
+        # Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order
+        # matters: with core.autocrlf still true, the checkout writes CRLF and the files on disk
+        # no longer match their blobs -- and for a bridge whose SVN side does not carry them yet,
+        # that turns a harmless "phantom M" into a real diff the drift check would report.
+        Set-BridgeEolFaithful -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
+        # --no-checkout leaves the index EMPTY, so populate explicitly; now the bytes on disk
+        # are the bytes git stores.
+        & git -C $remoteWorktreePath reset --hard --quiet
+        if ($LASTEXITCODE -ne 0) { throw "git reset --hard in $remoteWorktreeName failed" }
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        & svn info $SvnUrl 2>$null | Out-Null
+        $svnExists = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prevEAP
+
+        if (-not $svnExists) {
+            $mainSvnUrl = (& svn info --show-item url $remotemainPath | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { throw "Could not get main SVN URL from remote-svn-main worktree." }
+            Write-Output "SVN path '$SvnUrl' does not exist. Creating from '$mainSvnUrl'..."
+            & svn copy $mainSvnUrl $SvnUrl -m "create $svnMsgBranch branch"
+            if ($LASTEXITCODE -ne 0) { throw "svn copy failed" }
+        } else {
+            # Idempotent re-entry: a prior run's `svn copy` is permanent, so a re-run
+            # finds the path already present and takes the checkout branch (no re-copy).
+            Write-Output "SVN path exists, will checkout: $SvnUrl"
+        }
+        Write-Output "Running: svn checkout --force $SvnUrl $remoteWorktreePath"
+        # --force: `git worktree add` already created `.git` (pointer file) + init-commit
+        # content in the worktree path; svn would otherwise mark these "obstructed" and
+        # refuse to commit. --force treats existing files as already-versioned -- but it does
+        # NOT overwrite them: each one is adopted as locally MODIFIED, keeping git's bytes.
+        & svn checkout --force $SvnUrl $remoteWorktreePath
+        if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
+
+        # Take SVN's bytes for everything --force just adopted.
+        #
+        # Without this the bridge is born dirty. core.autocrlf=true is the SYSTEM-level default in
+        # Git for Windows, so `git worktree add` writes every text file with CRLF; --force then
+        # adopts those CRLF copies as modifications of SVN's LF originals. Observed on a real
+        # machine 2026-07-31: a one-line README change on a new branch pushed 11 whole-file
+        # rewrites into SVN, permanently, with blame destroyed. `svn revert` is the exact undo --
+        # the working copy was created seconds ago, so the only "local changes" it can throw away
+        # are those adopted copies.
+        #
+        # Deliberately NOT the sibling scripts' shape (empty the worktree, then a plain
+        # `svn checkout`): emptying also deletes files git tracks that SVN does not carry yet --
+        # `.gitignore` is the normal case -- so git would see a deletion and the bridge would need
+        # an extra commit to get clean again. That commit is not free: an unmarked non-merge commit
+        # on remote-svn/<branch> is exactly what the pull path reports as an orphaned sync
+        # (Sync-FromSvn, $Branch..$remoteBranch), because here the working branch does not descend
+        # from the bridge. Reverting touches only SVN-versioned paths and leaves git-only files
+        # alone, so no commit is needed at all.
+        Push-Location $remoteWorktreePath
+        try {
+            & svn revert -R '.'
+            if ($LASTEXITCODE -ne 0) { throw 'svn revert after --force checkout failed' }
+        } finally {
+            Pop-Location
+        }
+
+        # Untrack `.git` from the svn working copy BEFORE setting svn:ignore. `--force`
+        # added `.git` to svn-managed state; leaving it would push `.git` (pointing at the
+        # original committer's local path) into permanent SVN history. `--keep-local`
+        # removes it from svn versioning but keeps the file on disk for git.
+        Push-Location $remoteWorktreePath
+        try {
+            $gitFile = Join-Path $remoteWorktreePath '.git'
+            if (Test-Path -LiteralPath $gitFile) {
+                & svn rm --keep-local '.git' 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0) { Write-Verbose 'svn rm .git: not tracked (ok)' }
+            }
+        } finally {
+            Pop-Location
+        }
+
+        # svn:ignore is fixed to exactly `.git` -- the one must-exclude path that the push
+        # scripts' git check-ignore filter cannot catch (`.git` is not git-ignored yet shows
+        # as `?` in `svn status`). Everything else the bridge should exclude
+        # (bin/obj/.turbo-plugin/worktrees/ ...) lives in .gitignore and is filtered by
+        # git check-ignore. No inheritance from remote-svn-main: a single fixed value avoids
+        # inheriting a stale set that may omit `.git`.
+        $ignoreToApply = '.git'
+        # Do NOT sync .gitignore here. `svn copy` already brought svn:ignore=.git onto the new
+        # branch (properties copy with the tree), so the bridge excludes .git from the start. The
+        # old pre-sync copied main's .gitignore into the worktree WITHOUT a git commit, leaving the
+        # bridge git-dirty so the immediately-following build-svn-commit refused ("uncommitted git
+        # changes"). Any real .gitignore change now reaches SVN through the normal (confirmed) push
+        # that follows -- the branch is merged into the bridge and committed by submit-svn-commit.
+
+        # U4/KTD5: trunk copyfrom-rev (U2 reader) to INITIALIZE tp:last-aligned-rev -- the trunk
+        # revision this branch is aligned to at creation, NOT its own creation rev. Swallow a read
+        # failure to '' (property simply stays unset) rather than aborting the whole first push.
+        $branchCopyfromRev = ''
+        try { $branchCopyfromRev = Get-SvnBranchCopyfromRev -BranchUrl $SvnUrl } catch { $branchCopyfromRev = '' }
+
+        Push-Location $remoteWorktreePath
+        try {
+            & svn propset svn:ignore $ignoreToApply '.'
+            if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
+            # U4/KTD5: fold the branch metadata into THIS same infra commit (no 2nd revision). Both
+            # properties ride on '.' -- already a --depth empty target -- so no extra commit is paid.
+            #   tp:branch-name      = ORIGINAL git branch name, raw (slashes preserved for R7 checkout).
+            #   tp:last-aligned-rev = the trunk copyfrom-rev (init alignment; advanced later on merge).
+            & svn propset tp:branch-name $Branch '.'
+            if ($LASTEXITCODE -ne 0) { throw 'svn propset tp:branch-name failed' }
+            if (-not [string]::IsNullOrWhiteSpace($branchCopyfromRev)) {
+                & svn propset tp:last-aligned-rev $branchCopyfromRev '.'
+                if ($LASTEXITCODE -ne 0) { throw 'svn propset tp:last-aligned-rev failed' }
+            }
+            # Commit ONLY '.' -- the svn:ignore + tp:* properties (--depth empty, so nothing under
+            # the tree can be swept in) -- plus a real .git deletion if one was scheduled. The
+            # `svn revert` above now leaves nothing to sweep, but the scoping stays: it is the
+            # guard, not a consequence. The tp:* props are new (never inherited from the copy), so this is the
+            # ONE dedicated property commit first-push pays (bounded cost, KTD5).
+            $commitTargets = @('.')
+            # `svn status` may warn to stderr (unversioned/absent path); guard with EAP=Continue.
+            $prevEAP2 = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            $gitDelState = (& svn status '.git' 2>$null | Out-String)
+            $ErrorActionPreference = $prevEAP2
+            if ($gitDelState -match '(?m)^D') { $commitTargets += '.git' }
+            & svn commit --depth empty -m 'svn:ignore=.git (turbo-plugin bridge)' @commitTargets
+            if ($LASTEXITCODE -ne 0) { throw 'svn commit svn:ignore failed' }
+            & svn update | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'svn update after infra commit failed' }
+        } finally {
+            Pop-Location
+        }
+
+        # Re-align git's index with the bytes on disk. The CONTENT is unchanged -- `git diff` is
+        # empty and the blob hashes still match HEAD -- but the files shrank (CRLF -> LF), and
+        # under core.autocrlf=true git reports every one of them as ` M` in
+        # `git status --porcelain` anyway (the other face of its "LF will be replaced by CRLF"
+        # warning). Build-SvnCommit refuses to run on a non-empty `git status --porcelain`, so
+        # without this the push that immediately follows would be blocked by our own guard.
+        # `git add -A` clears it and provably does NOT change the tree.
+        #
+        # `.svn/` MUST be excluded before that runs. The bootstrap already writes this exclusion,
+        # but inheriting it is not good enough for the failure it prevents: unexcluded, `git add -A`
+        # pulls `.svn/pristine/*` through the CRLF filter and the next `svn commit` dies with
+        # "Working copy text base is corrupt" -- a destroyed working copy, not merely a dirty one.
+        Set-SvnGitExcluded -MainWorktree $mainWorktree
+        & git -C $remoteWorktreePath add -A
+        if ($LASTEXITCODE -ne 0) { throw 'git add -A on the bridge worktree failed' }
+
+        # Anything still staged after that is a REAL content difference between the SVN branch path
+        # and this repo's mirror of trunk -- normally because trunk moved on since the last pull, so
+        # the freshly copied branch already carries content this repo has never seen. The bridge is
+        # left in place (the `svn copy` is permanent and re-running is idempotent), but say plainly
+        # what happened: the push that follows will stop on its own git-clean gate, and "uncommitted
+        # git changes" on a worktree the user never touched explains nothing by itself.
+        & git -C $remoteWorktreePath diff --cached --quiet
+        if ($LASTEXITCODE -ne 0) {
+            $differing = (& git -C $remoteWorktreePath diff --cached --name-only | Out-String).Trim()
+            Write-Output ""
+            Write-Output "Note: the SVN branch content differs from this repo's mirror of trunk:"
+            foreach ($line in ($differing -split "`r?`n")) { Write-Output "  $line" }
+            Write-Output "This usually means trunk moved since your last pull. Run '/tp-pull-from-svn' on main,"
+            Write-Output "merge it into '$Branch', then run the push again (the bridge is already created; re-running is safe)."
+        }
+    } catch {
+        # Rollback covers ONLY the local git side (branch + worktree). An already-executed
+        # `svn copy` writes SVN's PERMANENT history and is NOT rolled back -- it remains as
+        # an orphan SVN path. Re-running first-push is idempotent: `svn info` detects the
+        # existing path and takes the checkout branch instead of re-copying.
+        Write-Output "Bridge setup failed; rolling back local git state (an already-created SVN path is permanent)..."
+        & git -C $mainWorktree worktree remove --force $remoteWorktreePath 2>$null | Out-Null
+        & git -C $mainWorktree branch -D $remoteBranch 2>$null | Out-Null
+        throw
+    }
+
+    Write-Output ""
+    Write-Output "SVN bridge created for branch '$Branch'."
+    Write-Output "  Bridge branch : $remoteBranch"
+    Write-Output "  SVN worktree  : $remoteWorktreePath"
+}
+catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}

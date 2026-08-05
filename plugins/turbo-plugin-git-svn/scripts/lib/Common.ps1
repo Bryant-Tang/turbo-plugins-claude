@@ -1,0 +1,908 @@
+﻿# turbo-plugin SVN concern helpers. Core (universal helpers + the UTF-8 encoding
+# preamble + StrictMode/EAP) is dot-sourced first; this concern lib must NOT reset the
+# encoding Core establishes (KTD2a). All scripts source THIS file, which transitively pulls
+# in Core.ps1 from the same lib/ directory.
+. ([System.IO.Path]::Combine($PSScriptRoot, 'Core.ps1'))
+
+# --- svn must NEVER prompt (single choke point) -------------------------------
+# These scripts are driven by an agent / CI with no usable stdin. A prompting `svn` (conflict
+# resolution, credential request, cert acceptance) does not fail -- it blocks FOREVER, which reads
+# as "the script hung" and cannot be recovered or rolled back. Real incident: a bootstrap replay hit
+# a tree conflict on `.gitignore` and sat in svn's interactive conflict prompt indefinitely.
+#
+# Shadowing `svn` here (rather than adding the flag at ~18 call sites) makes the invariant global
+# and future-proof: every `& svn ...` in every script that dot-sources this lib gets it, including
+# ones added later. The real executable is resolved with -CommandType Application so this function
+# never recurses. $LASTEXITCODE propagates through the wrapper unchanged, so the existing
+# `if ($LASTEXITCODE -ne 0)` guards and rollback blocks still work.
+# NOTE: credentials must therefore already be cached -- an uncached password now fails loudly
+# rather than waiting on a prompt nobody can answer.
+#
+# Lives in the SVN CONCERN lib, not in universal Core.ps1: Core.ps1 is the file copied
+# byte-identical into every plugin (enforced by tools/verify-core-identical.sh), and an svn shim
+# has no business in a plugin that never touches svn. Every script here that can invoke svn
+# dot-sources THIS file, so the choke point is unchanged. Same reasoning as the earlier move of
+# Get-WorktreesDir out of universal Core.
+function svn {
+    $exe = (Get-Command svn -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    & $exe --non-interactive @args
+}
+
+# Granularity gate threshold (KTD7/R2/R3): per-revision SILENTLY at or below this many new
+# revisions; ABOVE it the granularity choice is offered. One shared definition for Sync-FromSvn.ps1
+# and Initialize-GitSvnBridge.ps1 (dot-sourced into their scope) so the two never drift.
+$script:TpGranularityThreshold = 5
+
+
+# Return the worktree container directory: <mainWorktree>/.turbo-plugin/worktrees.
+# git-svn concern (the SVN remote worktree container) -- the SVN script pairs call this
+# instead of each hardcoding a sibling path. If -MainWorktree is supplied it is used as-is;
+# otherwise it is computed via Get-MainWorktree (defined in Core.ps1, sourced above).
+# Guarantee `.svn/` is excluded from git for THIS repository, independent of any .gitignore.
+#
+# Every bridge worktree is simultaneously a git worktree and an svn working copy, and every script
+# that runs `git add -A` inside one depends on this. It is not a tidiness measure: with autocrlf on,
+# `git add -A` pulls the binary files under `.svn/pristine/` through the CRLF filter, and the next
+# `svn commit` then fails with "Working copy text base is corrupt" -- the working copy is destroyed,
+# not merely dirty (reproduced 2026-08-03).
+#
+# Written to info/exclude rather than a .gitignore so it holds whatever content SVN carries, and to
+# the COMMON git dir because git does not read a linked worktree's own info/exclude. Idempotent.
+# Make a bridge worktree byte-faithful to what git stores.
+#
+# `core.autocrlf=true` is the SYSTEM-level default in Git for Windows -- not global, not local, so
+# it is on for essentially every Windows user and invisible in `git config --global --list`. Under
+# it EVERY checkout inside the bridge rewrites LF blobs as CRLF on disk: `git worktree add` at
+# creation, and later every `git merge` the push path runs there. `svn commit` then ships those
+# CRLF bytes to SVN.
+#
+# Nothing warns. Afterwards git reports clean (it normalises on read) and svn reports clean (it
+# committed exactly what was on disk). Observed 2026-08-03: a push of two edited files landed both
+# on SVN with CRLF while every untouched file stayed LF -- so a teammate's next diff shows those
+# two files rewritten end to end, blame destroyed, with nothing in either tool to point at.
+#
+# A bridge exists to carry content between git and SVN unchanged, so it must not transform it.
+# Scoped to the bridge worktree via git's per-worktree config, leaving the user's own worktree
+# exactly as they configured it. Idempotent.
+function Set-BridgeEolFaithful {
+    param(
+        [Parameter(Mandatory = $true)][string]$MainWorktree,
+        [Parameter(Mandatory = $true)][string]$Bridge
+    )
+    # extensions.worktreeConfig is repo-wide and must be on before --worktree writes are honoured.
+    # Enabling it is non-destructive: existing config stays in the shared file.
+    & git -C $MainWorktree config extensions.worktreeConfig true
+    if ($LASTEXITCODE -ne 0) { throw 'Could not enable extensions.worktreeConfig.' }
+    & git -C $Bridge config --worktree core.autocrlf false
+    if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.autocrlf=false on the bridge worktree.' }
+}
+
+function Set-SvnGitExcluded {
+    param([Parameter(Mandatory = $true)][string]$MainWorktree)
+
+    $gitCommonDir = (& git -C $MainWorktree rev-parse --git-common-dir 2>$null | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($gitCommonDir)) { throw 'Could not resolve the git common dir.' }
+    if (-not [System.IO.Path]::IsPathRooted($gitCommonDir)) {
+        $gitCommonDir = [System.IO.Path]::Combine($MainWorktree, $gitCommonDir)
+    }
+    $excludeDir = [System.IO.Path]::Combine($gitCommonDir, 'info')
+    if (-not (Test-Path -LiteralPath $excludeDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $excludeDir -Force | Out-Null
+    }
+    $excludeFile = [System.IO.Path]::Combine($excludeDir, 'exclude')
+    $excludeLines = @()
+    if (Test-Path -LiteralPath $excludeFile -PathType Leaf) {
+        $excludeLines = @([System.IO.File]::ReadAllLines($excludeFile))
+    }
+    if (-not @($excludeLines | Where-Object { $_.Trim() -eq '.svn/' }).Count) {
+        $excludeLines += '.svn/'
+        [System.IO.File]::WriteAllLines($excludeFile, $excludeLines)
+    }
+}
+
+function Get-WorktreesDir {
+    param([string]$MainWorktree = '')
+    if ([string]::IsNullOrWhiteSpace($MainWorktree)) {
+        $MainWorktree = Get-MainWorktree
+    }
+    return [System.IO.Path]::Combine($MainWorktree, '.turbo-plugin', 'worktrees')
+}
+
+
+# Validate a branch name for remote-svn worktree mapping (allowlist).
+# Throws with a sanitization message on rejection. 'main' is the canonical trust
+# anchor and always passes; other casings of 'main' are rejected so they cannot
+# impersonate the anchor directory.
+function Assert-ValidRemoteBranchName {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$BranchName)
+
+    if ([string]::IsNullOrEmpty($BranchName)) {
+        throw "Invalid branch name: empty."
+    }
+    # Case-SENSITIVE: only the exact lowercase 'main' is the trust anchor. Other
+    # casings (Main / MAIN) fall through to the reserved-name rejection below.
+    if ($BranchName -ceq 'main') { return }
+
+    if ($BranchName.Contains('..')) {
+        throw "Invalid branch name '$BranchName': must not contain '..'."
+    }
+    if ($BranchName.StartsWith('-')) {
+        throw "Invalid branch name '$BranchName': must not start with '-'."
+    }
+    if ($BranchName -match '[\s.]$') {
+        throw "Invalid branch name '$BranchName': must not end with '.' or whitespace."
+    }
+    # Allowlist: letters, digits, '.', '_', '-', '/'. Rejects '\', ':', spaces,
+    # control characters, and any other separator.
+    if ($BranchName -notmatch '^[A-Za-z0-9._/-]+$') {
+        throw "Invalid branch name '$BranchName': only letters, digits, '.', '_', '-', and '/' are allowed."
+    }
+    # Reserved names (case-insensitive): the 'main' anchor dir (any non-exact casing)
+    # plus Windows reserved device names, checked against the dash-form and each
+    # '/'-separated segment.
+    $segments = @(($BranchName -replace '/', '-')) + ($BranchName -split '/')
+    foreach ($seg in $segments) {
+        $low = $seg.ToLowerInvariant()
+        if ($low -eq 'main' -or $low -match '^(con|prn|aux|nul|com[1-9]|lpt[1-9])$') {
+            throw "Invalid branch name '$BranchName': '$seg' is a reserved name."
+        }
+    }
+}
+
+# Returns the existing remote-svn branch that collides with $BranchName (maps to the
+# same worktree dir name but is a different ref), or $null when there is no collision.
+# Pure: the caller supplies the existing branch list (e.g. from
+# `git branch --list 'remote-svn/*'` with the 'remote-svn/' prefix stripped).
+function Find-RemoteWorktreeCollision {
+    param(
+        [Parameter(Mandatory = $true)][string]$BranchName,
+        [string[]]$ExistingBranches
+    )
+    if ($null -eq $ExistingBranches) { return $null }
+    $dash = $BranchName -replace '/', '-'
+    foreach ($existing in $ExistingBranches) {
+        if ([string]::IsNullOrEmpty($existing)) { continue }
+        if ($existing -eq $BranchName) { continue }
+        if (($existing -replace '/', '-') -eq $dash) {
+            return $existing
+        }
+    }
+    return $null
+}
+
+# Map any branch to its remote-svn ref + worktree dir (generalized from
+# the old hard-coded main / test-<n>). Mapping:
+#   ref      = remote-svn/<branch>                 (slashes preserved)
+#   worktree = remote-svn-<branch with '/' -> '-'>
+# Sanitization + MAX_PATH guard run here; collision is the caller's concern
+# (Find-RemoteWorktreeCollision) since it needs the live branch list.
+function Resolve-RemoteWorktree {
+    param(
+        [Parameter(Mandatory = $true)][string]$BranchName,
+        [Parameter(Mandatory = $true)][string]$WorktreesDir
+    )
+
+    Assert-ValidRemoteBranchName -BranchName $BranchName
+
+    $dash = $BranchName -replace '/', '-'
+    $name = "remote-svn-$dash"
+    $path = [System.IO.Path]::Combine($WorktreesDir, $name)
+
+    # MAX_PATH guard — distinct from the sanitization rejection above. Windows PS 5.1
+    # / .NET Framework cannot create paths longer than 260 chars without long-path
+    # support; fail loudly with guidance rather than letting the create blow up later.
+    # MAX_PATH (260) counts the terminating NUL, so the usable string length is 259 —
+    # reject at >= 260 (a 260-char path passes -gt 260 but Windows still refuses it).
+    if ($path.Length -ge 260) {
+        throw "Worktree path exceeds the Windows MAX_PATH limit (260): '$path' is $($path.Length) chars. Shorten the clone path, or enable long-path support (git config core.longpaths true, or the \\?\ prefix)."
+    }
+
+    return @{
+        Name   = $name
+        Branch = "remote-svn/$BranchName"
+        Path   = $path
+    }
+}
+
+# Normalize an SVN URL for boundary-safe trust comparison:
+#   - trim a single trailing slash
+#   - lowercase scheme + authority (host[:port]); for file:// also lowercase the
+#     Windows drive letter immediately after the leading slash(es)
+#   - percent-decode the whole thing
+# Returns the normalized string. Does NOT validate the URL beyond this; callers
+# must still apply the boundary-prefix check.
+function ConvertTo-NormalizedSvnUrl {
+    param([Parameter(Mandatory = $true)][string]$Url)
+
+    $u = $Url.Trim()
+    # percent-decode first so encoded slashes / drive letters normalize too.
+    $u = [System.Uri]::UnescapeDataString($u)
+    # split scheme://rest so we only lowercase scheme + authority, not the path.
+    if ($u -match '^([A-Za-z][A-Za-z0-9+.\-]*://)([^/]*)(/.*)?$') {
+        $scheme = $Matches[1].ToLowerInvariant()
+        $authority = $Matches[2].ToLowerInvariant()
+        $rest = if ($null -ne $Matches[3]) { $Matches[3] } else { '' }
+        $u = "$scheme$authority$rest"
+    } elseif ($u -match '^([A-Za-z][A-Za-z0-9+.\-]*:)(.*)$') {
+        # scheme without authority (rare); lowercase scheme only.
+        $u = $Matches[1].ToLowerInvariant() + $Matches[2]
+    }
+    # file:// drive letter — lowercase the drive letter after the leading slashes
+    # (e.g. file:///C:/Repo -> file:///c:/Repo). Authority is empty for file URLs.
+    if ($u -match '^(file://)(/*)([A-Za-z])(:.*)$') {
+        $u = $Matches[1] + $Matches[2] + $Matches[3].ToLowerInvariant() + $Matches[4]
+    }
+    # trim a single trailing slash
+    if ($u.Length -gt 1 -and $u.EndsWith('/')) {
+        $u = $u.Substring(0, $u.Length - 1)
+    }
+    return $u
+}
+
+# Assert that a caller-supplied SVN URL falls under the trusted repository root.
+# Inputs:
+#   -TrustedWorkingCopy: path to a working copy we trust (e.g. remote-svn-main). Its
+#       `svn info --show-item repos-root-url` defines the trust base. MUST be
+#       repos-root-url (not the trunk url) so legitimate sibling branches under
+#       branches/ aren't falsely rejected.
+#   -CandidateUrl: the untrusted URL to validate before any svn side effect.
+# Behavior (fail closed):
+#   - If repos-root-url can't be obtained (path missing / not a WC / server
+#     unreachable) -> throw. The caller MUST NOT be able to swallow this and proceed.
+#   - Candidate containing `..` traversal -> throw.
+#   - After normalizing both ends (trailing slash, scheme/host case, file:// drive
+#     letter, percent-decode), pass only when candidate == base OR
+#     candidate startswith (base + '/'). Bare StartsWith(base) is rejected to stop
+#     `repos` matching `repos-evil` (prefix confusion).
+# On success: returns the normalized trusted base (for diagnostics); on any failure: throw.
+function Assert-TrustedSvnUrl {
+    param(
+        [Parameter(Mandatory = $true)][string]$TrustedWorkingCopy,
+        [Parameter(Mandatory = $true)][string]$CandidateUrl
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CandidateUrl)) {
+        throw 'Assert-TrustedSvnUrl: empty candidate URL.'
+    }
+
+    # Reject path traversal outright — `..` must never appear in a trusted URL.
+    if ($CandidateUrl -match '(^|[/\\])\.\.([/\\]|$)') {
+        throw "Untrusted SVN URL (path traversal '..' not allowed): $CandidateUrl"
+    }
+
+    # Obtain the trust base from the trusted working copy. Fail closed on any error.
+    $base = ''
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $base = (& svn info --show-item repos-root-url $TrustedWorkingCopy 2>$null | Out-String).Trim()
+    } catch {
+        $base = ''
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($base)) {
+        throw "Assert-TrustedSvnUrl: could not determine trusted repos-root-url from '$TrustedWorkingCopy' (path missing, not a working copy, or SVN unreachable). Refusing to proceed (fail closed). Run /tp-setup to bootstrap remote-svn-main."
+    }
+
+    $normBase = ConvertTo-NormalizedSvnUrl -Url $base
+    $normCand = ConvertTo-NormalizedSvnUrl -Url $CandidateUrl
+
+    # Re-check traversal AFTER percent-decoding — a percent-encoded `..` (%2e%2e)
+    # passes the raw check above but decodes here; without this it could slip under
+    # the boundary prefix as `<base>/../...`.
+    if ($normCand -match '(^|[/\\])\.\.([/\\]|$)') {
+        throw "Untrusted SVN URL (encoded path traversal '..' not allowed): $CandidateUrl"
+    }
+
+    # Boundary-safe ordinal comparison (both ends already lowercased where it matters).
+    $isTrusted = ($normCand -eq $normBase) -or $normCand.StartsWith($normBase + '/', [System.StringComparison]::Ordinal)
+    if (-not $isTrusted) {
+        throw "Untrusted SVN URL: '$CandidateUrl' is not under trusted repository root '$base'. Refusing to proceed."
+    }
+
+    return $normBase
+}
+
+# Build the LOCKED SVN commit body for a push range. The body is a deterministic, '- '-prefixed
+# list of EVERY non-merge commit subject (oldest first), one per line — git itself applies the
+# '- ' prefix and the ordering, so the same commit set always yields a byte-identical body.
+#
+# Merge commits are excluded by parent count (--no-merges), NOT by a 'Merge ' subject-prefix
+# match (KTD6/R11). There is NO commit-type filtering: docs/test/chore subjects all go in (R11).
+# Subjects come straight from git's --pretty formatter, so backticks, '$', quotes, and a leading
+# '- ' in a subject survive without any PowerShell interpolation.
+#
+# Capture happens OUTSIDE the ANSI OutputEncoding scope used for svn — commit subjects are UTF-8
+# (KTD6); callers must invoke this while the console encoding is still the default (UTF-8 capable).
+# Returns the body string ('' when the range has no non-merge commit).
+function Get-SvnPushBody {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][string]$Range
+    )
+    $tip = ($Range -split '\.\.')[-1]
+    # git may warn on stderr; under EAP=Stop that throws NativeCommandError, so soften locally.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $gName = New-Object System.Collections.ArrayList
+    $gBody = New-Object System.Collections.ArrayList
+    try {
+        # OWN commits = the current branch's first-parent mainline (non-merge); everything else in
+        # range arrived via a merge. Deciding "own" by topology (not name-rev) stops a commit the
+        # current branch shares with a sibling from being mis-attributed to the sibling.
+        $own = @{}
+        foreach ($o in @(& git -C $RepoDir rev-list --first-parent --no-merges $Range 2>$null)) {
+            if (-not [string]::IsNullOrWhiteSpace($o)) { $own[$o] = $true }
+        }
+        $shas = @(& git -C $RepoDir rev-list --no-merges --reverse $Range 2>$null)
+        foreach ($sha in $shas) {
+            if ([string]::IsNullOrWhiteSpace($sha)) { continue }
+            if ($own.ContainsKey($sha)) {
+                $branch = $tip
+            } else {
+                # Attribute a merged-in commit to the LOCAL branch it most directly came from;
+                # strip the ~N/^N locator and the internal remote-svn/ prefix (trunk-replay -> `main`).
+                # Undefined (source branch deleted) falls back to the current branch.
+                $name = "$(& git -C $RepoDir name-rev --name-only --refs='refs/heads/*' $sha 2>$null)"
+                $branch = ($name -split '[~^]')[0]
+                if ($branch -like 'remote-svn/*') { $branch = $branch.Substring('remote-svn/'.Length) }
+                if ([string]::IsNullOrWhiteSpace($branch) -or $branch -eq 'undefined') { $branch = $tip }
+            }
+            $subj = "$(& git -C $RepoDir log -1 --format='%s' $sha 2>$null)"
+            $idx = $gName.IndexOf($branch)
+            if ($idx -lt 0) {
+                [void]$gName.Add($branch); [void]$gBody.Add("- $subj")
+            } else {
+                $gBody[$idx] = $gBody[$idx] + "`n- $subj"
+            }
+        }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    $n = $gName.Count
+    if ($n -eq 0) { return '' }
+    # ONE source branch -> flat "- <subject>" list (backward compatible; no group header).
+    if ($n -eq 1) { return [string]$gBody[0] }
+    # 2+ source branches -> group by branch, current branch first, others in first-appearance order.
+    $order = New-Object System.Collections.ArrayList
+    for ($i = 0; $i -lt $n; $i++) { if ($gName[$i] -eq $tip) { [void]$order.Add($i) } }
+    for ($i = 0; $i -lt $n; $i++) { if ($gName[$i] -ne $tip) { [void]$order.Add($i) } }
+    $parts = foreach ($idx in $order) { "【" + [string]$gName[$idx] + "】`n" + [string]$gBody[$idx] }
+    return ($parts -join "`n")
+}
+
+# --- Per-revision SVN replay primitives (U1) ---------------------------------
+# PowerShell peers of svn_enumerate_revisions / svn_replay_commit / svn_floor_commit_for_rev
+# (common.sh). All three are pure git + XML (NO native svn call here — the caller captures the
+# svn log and passes the XML string in), so git output stays UTF-8 (Core.ps1 default) and no
+# ANSI OutputEncoding scoping is needed. Keep this block ASCII so the file's existing BOM is the
+# only reason it holds non-ASCII bytes.
+
+# Enumerate revisions from an `svn log --xml` document (passed as a Unicode string) into
+# per-revision objects { Rev; Author; Date; Message } in ASCENDING revision order. System.Xml
+# entity-decodes InnerText and preserves multi-line / CJK messages verbatim. Behavior-matched
+# to common.sh's svn_enumerate_revisions (shape differs: objects here vs a NUL record stream there).
+function Get-SvnRevisions {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$LogXml)
+
+    $result = @()
+    if ([string]::IsNullOrWhiteSpace($LogXml)) { return $result }
+
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.PreserveWhitespace = $true
+    $doc.LoadXml($LogXml)
+
+    $entries = $doc.SelectNodes('/log/logentry')
+    foreach ($e in $entries) {
+        $rev = [int]$e.GetAttribute('revision')
+        $authorNode = $e.SelectSingleNode('author')
+        $dateNode   = $e.SelectSingleNode('date')
+        $msgNode    = $e.SelectSingleNode('msg')
+        $author  = if ($authorNode) { $authorNode.InnerText } else { '' }
+        $date    = if ($dateNode)   { $dateNode.InnerText }   else { '' }
+        $message = if ($msgNode)    { $msgNode.InnerText -replace "\r", '' } else { '' }
+        $result += [pscustomobject]@{
+            Rev     = $rev
+            Author  = $author
+            Date    = $date
+            Message = $message
+        }
+    }
+    # Force array (a single-entry result would otherwise unwrap to a scalar and break .Count / indexing).
+    return @($result | Sort-Object -Property Rev)
+}
+
+# Replay one SVN revision as a git commit on the CURRENT HEAD of -RepoDir (in production the
+# remote-svn/<branch> worktree, already `svn update`d to this revision's tree). Returns a token:
+#   'SKIP:idempotent'  HEAD already carries a commit with this revision's `svn-revision:` trailer
+#                      (KTD4 idempotency — an interrupted-then-rerun pull mints no duplicate).
+#   'SKIP:empty'       `git add -A` left the index unchanged (tree identical to parent) → no commit.
+#   'COMMIT:<sha>'     committed. Author = "<svn-username> <>" (raw username, empty <> email; KTD2),
+#                      SVN date as the git AUTHOR-date (committer-date = replay moment; KTD6),
+#                      message = SVN message + blank line + `svn-revision: <rev>` trailer (KTD3).
+# commit.cleanup is pinned to 'whitespace' so a '#'-leading message line survives (default 'strip'
+# would delete it) while the trailer paragraph is still recognized.
+function Invoke-SvnReplayCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][int]$Rev,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Author,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Date,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message
+    )
+
+    # git warns on stderr (LF/CRLF etc); under EAP=Stop that throws NativeCommandError, so soften
+    # locally and drive control flow off $LASTEXITCODE (mind the PS5.1 EAP=Stop stderr-throw trap).
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        # Idempotency: this revision is already marked AND that marker is on HEAD → nothing to do.
+        # A marker left by a rolled-back attempt is not an ancestor of HEAD, so it never blocks a re-run.
+        $marked = Get-SvnRevMark -RepoDir $RepoDir -Rev $Rev
+        if (-not [string]::IsNullOrWhiteSpace($marked)) {
+            & git -C $RepoDir merge-base --is-ancestor $marked HEAD 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return 'SKIP:idempotent' }
+        }
+
+        & git -C $RepoDir add -A 2>$null | Out-Null
+        # Guard the stage: a failed `git add -A` leaves the index unchanged, which the empty-delta
+        # check below would misread as "identical tree", silently dropping this revision's commit
+        # (and its marker). The bash sibling fails loud here via `set -e`.
+        if ($LASTEXITCODE -ne 0) { throw "Invoke-SvnReplayCommit: git add -A failed for r$Rev (exit $LASTEXITCODE)." }
+
+        # Empty index (tree identical to parent) → this revision changed nothing we track, so HEAD
+        # ALREADY carries its content: mark HEAD, mint no commit. Marking (rather than skipping
+        # outright) is what lets a revision whose content arrived some other way -- notably one this
+        # repo pushed itself -- still be resolvable by the floor lookup. --quiet writes nothing to
+        # stderr, so $LASTEXITCODE is reliable: 0 = no staged changes, 1 = staged changes.
+        & git -C $RepoDir diff --cached --quiet 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $headSha = (& git -C $RepoDir rev-parse --verify --quiet HEAD 2>$null | Out-String).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($headSha)) {
+                Set-SvnRevMark -RepoDir $RepoDir -Rev $Rev -Sha $headSha
+            }
+            return 'SKIP:empty'
+        }
+
+        # git dislikes the .000000Z microseconds svn emits; keep it to whole seconds.
+        $dateGit = $Date -replace '\.\d+Z$', 'Z'
+
+        $authorArg = @()
+        if (-not [string]::IsNullOrEmpty($Author)) {
+            $authorArg = @("--author=$Author <>")
+        }
+
+        # The SVN message is committed VERBATIM -- the revision number lives in refs/tp/svn/<rev>,
+        # so nothing is appended to (or stripped from) what the author wrote.
+        & git -C $RepoDir -c commit.gpgsign=false commit --cleanup=whitespace @authorArg `
+            --date=$dateGit -m $Message 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Invoke-SvnReplayCommit: git commit failed for r$Rev (exit $LASTEXITCODE)."
+        }
+
+        $sha = (& git -C $RepoDir rev-parse HEAD 2>$null | Out-String).Trim()
+        Set-SvnRevMark -RepoDir $RepoDir -Rev $Rev -Sha $sha
+        return "COMMIT:$sha"
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# --- Shared per-revision replay loop (U3 pull + U7 first-import bootstrap) -----
+# One shared body so the steady-state pull (Sync-FromSvn) and the first-import bootstrap
+# (Initialize-GitSvnBridge) mint IDENTICAL commit shapes (author / date / trailer). Both callers own
+# their own >5 granularity GATE (the residue-free "needs choice" exit differs per caller); this code
+# only MATERIALISES an already-chosen mode against a bridge worktree at the resume baseline.
+
+# Replay ONE svn revision: svn update -r R in the bridge worktree, assert the WC is uniformly at R
+# (KTD4 sparse guard), then hand off to Invoke-SvnReplayCommit. Returns the U1 token.
+function Invoke-SvnOneReplay {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][int]$Rev,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Author,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Date,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message
+    )
+    Push-Location $RemotePath
+    try {
+        & svn update -r $Rev
+        if ($LASTEXITCODE -ne 0) { throw "svn update -r $Rev failed" }
+    } finally {
+        Pop-Location
+    }
+    $wc = [int]((& svn info --show-item revision $RemotePath | Out-String).Trim())
+    if ($wc -ne $Rev) { throw "Remote worktree not uniformly at r$Rev (got r$wc); refusing per-revision replay." }
+    return (Invoke-SvnReplayCommit -RepoDir $RemotePath -Rev $Rev -Author $Author -Date $Date -Message $Message)
+}
+
+# Squash the current SVN HEAD-of-range into ONE boundary commit on the bridge worktree's HEAD.
+# Subject `sync: svn r<rev>` (steady-state shape) + a second -m appending the `svn-revision: <rev>`
+# trailer so floor-lookup (U5) treats the squashed range as a single boundary. Skips an empty delta.
+function Invoke-SvnBoundaryCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][int]$Rev
+    )
+    & git -C $RemotePath add -A
+    if ($LASTEXITCODE -ne 0) { throw 'git add failed in remote worktree' }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        & git -C $RemotePath diff --cached --quiet 2>$null | Out-Null
+        $hasChanges = ($LASTEXITCODE -ne 0)
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if ($hasChanges) {
+        & git -C $RemotePath -c commit.gpgsign=false commit -m "sync: svn r$Rev"
+        if ($LASTEXITCODE -ne 0) { throw 'git commit failed in remote worktree' }
+    }
+    # Mark the boundary either way: with or without a new commit, HEAD is where revision $Rev is
+    # materialised, and the floor lookup needs that mapping.
+    $sha = (& git -C $RemotePath rev-parse --verify --quiet HEAD 2>$null | Out-String).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($sha)) {
+        Set-SvnRevMark -RepoDir $RemotePath -Rev $Rev -Sha $sha
+    }
+}
+
+# Enumerate r(Cur+1)..HeadRev on the bridge worktree, then materialise commits per -Mode:
+#   per-revision : one replay commit per revision (empty deltas skipped)
+#   squash       : one boundary commit at HeadRev
+#   range        : per-revision inside <lo>:<hi> (from -Range), squash the leading + trailing rest
+# Re-enumerates from the WC so the caller only hands over the decided mode.
+function Invoke-SvnReplayDispatch {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][string]$RemoteName,
+        [Parameter(Mandatory = $true)][int]$Cur,
+        [Parameter(Mandatory = $true)][int]$HeadRev,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [string]$Range = ''
+    )
+    # KTD4 sparse guard: a full (infinite-depth) checkout is required so `svn update -r R` yields a
+    # uniform per-revision tree -- otherwise an empty post-update delta could mean "sparse update",
+    # not "identical tree". Assert once, before the loop.
+    $depth = (& svn info --show-item depth $RemotePath | Out-String).Trim()
+    if ($depth -ne 'infinity') {
+        throw "Remote worktree depth is '$depth', not 'infinity'; per-revision replay needs a full checkout."
+    }
+
+    $revs = @()
+    if ($Cur -lt $HeadRev) {
+        $logXml = (& svn log --xml -r "$($Cur + 1):$HeadRev" $RemotePath | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw "svn log failed for r$($Cur + 1):r$HeadRev" }
+        $revs = @(Get-SvnRevisions -LogXml $logXml)
+    }
+
+    if ($Mode -eq 'per-revision') {
+        Write-Output "Replaying $(@($revs).Count) SVN revision(s) r$($Cur + 1)..r$HeadRev into $RemoteName..."
+        foreach ($rec in $revs) {
+            $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message
+        }
+    }
+    elseif ($Mode -eq 'squash') {
+        Write-Output "Squashing SVN r$($Cur + 1)..r$HeadRev into one commit in $RemoteName..."
+        Push-Location $RemotePath
+        try {
+            & svn update
+            if ($LASTEXITCODE -ne 0) { throw 'svn update failed' }
+        } finally {
+            Pop-Location
+        }
+        Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev $HeadRev
+    }
+    elseif ($Mode -eq 'range') {
+        if ($Range -notmatch '^[0-9]+:[0-9]+$') {
+            throw "Granularity 'range' requires -Range <lo>:<hi> (got '$Range')."
+        }
+        $loRaw, $hiRaw = $Range -split ':', 2
+        $lo = [Math]::Max([int]$loRaw, $Cur + 1)
+        $hi = [Math]::Min([int]$hiRaw, $HeadRev)
+        if ($lo -gt $hi) { throw "Granularity range r$loRaw:r$hiRaw does not overlap the pending r$($Cur + 1):r$HeadRev." }
+        Write-Output "Replaying r$lo..r$hi per-revision, squashing the rest, into $RemoteName..."
+        # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
+        if (($lo - 1) -ge ($Cur + 1)) {
+            Push-Location $RemotePath
+            try {
+                & svn update -r ($lo - 1)
+                if ($LASTEXITCODE -ne 0) { throw "svn update -r $($lo - 1) failed" }
+            } finally {
+                Pop-Location
+            }
+            Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev ($lo - 1)
+        }
+        # Per-revision inside [lo,hi].
+        foreach ($rec in $revs) {
+            if ($rec.Rev -ge $lo -and $rec.Rev -le $hi) {
+                $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message
+            }
+        }
+        # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=HeadRev.
+        if ($hi -lt $HeadRev) {
+            Push-Location $RemotePath
+            try {
+                & svn update
+                if ($LASTEXITCODE -ne 0) { throw 'svn update failed' }
+            } finally {
+                Pop-Location
+            }
+            Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev $HeadRev
+        }
+    }
+    else {
+        throw "Unknown granularity '$Mode' (expected per-revision | squash | range)."
+    }
+}
+
+# --- Revision markers: refs/tp/svn/<N> (R14) ----------------------------------
+# PowerShell peers of svn_rev_mark_set / svn_rev_mark_get / svn_rev_marks / floor / max
+# (common.sh). See that file for the full rationale; in short, the revision->commit map lives in a
+# dedicated ref namespace rather than in commit messages, both pull and push write it, and that is
+# what lets a revision this repo PUSHED still be resolvable by the floor lookup.
+
+# Point refs/tp/svn/<Rev> at <Sha> (create or move).
+function Set-SvnRevMark {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][int]$Rev,
+        [Parameter(Mandatory = $true)][string]$Sha
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        & git -C $RepoDir update-ref "refs/tp/svn/$Rev" $Sha 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Set-SvnRevMark: update-ref refs/tp/svn/$Rev failed (exit $LASTEXITCODE)." }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# SHA marked for <Rev>, or '' when unmarked.
+function Get-SvnRevMark {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][int]$Rev
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $sha = (& git -C $RepoDir rev-parse --verify --quiet "refs/tp/svn/$Rev^{commit}" 2>$null | Out-String).Trim()
+        return $sha
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# All markers as [pscustomobject]@{Rev;Sha}, DESCENDING by revision (numeric).
+function Get-SvnRevMarks {
+    param([Parameter(Mandatory = $true)][string]$RepoDir)
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $lines = @(& git -C $RepoDir for-each-ref --format='%(refname:lstrip=3) %(objectname)' 'refs/tp/svn/*' 2>$null)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    $out = foreach ($line in $lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $parts = $line.Trim() -split '\s+'
+        if ($parts.Count -ne 2 -or $parts[0] -notmatch '^[0-9]+$') { continue }
+        [pscustomobject]@{ Rev = [int]$parts[0]; Sha = $parts[1] }
+    }
+    return @($out | Sort-Object -Property Rev -Descending)
+}
+
+# Floor revision->commit lookup (KTD3 floor semantics, R8/R14): the marker with the GREATEST
+# revision <= -TargetRev whose commit is REACHABLE FROM `main`. Returns one SHA, or $null when no
+# marker <= target is reachable (the genuine "predates earliest" case -> checkout's R10 path).
+# Ambiguity is impossible by construction (one ref per revision), so there is no duplicate branch;
+# markers left by a rolled-back import are simply unreachable from main and skipped.
+#
+# WHY `main` and not the bridge ref (remote-svn/main) -- load-bearing, not an oversight:
+#   * The SHA returned here becomes the PARENT of the branch checkout is about to create. A later
+#     `git merge-base main <branch>` can only resolve to it if it sits in main's OWN history; that
+#     is the entire point of grading the fork point (U5).
+#   * Commits the bridge has but main does not come in two flavours, and NEITHER is a usable base:
+#     the `Merge branch 'main' into remote-svn/main` commits that push creates (the bridge tip is
+#     verifiably NOT an ancestor of main), and commits pull has already replayed but whose merge
+#     into main has not landed yet.
+#   * So widening the scan to the bridge would not buy reachability -- merge-base still would not
+#     land on the chosen base. It would only trade "stop with a clear error" for "silently attach
+#     the branch to history that main may never acquire".
+# Scope differs per caller BY DESIGN, which is why Get-SvnMaxRevReachable takes -Ref:
+#   pull resume point -> remote-svn/main | push alignment -> the pushed branch |
+#   checkout grading bound + this floor -> main.
+function Get-SvnFloorCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][int]$TargetRev
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        foreach ($m in (Get-SvnRevMarks -RepoDir $RepoDir)) {
+            if ($m.Rev -gt $TargetRev) { continue }
+            & git -C $RepoDir merge-base --is-ancestor $m.Sha main 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $m.Sha }
+        }
+        return $null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# Greatest marked revision REACHABLE FROM -Ref; 0 when none. Single "where are we" answer shared by
+# the pull resume point, the checkout grading bound and the push alignment advance, so those three
+# can no longer disagree (they used to: the pull read the working-copy revision while checkout read
+# message trailers, which deadlocked a checkout behind a pull that had nothing to do).
+function Get-SvnMaxRevReachable {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoDir,
+        [Parameter(Mandatory = $true)][string]$Ref
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        foreach ($m in (Get-SvnRevMarks -RepoDir $RepoDir)) {
+            & git -C $RepoDir merge-base --is-ancestor $m.Sha $Ref 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $m.Rev }
+        }
+        return 0
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+}
+
+# The checkout grading bound `cur` = greatest marked revision reachable from `main`.
+function Get-SvnHighestReplayedRev {
+    param([Parameter(Mandatory = $true)][string]$RepoDir)
+    return (Get-SvnMaxRevReachable -RepoDir $RepoDir -Ref 'main')
+}
+
+# --- tp:* branch-metadata property helpers (U2) ------------------------------
+# PowerShell peers of svn_copyfrom_rev_xml / get_svn_branch_copyfrom_rev / get_tp_branch_prop /
+# set_tp_branch_prop (common.sh). Read/write the two branch-metadata SVN properties the bridge
+# cannot otherwise share (KTD5) plus the trunk copyfrom-rev a branch was `svn copy`-ed from. Keep
+# this block ASCII so the file's existing BOM is the only reason it holds non-ASCII bytes.
+
+# Extract the trunk copyfrom-rev of a branch from an `svn log -v --stop-on-copy --xml` document
+# (passed as a string). Under --stop-on-copy the OLDEST logentry (smallest revision) IS the copy,
+# whose branch-root path carries copyfrom-rev="N" (the TRUNK revision the branch was copied from) --
+# NOT the branch's own creation revision (the logentry's revision, which never touched trunk and
+# carries no svn-revision: trailer). Returns the value as a string, or '' when the XML has no
+# copyfrom path. Reuses XmlDocument.LoadXml + SelectNodes (mirrors Get-SvnLog.ps1); GetAttribute
+# returns '' for a missing attribute, so the IsNullOrWhiteSpace guard is correct.
+function Get-SvnCopyfromRevFromXml {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Xml)
+
+    if ([string]::IsNullOrWhiteSpace($Xml)) { return '' }
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.LoadXml($Xml)
+    $logRoot = $doc.SelectSingleNode('/log')
+    if ($null -eq $logRoot) { return '' }
+    # @()-wrap so a single logentry does not unwrap to a scalar (five-taboo #5).
+    $entries = @($logRoot.SelectNodes('logentry'))
+    if ($entries.Count -eq 0) { return '' }
+
+    $minRev = $null; $minEntry = $null
+    foreach ($e in $entries) {
+        $r = $e.GetAttribute('revision')
+        if ([string]::IsNullOrWhiteSpace($r)) { continue }
+        $ri = [int]$r
+        if ($null -eq $minRev -or $ri -lt $minRev) { $minRev = $ri; $minEntry = $e }
+    }
+    if ($null -eq $minEntry) { return '' }
+    foreach ($p in @($minEntry.SelectNodes('paths/path'))) {
+        $cfr = $p.GetAttribute('copyfrom-rev')
+        if (-not [string]::IsNullOrWhiteSpace($cfr)) { return $cfr }
+    }
+    return ''
+}
+
+# Thin wrapper: run svn for a branch URL, feed its XML to the pure parser. Softens EAP so a native
+# stderr write cannot throw a NativeCommandError under EAP=Stop; throws on a genuine non-zero exit
+# so callers never treat empty as "not a copy".
+function Get-SvnBranchCopyfromRev {
+    param([Parameter(Mandatory = $true)][string]$BranchUrl)
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $xml = (& svn log -v --stop-on-copy --xml $BranchUrl 2>$null | Out-String)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($LASTEXITCODE -ne 0) { throw "svn log --stop-on-copy failed for $BranchUrl" }
+    return (Get-SvnCopyfromRevFromXml -Xml $xml)
+}
+
+# Getter: return the value of tp:<Name> on -Target (a branch URL or a working-copy path), or ''
+# when the property is absent. `svn propget` on a missing custom property exits NON-ZERO with empty
+# output (observed rc=1 on 1.14), so we suppress stderr, soften EAP (so a stderr write cannot throw
+# under EAP=Stop -- precedent: Assert-TrustedSvnUrl), and do NOT trust the exit code. Trim the
+# trailing CR/LF propget + Out-String append.
+function Get-TpBranchProp {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $val = (& svn propget "tp:$Name" $Target 2>$null | Out-String)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($null -eq $val) { return '' }
+    return ($val -replace '(\r?\n)+$', '')
+}
+
+# Setter: in the branch working copy set tp:<Name>=<Value>, then a SCOPED property commit and an
+# `svn update`. `--depth empty` + the explicit '.' target is load-bearing -- the fb42a63 fix that
+# stops `svn checkout --force` overlay drift being swept into the commit; the trailing `svn update`
+# clears the mixed-revision lag so the next build falsely-demand-a-pull check passes. Push-Location
+# + explicit $LASTEXITCODE checks after each native call mirror New-RemoteBridge.ps1. Fixed ASCII msg.
+function Set-TpBranchProp {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)][string]$WorkingCopy
+    )
+    Push-Location -LiteralPath $WorkingCopy
+    try {
+        & svn propset "tp:$Name" $Value '.'
+        if ($LASTEXITCODE -ne 0) { throw "svn propset tp:$Name failed" }
+        & svn commit --depth empty -m "set tp:$Name (turbo-plugin metadata)" '.'
+        if ($LASTEXITCODE -ne 0) { throw "svn commit tp:$Name failed" }
+        & svn update | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "svn update after tp:$Name commit failed" }
+    } finally {
+        Pop-Location
+    }
+}
+
+# Resolve a caller-supplied relative path against a worktree root, refusing anything that escapes
+# it. Returns the resolved absolute path.
+#
+# Why this is worth a guard even though the value is not attacker-supplied in practice: the caller
+# (Remove-SvnFile) uses the result for `svn delete` + `svn commit` against the SHARED repository,
+# and that is irreversible -- deleting the wrong path costs everyone on the team a recovery, and
+# SVN history keeps the mistake forever. The path arrives from an agent reading `git status` /
+# `svn status` output, so a `..` segment means something upstream is already wrong; the point is to
+# stop there rather than to discover it after the commit. Mirrors the existing fail-closed stance
+# of the SVN URL trust check above, which rejects `..` outright rather than trying to sanitize it.
+function Resolve-PathWithinWorktree {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$RelativePath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
+        throw "Refusing an empty path."
+    }
+    if ([System.IO.Path]::IsPathRooted($RelativePath)) {
+        throw "Refusing an absolute path: '$RelativePath'. Paths are relative to the worktree root."
+    }
+    # Check the segments, not a substring: a filename may legitimately contain '..' (e.g. "a..b.txt")
+    # and rejecting that would be wrong.
+    $segments = ($RelativePath -replace '\\', '/') -split '/'
+    if ($segments -contains '..') {
+        throw "Refusing a path containing '..': '$RelativePath'."
+    }
+
+    $rootFull = [System.IO.Path]::GetFullPath($Root)
+    if (-not $rootFull.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $rootFull += [System.IO.Path]::DirectorySeparatorChar
+    }
+    # GetFullPath (not GetRelativePath -- that one is .NET Core only and absent on PS 5.1) collapses
+    # any remaining oddities, so the prefix test below sees the real destination.
+    $targetFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Root, $RelativePath))
+
+    if (-not $targetFull.StartsWith($rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing a path that resolves outside the worktree: '$RelativePath' -> $targetFull"
+    }
+    return $targetFull
+}
+

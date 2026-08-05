@@ -1,0 +1,17 @@
+{
+  "description": "turbo-plugin-git-svn: SessionStart 提示性 prompt（marker 缺失時提示 /tp-setup）。advisory（不會 block session）。",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/invoke-sessionstart.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

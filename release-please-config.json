@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "separate-pull-requests": true,
+  "bump-minor-pre-major": true,
+  "include-component-in-tag": true,
+  "tag-separator": "--",
+  "changelog-sections": [
+    { "type": "feat", "section": "Added" },
+    { "type": "fix", "section": "Fixed" },
+    { "type": "refactor", "section": "Changed" },
+    { "type": "perf", "section": "Changed" },
+    { "type": "db", "section": "Database" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "chore", "section": "Chore", "hidden": true },
+    { "type": "test", "section": "Test", "hidden": true },
+    { "type": "ci", "section": "CI", "hidden": true },
+    { "type": "build", "section": "Build", "hidden": true }
+  ],
+  "packages": {
+    "plugins/turbo-plugin-code-comment": {
+      "component": "turbo-plugin-code-comment",
+      "extra-files": [
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+      ]
+    },
+    "plugins/turbo-plugin-dotnet-framework": {
+      "component": "turbo-plugin-dotnet-framework",
+      "extra-files": [
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+      ]
+    },
+    "plugins/turbo-plugin-git-svn": {
+      "component": "turbo-plugin-git-svn",
+      "extra-files": [
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+      ]
+    },
+    "plugins/turbo-plugin-three-environment-db": {
+      "component": "turbo-plugin-three-environment-db",
+      "extra-files": [
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+      ]
+    },
+    "plugins/turbo-plugin-multi-repo-workspace": {
+      "component": "turbo-plugin-multi-repo-workspace",
+      "extra-files": [
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+      ]
+    }
+  }
+}

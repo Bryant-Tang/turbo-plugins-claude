@@ -1,0 +1,13 @@
+{
+    "mcpServers": {
+        "tp-dbhub": {
+            "type": "stdio",
+            "command": "node",
+            "args": [
+                "${CLAUDE_PLUGIN_ROOT}/scripts/start-dbhub.js",
+                "${CLAUDE_PROJECT_DIR}"
+            ],
+            "env": {}
+        }
+    }
+}

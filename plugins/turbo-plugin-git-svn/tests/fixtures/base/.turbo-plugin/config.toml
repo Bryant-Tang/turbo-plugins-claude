@@ -1,0 +1,11 @@
+# turbo-plugin-git-svn Script tests fixture config.toml
+# 此檔由 Reset-Fixture.ps1 mirror 進 <tests>/.sandbox/test-turbo-plugin/.turbo-plugin/config.toml
+# 不要直接編輯 — 修改請改 plugins/turbo-plugin-git-svn/tests/fixtures/base/.turbo-plugin/config.toml 並重跑 reset。
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [svn] — SVN bridge 行為設定（git-svn plugin 的 concern section）
+# ─────────────────────────────────────────────────────────────────────────────
+[svn]
+
+# 註:IIS / build / publish / run 等 .NET 設定區段已隨四拆移至 turbo-plugin-dotnet-framework。
+# 此 fixture 只保留 git↔SVN bridge 所需的 [svn] 區段。

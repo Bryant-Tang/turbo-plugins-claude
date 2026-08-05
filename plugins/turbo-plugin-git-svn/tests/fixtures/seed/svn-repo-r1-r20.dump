@@ -1,0 +1,673 @@
+SVN-fs-dump-format-version: 2
+
+UUID: 3f4bcf4d-7634-ac4f-9a69-ac21b632a10e
+
+Revision-number: 0
+Prop-content-length: 56
+Content-length: 56
+
+K 8
+svn:date
+V 27
+2026-05-27T09:30:21.000715Z
+PROPS-END
+
+Revision-number: 1
+Prop-content-length: 136
+Content-length: 136
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:21.481050Z
+K 7
+svn:log
+V 35
+r1: initial trunk + branches + tags
+PROPS-END
+
+Node-path: branches
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: tags
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: trunk
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Revision-number: 2
+Prop-content-length: 119
+Content-length: 119
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:22.190091Z
+K 7
+svn:log
+V 18
+r2: add README.txt
+PROPS-END
+
+Node-path: trunk/README.txt
+Node-kind: file
+Node-action: add
+Text-content-md5: 7e5492c6617771beda44c053433bedc0
+Text-content-sha1: 628e8e4e015655c014cc84635dc5c2062a44699d
+Prop-content-length: 10
+Text-content-length: 30
+Content-length: 40
+
+PROPS-END
+turbo-plugin Phase 1 SVN seed.
+
+Revision-number: 3
+Prop-content-length: 124
+Content-length: 124
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:22.802876Z
+K 7
+svn:log
+V 23
+r3: add HelloController
+PROPS-END
+
+Node-path: trunk/Controllers
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: trunk/Controllers/HelloController.cs
+Node-kind: file
+Node-action: add
+Text-content-md5: 23b94ad229fb9f017847084e4e89bac4
+Text-content-sha1: 6329ee5d6cb5950e79718293a73f96a2eefe1f63
+Prop-content-length: 10
+Text-content-length: 22
+Content-length: 32
+
+PROPS-END
+// hello controller v1
+
+Revision-number: 4
+Prop-content-length: 119
+Content-length: 119
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:23.606299Z
+K 7
+svn:log
+V 18
+r4: add Index view
+PROPS-END
+
+Node-path: trunk/Views
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: trunk/Views/Home
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: trunk/Views/Home/Index.cshtml
+Node-kind: file
+Node-action: add
+Text-content-md5: 17a50654776c11ebdf2b02d78ca1f0e5
+Text-content-sha1: 514cf5fc5b77922d3742b8c26ab63b16629c543c
+Prop-content-length: 10
+Text-content-length: 17
+Content-length: 27
+
+PROPS-END
+<h1>Index v1</h1>
+
+Revision-number: 5
+Prop-content-length: 160
+Content-length: 160
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:24.113412Z
+K 7
+svn:log
+V 59
+ä¿®æ­£ä¸­æ–‡ commit è¨Šæ¯äº‚ç¢¼
+PROPS-END
+
+Node-path: trunk/Scripts
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: trunk/Scripts/site.js
+Node-kind: file
+Node-action: add
+Text-content-md5: 7ac8408c1bc0054d0cd952d830a4070c
+Text-content-sha1: 08e630f9d938ca6447de45f7405b3b577d717434
+Prop-content-length: 10
+Text-content-length: 13
+Content-length: 23
+
+PROPS-END
+// site.js v1
+
+Revision-number: 6
+Prop-content-length: 119
+Content-length: 119
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:24.679063Z
+K 7
+svn:log
+V 18
+r6: add Web.config
+PROPS-END
+
+Node-path: trunk/Web.config
+Node-kind: file
+Node-action: add
+Text-content-md5: 7ab9b9b01826c917589fdbc643bef454
+Text-content-sha1: 5f5a4ef4cdba1cb9518b84f9626116de48045bb3
+Prop-content-length: 10
+Text-content-length: 16
+Content-length: 26
+
+PROPS-END
+<configuration/>
+
+Revision-number: 7
+Prop-content-length: 125
+Content-length: 125
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:25.036860Z
+K 7
+svn:log
+V 24
+r7: add appSettings stub
+PROPS-END
+
+Node-path: trunk/Web.config
+Node-kind: file
+Node-action: change
+Text-content-md5: 08f53a7fe40bbc152fa18459fbd67d75
+Text-content-sha1: 3680b27dd406f63c45fc632ebce0604e2f03ace0
+Text-content-length: 45
+Content-length: 45
+
+<configuration><appSettings/></configuration>
+
+Revision-number: 8
+Prop-content-length: 128
+Content-length: 128
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:25.390152Z
+K 7
+svn:log
+V 27
+r8: bump HelloController v2
+PROPS-END
+
+Node-path: trunk/Controllers/HelloController.cs
+Node-kind: file
+Node-action: change
+Text-content-md5: 61102aeb31c475cb255fd6068594f214
+Text-content-sha1: b323bf51010a7bb15a2f25afaf3cda41d107d1f3
+Text-content-length: 22
+Content-length: 22
+
+// hello controller v2
+
+Revision-number: 9
+Prop-content-length: 126
+Content-length: 126
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:25.847251Z
+K 7
+svn:log
+V 25
+r9: refactor Index layout
+PROPS-END
+
+Node-path: trunk/Views/Home/Index.cshtml
+Node-kind: file
+Node-action: change
+Text-content-md5: 41f6be17fad990266494094f574c7a00
+Text-content-sha1: b8e6ca88b6d965443fcb1c133be4b9b76f064619
+Text-content-length: 17
+Content-length: 17
+
+<h1>Index v2</h1>
+
+Revision-number: 10
+Prop-content-length: 169
+Content-length: 169
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:26.352355Z
+K 7
+svn:log
+V 68
+æ–°å¢žç¹é«”ä¸­æ–‡ç¯„ä¾‹æ–‡ä»¶
+PROPS-END
+
+Node-path: trunk/Scripts/site.js
+Node-kind: file
+Node-action: change
+Text-content-md5: ec6181af818fcd854f9ccba45a2891ae
+Text-content-sha1: 3f408f6d52b8386fd18f9f3a298e4b623d71ab7d
+Text-content-length: 13
+Content-length: 13
+
+// site.js v2
+
+Revision-number: 11
+Prop-content-length: 120
+Content-length: 120
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:26.861496Z
+K 7
+svn:log
+V 19
+r11: add User model
+PROPS-END
+
+Node-path: trunk/Models
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: trunk/Models/User.cs
+Node-kind: file
+Node-action: add
+Text-content-md5: cc3930ed854d6f8051dc199a647a4039
+Text-content-sha1: 24c1d7f1289eefdac345a4754d9e035ecf42a05e
+Prop-content-length: 10
+Text-content-length: 13
+Content-length: 23
+
+PROPS-END
+// User.cs v1
+
+Revision-number: 12
+Prop-content-length: 120
+Content-length: 120
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:27.391857Z
+K 7
+svn:log
+V 19
+r12: add Role model
+PROPS-END
+
+Node-path: trunk/Models/Role.cs
+Node-kind: file
+Node-action: add
+Text-content-md5: 4d8cacc6ff8d0249ac627660b5c3a559
+Text-content-sha1: f5fc4a193d89f1b9672db122b51f50a3520eb32a
+Prop-content-length: 10
+Text-content-length: 13
+Content-length: 23
+
+PROPS-END
+// Role.cs v1
+
+Revision-number: 13
+Prop-content-length: 121
+Content-length: 121
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:27.846952Z
+K 7
+svn:log
+V 20
+r13: User validation
+PROPS-END
+
+Node-path: trunk/Models/User.cs
+Node-kind: file
+Node-action: change
+Text-content-md5: ed8d522d73ca93d9c7572644f74a5a03
+Text-content-sha1: c41f3b0d2db697a3ee62c744b87273b754eb6370
+Text-content-length: 24
+Content-length: 24
+
+// User.cs v2 validation
+
+Revision-number: 14
+Prop-content-length: 123
+Content-length: 123
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:28.253524Z
+K 7
+svn:log
+V 22
+r14: add Logger helper
+PROPS-END
+
+Node-path: trunk/Helpers
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: trunk/Helpers/Logger.cs
+Node-kind: file
+Node-action: add
+Text-content-md5: 0acd28b836bf6971c0f5373ffb951b68
+Text-content-sha1: fd007d36faf4983d548a99d78a46c3736ea177c0
+Prop-content-length: 10
+Text-content-length: 15
+Content-length: 25
+
+PROPS-END
+// Logger.cs v1
+
+Revision-number: 15
+Prop-content-length: 176
+Content-length: 176
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:28.571430Z
+K 7
+svn:log
+V 75
+é‡æ§‹ä¼ºæœå™¨çµ„æ…‹è¼‰å…¥æµç¨‹
+PROPS-END
+
+Node-path: trunk/Helpers/Logger.cs
+Node-kind: file
+Node-action: change
+Text-content-md5: d888801613526905485a57e626380fb4
+Text-content-sha1: ceb10c7b81ccc2c61a8b6587d9edbbd2dc4eca9e
+Text-content-length: 15
+Content-length: 15
+
+// Logger.cs v2
+
+Revision-number: 16
+Prop-content-length: 132
+Content-length: 132
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:29.135038Z
+K 7
+svn:log
+V 31
+r16: add smoke test placeholder
+PROPS-END
+
+Node-path: trunk/Tests
+Node-kind: dir
+Node-action: add
+Prop-content-length: 10
+Content-length: 10
+
+PROPS-END
+
+
+Node-path: trunk/Tests/Smoke.cs
+Node-kind: file
+Node-action: add
+Text-content-md5: 8ab088fd73bd86c660d66f49768d3ffc
+Text-content-sha1: 04c811f7bf322bea881a3266d814e9b40d7e1b32
+Prop-content-length: 10
+Text-content-length: 25
+Content-length: 35
+
+PROPS-END
+// smoke test placeholder
+
+Revision-number: 17
+Prop-content-length: 132
+Content-length: 132
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:29.545015Z
+K 7
+svn:log
+V 31
+r17: enable debug in Web.config
+PROPS-END
+
+Node-path: trunk/Web.config
+Node-kind: file
+Node-action: change
+Text-content-md5: 62eb05048074a743ed038e5cc717625a
+Text-content-sha1: 5455d8f8ddb74110ca4b357de465454acad2ae87
+Text-content-length: 89
+Content-length: 89
+
+<configuration><appSettings><add key="debug" value="true"/></appSettings></configuration>
+
+Revision-number: 18
+Prop-content-length: 117
+Content-length: 117
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:30.079657Z
+K 7
+svn:log
+V 16
+r18: add LICENSE
+PROPS-END
+
+Node-path: trunk/LICENSE
+Node-kind: file
+Node-action: add
+Text-content-md5: 7abc1a233092fc104c7af72a89c0829c
+Text-content-sha1: 89690ac571dcf4c9c40c842efed3f11171d07b29
+Prop-content-length: 10
+Text-content-length: 3
+Content-length: 13
+
+PROPS-END
+MIT
+
+Revision-number: 19
+Prop-content-length: 123
+Content-length: 123
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:30.424138Z
+K 7
+svn:log
+V 22
+r19: add .editorconfig
+PROPS-END
+
+Node-path: trunk/.editorconfig
+Node-kind: file
+Node-action: add
+Text-content-md5: 429338ca3fd371d6ea7e35deac70ce2d
+Text-content-sha1: d1339ea8af12adb579777d6409187f7560540ace
+Prop-content-length: 10
+Text-content-length: 11
+Content-length: 21
+
+PROPS-END
+root = true
+
+Revision-number: 20
+Prop-content-length: 135
+Content-length: 135
+
+K 10
+svn:author
+V 6
+tester
+K 8
+svn:date
+V 27
+2026-05-27T09:30:30.735191Z
+K 7
+svn:log
+V 34
+r20: branch test-1 from trunk@HEAD
+PROPS-END
+
+Node-path: branches/test-1
+Node-kind: dir
+Node-action: add
+Node-copyfrom-rev: 19
+Node-copyfrom-path: trunk
+
+
