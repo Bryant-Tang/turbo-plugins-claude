@@ -20,6 +20,8 @@ allowed-tools: Bash, Read
    - `Already up to date at SVN r<rev>` → 完成
    - `Replaying <n> SVN revision(s) ...` / `Pulled SVN r<lo>..r<hi> into <branch> (<n> revision(s), <mode>)` → 完成。逐修訂(per-revision)模式下**每個 SVN 修訂都變成一顆對應的 git commit**,保留原作者 / 訊息 / 時間;squash 模式則是壓成單一 `sync: svn r<rev>`。
    - `TP_TOKEN:GRANULARITY_REQUIRED count=<N> range=r<lo>:r<hi>` → 這次要拉的 SVN 修訂較多、需要先問使用者用哪種顆粒度保留歷史(此時 script 尚未建立任何 commit、也沒有落地任何變更)。**此行是給 agent 內部解析的機器標記,絕不可原樣丟給使用者** → 進入 step 3。
+   - `TP_TOKEN:SVN_PATH_RENAMED old=<url> new=<url> range=r<lo>:r<hi>` → **這不是錯誤,不需要任何處理**:這段期間 SVN 上的資料夾被改名了,腳本已自動跟著改名走完。同樣**不可原樣丟給使用者**,但**要用白話提一句**——因為使用者會在歷史裡看到路徑變動,不講他會以為是自己弄錯:「這段期間 SVN 上的資料夾改過名(<舊資料夾名> → <新資料夾名>),已經自動跟著處理,歷史完整保留。」
+   - `Error: cannot read SVN at the path this bridge is attached to: ...` → 這個 bridge 當初接上的 SVN 路徑現在讀不到了。**最常見的原因是那個資料夾(或它的上層)在 bridge 建好之後被改名或搬走**,而 bridge 沒辦法自己找到新位置(SVN 只能從現存路徑往回追歷史,不能從已刪除的路徑往前追)。用白話告訴使用者:SVN 上的位置好像變了,請確認現在的 URL,然後對新位置重跑 `/tp-setup`。不要叫他重跑 `/tp-pull-from-svn`——同一個舊路徑再拉幾次都是一樣的結果。
    - `Error: merge conflict detected. The merge has been aborted and main worktree restored ...` → **script 已自動 `git merge --abort` 並把主 worktree 還原到原分支**(零殘留、沒有進行中的 merge)。agent:把 token 後列出的衝突檔**白話**告訴使用者,說明「這次拉取與本機有衝突,已自動還原、沒有留下半成品」,請使用者在自己的流程裡調和這些檔案後**重跑 `/tp-pull-from-svn`**。**不要**叫使用者 `git merge --continue`(此時沒有進行中的 merge 可續)。若訊息是 `... automatic rollback failed ...`(回滾本身失敗)→ 工作樹處於不一致狀態,請使用者依訊息手動修復後再重跑。
 3. **粒度選擇(僅在 step 2 出現 `GRANULARITY_REQUIRED` 時做)**
 
@@ -57,6 +59,8 @@ allowed-tools: Bash, Read
 - 衝突時 **不自動 abort**,讓使用者選擇手動解決。
 - 跑兩次無 SVN 新 commit → 第二次回 "Already up to date" 不重做。
 - **粒度只在更新數 > 5 時才問**:5 個(含)以內,script 直接一顆一顆保留、**不打擾使用者**;超過 5 個且未帶粒度參數時,script 才回報 `GRANULARITY_REQUIRED` 讓 agent 去問(此時零 commit、零落地,可安全重跑)。
+- **但「問不問」與「聽不聽」是兩件事**:你明確帶了粒度參數時,**不論更新數多少 script 都會照辦**(以前 ≤5 筆會把你傳的值默默丟掉、一律逐筆)。所以使用者在少量更新時主動說「這次壓成一顆就好」,直接帶參數即可。
+- **SVN 資料夾中途改名不是錯誤**:script 會自動跟著改名走完並印 `SVN_PATH_RENAMED`。照常完成,但要用白話補一句資料夾改過名,免得使用者看到歷史裡的路徑變動以為出錯。若改名發生在 bridge **建好之後**,script 反而會讀不到路徑並要求對新 URL 重跑 `/tp-setup`——那種情況重跑 pull 沒有用。
 - **預設推薦「一顆一顆保留」**:使用者沒特別偏好時建議選 1(逐修訂),因為它讓日後 `/tp-checkout-svn-branch` 對齊分支接點(fork-point)最準;要最精簡歷史才選壓成一顆。
 - **粒度選項一律白話**:呈現給使用者時只講「一顆一顆保留 / 壓成一顆 / 挑一段保留」與白話理由,**不要**出現 `TP_TOKEN` / `refs/tp/svn/<n>` / `per-revision` / `squash` / `range` 這些內部參數名或 worktree 名;內部參數只在你**重跑 script** 時用。
 

@@ -93,7 +93,18 @@ fi
 # Resolve the branch URL + repo HEAD (URL side, not the WC -- the WC reports only its checked-out
 # revision, not what SVN has). WC_REV_START is the WC baseline captured BEFORE the loop mutates it.
 SVN_URL="$(svn info --show-item url "$REMOTE_PATH" | tr -d '\r\n')"
-HEAD_REV="$(svn info --show-item revision "$SVN_URL" | tr -d '[:space:]')"
+# A bridge whose SVN path (or any parent folder) was renamed AFTER the bridge was built points at a
+# path that no longer exists, and svn's own error names that old path -- which the user never typed
+# and will not recognise. There is no way to discover the new name from here: svn follows copy
+# history backwards from an existing path, not forwards from a deleted one (issue #32). So the only
+# honest thing to do is say precisely that.
+if ! HEAD_REV="$(svn info --show-item revision "$SVN_URL" 2>/dev/null | tr -d '[:space:]')" || [[ -z "$HEAD_REV" ]]; then
+  echo "Error: cannot read SVN at the path this bridge is attached to:" >&2
+  echo "  $SVN_URL" >&2
+  echo "  Either SVN is unreachable, or that path (or one of its parent folders) was renamed or removed on SVN." >&2
+  echo "  If it was renamed, re-run /tp-setup against the current URL -- a bridge cannot find its own new name." >&2
+  exit 1
+fi
 WC_REV_START="$(svn info --show-item revision "$REMOTE_PATH" | tr -d '[:space:]')"
 
 # cur (resume point) = greatest MARKED revision reachable from the bridge branch, floored by the
@@ -108,7 +119,9 @@ if (( MAX_MARK > CUR )); then CUR="$MAX_MARK"; fi
 # enumerator). Guard the reversed/empty range so svn 1.14.x never sees lo>hi ("No such revision").
 COUNT=0
 if (( CUR < HEAD_REV )); then
-  COUNT="$(svn log --xml -r "$((CUR + 1)):$HEAD_REV" "$REMOTE_PATH" | svn_enumerate_revisions | tr -cd '\000' | wc -c | tr -d '[:space:]')"
+  # Pegged URL, not the WC: same reason as svn_replay_dispatch's enumeration (issue #32) -- a WC
+  # sitting at an older revision is bound to the path name of that revision.
+  COUNT="$(svn log --xml -r "$((CUR + 1)):$HEAD_REV" "${SVN_URL}@${HEAD_REV}" | svn_enumerate_revisions | tr -cd '\000' | wc -c | tr -d '[:space:]')"
 fi
 
 # Nothing new to replay and nothing resumable ahead -> up to date.
@@ -128,18 +141,20 @@ fi
 # Granularity gate (KTD7 / R2-R4). <=5 new revisions replay per-revision silently. >5 with no
 # explicit choice -> emit a structured signal and exit 0 (NO commits, residue-free) so the SKILL can
 # prompt; distinct from the merge-conflict path which exits 1.
+# The threshold decides whether to ASK, never whether to HONOUR the answer: an explicitly passed
+# --granularity is used at any count. (Same fix as the bootstrap side; previously a caller's
+# explicit choice was silently discarded whenever the count sat at or below the threshold.)
 MODE='per-revision'
-if (( COUNT > TP_GRANULARITY_THRESHOLD )); then
-  if [[ -z "$GRANULARITY" ]]; then
-    printf 'TP_TOKEN:GRANULARITY_REQUIRED count=%s range=r%s:r%s\n' "$COUNT" "$((CUR + 1))" "$HEAD_REV"
-    exit 0
-  fi
+if [[ -n "$GRANULARITY" ]]; then
   MODE="$GRANULARITY"
+elif (( COUNT > TP_GRANULARITY_THRESHOLD )); then
+  printf 'TP_TOKEN:GRANULARITY_REQUIRED count=%s range=r%s:r%s\n' "$COUNT" "$((CUR + 1))" "$HEAD_REV"
+  exit 0
 fi
 
 # Materialise the chosen granularity via the shared enumerate+replay dispatch (lib/common.sh),
 # the same body the first-import bootstrap (Initialize-GitSvnBridge) uses.
-svn_replay_dispatch "$REMOTE_PATH" "$REMOTE_NAME" "$CUR" "$HEAD_REV" "$MODE" "$RANGE"
+svn_replay_dispatch "$REMOTE_PATH" "$REMOTE_NAME" "$CUR" "$HEAD_REV" "$MODE" "$RANGE" "$SVN_URL"
 
 SWITCHED=false
 if [[ "$ORIGINAL_BRANCH" != "$BRANCH" ]]; then

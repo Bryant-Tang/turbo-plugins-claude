@@ -268,16 +268,22 @@ try {
         if ($importCount -gt 0) { $firstRev = [int]$importRecs[0].Rev }
     }
 
+    # The threshold decides whether to ASK, never whether to HONOUR the answer.
+    #
+    # It used to gate both: at or below the threshold, an explicitly passed -Granularity was dropped
+    # on the floor and the mode was always per-revision. That made a caller's explicit choice
+    # silently ineffective -- and left the issue #32 case (2 revisions, so below the threshold) with
+    # no supported way to select the mode that would have worked.
     $mode = 'per-revision'
     if ($importCount -eq 0) {
         $mode = 'legacy-empty'
     }
-    elseif ($importCount -gt $TpGranularityThreshold) {
-        if ([string]::IsNullOrWhiteSpace($Granularity)) {
-            Write-Output "TP_TOKEN:GRANULARITY_REQUIRED count=$importCount range=r$firstRev:r$headRev"
-            exit 0
-        }
+    elseif (-not [string]::IsNullOrWhiteSpace($Granularity)) {
         $mode = $Granularity
+    }
+    elseif ($importCount -gt $TpGranularityThreshold) {
+        Write-Output "TP_TOKEN:GRANULARITY_REQUIRED count=$importCount range=r$firstRev:r$headRev"
+        exit 0
     }
 
     # The worktrees container does not exist yet on a first bootstrap; create it so `git worktree
@@ -367,7 +373,10 @@ try {
                 if ($LASTEXITCODE -ne 0) { throw 'git commit (empty bridge init) failed' }
             }
         } else {
-            Invoke-SvnReplayDispatch -RemotePath $remoteWorktreePath -RemoteName $remoteWorktreeName -Cur ($firstRev - 1) -HeadRev $headRev -Mode $mode -Range $Range
+            # -BaseUrl is the URL the user actually gave us: the bridge WC is checked out at
+            # $firstRev and is therefore bound to the path as it existed THEN, which is the wrong
+            # thing to enumerate from once any ancestor has been renamed since (issue #32).
+            Invoke-SvnReplayDispatch -RemotePath $remoteWorktreePath -RemoteName $remoteWorktreeName -Cur ($firstRev - 1) -HeadRev $headRev -Mode $mode -Range $Range -BaseUrl $SvnUrl
         }
 
         # ---- step 10 (REMOVED): the bridge no longer invents a .gitignore. ----

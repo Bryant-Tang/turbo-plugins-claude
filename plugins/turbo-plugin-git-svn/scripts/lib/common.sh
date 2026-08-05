@@ -489,6 +489,22 @@ svn_log_format_xml() {
 # Args: <repo_dir> <range>   (range e.g. "remote-svn/main..feat/x")
 # Prints the body to stdout (empty output when the range has no non-merge commit). Returns the
 # git exit code, so a genuine git failure propagates under `set -e`.
+# Escape a path so svn accepts it as a TARGET argument.
+#
+# svn parses a trailing @<rev> on EVERY target as a peg revision, so a perfectly legal filename
+# containing '@' -- `banner@2x.jpg`, the standard retina naming convention -- makes svn try to read
+# "2x.jpg" as a revision and fail with:
+#   svn: E200009: '<path>': a peg revision is not allowed here
+# `--` does NOT prevent this: it terminates OPTION parsing, and peg parsing happens per-target
+# afterwards (issue #34).
+#
+# The documented escape is to append one '@'. It is harmless for paths that contain no '@' at all
+# (`foo.txt@` still resolves to `foo.txt`), so it is applied UNCONDITIONALLY -- a detect-then-escape
+# branch would only add a way for our parsing to disagree with svn's.
+#
+# Use it for FILE targets. Do NOT wrap fixed targets like '.', which have their own meaning to svn.
+svn_target() { printf '%s@' "$1"; }
+
 # Expand an unversioned DIRECTORY into one "A|<tracked|ignored>|<relpath>" line per file inside it.
 #
 # `svn status` reports a directory that is not yet under version control as a SINGLE '?' entry and
@@ -711,9 +727,51 @@ svn_replay_commit() {
 # uniformly at R (KTD4 sparse guard -- an empty delta must mean "identical tree", never a partial
 # update), then hand off to svn_replay_commit (empty-delta + idempotent skips live there).
 # Args: <remote_path> <rev> <author> <date> <message>
-svn_replay_one_revision() {
-  local remote_path="$1" rev="$2" author="$3" date="$4" message="$5" wc
+# Echo the URL that <base_url> (pegged at <peg_rev>) had at <rev>. Empty output + non-zero when svn
+# cannot answer, so callers never mistake "unknown" for "unchanged".
+#
+# The peg is what makes this work across renames. `svn info -r R URL@PEG` follows copy history
+# BACKWARDS from the pegged path, so a path renamed at some revision still resolves to its older
+# name for revisions before the rename. The reverse does NOT hold: asking where an OLD path lives
+# at HEAD fails with E160013 once that path has been deleted (verified against a local repository
+# reproducing issue #32) -- which is why every lookup here must peg at a revision where the path is
+# known to exist, normally HEAD.
+# Args: <base_url> <peg_rev> <rev>
+svn_url_at_rev() {
+  local base_url="$1" peg_rev="$2" rev="$3" url
+  url="$(svn info --show-item url -r "$rev" "${base_url}@${peg_rev}" 2>/dev/null | tr -d '\r\n')" || return 1
+  [[ -n "$url" ]] || return 1
+  printf '%s' "$url"
+}
+
+# Position the bridge working copy at <rev>, following a path rename when one is in play.
+#
+# `svn update -r R` cannot cross a rename: the WC is bound to the path as it existed at its own
+# revision, and updating to a revision where that path no longer exists fails with E160005. When the
+# caller knows the URL this path has at <rev>, switching to it (with an explicit peg) moves the WC
+# to the right place instead. --ignore-ancestry because a rename IS a delete+copy: svn otherwise
+# refuses the switch for having no common ancestry.
+# <target_url> empty (the common case: nothing was ever renamed) keeps the plain update path, so
+# repositories without renames behave exactly as before.
+# Args: <remote_path> <rev> [<target_url>]
+svn_position_wc_at_rev() {
+  local remote_path="$1" rev="$2" target_url="${3:-}" wc_url
+
+  if [[ -n "$target_url" ]]; then
+    wc_url="$(svn info --show-item url "$remote_path" 2>/dev/null | tr -d '\r\n')"
+    if [[ "$wc_url" != "$target_url" ]]; then
+      ( cd "$remote_path" && svn switch --ignore-ancestry -r "$rev" "${target_url}@${rev}" ) \
+        || { echo "Error: svn switch to ${target_url}@${rev} failed" >&2; return 1; }
+      return 0
+    fi
+  fi
+
   ( cd "$remote_path" && svn update -r "$rev" ) || { echo "Error: svn update -r $rev failed" >&2; return 1; }
+}
+
+svn_replay_one_revision() {
+  local remote_path="$1" rev="$2" author="$3" date="$4" message="$5" target_url="${6:-}" wc
+  svn_position_wc_at_rev "$remote_path" "$rev" "$target_url" || return 1
   wc="$(svn info --show-item revision "$remote_path" | tr -d '[:space:]')"
   if [[ "$wc" != "$rev" ]]; then
     echo "Error: remote worktree not uniformly at r$rev (got r$wc); refusing per-revision replay." >&2
@@ -748,7 +806,7 @@ svn_boundary_commit() {
 # Re-enumerates from the WC so the caller only has to hand over the decided mode (no array passing).
 # Args: <remote_path> <remote_name> <cur> <head_rev> <mode> [<range>]
 svn_replay_dispatch() {
-  local remote_path="$1" remote_name="$2" cur="$3" head_rev="$4" mode="$5" range="${6:-}"
+  local remote_path="$1" remote_name="$2" cur="$3" head_rev="$4" mode="$5" range="${6:-}" base_url="${7:-}"
 
   # KTD4 sparse guard: a full (infinite-depth) checkout is required so `svn update -r R` yields a
   # uniform per-revision tree; assert once before touching anything.
@@ -759,25 +817,62 @@ svn_replay_dispatch() {
     return 1
   fi
 
+  # Enumerate against the URL pegged at head_rev, NOT against the working copy.
+  #
+  # A WC checked out at an older revision is bound to the path as it existed THEN. If any ancestor
+  # was renamed since, `svn log <WC>` asks about a path that no longer exists at head and dies with
+  # E160013 naming a path the user never typed (issue #32). The pegged URL follows copy history, so
+  # the same range enumerates correctly whether or not a rename happened.
+  if [[ -z "$base_url" ]]; then
+    base_url="$(svn info --show-item url "$remote_path" 2>/dev/null | tr -d '\r\n')"
+  fi
+
   local -a REC_REV=() REC_AUTHOR=() REC_DATE=() REC_MSG=()
   if (( cur < head_rev )); then
     local log_xml
-    log_xml="$(svn log --xml -r "$((cur + 1)):$head_rev" "$remote_path")" \
-      || { echo "Error: svn log failed for r$((cur + 1)):r$head_rev" >&2; return 1; }
+    log_xml="$(svn log --xml -r "$((cur + 1)):$head_rev" "${base_url}@${head_rev}")" || {
+      echo "Error: svn log failed for r$((cur + 1)):r$head_rev on ${base_url}@${head_rev}" >&2
+      echo "  If this mentions a path you never entered, the path (or one of its parent folders) was renamed on SVN." >&2
+      echo "  A bridge already built against the old path cannot find the new one on its own -- re-run /tp-setup with the current URL." >&2
+      return 1
+    }
     while IFS=$'\037' read -r -d '' _rev _author _date _msg; do
       REC_REV+=("$_rev"); REC_AUTHOR+=("$_author"); REC_DATE+=("$_date"); REC_MSG+=("$_msg")
     done < <(printf '%s' "$log_xml" | svn_enumerate_revisions)
   fi
 
+  # Was this path renamed anywhere inside the pending range? Asked ONCE, by comparing where it
+  # lived at the first pending revision with where it lives at head. Equal -- the overwhelmingly
+  # common case -- means no per-revision URL lookups happen at all, so unrenamed repositories pay
+  # nothing for this. Only when they differ does each replayed revision resolve its own URL.
+  local renamed=0 url_first='' url_head=''
+  if (( cur < head_rev )); then
+    url_first="$(svn_url_at_rev "$base_url" "$head_rev" "$((cur + 1))" || true)"
+    url_head="$(svn_url_at_rev "$base_url" "$head_rev" "$head_rev" || true)"
+    if [[ -n "$url_first" && -n "$url_head" && "$url_first" != "$url_head" ]]; then
+      renamed=1
+      printf 'TP_TOKEN:SVN_PATH_RENAMED old=%s new=%s range=r%s:r%s\n' \
+        "$url_first" "$url_head" "$((cur + 1))" "$head_rev"
+      echo "Note: this SVN path was renamed within r$((cur + 1))..r$head_rev; the import will follow the rename."
+    fi
+  fi
+
+  # Resolve the URL a given revision needs, or empty when nothing was renamed (plain update path).
+  _replay_target_url() {
+    (( renamed )) || return 0
+    svn_url_at_rev "$base_url" "$head_rev" "$1" || true
+  }
+
   local i r lo hi
   if [[ "$mode" == "per-revision" ]]; then
     echo "Replaying ${#REC_REV[@]} SVN revision(s) r$((cur + 1))..r$head_rev into $remote_name..."
     for i in "${!REC_REV[@]}"; do
-      svn_replay_one_revision "$remote_path" "${REC_REV[$i]}" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" || return 1
+      svn_replay_one_revision "$remote_path" "${REC_REV[$i]}" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" \
+        "$(_replay_target_url "${REC_REV[$i]}")" || return 1
     done
   elif [[ "$mode" == "squash" ]]; then
     echo "Squashing SVN r$((cur + 1))..r$head_rev into one commit in $remote_name..."
-    ( cd "$remote_path" && svn update ) || { echo "Error: svn update failed" >&2; return 1; }
+    svn_position_wc_at_rev "$remote_path" "$head_rev" "$(_replay_target_url "$head_rev")" || return 1
     svn_boundary_commit "$remote_path" "$head_rev" || return 1
   elif [[ "$mode" == "range" ]]; then
     if [[ ! "$range" =~ ^[0-9]+:[0-9]+$ ]]; then
@@ -792,19 +887,20 @@ svn_replay_dispatch() {
     echo "Replaying r$lo..r$hi per-revision, squashing the rest, into $remote_name..."
     # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
     if (( lo - 1 >= cur + 1 )); then
-      ( cd "$remote_path" && svn update -r "$((lo - 1))" ) || { echo "Error: svn update -r $((lo - 1)) failed" >&2; return 1; }
+      svn_position_wc_at_rev "$remote_path" "$((lo - 1))" "$(_replay_target_url "$((lo - 1))")" || return 1
       svn_boundary_commit "$remote_path" "$((lo - 1))" || return 1
     fi
     # Per-revision inside [lo,hi].
     for i in "${!REC_REV[@]}"; do
       r="${REC_REV[$i]}"
       if (( r >= lo && r <= hi )); then
-        svn_replay_one_revision "$remote_path" "$r" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" || return 1
+        svn_replay_one_revision "$remote_path" "$r" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" \
+          "$(_replay_target_url "$r")" || return 1
       fi
     done
     # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=head_rev.
     if (( hi < head_rev )); then
-      ( cd "$remote_path" && svn update ) || { echo "Error: svn update failed" >&2; return 1; }
+      svn_position_wc_at_rev "$remote_path" "$head_rev" "$(_replay_target_url "$head_rev")" || return 1
       svn_boundary_commit "$remote_path" "$head_rev" || return 1
     fi
   else

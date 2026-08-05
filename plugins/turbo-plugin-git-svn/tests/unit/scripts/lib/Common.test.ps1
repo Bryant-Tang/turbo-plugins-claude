@@ -849,6 +849,26 @@ Describe 'Assert-SvnVersion (issue #26)' {
     }
 }
 
+Describe 'ConvertTo-SvnTarget (issue #34)' {
+
+    It 'escapes a filename containing @ so svn stops reading it as a peg revision' {
+        # `banner@2x.jpg` is a legal SVN filename (retina naming), but as a TARGET argument svn
+        # parsed "2x.jpg" as a revision and failed the whole commit with E200009.
+        ConvertTo-SvnTarget -Path 'Content/img/banner@2x.jpg' | Should -Be 'Content/img/banner@2x.jpg@'
+    }
+
+    It 'appends the escape unconditionally (harmless on paths without @)' {
+        # Applied to every path rather than only the ones containing '@': a detect-then-escape
+        # branch is one more place for our parsing to disagree with svn's, and `foo.txt@` resolves
+        # to `foo.txt` anyway.
+        ConvertTo-SvnTarget -Path 'src/app.txt' | Should -Be 'src/app.txt@'
+    }
+
+    It 'leaves a path that already ends in @ resolvable (trailing escape still applies)' {
+        ConvertTo-SvnTarget -Path 'weird@' | Should -Be 'weird@@'
+    }
+}
+
 Describe 'Get-UnversionedDirectoryFiles (issue #24)' {
 
     It 'lists every file under a new folder, recursively' {

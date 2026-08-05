@@ -69,6 +69,15 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 
 bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用）+ 固定 `svn:ignore=.git` 來確保 `.git` 不被推進 SVN——首個 bridge（`tp-setup` case (a)/(b)）由 `Initialize-GitSvnBridge` / `initialize-git-svn-bridge.sh` 做、後續工作分支的 bridge 由 `New-RemoteBridge` / `Checkout-SvnBranch` 做。其餘該排除的檔一律由 `.gitignore` + push 腳本的 `git check-ignore` 決定（bridge 的 add-set = `svn status` 的 `?` 減去 git-ignored），讓 remote-svn 用起來更接近 remote git。
 
+## SVN 路徑被改名時（`svn move` 過的資料夾）
+
+企業 SVN 常有重整目錄、專案搬家、根資料夾改名這類事，而且改的是**上層資料夾**時，使用者根本不會意識到自己的專案路徑「變過」。
+
+- **匯入歷史時跨改名（`tp-setup` 首次建 bridge）**：自動處理。歷史列舉是對「你給的 URL 加上明確 peg」下的，逐筆重放遇到改名邊界會 `svn switch` 跟過去，所以**逐筆歷史完整保留**，不需要退而求其次壓成一顆。偵測到時會回報一次，agent 會用白話告訴你資料夾改過名——因為你會在歷史裡看到路徑變動。
+- **bridge 建好之後才被改名**：無法自動修復，會 fail loudly 並要你對新 URL 重跑 `/tp-setup`。原因是 SVN 只能從**現存**路徑往回追歷史，不能從已被刪除的舊路徑往前追（`svn info -r HEAD <舊URL>@<舊rev>` 直接 E160013），所以 bridge 沒有任何辦法自己查出新名字。
+
+> 粒度參數（逐筆 / 壓成一顆 / 挑一段）**一律生效**。修訂數多寡只決定「要不要主動問你」，不決定「聽不聽你的」。
+
 ## SVN commit body 的組裝（`tp-push-to-svn`）
 
 `tp-push-to-svn` 組裝 SVN commit body 時,收錄推送範圍內**所有非-merge commit 的 subject**,**不依 conventional-commit type 過濾**——`feat` / `fix` / `refactor` / `docs` / `db` / `chore` 等各型 subject 都會進 SVN body。唯一被排除的是 **merge commit**（`Merge ...`;且範圍內若全是 merge commit、沒有任何 code-level subject 可記,腳本會 hard-stop 提示先補一個非-merge commit）。body 由腳本鎖定、agent 只寫 title。

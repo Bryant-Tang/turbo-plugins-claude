@@ -6,6 +6,7 @@
 #   - probe_git_version            — happy (git on PATH >= 2.31)
 #   - assert_svn_version           — pre-1.9 rejected / 1.9 boundary / unparseable fails loudly
 #   - expand_unversioned_dir       — recursive listing / ignored children / metadata skip / non-dir
+#   - svn_target                   — peg-revision escape for '@' filenames (unconditional)
 #   - get_normalized_absolute_path — /c/foo Git-Bash style, forward-slash, empty
 #   - get_main_worktree            — fresh git init top-level + linked worktree + explicit root
 #   - resolve_git_root             — omitted is '.', missing path fails loudly
@@ -891,6 +892,25 @@ test_assert_svn_version_fails_loudly_on_unparseable_output() {
     PATH="$sandbox:$PATH" assert_svn_version >/dev/null 2>&1 && rc=0 || rc=$?
     assertNotEquals 'unparseable version must not silently pass' '0' "$rc"
     rm -rf "$sandbox"
+}
+
+# --- svn_target (issue #34) ---------------------------------------------------
+# svn parses a trailing @<rev> on every TARGET argument, so a legal filename containing '@' made
+# the whole commit fail with E200009. The escape is one appended '@'.
+
+test_svn_target_escapes_at_sign() {
+    assertEquals 'retina filename gets the peg escape' \
+        'Content/img/banner@2x.jpg@' "$(svn_target 'Content/img/banner@2x.jpg')"
+}
+
+test_svn_target_is_unconditional() {
+    # Applied to every path rather than only those containing '@': a detect-then-escape branch is
+    # one more place for our parsing to disagree with svn's, and `foo.txt@` resolves to `foo.txt`.
+    assertEquals 'plain filename still gets the escape' 'src/app.txt@' "$(svn_target 'src/app.txt')"
+}
+
+test_svn_target_handles_trailing_at() {
+    assertEquals 'a path already ending in @ still gets one more' 'weird@@' "$(svn_target 'weird@')"
 }
 
 # --- expand_unversioned_dir (issue #24) ---------------------------------------

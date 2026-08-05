@@ -188,6 +188,16 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      - 壓成一顆:PowerShell `-Granularity squash` / bash `--granularity squash`
      - 指定範圍:PowerShell `-Granularity range -Range <lo>:<hi>` / bash `--granularity range --range <lo>:<hi>`
    - **≤5 個修訂**時腳本不發此 token(直接逐筆匯入),agent 無需處理。
+   - **粒度參數一律生效**:你明確帶 `-Granularity` / `--granularity` 時,不論修訂數多少腳本都會照辦
+     (以前 ≤5 筆會把你傳的值丟掉、一律逐筆)。所以使用者若在少量修訂時主動說要壓成一顆,直接帶參數即可。
+
+3b-2. **匯入期間 SVN 資料夾被改過名(`TP_TOKEN:SVN_PATH_RENAMED old=<url> new=<url> range=r<lo>:r<hi>`)**。
+   **這不是錯誤、不需要任何處理**——腳本已自動跟著改名走完,逐筆歷史完整保留。但**要用白話提一句**,
+   因為使用者會在匯入的歷史裡看到路徑變動,不講他會以為是自己 URL 給錯:
+
+   > 這個專案在 SVN 上的資料夾中途改過名(<舊資料夾名> → <新資料夾名>),已經自動跟著處理,歷史完整帶進來了。
+
+   只講**資料夾名**的變化就好,不要把整串 URL 或 token 原樣貼給使用者。
 
 3c. **目標專案已連著 git 遠端(`TP_TOKEN:EXISTING_GIT_REMOTE remotes=<names>`)→ 確認後才重呼叫**。腳本在**動任何
    東西之前**偵測到目標 repo 已設定 git remote 時印此 token 並非零 exit(**零變更、可乾淨重跑**)。這絕大多數
