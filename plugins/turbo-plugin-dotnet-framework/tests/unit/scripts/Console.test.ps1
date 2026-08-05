@@ -184,14 +184,22 @@ Describe 'Start-Console / Stop-Console (U11)' {
                 -RedirectStandardError ([System.IO.Path]::Combine($sb, 'start.err.txt'))
             $null = $launcher.Handle
 
+            # Wait for the STATUS LINE, not just the state file. Start-Console records the run and
+            # then prints its status, so polling only for the state file and reading the output on
+            # the very next line races that ordering: on a fast dev box the line is always there,
+            # on a loaded CI runner it is not yet -- green that depended on the machine's speed.
+            # Shared read throughout: the launched console inherited this handle and still holds
+            # it, so ReadAllText would fail with "used by another process".
             $deadline = [datetime]::UtcNow.AddSeconds(30)
-            while (-not (Test-Path -LiteralPath $stateFile -PathType Leaf) -and [datetime]::UtcNow -lt $deadline) {
+            $startText = ''
+            while ([datetime]::UtcNow -lt $deadline) {
+                if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
+                    $startText = Read-SharedText -Path $startOut
+                    if ($startText -match 'Status: still running') { break }
+                }
                 Start-Sleep -Milliseconds 250
             }
             (Test-Path -LiteralPath $stateFile) | Should -BeTrue -Because 'a console still running past the wait must be recorded'
-            # Shared read: the launched console inherited this handle and still holds it, so
-            # ReadAllText would fail with "used by another process".
-            $startText = Read-SharedText -Path $startOut
             $startText | Should -Match 'Status: still running'
 
             $state = [System.IO.File]::ReadAllText($stateFile) | ConvertFrom-Json
