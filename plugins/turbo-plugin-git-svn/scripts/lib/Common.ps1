@@ -394,8 +394,10 @@ function Get-UnversionedDirectoryFiles {
     if (-not (Test-Path -LiteralPath $absDir -PathType Container)) { return @() }
 
     # .git / .svn are metadata, never content to be pushed. A bridge worktree always has both.
+    # Both separators are matched: FullName uses '\' on Windows and '/' under pwsh on Linux, and the
+    # test suite runs on both -- a backslash-only pattern silently stops excluding anything on Linux.
     $children = @(Get-ChildItem -LiteralPath $absDir -Recurse -File -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\\\.(git|svn)\\' } |
+        Where-Object { $_.FullName -notmatch '[\\/]\.(git|svn)[\\/]' } |
         Sort-Object -Property FullName)
 
     $lines = @()
