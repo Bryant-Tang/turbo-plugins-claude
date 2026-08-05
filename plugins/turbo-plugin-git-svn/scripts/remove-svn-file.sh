@@ -133,18 +133,24 @@ write_utf8_no_bom "$MSG_FILE" "remove $REL_PATH from svn (turbo-plugin)"
 # On delete/commit failure, `svn revert` so the bridge WC is left CLEAN — a dangling scheduled
 # deletion would otherwise wedge the next /tp-pull-from-svn and re-runs of this script.
 svn_remove_failed() {
-  svn revert -- "$REL_PATH" >/dev/null 2>&1 || true
+  # Escaped target here too: reverting is the cleanup path, and it must not fail for the same
+  # peg-revision reason that got us here.
+  svn revert -- "$(svn_target "$REL_PATH")" >/dev/null 2>&1 || true
   popd >/dev/null 2>&1 || true
   echo "Error: svn delete/commit failed for '$REL_PATH'; the deletion was reverted (bridge left clean)." >&2
   exit 1
 }
 pushd "$REMOTE_PATH" >/dev/null
+# svn_target: a filename containing '@' is legal in SVN, but passing it as a TARGET makes svn read
+# everything after the last '@' as a peg revision and fail with E200009 (issue #34). `--` does not
+# cover this -- it only terminates option parsing.
+SVN_TARGET="$(svn_target "$REL_PATH")"
 if [[ "$SVN_FIRST" == 'M' ]]; then
-  svn delete --force -- "$REL_PATH" || svn_remove_failed
+  svn delete --force -- "$SVN_TARGET" || svn_remove_failed
 else
-  svn delete -- "$REL_PATH" || svn_remove_failed
+  svn delete -- "$SVN_TARGET" || svn_remove_failed
 fi
-svn commit --file "$MSG_FILE" --encoding UTF-8 -- "$REL_PATH" || svn_remove_failed
+svn commit --file "$MSG_FILE" --encoding UTF-8 -- "$SVN_TARGET" || svn_remove_failed
 svn update >/dev/null || echo 'Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.' >&2
 SVN_REV="$(svn info --show-item revision)"
 popd >/dev/null

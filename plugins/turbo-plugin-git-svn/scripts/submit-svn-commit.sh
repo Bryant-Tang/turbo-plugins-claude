@@ -181,14 +181,18 @@ set +e
       continue
     fi
 
+    # svn_target: append the peg-revision escape. A filename containing '@' is legal in SVN and
+    # checks out fine, but passing it as a TARGET makes svn read everything after the last '@' as a
+    # revision (issue #34). Escaped here at collection time so every downstream svn call gets it.
     case "$status" in
-      '?') TO_ADD+=("$filepath") ;;
-      '!') TO_DEL+=("$filepath") ;;
-      'M') MODIFIED_TO_COMMIT+=("$filepath") ;;
+      '?') TO_ADD+=("$(svn_target "$filepath")") ;;
+      '!') TO_DEL+=("$(svn_target "$filepath")") ;;
+      'M') MODIFIED_TO_COMMIT+=("$(svn_target "$filepath")") ;;
     esac
   done <<< "$XML_PASS1"
 
   # `--` terminates option parsing so a filename beginning with '-' is never read as an svn flag.
+  # It does NOT cover peg revisions -- that is what svn_target above is for.
   if [[ ${#TO_ADD[@]} -gt 0 ]]; then
     echo "SVN adding ${#TO_ADD[@]} new file(s)..."
     svn add --parents -- "${TO_ADD[@]}" || exit 1
@@ -204,7 +208,7 @@ set +e
   while IFS=$'\t' read -r status filepath; do
     [[ -z "$filepath" ]] && continue
     if [[ "$status" == 'A' || "$status" == 'D' ]]; then
-      COMMIT_TARGETS+=("$filepath")
+      COMMIT_TARGETS+=("$(svn_target "$filepath")")
     fi
   done <<< "$XML_PASS2"
   if [[ ${#MODIFIED_TO_COMMIT[@]} -gt 0 ]]; then
@@ -256,5 +260,31 @@ if [[ $svn_commit_status -eq 0 ]]; then
   rm -f "$SVN_STATUS_FILE" 2>/dev/null || true
   rm -f "$BODY_FILE" 2>/dev/null || true
 else
+  # A failed svn commit leaves a half-finished state that nothing else reports: the merge commit was
+  # already made above, the adds/deletes are still SCHEDULED in the bridge working copy, and the pins
+  # are deliberately kept so a retry need not redo the merge. Previously the script said none of this
+  # and the user was left to reverse-engineer it (issue #34).
+  #
+  # No automatic rollback: whether to retry or unwind depends on WHY svn refused, and the script
+  # cannot tell. A transient failure (network, lock, credentials) should be retried -- unwinding it
+  # would throw away a correct merge. A rejected commit needs unwinding -- retrying just fails again.
+  # So state the position plainly and give both exits.
+  MERGE_SHA="$(git -C "$REMOTE_PATH" rev-parse --verify -q HEAD 2>/dev/null || true)"
+  {
+    echo ''
+    echo 'TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE'
+    echo 'The SVN commit failed. Nothing reached SVN (an svn commit is atomic), but locally:'
+    echo '  - the merge commit has already been made on the bridge branch'
+    echo '  - the add/delete are still scheduled in the bridge working copy'
+    echo '  - the prepare pins are kept, so a retry does not have to redo the merge'
+    echo ''
+    echo 'RETRY (transient cause -- network, lock, credentials): fix the cause, re-run /tp-push-to-svn.'
+    echo 'UNWIND (the commit was rejected and would be rejected again):'
+    echo "  1. svn revert -R \"$REMOTE_PATH\""
+    echo "  2. git -C \"$REMOTE_PATH\" reset --hard ${MERGE_SHA:-<merge-sha>}^1"
+    echo "  3. rm -f \"$SHA_FILE\" \"$SVN_STATUS_FILE\" \"$BODY_FILE\""
+    echo '  ORDER MATTERS: revert BEFORE reset. The other way round deletes the files from disk while'
+    echo '  svn still has them scheduled, which is harder to clean up than the state you are in now.'
+  } >&2
   exit $svn_commit_status
 fi

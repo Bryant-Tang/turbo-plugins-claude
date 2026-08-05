@@ -90,6 +90,14 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--re
 - merge 衝突 → 列出衝突檔,**不自動 abort**(由使用者解或手動 `git merge --abort`)
 - `PENDING_MERGE_DETECTED <remote-path>` → Script 輸出此 token 並 exit 0;SKILL 進入下方三選一 prompt
 - `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<current> requested=<requested>` → Build-SvnCommit 的 backstop(主要偵測已在 Step 0 pre-flight;此為正常 push 路徑上的二次防線),token 同以 `TP_TOKEN:` 前綴。Script 輸出此 token 並**繼續執行**;SKILL 進入下方確認 prompt
+- `TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE` → **svn commit 失敗,但本機留下半完成狀態**(merge commit 已建、新增/刪除仍排程在 bridge、pin 檔保留)。token 後面幾行是腳本印的兩條出路與還原步驟。**這個 token 與那幾行都不可原樣丟給使用者** → 進入下方「commit 失敗處理」
+
+**commit 失敗處理(`SVN_COMMIT_FAILED_HALF_DONE`)** — 腳本**不會**自動還原,因為「該重試還是該還原」取決於 svn 為什麼拒絕,腳本判斷不了:暫時性原因(網路、鎖、憑證)重試就好,還原反而白白丟掉一次正確的 merge;真的被拒絕則重試幾次都一樣。所以由**你**看 svn 的錯誤訊息判斷,再用白話講給使用者:
+
+1. **先講清楚現在的狀態**(白話,不要露出 token / pin 檔名):「東西沒有送上 SVN(SVN 那邊完全沒變),但本機這邊已經先把這次要推的內容合好了,還留在半路上。」
+2. **看得出是暫時性原因**(連不上伺服器、被鎖、認證失敗)→ 建議修掉原因後**重跑 `/tp-push-to-svn`**,不需要清任何東西。
+3. **看得出是被拒絕**(權限不足、路徑不存在、檔名不被接受等)→ 說明重跑也會再失敗一次,詢問使用者要不要**還原到推送前**。使用者同意才執行腳本印出的三個步驟,**順序不可調換**——一定先 `svn revert -R`、再 `git reset --hard <merge>^1`、最後清 pin 檔。反過來會先把檔案從磁碟刪掉、而 svn 還排程著這些新增,狀態更難收拾。
+4. **判斷不出來** → 把 svn 的原始錯誤訊息**照實**轉述給使用者(那是 svn 講的,不是內部 token),讓他決定,並附上兩條出路。
 
 **BRANCH_MISMATCH_WARNING 處理** — 當 prepare 輸出含以 `TP_TOKEN:BRANCH_MISMATCH_WARNING` 開頭的行時,在繼續解析其他輸出之前,`AskUserQuestion` 詢問:
 
