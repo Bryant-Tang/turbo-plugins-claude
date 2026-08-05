@@ -22,6 +22,20 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
 
 > `.turbo-plugin/` 設定目錄由各 plugin 共用。`turbo-plugin-git-svn` 的 `/tp-setup` 會建立它；只裝 dotnet plugin 時不必先做任何事——需要寫設定的一方會自己把目錄、檔案與自己的區塊建起來。
 
+### 這個 marketplace 不做什麼
+
+這裡收的都是「**被綁在特定環境裡**」才會遇到的具體問題：只能用 SVN、只能用 .NET Framework、多個獨立 repo 並排在同一個資料夾。這些東西換個團隊就未必用得上，但在用得上的地方，細節（PowerShell 5.1 相容、CP950 中文檔名、IIS Express 的設定檔）沒人幫你處理。
+
+**通用的開發流程不在範圍內**，例如：
+
+- 需求討論、逐條轉成 spec、蒐集佐證
+- 規劃與實作的流程編排（plan / implement 類的 skill）
+- 程式碼審查、commit 訊息以外的一般性工作流
+
+理由是這些跟技術棧無關，而且已經有成熟的開源 plugin 在做。**在這裡重做一份，只會做出一個比較差的版本，還要自己維護。** 需要的話另外裝一個就好——各 plugin 之間不會互相干擾。
+
+> 這條界線先前只存在於口頭，結果同樣的提案被重新提出過兩次（issue #22、#23，均以 `not planned` 關閉）。寫在這裡是為了讓期待一開始就對齊。
+
 ## 安裝
 
 1. 加入 marketplace
