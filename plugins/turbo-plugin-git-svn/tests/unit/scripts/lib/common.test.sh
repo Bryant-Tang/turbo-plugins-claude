@@ -4,6 +4,9 @@
 #
 # Covers:
 #   - probe_git_version            — happy (git on PATH >= 2.31)
+#   - assert_svn_version           — pre-1.9 rejected / 1.9 boundary / unparseable fails loudly
+#   - expand_unversioned_dir       — recursive listing / ignored children / metadata skip / non-dir
+#   - svn_target                   — peg-revision escape for '@' filenames (unconditional)
 #   - get_normalized_absolute_path — /c/foo Git-Bash style, forward-slash, empty
 #   - get_main_worktree            — fresh git init top-level + linked worktree + explicit root
 #   - resolve_git_root             — omitted is '.', missing path fails loudly
@@ -839,6 +842,173 @@ test_resolve_path_within_worktree_allows_dotdot_inside_filename() {
         *) fail "unexpected resolution: $out" ;;
     esac
     rm -rf "$root"
+}
+
+# --- assert_svn_version (issue #26) -------------------------------------------
+# A stub `svn` is injected via PATH: assert_svn_version calls `command svn`, which bypasses the
+# shim function and resolves from PATH, so the stub is what gets run.
+
+_make_svn_stub() {
+    # $1 = sandbox dir, $2 = version string the stub reports
+    local dir="$1" version="$2"
+    printf '#!/usr/bin/env bash\necho "%s"\n' "$version" > "$dir/svn"
+    chmod +x "$dir/svn"
+}
+
+test_assert_svn_version_rejects_pre_1_9() {
+    local sandbox out rc
+    sandbox="$(mktemp -d)"
+    # 1.8.15 is exactly what chocolatey's win32svn package pins to -- the realistic way a user
+    # ends up here.
+    _make_svn_stub "$sandbox" '1.8.15'
+
+    out="$(PATH="$sandbox:$PATH" assert_svn_version 2>&1)" && rc=0 || rc=$?
+    assertNotEquals 'pre-1.9 client must be rejected' '0' "$rc"
+    case "$out" in
+        *--show-item*) assertTrue 'message names --show-item' 0 ;;
+        *) fail "message does not explain the cause: $out" ;;
+    esac
+    rm -rf "$sandbox"
+}
+
+test_assert_svn_version_accepts_1_9_and_newer() {
+    local sandbox rc
+    sandbox="$(mktemp -d)"
+    _make_svn_stub "$sandbox" '1.14.2'
+    PATH="$sandbox:$PATH" assert_svn_version >/dev/null 2>&1 && rc=0 || rc=$?
+    assertEquals '1.14.2 must be accepted' '0' "$rc"
+
+    # Boundary: exactly 1.9 is the first version that has --show-item.
+    _make_svn_stub "$sandbox" '1.9.0'
+    PATH="$sandbox:$PATH" assert_svn_version >/dev/null 2>&1 && rc=0 || rc=$?
+    assertEquals '1.9.0 must be accepted' '0' "$rc"
+    rm -rf "$sandbox"
+}
+
+test_assert_svn_version_fails_loudly_on_unparseable_output() {
+    local sandbox rc
+    sandbox="$(mktemp -d)"
+    _make_svn_stub "$sandbox" 'not-a-version'
+    PATH="$sandbox:$PATH" assert_svn_version >/dev/null 2>&1 && rc=0 || rc=$?
+    assertNotEquals 'unparseable version must not silently pass' '0' "$rc"
+    rm -rf "$sandbox"
+}
+
+# --- svn_target (issue #34) ---------------------------------------------------
+# svn parses a trailing @<rev> on every TARGET argument, so a legal filename containing '@' made
+# the whole commit fail with E200009. The escape is one appended '@'.
+
+test_svn_target_escapes_at_sign() {
+    assertEquals 'retina filename gets the peg escape' \
+        'Content/img/banner@2x.jpg@' "$(svn_target 'Content/img/banner@2x.jpg')"
+}
+
+test_svn_target_is_unconditional() {
+    # Applied to every path rather than only those containing '@': a detect-then-escape branch is
+    # one more place for our parsing to disagree with svn's, and `foo.txt@` resolves to `foo.txt`.
+    assertEquals 'plain filename still gets the escape' 'src/app.txt@' "$(svn_target 'src/app.txt')"
+}
+
+test_svn_target_handles_trailing_at() {
+    assertEquals 'a path already ending in @ still gets one more' 'weird@@' "$(svn_target 'weird@')"
+}
+
+# --- write_svn_targets_file (issue #35) ---------------------------------------
+# svn reads a --targets file through CP_ACP on Windows, NOT UTF-8: a UTF-8 file makes svn look for
+# a mojibake path and report "is not under version control". These lock the line-per-path shape and
+# the ASCII round-trip; the encoding itself is covered end-to-end by the push test.
+
+test_write_svn_targets_file_one_path_per_line() {
+    local out
+    out="$(mktemp)"
+    write_svn_targets_file "$out" 'Content/one.txt@' 'Content/two.txt@'
+    assertEquals 'two lines written' '2' "$(grep -c . "$out" || true)"
+    assertEquals 'first line intact'  'Content/one.txt@' "$(sed -n '1p' "$out" | tr -d '\r')"
+    assertEquals 'second line intact' 'Content/two.txt@' "$(sed -n '2p' "$out" | tr -d '\r')"
+    rm -f "$out"
+}
+
+test_write_svn_targets_file_handles_many_paths() {
+    local out n args=()
+    out="$(mktemp)"
+    for (( n = 1; n <= 3000; n++ )); do args+=("bulk/file$n.txt@"); done
+    write_svn_targets_file "$out" "${args[@]}"
+    assertEquals '3000 lines written' '3000' "$(grep -c . "$out" || true)"
+    rm -f "$out"
+}
+
+# --- expand_unversioned_dir (issue #24) ---------------------------------------
+# svn status collapses an unversioned directory into a single '?' line; the commit step adds it
+# recursively. These cover the expansion that closes that gap in the confirmation list.
+
+test_expand_unversioned_dir_lists_files_recursively() {
+    local repo out count
+    repo="$(mktemp -d)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    mkdir -p "$repo/NewFolder/sub"
+    echo 'a' > "$repo/NewFolder/a.txt"
+    echo 'b' > "$repo/NewFolder/sub/b.txt"
+
+    out="$(expand_unversioned_dir "$repo" 'NewFolder')"
+    count="$(printf '%s\n' "$out" | grep -c '^A|' || true)"
+    assertEquals 'both files are expanded' '2' "$count"
+    case "$out" in
+        *'A|tracked|NewFolder/a.txt'*) assertTrue 'top-level file listed' 0 ;;
+        *) fail "top-level file missing: $out" ;;
+    esac
+    case "$out" in
+        *'A|tracked|NewFolder/sub/b.txt'*) assertTrue 'nested file listed' 0 ;;
+        *) fail "nested file missing: $out" ;;
+    esac
+    rm -rf "$repo"
+}
+
+test_expand_unversioned_dir_marks_ignored_children() {
+    local repo out
+    repo="$(mktemp -d)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    echo 'NewFolder/skip/' > "$repo/.gitignore"
+    mkdir -p "$repo/NewFolder/skip"
+    echo 'k' > "$repo/NewFolder/keep.txt"
+    echo 'j' > "$repo/NewFolder/skip/junk.txt"
+
+    out="$(expand_unversioned_dir "$repo" 'NewFolder')"
+    case "$out" in
+        *'A|tracked|NewFolder/keep.txt'*) assertTrue 'kept file is tracked' 0 ;;
+        *) fail "kept file missing or mislabelled: $out" ;;
+    esac
+    case "$out" in
+        *'A|ignored|NewFolder/skip/junk.txt'*) assertTrue 'ignored file is labelled ignored' 0 ;;
+        *) fail "ignored file missing or mislabelled: $out" ;;
+    esac
+    rm -rf "$repo"
+}
+
+test_expand_unversioned_dir_skips_metadata_dirs() {
+    local repo out count
+    repo="$(mktemp -d)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    mkdir -p "$repo/NewFolder/.svn"
+    echo 'r' > "$repo/NewFolder/real.txt"
+    echo 'x' > "$repo/NewFolder/.svn/entries"
+
+    out="$(expand_unversioned_dir "$repo" 'NewFolder')"
+    count="$(printf '%s\n' "$out" | grep -c '^A|' || true)"
+    assertEquals 'only the real file is listed' '1' "$count"
+    rm -rf "$repo"
+}
+
+test_expand_unversioned_dir_ignores_non_directories() {
+    local repo out
+    repo="$(mktemp -d)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    echo 'p' > "$repo/plain.txt"
+
+    out="$(expand_unversioned_dir "$repo" 'plain.txt')"
+    assertEquals 'a file target yields nothing' '' "$out"
+    out="$(expand_unversioned_dir "$repo" 'DoesNotExist')"
+    assertEquals 'a missing target yields nothing' '' "$out"
+    rm -rf "$repo"
 }
 
 # shellcheck disable=SC1090

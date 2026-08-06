@@ -25,7 +25,57 @@ source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
 # shim has no business in a plugin that never touches svn. Every script here that can invoke
 # svn sources THIS file, so the choke point is unchanged. Same reasoning as the earlier move
 # of get_worktrees_dir out of universal core.
+# --- svn must be new enough to have --show-item (single choke point) -----------
+# `svn info --show-item` arrived in Subversion 1.9 and is used across build-svn-commit,
+# checkout-svn-branch, initialize-git-svn-bridge, new-remote-bridge and this lib. On an older
+# client every one of those dies with `svn: invalid option: --show-item` -- a message that says
+# nothing about the actual problem, leaving the user to work out whether their environment is
+# broken or the plugin is. That diagnosis time is exactly what this gate exists to remove.
+#
+# Not hypothetical: chocolatey's `svn` package is win32svn, last released 2015 and pinned at
+# 1.8.15. It is also the likely shape of the problem in the field -- this plugin exists because a
+# team is stuck on SVN, and those environments are the most likely to be running an old client.
+#
+# Checked ONCE per process from inside the shim, so every caller is covered without each script
+# having to remember a pre-check, and the cost is one `svn --version` per run.
+TP_SVN_MIN_VERSION="1.9"
+_tp_svn_version_checked=""
+
+assert_svn_version() {
+  local raw major minor
+  raw="$(command svn --version --quiet 2>/dev/null)" || raw=""
+  raw="$(printf '%s' "$raw" | tr -d '[:space:]')"
+
+  if [[ -z "$raw" ]]; then
+    echo "Error: could not determine the Subversion version (ran: svn --version --quiet). Subversion ${TP_SVN_MIN_VERSION} or newer is required." >&2
+    return 1
+  fi
+  # grep -oE, never grep -P: PCRE mode refuses to run under the non-UTF-8 locales common on
+  # zh-TW Git Bash installs.
+  if [[ ! "$raw" =~ ^([0-9]+)\.([0-9]+) ]]; then
+    echo "Error: could not parse the Subversion version from '$raw'. Subversion ${TP_SVN_MIN_VERSION} or newer is required." >&2
+    return 1
+  fi
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+
+  if (( major < 1 || ( major == 1 && minor < 9 ) )); then
+    echo "Error: Subversion ${TP_SVN_MIN_VERSION} or newer is required, but this client is ${raw}." >&2
+    echo "  Reason: turbo-plugin-git-svn uses 'svn info --show-item', which does not exist before 1.9;" >&2
+    echo "  on this client it fails with \"svn: invalid option: --show-item\"." >&2
+    echo "  Fix: install a current client -- SlikSVN or TortoiseSVN (with command line tools) on Windows." >&2
+    echo "  Note: the chocolatey 'svn' package is win32svn and is pinned at 1.8.15, so it will not do." >&2
+    return 1
+  fi
+}
+
 svn() {
+  if [[ -z "$_tp_svn_version_checked" ]]; then
+    assert_svn_version || return 1
+    # Set only AFTER a passing check, so a failure is re-reported on the next call instead of
+    # being silently swallowed by an "already checked" flag.
+    _tp_svn_version_checked=1
+  fi
   command svn --non-interactive "$@"
 }
 
@@ -439,6 +489,136 @@ svn_log_format_xml() {
 # Args: <repo_dir> <range>   (range e.g. "remote-svn/main..feat/x")
 # Prints the body to stdout (empty output when the range has no non-merge commit). Returns the
 # git exit code, so a genuine git failure propagates under `set -e`.
+# Escape a path so svn accepts it as a TARGET argument.
+#
+# svn parses a trailing @<rev> on EVERY target as a peg revision, so a perfectly legal filename
+# containing '@' -- `banner@2x.jpg`, the standard retina naming convention -- makes svn try to read
+# "2x.jpg" as a revision and fail with:
+#   svn: E200009: '<path>': a peg revision is not allowed here
+# `--` does NOT prevent this: it terminates OPTION parsing, and peg parsing happens per-target
+# afterwards (issue #34).
+#
+# The documented escape is to append one '@'. It is harmless for paths that contain no '@' at all
+# (`foo.txt@` still resolves to `foo.txt`), so it is applied UNCONDITIONALLY -- a detect-then-escape
+# branch would only add a way for our parsing to disagree with svn's.
+#
+# Use it for FILE targets. Do NOT wrap fixed targets like '.', which have their own meaning to svn.
+svn_target() { printf '%s@' "$1"; }
+
+# Echo the system ANSI codepage (CP_ACP) on Windows; empty elsewhere.
+#
+# NOT `chcp`: that reports the CONSOLE (OEM) codepage, which differs from CP_ACP on plenty of
+# systems -- an en-US Windows is OEM 437 / ANSI 1252. svn reads a --targets file through CP_ACP, so
+# the console codepage would be the wrong answer exactly where it matters.
+#
+# MSYS2_ARG_CONV_EXCL is required: without it MSYS mangles the `HKLM\...` argument into a path and
+# reg.exe answers "invalid syntax".
+_svn_ansi_codepage() {
+  [[ "${OS:-}" == 'Windows_NT' ]] || return 0
+  MSYS2_ARG_CONV_EXCL='*' reg.exe query 'HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage' /v ACP 2>/dev/null \
+    | tr -d '\r' | awk '/^[[:space:]]*ACP[[:space:]]/ { print $NF }' | tail -1
+}
+
+# Write a --targets file for svn: one path per line, in the encoding svn will read it back with.
+#
+# Why a targets file at all: passing each path as its own argv entry blows the command-line length
+# limit once a push touches enough files ("Argument list too long" at ~2.9k targets; a first import
+# of an existing project is usually far more than that, so that scenario simply could not work).
+#
+# Why the ANSI codepage and not UTF-8: verified against a local repository -- a UTF-8 targets file
+# makes svn look for a mojibake path and fail with "is not under version control", while the same
+# list written in CP_ACP commits correctly. This is the same channel the command line already went
+# through (argv is CP_ACP too), so it is not a new limitation -- but it does mean a filename using
+# characters outside the active codepage cannot be expressed here, exactly as it could not be
+# expressed on the command line.
+#
+# Paths must ALREADY be escaped with svn_target: a targets file is peg-parsed line by line, just
+# like argv (verified -- an unescaped `banner@2x.jpg` in a targets file still fails E200009).
+# Args: <out_file> <path>...
+write_svn_targets_file() {
+  local out="$1"; shift
+  local cp non_ascii=0
+  cp="$(_svn_ansi_codepage)"
+
+  # Does any path need an encoding that is not plain ASCII? ASCII is byte-identical in UTF-8 and in
+  # every ANSI codepage, so when every path is ASCII the encoding question is moot and none of the
+  # failure paths below apply. grep -E, never grep -P: PCRE mode refuses to run under the non-UTF-8
+  # locales common on zh-TW Git Bash installs.
+  if printf '%s\n' "$@" | LC_ALL=C grep -qE '[^ -~]'; then non_ascii=1; fi
+
+  # No re-encoding needed: either not Windows (svn reads the locale encoding, i.e. UTF-8), or
+  # CP_ACP already IS UTF-8. printf never emits a BOM -- and it must not, because svn would read
+  # those bytes as part of the first path.
+  if [[ "$cp" == '65001' ]] || [[ -z "$cp" && "${OS:-}" != 'Windows_NT' ]]; then
+    printf '%s\n' "$@" > "$out"
+    return 0
+  fi
+
+  # Windows, but the codepage lookup failed. Plain UTF-8 is right for ASCII and wrong for anything
+  # else, so only the non-ASCII case is a problem -- fail there instead of silently writing bytes
+  # svn will misread, which is exactly the mojibake this function exists to prevent.
+  if [[ -z "$cp" ]]; then
+    if (( non_ascii )); then
+      echo "Error: could not determine this system's ANSI codepage, and a path in this commit is not plain ASCII." >&2
+      echo "  Refusing to guess an encoding svn may misread. Run from a shell where reg.exe is available." >&2
+      return 1
+    fi
+    printf '%s\n' "$@" > "$out"
+    return 0
+  fi
+
+  if command -v iconv >/dev/null 2>&1; then
+    if printf '%s\n' "$@" | iconv -f UTF-8 -t "CP$cp" > "$out" 2>/dev/null; then
+      return 0
+    fi
+    # A path carries characters the ANSI codepage cannot represent. Say so plainly instead of
+    # writing bytes svn will misread: the failure would otherwise surface as a confusing
+    # "is not under version control" naming a mangled path.
+    echo "Error: a path in this commit uses characters your system codepage (CP$cp) cannot represent," >&2
+    echo "  so it cannot be passed to svn on this host. See the encoding notes in /tp-setup." >&2
+    return 1
+  fi
+
+  # iconv missing (unusual in Git Bash, but possible): same reasoning as the unknown-codepage case.
+  if (( non_ascii )); then
+    echo "Error: 'iconv' is not available, so a non-ASCII path cannot be encoded for your system codepage (CP$cp)." >&2
+    echo "  Refusing to write an encoding svn may misread." >&2
+    return 1
+  fi
+  printf '%s\n' "$@" > "$out"
+}
+
+# Expand an unversioned DIRECTORY into one "A|<tracked|ignored>|<relpath>" line per file inside it.
+#
+# `svn status` reports a directory that is not yet under version control as a SINGLE '?' entry and
+# never recurses into it -- svn's own behaviour, not a defect here. The commit step, however, runs
+# `svn add --parents` (recursive), so every file inside IS committed. That gap made the
+# consolidated confirmation list show 3 folders where 14 files were actually going to SVN
+# (issue #24). The confirmation exists so the user sees the full scope BEFORE the commit rather
+# than reading it back out of the commit output afterwards.
+#
+# Paths are emitted relative to the working copy, matching what `svn status` itself prints, so the
+# SKILL's list never mixes two path shapes.
+#
+# Args: $1 = the bridge working copy; $2 = the unversioned dir, relative to it.
+expand_unversioned_dir() {
+  local remote_path="$1" rel_dir="$2"
+  local abs_dir="$remote_path/$rel_dir"
+  [[ -d "$abs_dir" ]] || return 0
+
+  local child_abs child_rel
+  # .git / .svn are metadata, never content to be pushed. A bridge worktree always has both.
+  while IFS= read -r child_abs; do
+    [[ -z "$child_abs" ]] && continue
+    child_rel="${child_abs#"$remote_path/"}"
+    if git -C "$remote_path" check-ignore -q "$child_rel" 2>/dev/null; then
+      echo "A|ignored|$child_rel"
+    else
+      echo "A|tracked|$child_rel"
+    fi
+  done < <(find "$abs_dir" -type f -not -path '*/.git/*' -not -path '*/.svn/*' | LC_ALL=C sort)
+}
+
 get_svn_push_body() {
   local repo_dir="$1" range="$2"
   local tip="${range##*..}"
@@ -630,9 +810,75 @@ svn_replay_commit() {
 # uniformly at R (KTD4 sparse guard -- an empty delta must mean "identical tree", never a partial
 # update), then hand off to svn_replay_commit (empty-delta + idempotent skips live there).
 # Args: <remote_path> <rev> <author> <date> <message>
+# Echo the URL that <base_url> (pegged at <peg_rev>) had at <rev>. Empty output + non-zero when svn
+# cannot answer, so callers never mistake "unknown" for "unchanged".
+#
+# The peg is what makes this work across renames. `svn info -r R URL@PEG` follows copy history
+# BACKWARDS from the pegged path, so a path renamed at some revision still resolves to its older
+# name for revisions before the rename. The reverse does NOT hold: asking where an OLD path lives
+# at HEAD fails with E160013 once that path has been deleted (verified against a local repository
+# reproducing issue #32) -- which is why every lookup here must peg at a revision where the path is
+# known to exist, normally HEAD.
+# Args: <base_url> <peg_rev> <rev>
+svn_url_at_rev() {
+  local base_url="$1" peg_rev="$2" rev="$3" url
+  url="$(svn info --show-item url -r "$rev" "${base_url}@${peg_rev}" 2>/dev/null | tr -d '\r\n')" || return 1
+  [[ -n "$url" ]] || return 1
+  printf '%s' "$url"
+}
+
+# Position the bridge working copy at <rev>, following a path rename when one is in play.
+#
+# `svn update -r R` cannot cross a rename: the WC is bound to the path as it existed at its own
+# revision, and updating to a revision where that path no longer exists fails with E160005. When the
+# URL this path has at <rev> is known, switching to it (with an explicit peg) moves the WC to the
+# right place instead. --ignore-ancestry because a rename IS a delete+copy: svn otherwise refuses
+# the switch for having no common ancestry.
+#
+# Two ways in, and BOTH are needed:
+#   - <target_url> non-empty: the caller already detected a rename across the range, so switch
+#     straight away instead of failing first.
+#   - <target_url> empty but <base_url> given: try the plain update, and if it fails, resolve this
+#     revision's own URL and switch. This is what covers a rename the range-endpoint check cannot
+#     see -- a path renamed A->B->A INSIDE one pending window looks unrenamed at both ends, yet the
+#     revisions in the middle live at B. Paying for the lookup only after a failure keeps the
+#     common (never-renamed) case at exactly one svn call, as before.
+# Args: <remote_path> <rev> [<target_url>] [<base_url>] [<peg_rev>]
+svn_position_wc_at_rev() {
+  local remote_path="$1" rev="$2" target_url="${3:-}" base_url="${4:-}" peg_rev="${5:-}" wc_url recovered
+
+  if [[ -n "$target_url" ]]; then
+    wc_url="$(svn info --show-item url "$remote_path" 2>/dev/null | tr -d '\r\n')"
+    if [[ "$wc_url" != "$target_url" ]]; then
+      ( cd "$remote_path" && svn switch --ignore-ancestry -r "$rev" "${target_url}@${rev}" ) \
+        || { echo "Error: svn switch to ${target_url}@${rev} failed" >&2; return 1; }
+      return 0
+    fi
+  fi
+
+  if ( cd "$remote_path" && svn update -r "$rev" ); then
+    return 0
+  fi
+
+  # Update failed. If we can ask where this path lived at <rev>, a mid-range rename is the likely
+  # cause; switching there is a recovery, not a guess -- the URL comes from svn's own copy history.
+  if [[ -n "$base_url" && -n "$peg_rev" ]]; then
+    recovered="$(svn_url_at_rev "$base_url" "$peg_rev" "$rev" || true)"
+    if [[ -n "$recovered" ]]; then
+      echo "Note: r$rev is not reachable at the current path; following the rename to $recovered" >&2
+      ( cd "$remote_path" && svn switch --ignore-ancestry -r "$rev" "${recovered}@${rev}" ) \
+        || { echo "Error: svn switch to ${recovered}@${rev} failed" >&2; return 1; }
+      return 0
+    fi
+  fi
+
+  echo "Error: svn update -r $rev failed" >&2
+  return 1
+}
+
 svn_replay_one_revision() {
-  local remote_path="$1" rev="$2" author="$3" date="$4" message="$5" wc
-  ( cd "$remote_path" && svn update -r "$rev" ) || { echo "Error: svn update -r $rev failed" >&2; return 1; }
+  local remote_path="$1" rev="$2" author="$3" date="$4" message="$5" target_url="${6:-}" base_url="${7:-}" peg_rev="${8:-}" wc
+  svn_position_wc_at_rev "$remote_path" "$rev" "$target_url" "$base_url" "$peg_rev" || return 1
   wc="$(svn info --show-item revision "$remote_path" | tr -d '[:space:]')"
   if [[ "$wc" != "$rev" ]]; then
     echo "Error: remote worktree not uniformly at r$rev (got r$wc); refusing per-revision replay." >&2
@@ -667,7 +913,7 @@ svn_boundary_commit() {
 # Re-enumerates from the WC so the caller only has to hand over the decided mode (no array passing).
 # Args: <remote_path> <remote_name> <cur> <head_rev> <mode> [<range>]
 svn_replay_dispatch() {
-  local remote_path="$1" remote_name="$2" cur="$3" head_rev="$4" mode="$5" range="${6:-}"
+  local remote_path="$1" remote_name="$2" cur="$3" head_rev="$4" mode="$5" range="${6:-}" base_url="${7:-}"
 
   # KTD4 sparse guard: a full (infinite-depth) checkout is required so `svn update -r R` yields a
   # uniform per-revision tree; assert once before touching anything.
@@ -678,25 +924,62 @@ svn_replay_dispatch() {
     return 1
   fi
 
+  # Enumerate against the URL pegged at head_rev, NOT against the working copy.
+  #
+  # A WC checked out at an older revision is bound to the path as it existed THEN. If any ancestor
+  # was renamed since, `svn log <WC>` asks about a path that no longer exists at head and dies with
+  # E160013 naming a path the user never typed (issue #32). The pegged URL follows copy history, so
+  # the same range enumerates correctly whether or not a rename happened.
+  if [[ -z "$base_url" ]]; then
+    base_url="$(svn info --show-item url "$remote_path" 2>/dev/null | tr -d '\r\n')"
+  fi
+
   local -a REC_REV=() REC_AUTHOR=() REC_DATE=() REC_MSG=()
   if (( cur < head_rev )); then
     local log_xml
-    log_xml="$(svn log --xml -r "$((cur + 1)):$head_rev" "$remote_path")" \
-      || { echo "Error: svn log failed for r$((cur + 1)):r$head_rev" >&2; return 1; }
+    log_xml="$(svn log --xml -r "$((cur + 1)):$head_rev" "${base_url}@${head_rev}")" || {
+      echo "Error: svn log failed for r$((cur + 1)):r$head_rev on ${base_url}@${head_rev}" >&2
+      echo "  If this mentions a path you never entered, the path (or one of its parent folders) was renamed on SVN." >&2
+      echo "  A bridge already built against the old path cannot find the new one on its own -- re-run /tp-setup with the current URL." >&2
+      return 1
+    }
     while IFS=$'\037' read -r -d '' _rev _author _date _msg; do
       REC_REV+=("$_rev"); REC_AUTHOR+=("$_author"); REC_DATE+=("$_date"); REC_MSG+=("$_msg")
     done < <(printf '%s' "$log_xml" | svn_enumerate_revisions)
   fi
 
+  # Was this path renamed anywhere inside the pending range? Asked ONCE, by comparing where it
+  # lived at the first pending revision with where it lives at head. Equal -- the overwhelmingly
+  # common case -- means no per-revision URL lookups happen at all, so unrenamed repositories pay
+  # nothing for this. Only when they differ does each replayed revision resolve its own URL.
+  local renamed=0 url_first='' url_head=''
+  if (( cur < head_rev )); then
+    url_first="$(svn_url_at_rev "$base_url" "$head_rev" "$((cur + 1))" || true)"
+    url_head="$(svn_url_at_rev "$base_url" "$head_rev" "$head_rev" || true)"
+    if [[ -n "$url_first" && -n "$url_head" && "$url_first" != "$url_head" ]]; then
+      renamed=1
+      printf 'TP_TOKEN:SVN_PATH_RENAMED old=%s new=%s range=r%s:r%s\n' \
+        "$url_first" "$url_head" "$((cur + 1))" "$head_rev"
+      echo "Note: this SVN path was renamed within r$((cur + 1))..r$head_rev; the import will follow the rename."
+    fi
+  fi
+
+  # Resolve the URL a given revision needs, or empty when nothing was renamed (plain update path).
+  _replay_target_url() {
+    (( renamed )) || return 0
+    svn_url_at_rev "$base_url" "$head_rev" "$1" || true
+  }
+
   local i r lo hi
   if [[ "$mode" == "per-revision" ]]; then
     echo "Replaying ${#REC_REV[@]} SVN revision(s) r$((cur + 1))..r$head_rev into $remote_name..."
     for i in "${!REC_REV[@]}"; do
-      svn_replay_one_revision "$remote_path" "${REC_REV[$i]}" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" || return 1
+      svn_replay_one_revision "$remote_path" "${REC_REV[$i]}" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" \
+        "$(_replay_target_url "${REC_REV[$i]}")" "$base_url" "$head_rev" || return 1
     done
   elif [[ "$mode" == "squash" ]]; then
     echo "Squashing SVN r$((cur + 1))..r$head_rev into one commit in $remote_name..."
-    ( cd "$remote_path" && svn update ) || { echo "Error: svn update failed" >&2; return 1; }
+    svn_position_wc_at_rev "$remote_path" "$head_rev" "$(_replay_target_url "$head_rev")" "$base_url" "$head_rev" || return 1
     svn_boundary_commit "$remote_path" "$head_rev" || return 1
   elif [[ "$mode" == "range" ]]; then
     if [[ ! "$range" =~ ^[0-9]+:[0-9]+$ ]]; then
@@ -711,19 +994,20 @@ svn_replay_dispatch() {
     echo "Replaying r$lo..r$hi per-revision, squashing the rest, into $remote_name..."
     # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
     if (( lo - 1 >= cur + 1 )); then
-      ( cd "$remote_path" && svn update -r "$((lo - 1))" ) || { echo "Error: svn update -r $((lo - 1)) failed" >&2; return 1; }
+      svn_position_wc_at_rev "$remote_path" "$((lo - 1))" "$(_replay_target_url "$((lo - 1))")" "$base_url" "$head_rev" || return 1
       svn_boundary_commit "$remote_path" "$((lo - 1))" || return 1
     fi
     # Per-revision inside [lo,hi].
     for i in "${!REC_REV[@]}"; do
       r="${REC_REV[$i]}"
       if (( r >= lo && r <= hi )); then
-        svn_replay_one_revision "$remote_path" "$r" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" || return 1
+        svn_replay_one_revision "$remote_path" "$r" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" \
+          "$(_replay_target_url "$r")" "$base_url" "$head_rev" || return 1
       fi
     done
     # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=head_rev.
     if (( hi < head_rev )); then
-      ( cd "$remote_path" && svn update ) || { echo "Error: svn update failed" >&2; return 1; }
+      svn_position_wc_at_rev "$remote_path" "$head_rev" "$(_replay_target_url "$head_rev")" "$base_url" "$head_rev" || return 1
       svn_boundary_commit "$remote_path" "$head_rev" || return 1
     fi
   else

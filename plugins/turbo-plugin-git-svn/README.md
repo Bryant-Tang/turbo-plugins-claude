@@ -19,7 +19,11 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 
 ## 設定
 
-- 需 git + SVN client(`svn` / `svnadmin` 在 PATH)。
+- 需 git + SVN client(`svn` / `svnadmin` 在 PATH)。**SVN 需 1.9 以上**——腳本用 `svn info --show-item`,
+  那是 1.9 才有的選項。版本不足時第一次呼叫 svn 就會直接說明原因與升級方式,不會讓你去猜
+  `svn: invalid option: --show-item` 是什麼意思。
+  > Windows 上請裝 SlikSVN 或 TortoiseSVN(勾 command line tools)。**chocolatey 的 `svn` 套件不行**:
+  > 那是 win32svn,2015 年最後發佈、停在 1.8.15。
 - `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml`(+ `CLAUDE.md` base 區塊);machine-specific 偏好寫進 gitignored `config.local.toml`。
 - case (a)(新建)/(b)(接管現有 git+SVN)的 git↔SVN bridge bootstrap 由固定腳本 `Initialize-GitSvnBridge`(`.ps1` / `.sh`)承接(空 main 先行 → orphan bridge + `svn checkout` → 固定 `svn:ignore=.git` → `git merge --allow-unrelated-histories` 進當前分支),agent 只留收 SVN URL / 收 git 身分 / 確認;base 骨架在腳本成功後才疊上。
 
@@ -64,6 +68,21 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 ## `.git` 不進 SVN 的機制
 
 bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用）+ 固定 `svn:ignore=.git` 來確保 `.git` 不被推進 SVN——首個 bridge（`tp-setup` case (a)/(b)）由 `Initialize-GitSvnBridge` / `initialize-git-svn-bridge.sh` 做、後續工作分支的 bridge 由 `New-RemoteBridge` / `Checkout-SvnBranch` 做。其餘該排除的檔一律由 `.gitignore` + push 腳本的 `git check-ignore` 決定（bridge 的 add-set = `svn status` 的 `?` 減去 git-ignored），讓 remote-svn 用起來更接近 remote git。
+
+## SVN 路徑被改名時（`svn move` 過的資料夾）
+
+企業 SVN 常有重整目錄、專案搬家、根資料夾改名這類事，而且改的是**上層資料夾**時，使用者根本不會意識到自己的專案路徑「變過」。
+
+- **匯入歷史時跨改名（`tp-setup` 首次建 bridge）**：自動處理。歷史列舉是對「你給的 URL 加上明確 peg」下的，逐筆重放遇到改名邊界會 `svn switch` 跟過去，所以**逐筆歷史完整保留**，不需要退而求其次壓成一顆。偵測到時會回報一次，agent 會用白話告訴你資料夾改過名——因為你會在歷史裡看到路徑變動。
+- **bridge 建好之後才被改名**：無法自動修復，會 fail loudly 並要你對新 URL 重跑 `/tp-setup`。原因是 SVN 只能從**現存**路徑往回追歷史，不能從已被刪除的舊路徑往前追（`svn info -r HEAD <舊URL>@<舊rev>` 直接 E160013），所以 bridge 沒有任何辦法自己查出新名字。
+
+> 粒度參數（逐筆 / 壓成一顆 / 挑一段）**一律生效**。修訂數多寡只決定「要不要主動問你」，不決定「聽不聽你的」。
+
+## 推送的規模與檔名限制
+
+- **檔案數不受命令列長度限制**：推送走 svn 的 `--targets` 檔案清單，所以把既有專案首次匯入 SVN（動輒幾千個檔）不會再撞到 `Argument list too long`。
+- **檔名含 `@` 沒問題**：`banner@2x.jpg` 這種 retina 命名會自動處理掉 svn 的 peg revision 語法。
+- **檔名字元仍受系統字碼頁限制**：Windows 上路徑是透過系統 ANSI 字碼頁傳給 svn 的，所以檔名若用到你這台機器字碼頁裝不下的文字（例如繁中 cp950 系統上的日文假名、emoji），推送會**明確失敗並說明原因**，而不是送出壞掉的檔名。要用這類檔名請依 `/tp-setup` 的編碼說明改用 PowerShell 7+ 或開啟 Windows 的 UTF-8 設定。
 
 ## SVN commit body 的組裝（`tp-push-to-svn`）
 

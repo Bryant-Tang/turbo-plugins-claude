@@ -159,6 +159,66 @@ test_advance_on_merge_main() {
 # A normal feature commit (file change, NO svn-revision trailer) brings no newer main revision, so
 # tp:last-aligned-rev is untouched and the push creates exactly ONE content revision (no extra
 # property-only commit).
+# ── issue #35: a push with thousands of files must not overflow the command line ──────────────
+# Every path used to be passed as its own argv entry, so a large enough push died before svn even
+# started ("Argument list too long"; observed at ~2.9k targets, while 350 got through). A first
+# import of an existing project is normally far past that, so that scenario simply could not work.
+#
+# The count must exceed the real limit or this test proves nothing -- 3000 is chosen to sit clearly
+# above the observed failure point, not because the exact threshold matters.
+test_large_push_does_not_overflow_command_line() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc n count
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    mkdir -p "$ROOT/bulk"
+    for (( n = 1; n <= 3000; n++ )); do
+        printf 'f%s\n' "$n" > "$ROOT/bulk/file$n.txt"
+    done
+    git -C "$ROOT" add -A >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: bulk import' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: bulk import' 2>&1 )"; rc=$?
+
+    case "$out" in *'Argument list too long'*) fail "command line overflowed: $out" ;; esac
+    assertEquals "3000-file push exits 0 (tail: $(printf '%s' "$out" | tail -c 400))" 0 "$rc"
+
+    # Everything actually landed -- not a partial commit that merely avoided the error.
+    count="$(svn ls "$BRANCH_URL/bulk" --config-dir "$CFG" 2>/dev/null | grep -c . || true)"
+    assertEquals 'all 3000 files reached SVN' 3000 "$count"
+}
+
+# ── issue #34: a filename containing '@' must survive the push ────────────────────────────────
+# svn parses a trailing @<rev> on EVERY target argument, so `banner@2x.jpg` (the standard retina
+# naming convention) made svn try to read "2x.jpg" as a revision and fail the whole commit with
+# E200009. The filename is perfectly legal in SVN and checks out fine -- only passing it as an
+# argument was broken, and `--` does not help because it only terminates OPTION parsing.
+# This case covers both svn-side paths at once: the `svn add` of the new file and the `svn commit`
+# that lists it as a target.
+test_at_sign_filename_survives_push() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc listing
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'retina\n' > "$ROOT/banner@2x.jpg"
+    git -C "$ROOT" add -- 'banner@2x.jpg' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: add a retina asset' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: retina asset' 2>&1 )"; rc=$?
+
+    case "$out" in *E200009*) fail "peg-revision error on an '@' filename: $out" ;; esac
+    assertEquals "push with an '@' filename exits 0 (out: $out)" 0 "$rc"
+
+    # And it must land on SVN under its FULL name -- not truncated at the '@'.
+    listing="$(svn ls "$BRANCH_URL" --config-dir "$CFG" 2>/dev/null)"
+    case "$listing" in
+        *'banner@2x.jpg'*) assertTrue "'@' filename landed on SVN intact" 0 ;;
+        *) fail "'@' filename missing from svn listing: $listing" ;;
+    esac
+}
+
 test_ordinary_push_does_not_advance() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
     if ! build_feature_bridge; then startSkipping; return 0; fi

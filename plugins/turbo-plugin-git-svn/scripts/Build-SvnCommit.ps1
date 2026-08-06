@@ -180,10 +180,18 @@ try {
                 $isIgnored = ($LASTEXITCODE -eq 0)
                 $ErrorActionPreference = $ea2
 
-                if ($isIgnored) {
-                    $fileLines += "$diffStatus|ignored|$filepath"
-                } else {
-                    $fileLines += "$diffStatus|tracked|$filepath"
+                $kind = if ($isIgnored) { 'ignored' } else { 'tracked' }
+                $fileLines += "$diffStatus|$kind|$filepath"
+
+                # An unversioned DIRECTORY is one '?' line in svn status but many files on the way
+                # to SVN -- expand it so the confirmation shows the real scope (issue #24; the
+                # full rationale lives on Get-UnversionedDirectoryFiles in lib/Common.ps1).
+                #
+                # An ignored directory is NOT expanded: git-ignored trees (node_modules/, bin/) can
+                # hold thousands of files, the folder line already says it is ignored, and listing
+                # its contents would bury the entries that matter.
+                if ($diffStatus -eq 'A' -and -not $isIgnored -and (Test-Path -LiteralPath $filepath -PathType Container)) {
+                    $fileLines += Get-UnversionedDirectoryFiles -RemotePath $remote.Path -RelativeDir $filepath
                 }
             }
         } finally {

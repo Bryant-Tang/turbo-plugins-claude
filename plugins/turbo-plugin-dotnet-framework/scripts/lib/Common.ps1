@@ -8,25 +8,77 @@
 
 
 
+# Resolve the anchor directory that project-relative paths (and therefore the identity hash) are
+# measured from: the git worktree top-level when inside git, else the project root itself.
+#
+# Every caller that computes an identity needs the SAME anchor, because the hash mixes in the
+# csproj path *relative to it* -- two callers disagreeing on the anchor produce two different site
+# names for one project, and stop / orphan-cleanup then fail to match the running site. Keep this
+# the single place that decision is made.
+#
+# The git call is wrapped in try/catch for the EAP=Stop + native-stderr reason documented on
+# Get-ProjectIdentityHash below: without it, a non-git folder throws instead of falling back.
+function Resolve-IdentityAnchor {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $topLevel = ''
+    try {
+        $topLevel = (& git -C $RepoRoot rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
+    } catch {
+        $topLevel = ''
+    }
+
+    if ([string]::IsNullOrWhiteSpace($topLevel)) {
+        return Get-NormalizedAbsolutePath -Path $RepoRoot
+    }
+    return Get-NormalizedAbsolutePath -Path $topLevel
+}
+
 # Compute the project-identity hash used for IIS Express site name suffixes
 # and cross-worktree project matching. Inputs:
 #   -RepoPath: an absolute path inside the worktree whose project we're identifying.
-#   -CsprojRelPath: csproj path relative to the worktree top-level (forward slashes preferred).
-# Returns: first 8 hex chars of sha256(git-common-dir + "#" + lower(csproj-relpath)).
+#   -CsprojRelPath: csproj path relative to the identity root (forward slashes preferred).
+# Returns: first 8 hex chars of sha256(identity-root + "#" + lower(csproj-relpath)), where the
+# identity root is the git-common-dir when inside git, else the project root's own path.
+#
+# git-common-dir is PREFERRED, not REQUIRED. It is the right root inside git because it is shared
+# by every worktree of the same repository, so one project keeps one identity no matter which
+# worktree it is run from. But a project folder that was never `git init`-ed still needs a stable
+# site name: build/publish already work outside git entirely (see Resolve-DotnetRepoRoot), and
+# making run/stop the only git-requiring operations left users with a project they could build but
+# not run (issue #29). Outside git we therefore fall back to the project root's absolute path,
+# which gives the same guarantee that actually matters here -- one checkout, one stable hash. The
+# only property lost is cross-worktree sharing, which a non-git folder cannot have anyway.
+#
+# INVARIANT: inside git the identity string is byte-identical to the pre-fallback version, so
+# existing site names, committed applicationhost.config entries and the site-name lookups in
+# Stop-Iis / Remove-OrphanIis all keep matching. Do not "simplify" by always using $RepoPath.
 function Get-ProjectIdentityHash {
     param(
         [Parameter(Mandatory = $true)][string]$RepoPath,
         [Parameter(Mandatory = $true)][string]$CsprojRelPath
     )
 
-    $commonDir = (& git -C $RepoPath rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($commonDir)) {
-        throw "Not a git repository: $RepoPath"
+    # try/catch, not merely 2>$null: under EAP=Stop a native exe that WRITES stderr throws a
+    # terminating NativeCommandError before the IsNullOrWhiteSpace check below can run (repo
+    # CLAUDE.md, "PS 5.1 相容性" #4). Without the catch the non-git path would surface raw git
+    # stderr instead of falling back -- i.e. the fallback would be dead code. Core.ps1's
+    # Get-MainWorktree wraps its git call for exactly this reason.
+    $commonDir = ''
+    try {
+        $commonDir = (& git -C $RepoPath rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+    } catch {
+        $commonDir = ''
     }
-    $commonDir = Get-NormalizedAbsolutePath -Path $commonDir
+
+    $identityRoot = if ([string]::IsNullOrWhiteSpace($commonDir)) {
+        Get-NormalizedAbsolutePath -Path $RepoPath
+    } else {
+        Get-NormalizedAbsolutePath -Path $commonDir
+    }
 
     $relNorm = ($CsprojRelPath -replace '\\', '/').ToLower()
-    $identity = "$commonDir#$relNorm"
+    $identity = "$identityRoot#$relNorm"
 
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -240,6 +292,29 @@ function Get-MsbuildProperty {
     return $nodes[$nodes.Count - 1].InnerText.Trim()
 }
 
+# Single source of truth for "will a frontend pack run, and against which directory".
+#
+# Build-Web / Publish-Web use it to fill the result template's Frontend line and Compress-Content
+# uses it to decide whether to act, so the template can never claim a pack that did not happen --
+# which is the whole point: the silent skip in issue #30 was invisible precisely because reporting
+# and behaviour were decided in different places.
+#
+# `[frontend] enabled = false` is an explicit opt-out and WINS over a configured dir (mirrors the
+# existing `[iis] enabled` switch), so a project can keep its frontend settings while turning the
+# step off. tp-build / tp-publish also write it as the "already asked, user said no" marker.
+#
+# Returns '' when no pack will run, else the configured directory (as written in config).
+function Resolve-FrontendPackDir {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $enabled = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'frontend' -Key 'enabled' -CliValue $null -Default $true
+    if ($enabled -eq $false) { return '' }
+
+    $dir = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'frontend' -Key 'dir' -CliValue $null -Default $null
+    if ($null -eq $dir) { return '' }
+    return [string]$dir
+}
+
 # ─── per-operation result-template family (KTD5) ────────────────────────────────
 # Each Format-*ResultLines helper returns the ORDERED display lines the executor prints under
 # its result marker. The agent relays the block as the fixed per-operation result template:
@@ -255,11 +330,29 @@ function Get-UnspecifiedConfigNote {
     return '未指定 (由 MSBuild / solution / Directory.Build.props 決定)'
 }
 
+# Frontend-pack status, shared by the build and publish templates.
+#
+# This belongs IN the template rather than being left to Compress-Content's own stdout: the SKILLs
+# tell the agent to relay the marker block verbatim as the result, so anything printed outside it
+# is effectively invisible to the user. That is exactly how an unconfigured [frontend] came to be
+# skipped in complete silence -- the skip message existed, but nothing was ever going to repeat it
+# (issue #30). Projects with no frontend step still get a line, so "未設定" is an explicit
+# statement rather than the absence of one.
+function Format-FrontendStatusLine {
+    param([string]$FrontendDir = '')
+
+    if ([string]::IsNullOrWhiteSpace($FrontendDir)) {
+        return 'Frontend: 未設定 (未執行前端打包)'
+    }
+    return "Frontend: 已執行 ($FrontendDir)"
+}
+
 function Format-BuildResultLines {
     param(
         [Parameter(Mandatory = $true)][string]$ResolvedTarget,
         [string]$Configuration = '',
         [string]$Platform = '',
+        [string]$FrontendDir = '',
         [switch]$IsSolution
     )
     $note = Get-UnspecifiedConfigNote
@@ -267,6 +360,7 @@ function Format-BuildResultLines {
     $lines += if ($IsSolution) { "Target: $ResolvedTarget (整個 solution)" } else { "Target: $ResolvedTarget" }
     $lines += if ([string]::IsNullOrWhiteSpace($Configuration)) { "Configuration: $note" } else { "Configuration: $Configuration" }
     $lines += if ([string]::IsNullOrWhiteSpace($Platform)) { "Platform: $note" } else { "Platform: $Platform" }
+    $lines += Format-FrontendStatusLine -FrontendDir $FrontendDir
     return $lines
 }
 

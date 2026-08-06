@@ -774,3 +774,252 @@ Describe 'Get-SvnPushBody' {
         }
     }
 }
+
+Describe 'Assert-SvnVersion (issue #26)' {
+
+    BeforeAll {
+        # NOT $IsWindows: that automatic variable is read-only under pwsh and undefined under
+        # Windows PowerShell 5.1. Same expression the test orchestrator uses.
+        $script:SvOnWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
+    }
+
+    It 'rejects a pre-1.9 client, naming --show-item and the upgrade path' {
+        # Set-ItResult inside the It, never -Skip:, because -Skip: is evaluated during Pester's
+        # DISCOVERY phase where a flag set in BeforeAll is still $null -- the file would then skip
+        # silently while reporting green.
+        if (-not $script:SvOnWindows) {
+            Set-ItResult -Skipped -Because 'the fake svn stub is a .cmd (Windows only); the .sh suite covers bash'
+            return
+        }
+        $root = New-IsolatedRepoRoot 'svnver18'
+        try {
+            $stub = Join-Path $root 'fakesvn.cmd'
+            # 1.8.15 is not an arbitrary number: it is exactly what chocolatey's win32svn pins to,
+            # which is how this reaches real users.
+            Set-Content -LiteralPath $stub -Value '@echo 1.8.15' -Encoding ASCII
+            { Assert-SvnVersion -SvnExe $stub } | Should -Throw -ExpectedMessage '*--show-item*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'accepts a 1.9+ client' {
+        if (-not $script:SvOnWindows) {
+            Set-ItResult -Skipped -Because 'the fake svn stub is a .cmd (Windows only); the .sh suite covers bash'
+            return
+        }
+        $root = New-IsolatedRepoRoot 'svnver114'
+        try {
+            $stub = Join-Path $root 'fakesvn.cmd'
+            Set-Content -LiteralPath $stub -Value '@echo 1.14.2' -Encoding ASCII
+            { Assert-SvnVersion -SvnExe $stub } | Should -Not -Throw
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'accepts exactly 1.9 (boundary)' {
+        if (-not $script:SvOnWindows) {
+            Set-ItResult -Skipped -Because 'the fake svn stub is a .cmd (Windows only); the .sh suite covers bash'
+            return
+        }
+        $root = New-IsolatedRepoRoot 'svnver19'
+        try {
+            $stub = Join-Path $root 'fakesvn.cmd'
+            Set-Content -LiteralPath $stub -Value '@echo 1.9.0' -Encoding ASCII
+            { Assert-SvnVersion -SvnExe $stub } | Should -Not -Throw
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'fails loudly when the version cannot be determined' {
+        if (-not $script:SvOnWindows) {
+            Set-ItResult -Skipped -Because 'the fake svn stub is a .cmd (Windows only); the .sh suite covers bash'
+            return
+        }
+        $root = New-IsolatedRepoRoot 'svnverJunk'
+        try {
+            $stub = Join-Path $root 'fakesvn.cmd'
+            Set-Content -LiteralPath $stub -Value '@echo not-a-version' -Encoding ASCII
+            { Assert-SvnVersion -SvnExe $stub } | Should -Throw
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+}
+
+Describe 'ConvertTo-SvnTarget (issue #34)' {
+
+    It 'escapes a filename containing @ so svn stops reading it as a peg revision' {
+        # `banner@2x.jpg` is a legal SVN filename (retina naming), but as a TARGET argument svn
+        # parsed "2x.jpg" as a revision and failed the whole commit with E200009.
+        ConvertTo-SvnTarget -Path 'Content/img/banner@2x.jpg' | Should -Be 'Content/img/banner@2x.jpg@'
+    }
+
+    It 'appends the escape unconditionally (harmless on paths without @)' {
+        # Applied to every path rather than only the ones containing '@': a detect-then-escape
+        # branch is one more place for our parsing to disagree with svn's, and `foo.txt@` resolves
+        # to `foo.txt` anyway.
+        ConvertTo-SvnTarget -Path 'src/app.txt' | Should -Be 'src/app.txt@'
+    }
+
+    It 'leaves a path that already ends in @ resolvable (trailing escape still applies)' {
+        ConvertTo-SvnTarget -Path 'weird@' | Should -Be 'weird@@'
+    }
+}
+
+Describe 'Write-SvnTargetsFile (issue #35)' {
+
+    It 'writes one path per line' {
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            Write-SvnTargetsFile -Path $f -Targets @('Content/one.txt@', 'Content/two.txt@')
+            $lines = @([System.IO.File]::ReadAllLines($f) | Where-Object { $_ -match '\S' })
+            $lines.Count | Should -Be 2
+            $lines[0] | Should -Be 'Content/one.txt@'
+            $lines[1] | Should -Be 'Content/two.txt@'
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'handles a target list far beyond the command-line limit' {
+        # The whole point of the targets file: 3000 paths as argv is what blew up.
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            $many = 1..3000 | ForEach-Object { "bulk/file$_.txt@" }
+            Write-SvnTargetsFile -Path $f -Targets $many
+            @([System.IO.File]::ReadAllLines($f) | Where-Object { $_ -match '\S' }).Count | Should -Be 3000
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'never writes a BOM, whatever the host codepage is' {
+        # Runs unconditionally, and that is the point: the ANSI test below has to skip when the
+        # host's codepage is already 65001, which left the UTF-8-system-locale branch untested.
+        # On such a host GetEncoding(65001) returns Encoding.UTF8, whose preamble IS a BOM, and
+        # File.WriteAllText emits it -- svn would then read three stray bytes as part of the first
+        # path. That configuration is not exotic: /tp-setup actively recommends it to users who
+        # need filenames beyond their codepage.
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            Write-SvnTargetsFile -Path $f -Targets @('Content/one.txt@')
+            $bytes = [System.IO.File]::ReadAllBytes($f)
+            @($bytes).Count | Should -BeGreaterThan 3
+            $startsWithBom = ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            $startsWithBom | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'writes in the ANSI codepage, not UTF-8, so svn reads the paths back correctly' {
+        # svn reads a --targets file through CP_ACP on Windows. A UTF-8 file makes it look for a
+        # mojibake path and fail "is not under version control" -- verified against a local repo.
+        $onWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
+        if (-not $onWindows) {
+            Set-ItResult -Skipped -Because 'no CP_ACP off Windows; svn reads the locale encoding there'
+            return
+        }
+        $acp = [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage
+        if ($acp -le 0 -or $acp -eq 65001) {
+            Set-ItResult -Skipped -Because "ANSI codepage is $acp (UTF-8 host); nothing to distinguish"
+            return
+        }
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            # A CJK path is the case that actually differs between the two encodings.
+            # Built from code points (U+4E2D U+6587) rather than literal characters so this
+            # assertion does not itself depend on how the test file is encoded.
+            $cjk = "Content/$([char]0x4E2D)$([char]0x6587).txt@"
+            Write-SvnTargetsFile -Path $f -Targets @($cjk)
+
+            $ansi = [System.Text.Encoding]::GetEncoding($acp)
+            $expected = $ansi.GetBytes("$cjk`n")
+            $actual = [System.IO.File]::ReadAllBytes($f)
+            # Byte-for-byte: reading it back as UTF-8 would silently "work" and prove nothing.
+            [System.Convert]::ToBase64String($actual) | Should -Be ([System.Convert]::ToBase64String($expected))
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'Get-UnversionedDirectoryFiles (issue #24)' {
+
+    It 'lists every file under a new folder, recursively' {
+        $repo = New-IsolatedRepoRoot 'unvExpand'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            $newDir = Join-Path $repo 'NewFolder'
+            $subDir = Join-Path $newDir 'sub'
+            $null = New-Item -ItemType Directory -Path $subDir -Force
+            Set-Content -LiteralPath (Join-Path $newDir 'a.txt') -Value 'a' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $subDir 'b.txt') -Value 'b' -Encoding ASCII
+
+            $lines = @(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'NewFolder')
+
+            # svn status alone would have reported only the folder -- these two files are exactly
+            # what used to be missing from the confirmation list while still being committed.
+            $lines.Count | Should -Be 2
+            ($lines -join "`n") | Should -Match 'A\|tracked\|NewFolder.a\.txt'
+            ($lines -join "`n") | Should -Match 'A\|tracked\|NewFolder.sub.b\.txt'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'marks git-ignored children as ignored rather than dropping or mislabelling them' {
+        $repo = New-IsolatedRepoRoot 'unvIgnored'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Set-Content -LiteralPath (Join-Path $repo '.gitignore') -Value 'NewFolder/skip/' -Encoding ASCII
+            $newDir = Join-Path $repo 'NewFolder'
+            $skipDir = Join-Path $newDir 'skip'
+            $null = New-Item -ItemType Directory -Path $skipDir -Force
+            Set-Content -LiteralPath (Join-Path $newDir 'keep.txt') -Value 'k' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $skipDir 'junk.txt') -Value 'j' -Encoding ASCII
+
+            $joined = (@(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'NewFolder') -join "`n")
+
+            $joined | Should -Match 'A\|tracked\|NewFolder.keep\.txt'
+            $joined | Should -Match 'A\|ignored\|NewFolder.skip.junk\.txt'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'skips .git and .svn metadata' {
+        $repo = New-IsolatedRepoRoot 'unvMeta'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            $newDir = Join-Path $repo 'NewFolder'
+            $svnMeta = Join-Path $newDir '.svn'
+            $null = New-Item -ItemType Directory -Path $svnMeta -Force
+            Set-Content -LiteralPath (Join-Path $newDir 'real.txt') -Value 'r' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $svnMeta 'entries') -Value 'x' -Encoding ASCII
+
+            $lines = @(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'NewFolder')
+
+            $lines.Count | Should -Be 1
+            ($lines -join "`n") | Should -Match 'real\.txt'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'returns nothing for a path that is not a directory' {
+        $repo = New-IsolatedRepoRoot 'unvNotDir'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Set-Content -LiteralPath (Join-Path $repo 'plain.txt') -Value 'p' -Encoding ASCII
+
+            @(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'plain.txt').Count | Should -Be 0
+            @(Get-UnversionedDirectoryFiles -RemotePath $repo -RelativeDir 'DoesNotExist').Count | Should -Be 0
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+}

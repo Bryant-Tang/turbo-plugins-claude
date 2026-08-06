@@ -140,8 +140,20 @@ svn_status_xml "$REMOTE_PATH" | while IFS=$'\t' read -r status filepath; do
     *)   continue ;;
   esac
   if git -C "$REMOTE_PATH" check-ignore -q "$filepath" 2>/dev/null; then
-    echo "$diff_status|ignored|$filepath"
+    kind='ignored'
   else
-    echo "$diff_status|tracked|$filepath"
+    kind='tracked'
+  fi
+  echo "$diff_status|$kind|$filepath"
+
+  # An unversioned DIRECTORY is one '?' line in svn status but many files on the way to SVN --
+  # expand it so the confirmation shows the real scope (issue #24; full rationale on
+  # expand_unversioned_dir in lib/common.sh).
+  #
+  # An ignored directory is NOT expanded: git-ignored trees (node_modules/, bin/) can hold
+  # thousands of files, the folder line already says it is ignored, and listing its contents
+  # would bury the entries that matter.
+  if [[ "$diff_status" == 'A' && "$kind" == 'tracked' && -d "$REMOTE_PATH/$filepath" ]]; then
+    expand_unversioned_dir "$REMOTE_PATH" "$filepath"
   fi
 done

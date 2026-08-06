@@ -23,8 +23,63 @@
 # has no business in a plugin that never touches svn. Every script here that can invoke svn
 # dot-sources THIS file, so the choke point is unchanged. Same reasoning as the earlier move of
 # Get-WorktreesDir out of universal Core.
+
+# --- svn must be new enough to have --show-item (single choke point) -----------
+# `svn info --show-item` arrived in Subversion 1.9 and is used across build-svn-commit,
+# checkout-svn-branch, initialize-git-svn-bridge, new-remote-bridge and this lib. On an older
+# client every one of those dies with `svn: invalid option: --show-item` -- a message that says
+# nothing about the actual problem, leaving the user to work out whether their environment is
+# broken or the plugin is. That diagnosis time is exactly what this gate exists to remove.
+#
+# Not hypothetical: chocolatey's `svn` package is win32svn, last released 2015 and pinned at
+# 1.8.15. It is also the likely shape of the problem in the field -- this plugin exists because a
+# team is stuck on SVN, and those environments are the most likely to be running an old client.
+#
+# Checked ONCE per process from inside the shim, so every caller is covered without each script
+# having to remember a pre-check, and the cost is one `svn --version` per run.
+$script:TpSvnMinVersion = '1.9'
+$script:TpSvnVersionChecked = $false
+
+function Assert-SvnVersion {
+    param([Parameter(Mandatory = $true)][string]$SvnExe)
+
+    # try/catch around the native call: under EAP=Stop anything svn writes to stderr becomes a
+    # terminating NativeCommandError before the emptiness check can run (repo CLAUDE.md, PS 5.1 #4).
+    $raw = ''
+    try {
+        $raw = (& $SvnExe --version --quiet 2>$null | Out-String).Trim()
+    } catch {
+        $raw = ''
+    }
+
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        throw "Could not determine the Subversion version (ran: $SvnExe --version --quiet). Subversion $script:TpSvnMinVersion or newer is required."
+    }
+    if ($raw -notmatch '(\d+)\.(\d+)') {
+        throw "Could not parse the Subversion version from '$raw'. Subversion $script:TpSvnMinVersion or newer is required."
+    }
+
+    $major = [int]$Matches[1]
+    $minor = [int]$Matches[2]
+    if ($major -lt 1 -or ($major -eq 1 -and $minor -lt 9)) {
+        throw @"
+Subversion $script:TpSvnMinVersion or newer is required, but this client is $raw ($SvnExe).
+Reason: turbo-plugin-git-svn uses 'svn info --show-item', which does not exist before 1.9;
+on this client it fails with "svn: invalid option: --show-item".
+Fix: install a current client -- SlikSVN or TortoiseSVN (with command line tools) on Windows.
+Note: the chocolatey 'svn' package is win32svn and is pinned at 1.8.15, so it will not do.
+"@
+    }
+}
+
 function svn {
     $exe = (Get-Command svn -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    if (-not $script:TpSvnVersionChecked) {
+        Assert-SvnVersion -SvnExe $exe
+        # Set only AFTER a passing check, so a failure is re-reported on the next call instead of
+        # being silently swallowed by a "already checked" flag.
+        $script:TpSvnVersionChecked = $true
+    }
     & $exe --non-interactive @args
 }
 
@@ -316,6 +371,51 @@ function Assert-TrustedSvnUrl {
 # Capture happens OUTSIDE the ANSI OutputEncoding scope used for svn — commit subjects are UTF-8
 # (KTD6); callers must invoke this while the console encoding is still the default (UTF-8 capable).
 # Returns the body string ('' when the range has no non-merge commit).
+# Expand an unversioned DIRECTORY into one "A|<tracked|ignored>|<relpath>" line per file inside it.
+#
+# `svn status` reports a directory that is not yet under version control as a SINGLE '?' entry and
+# never recurses into it -- svn's own behaviour, not a defect here. The commit step, however, runs
+# `svn add --parents` (recursive), so every file inside IS committed. That gap made the
+# consolidated confirmation list show 3 folders where 14 files were actually going to SVN
+# (issue #24). The confirmation exists so the user sees the full scope BEFORE the commit rather
+# than reading it back out of the commit output afterwards.
+#
+# Paths are emitted relative to the working copy, matching what `svn status` itself prints, so the
+# SKILL's list never mixes two path shapes.
+#
+# Args: -RemotePath = the bridge working copy; -RelativeDir = the unversioned dir, relative to it.
+function Get-UnversionedDirectoryFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][string]$RelativeDir
+    )
+
+    $absDir = [System.IO.Path]::Combine($RemotePath, $RelativeDir)
+    if (-not (Test-Path -LiteralPath $absDir -PathType Container)) { return @() }
+
+    # .git / .svn are metadata, never content to be pushed. A bridge worktree always has both.
+    # Both separators are matched: FullName uses '\' on Windows and '/' under pwsh on Linux, and the
+    # test suite runs on both -- a backslash-only pattern silently stops excluding anything on Linux.
+    $children = @(Get-ChildItem -LiteralPath $absDir -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '[\\/]\.(git|svn)[\\/]' } |
+        Sort-Object -Property FullName)
+
+    $lines = @()
+    foreach ($child in $children) {
+        $childRel = Get-RelativePathSafe -From $RemotePath -To $child.FullName
+
+        $eaChild = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        & git -C $RemotePath check-ignore -q $childRel 2>$null | Out-Null
+        $childIgnored = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $eaChild
+
+        $childKind = if ($childIgnored) { 'ignored' } else { 'tracked' }
+        $lines += "A|$childKind|$childRel"
+    }
+    return $lines
+}
+
 function Get-SvnPushBody {
     param(
         [Parameter(Mandatory = $true)][string]$RepoDir,
@@ -497,21 +597,192 @@ function Invoke-SvnReplayCommit {
 
 # Replay ONE svn revision: svn update -r R in the bridge worktree, assert the WC is uniformly at R
 # (KTD4 sparse guard), then hand off to Invoke-SvnReplayCommit. Returns the U1 token.
+# Escape a path so svn accepts it as a TARGET argument.
+#
+# svn parses a trailing @<rev> on EVERY target as a peg revision, so a perfectly legal filename
+# containing '@' -- `banner@2x.jpg`, the standard retina naming convention -- makes svn try to read
+# "2x.jpg" as a revision and fail with:
+#   svn: E200009: '<path>': a peg revision is not allowed here
+# `--` does NOT prevent this: it terminates OPTION parsing, and peg parsing happens per-target
+# afterwards (issue #34).
+#
+# The documented escape is to append one '@'. It is harmless for paths that contain no '@' at all
+# (`foo.txt@` still resolves to `foo.txt`), so it is applied UNCONDITIONALLY -- a detect-then-escape
+# branch would only add a way for our parsing to disagree with svn's.
+#
+# Use it for FILE targets. Do NOT wrap fixed targets like '.', which have their own meaning to svn.
+function ConvertTo-SvnTarget {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Path)
+    return "$Path@"
+}
+
+# Write a --targets file for svn: one path per line, in the encoding svn will read it back with.
+#
+# Why a targets file at all: passing each path as its own argument overflows the command-line length
+# limit once a push touches enough files (issue #35). On Windows that limit is CreateProcess's 32767
+# characters, and the failure mode is worse than bash's "Argument list too long" -- arguments get
+# truncated and svn complains about paths that look fine.
+#
+# Why the ANSI codepage and not UTF-8: verified against a local repository -- a UTF-8 targets file
+# makes svn look for a mojibake path and fail with "is not under version control", while the same
+# list written in CP_ACP commits correctly. This is the same channel the command line already went
+# through (argv is CP_ACP too), so it is not a new limitation -- but a filename using characters
+# outside the active codepage cannot be expressed here, exactly as it could not be on the command
+# line.
+#
+# ANSICodePage rather than [Text.Encoding]::Default: Default IS CP_ACP under Windows PowerShell 5.1
+# but is UTF-8 under PowerShell 7+, so relying on it would silently write the wrong bytes on the
+# newer host -- the kind of difference that only shows up on someone else's machine.
+#
+# Paths must ALREADY be escaped with ConvertTo-SvnTarget: a targets file is peg-parsed line by line,
+# just like argv (verified -- an unescaped `banner@2x.jpg` in a targets file still fails E200009).
+function Write-SvnTargetsFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Targets
+    )
+
+    $enc = $null
+    try {
+        $acp = [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage
+        if ($acp -eq 65001) {
+            # CP_ACP is already UTF-8 (the Windows "Use Unicode UTF-8 worldwide" system-locale
+            # option -- which is exactly what /tp-setup recommends to users who need filenames
+            # beyond their codepage, so this is a configuration we actively steer people into).
+            #
+            # It must NOT go through GetEncoding(65001): that returns Encoding.UTF8, whose preamble
+            # is a 3-byte BOM, and File.WriteAllText writes the preamble. svn would then read those
+            # bytes as part of the FIRST path in the file and fail to find it -- the same
+            # "is not under version control" class of failure this function exists to prevent.
+            # The bash side already sidesteps this by not re-encoding at all when cp == 65001.
+            $enc = New-Object System.Text.UTF8Encoding($false)
+        } elseif ($acp -gt 0) {
+            $enc = [System.Text.Encoding]::GetEncoding($acp)
+        }
+    } catch {
+        $enc = $null
+    }
+    # Non-Windows hosts have no CP_ACP; there svn reads the file in the locale encoding, i.e. UTF-8.
+    if ($null -eq $enc) { $enc = New-Object System.Text.UTF8Encoding($false) }
+
+    $content = ''
+    if (@($Targets).Count -gt 0) { $content = (@($Targets) -join "`n") + "`n" }
+    [System.IO.File]::WriteAllText($Path, $content, $enc)
+}
+
+# Return the URL that -BaseUrl (pegged at -PegRev) had at -Rev, or '' when svn cannot answer, so a
+# caller never mistakes "unknown" for "unchanged".
+#
+# The peg is what makes this work across renames. `svn info -r R URL@PEG` follows copy history
+# BACKWARDS from the pegged path, so a path renamed at some revision still resolves to its older
+# name for revisions before the rename. The reverse does NOT hold: asking where an OLD path lives
+# at HEAD fails with E160013 once that path has been deleted (verified against a local repository
+# reproducing issue #32) -- so every lookup must peg at a revision where the path exists, normally
+# HEAD.
+function Get-SvnUrlAtRev {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseUrl,
+        [Parameter(Mandatory = $true)][int]$PegRev,
+        [Parameter(Mandatory = $true)][int]$Rev
+    )
+    $url = ''
+    try {
+        $url = (& svn info --show-item url -r $Rev "$BaseUrl@$PegRev" 2>$null | Out-String).Trim()
+    } catch {
+        $url = ''
+    }
+    if ($LASTEXITCODE -ne 0) { return '' }
+    return $url
+}
+
+# Position the bridge working copy at -Rev, following a path rename when one is in play.
+#
+# `svn update -r R` cannot cross a rename: the WC is bound to the path as it existed at its own
+# revision, and updating to a revision where that path no longer exists fails with E160005. When the
+# URL this path has at -Rev is known, switching to it (with an explicit peg) moves the WC to the
+# right place instead. --ignore-ancestry because a rename IS a delete+copy: svn otherwise refuses
+# the switch for having no common ancestry.
+#
+# Two ways in, and BOTH are needed:
+#   - -TargetUrl given: the caller already detected a rename across the range, so switch straight
+#     away instead of failing first.
+#   - -TargetUrl empty but -BaseUrl given: try the plain update, and if it fails, resolve this
+#     revision's own URL and switch. This is what covers a rename the range-endpoint check cannot
+#     see -- a path renamed A->B->A INSIDE one pending window looks unrenamed at both ends, yet the
+#     revisions in the middle live at B. Paying for the lookup only after a failure keeps the
+#     common (never-renamed) case at exactly one svn call, as before.
+function Set-SvnWcPosition {
+    param(
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][int]$Rev,
+        [string]$TargetUrl = '',
+        [string]$BaseUrl = '',
+        [int]$PegRev = 0
+    )
+    if (-not [string]::IsNullOrWhiteSpace($TargetUrl)) {
+        $wcUrl = (& svn info --show-item url $RemotePath | Out-String).Trim()
+        if ($wcUrl -ne $TargetUrl) {
+            Push-Location $RemotePath
+            try {
+                & svn switch --ignore-ancestry -r $Rev "$TargetUrl@$Rev"
+                if ($LASTEXITCODE -ne 0) { throw "svn switch to $TargetUrl@$Rev failed" }
+            } finally {
+                Pop-Location
+            }
+            return
+        }
+    }
+
+    # EAP-softened so a failed update surfaces as a non-zero exit we can act on, rather than a
+    # terminating NativeCommandError thrown the moment svn writes to stderr.
+    $updateExit = 0
+    Push-Location $RemotePath
+    try {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & svn update -r $Rev
+            $updateExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
+    } finally {
+        Pop-Location
+    }
+    if ($updateExit -eq 0) { return }
+
+    # Update failed. If we can ask where this path lived at -Rev, a mid-range rename is the likely
+    # cause; switching there is a recovery, not a guess -- the URL comes from svn's own copy history.
+    if (-not [string]::IsNullOrWhiteSpace($BaseUrl) -and $PegRev -gt 0) {
+        $recovered = Get-SvnUrlAtRev -BaseUrl $BaseUrl -PegRev $PegRev -Rev $Rev
+        if (-not [string]::IsNullOrWhiteSpace($recovered)) {
+            [Console]::Error.WriteLine("Note: r$Rev is not reachable at the current path; following the rename to $recovered")
+            Push-Location $RemotePath
+            try {
+                & svn switch --ignore-ancestry -r $Rev "$recovered@$Rev"
+                if ($LASTEXITCODE -ne 0) { throw "svn switch to $recovered@$Rev failed" }
+            } finally {
+                Pop-Location
+            }
+            return
+        }
+    }
+
+    throw "svn update -r $Rev failed"
+}
+
 function Invoke-SvnOneReplay {
     param(
         [Parameter(Mandatory = $true)][string]$RemotePath,
         [Parameter(Mandatory = $true)][int]$Rev,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Author,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Date,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message,
+        [string]$TargetUrl = '',
+        [string]$BaseUrl = '',
+        [int]$PegRev = 0
     )
-    Push-Location $RemotePath
-    try {
-        & svn update -r $Rev
-        if ($LASTEXITCODE -ne 0) { throw "svn update -r $Rev failed" }
-    } finally {
-        Pop-Location
-    }
+    Set-SvnWcPosition -RemotePath $RemotePath -Rev $Rev -TargetUrl $TargetUrl -BaseUrl $BaseUrl -PegRev $PegRev
     $wc = [int]((& svn info --show-item revision $RemotePath | Out-String).Trim())
     if ($wc -ne $Rev) { throw "Remote worktree not uniformly at r$Rev (got r$wc); refusing per-revision replay." }
     return (Invoke-SvnReplayCommit -RepoDir $RemotePath -Rev $Rev -Author $Author -Date $Date -Message $Message)
@@ -559,7 +830,8 @@ function Invoke-SvnReplayDispatch {
         [Parameter(Mandatory = $true)][int]$Cur,
         [Parameter(Mandatory = $true)][int]$HeadRev,
         [Parameter(Mandatory = $true)][string]$Mode,
-        [string]$Range = ''
+        [string]$Range = '',
+        [string]$BaseUrl = ''
     )
     # KTD4 sparse guard: a full (infinite-depth) checkout is required so `svn update -r R` yields a
     # uniform per-revision tree -- otherwise an empty post-update delta could mean "sparse update",
@@ -569,28 +841,60 @@ function Invoke-SvnReplayDispatch {
         throw "Remote worktree depth is '$depth', not 'infinity'; per-revision replay needs a full checkout."
     }
 
+    # Enumerate against the URL pegged at HeadRev, NOT against the working copy.
+    #
+    # A WC checked out at an older revision is bound to the path as it existed THEN. If any ancestor
+    # was renamed since, `svn log <WC>` asks about a path that no longer exists at head and dies with
+    # E160013 naming a path the user never typed (issue #32). The pegged URL follows copy history, so
+    # the same range enumerates correctly whether or not a rename happened.
+    if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
+        $BaseUrl = (& svn info --show-item url $RemotePath | Out-String).Trim()
+    }
+
     $revs = @()
     if ($Cur -lt $HeadRev) {
-        $logXml = (& svn log --xml -r "$($Cur + 1):$HeadRev" $RemotePath | Out-String)
-        if ($LASTEXITCODE -ne 0) { throw "svn log failed for r$($Cur + 1):r$HeadRev" }
+        $logXml = (& svn log --xml -r "$($Cur + 1):$HeadRev" "$BaseUrl@$HeadRev" | Out-String)
+        if ($LASTEXITCODE -ne 0) {
+            throw @"
+svn log failed for r$($Cur + 1):r$HeadRev on $BaseUrl@$HeadRev
+  If the error names a path you never entered, that path (or one of its parent folders) was renamed on SVN.
+  A bridge already built against the old path cannot find the new one on its own -- re-run /tp-setup with the current URL.
+"@
+        }
         $revs = @(Get-SvnRevisions -LogXml $logXml)
+    }
+
+    # Was this path renamed anywhere inside the pending range? Asked ONCE, by comparing where it
+    # lived at the first pending revision with where it lives at head. Equal -- the overwhelmingly
+    # common case -- means no per-revision URL lookups happen at all, so unrenamed repositories pay
+    # nothing for this. Only when they differ does each replayed revision resolve its own URL.
+    $renamed = $false
+    if ($Cur -lt $HeadRev) {
+        $urlFirst = Get-SvnUrlAtRev -BaseUrl $BaseUrl -PegRev $HeadRev -Rev ($Cur + 1)
+        $urlHead = Get-SvnUrlAtRev -BaseUrl $BaseUrl -PegRev $HeadRev -Rev $HeadRev
+        if (-not [string]::IsNullOrWhiteSpace($urlFirst) -and -not [string]::IsNullOrWhiteSpace($urlHead) -and $urlFirst -ne $urlHead) {
+            $renamed = $true
+            Write-Output "TP_TOKEN:SVN_PATH_RENAMED old=$urlFirst new=$urlHead range=r$($Cur + 1):r$HeadRev"
+            Write-Output "Note: this SVN path was renamed within r$($Cur + 1)..r$HeadRev; the import will follow the rename."
+        }
+    }
+
+    # Resolve the URL a given revision needs, or '' when nothing was renamed (plain update path).
+    $targetUrlFor = {
+        param([int]$R)
+        if (-not $renamed) { return '' }
+        return (Get-SvnUrlAtRev -BaseUrl $BaseUrl -PegRev $HeadRev -Rev $R)
     }
 
     if ($Mode -eq 'per-revision') {
         Write-Output "Replaying $(@($revs).Count) SVN revision(s) r$($Cur + 1)..r$HeadRev into $RemoteName..."
         foreach ($rec in $revs) {
-            $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message
+            $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message -TargetUrl (& $targetUrlFor $rec.Rev) -BaseUrl $BaseUrl -PegRev $HeadRev
         }
     }
     elseif ($Mode -eq 'squash') {
         Write-Output "Squashing SVN r$($Cur + 1)..r$HeadRev into one commit in $RemoteName..."
-        Push-Location $RemotePath
-        try {
-            & svn update
-            if ($LASTEXITCODE -ne 0) { throw 'svn update failed' }
-        } finally {
-            Pop-Location
-        }
+        Set-SvnWcPosition -RemotePath $RemotePath -Rev $HeadRev -TargetUrl (& $targetUrlFor $HeadRev) -BaseUrl $BaseUrl -PegRev $HeadRev
         Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev $HeadRev
     }
     elseif ($Mode -eq 'range') {
@@ -604,30 +908,18 @@ function Invoke-SvnReplayDispatch {
         Write-Output "Replaying r$lo..r$hi per-revision, squashing the rest, into $RemoteName..."
         # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
         if (($lo - 1) -ge ($Cur + 1)) {
-            Push-Location $RemotePath
-            try {
-                & svn update -r ($lo - 1)
-                if ($LASTEXITCODE -ne 0) { throw "svn update -r $($lo - 1) failed" }
-            } finally {
-                Pop-Location
-            }
+            Set-SvnWcPosition -RemotePath $RemotePath -Rev ($lo - 1) -TargetUrl (& $targetUrlFor ($lo - 1)) -BaseUrl $BaseUrl -PegRev $HeadRev
             Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev ($lo - 1)
         }
         # Per-revision inside [lo,hi].
         foreach ($rec in $revs) {
             if ($rec.Rev -ge $lo -and $rec.Rev -le $hi) {
-                $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message
+                $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message -TargetUrl (& $targetUrlFor $rec.Rev) -BaseUrl $BaseUrl -PegRev $HeadRev
             }
         }
         # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=HeadRev.
         if ($hi -lt $HeadRev) {
-            Push-Location $RemotePath
-            try {
-                & svn update
-                if ($LASTEXITCODE -ne 0) { throw 'svn update failed' }
-            } finally {
-                Pop-Location
-            }
+            Set-SvnWcPosition -RemotePath $RemotePath -Rev $HeadRev -TargetUrl (& $targetUrlFor $HeadRev) -BaseUrl $BaseUrl -PegRev $HeadRev
             Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev $HeadRev
         }
     }

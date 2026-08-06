@@ -533,7 +533,7 @@ Describe 'Get-ProjectIdentityHash' {
         try { $null = (& git --version 2>$null); $script:GhGitOk = ($LASTEXITCODE -eq 0) } catch { $script:GhGitOk = $false }
     }
 
-    It 'is deterministic and case/slash normalized, isolates across repos, throws off-git' {
+    It 'is deterministic and case/slash normalized, isolates across repos, falls back off-git' {
         if (-not $script:GhGitOk) {
             Set-ItResult -Skipped -Because 'git not on PATH'
             return
@@ -560,17 +560,121 @@ Describe 'Get-ProjectIdentityHash' {
             $hB1 = Get-ProjectIdentityHash -RepoPath $repoB -CsprojRelPath 'src/App.csproj'
             $hB1 | Should -Not -Be $hA1
 
-            # Non-git path -> throw.
+            # Non-git path -> falls back to the folder's own path instead of throwing (issue #29):
+            # a project that was never `git init`-ed must still get a stable site name, or it can
+            # be built but never run.
             $nonGit = New-IsolatedRepoRoot 'hashNonGit'
+            $nonGit2 = New-IsolatedRepoRoot 'hashNonGit2'
             try {
-                { Get-ProjectIdentityHash -RepoPath $nonGit -CsprojRelPath 'src/App.csproj' } | Should -Throw -ExpectedMessage '*Not a git repository*'
+                $hNon1 = Get-ProjectIdentityHash -RepoPath $nonGit -CsprojRelPath 'src/App.csproj'
+                $hNon1 | Should -Match '^[0-9a-f]{8}$'
+
+                # Stable across calls -- this is what stop / orphan-cleanup rely on to match the
+                # running site back to the project.
+                $hNon2 = Get-ProjectIdentityHash -RepoPath $nonGit -CsprojRelPath 'src/App.csproj'
+                $hNon2 | Should -Be $hNon1
+
+                # Still isolates two different non-git folders sharing a relpath.
+                $hOther = Get-ProjectIdentityHash -RepoPath $nonGit2 -CsprojRelPath 'src/App.csproj'
+                $hOther | Should -Not -Be $hNon1
+
+                # And a non-git folder must not collide with a real repo's identity.
+                $hNon1 | Should -Not -Be $hA1
             } finally {
                 Remove-IsolatedRepoRoot -Dir $nonGit
+                Remove-IsolatedRepoRoot -Dir $nonGit2
             }
         } finally {
             Remove-IsolatedRepoRoot -Dir $repoA
             Remove-IsolatedRepoRoot -Dir $repoB
         }
+    }
+
+    It 'REGRESSION issue #29: inside git the identity is byte-identical to the pre-fallback formula' {
+        if (-not $script:GhGitOk) {
+            Set-ItResult -Skipped -Because 'git not on PATH'
+            return
+        }
+        # The off-git fallback added for issue #29 must not disturb the IN-git hash by even one
+        # character: existing IIS site names, the site entries committed in applicationhost.config,
+        # and the name Stop-Iis / Remove-OrphanIis look up all derive from it. Recomputing the
+        # original formula here (sha256 of git-common-dir + '#' + lowercased relpath, first 8 hex)
+        # pins the algorithm rather than a literal digest, which a path-free fixture cannot have.
+        $repo = New-GitRepoFixture 'hashInvariant'
+        try {
+            $commonDir = (& git -C $repo rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+            $commonDir | Should -Not -BeNullOrEmpty
+            $commonDir = Get-NormalizedAbsolutePath -Path $commonDir
+
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes("$commonDir#src/app.csproj")
+                $digest = $sha.ComputeHash($bytes)
+            } finally {
+                $sha.Dispose()
+            }
+            $expected = ((($digest | ForEach-Object { $_.ToString('x2') }) -join '')).Substring(0, 8)
+
+            Get-ProjectIdentityHash -RepoPath $repo -CsprojRelPath 'src/App.csproj' | Should -Be $expected
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+}
+
+Describe 'Resolve-FrontendPackDir' {
+
+    It 'returns empty when [frontend] is absent (so the template says 未設定, issue #30)' {
+        $root = New-IsolatedRepoRoot 'feNone'
+        try {
+            Resolve-FrontendPackDir -RepoRoot $root | Should -Be ''
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'returns the configured dir when [frontend] dir is set' {
+        $root = New-IsolatedRepoRoot 'feDir'
+        try {
+            $tp = Join-Path $root '.turbo-plugin'
+            New-Item -ItemType Directory -Path $tp -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $tp 'config.toml') -Value @(
+                '[frontend]'
+                'dir = "src/web/frontend"'
+            ) -Encoding UTF8
+            Resolve-FrontendPackDir -RepoRoot $root | Should -Be 'src/web/frontend'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'enabled = false wins over a configured dir (explicit opt-out, mirrors [iis] enabled)' {
+        $root = New-IsolatedRepoRoot 'feOff'
+        try {
+            $tp = Join-Path $root '.turbo-plugin'
+            New-Item -ItemType Directory -Path $tp -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $tp 'config.toml') -Value @(
+                '[frontend]'
+                'dir = "src/web/frontend"'
+                'enabled = false'
+            ) -Encoding UTF8
+            # Reporting and behaviour both read this function, so an opt-out must not leave the
+            # result template claiming a pack that Compress-Content is going to skip.
+            Resolve-FrontendPackDir -RepoRoot $root | Should -Be ''
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+}
+
+Describe 'Format-FrontendStatusLine' {
+
+    It 'states 未設定 when no pack will run (the line that was missing in issue #30)' {
+        Format-FrontendStatusLine -FrontendDir '' | Should -Match '未設定'
+    }
+
+    It 'names the directory when a pack ran' {
+        Format-FrontendStatusLine -FrontendDir 'src/web/frontend' | Should -Be 'Frontend: 已執行 (src/web/frontend)'
     }
 }
 
@@ -801,6 +905,15 @@ Describe 'Result-template family (KTD5)' {
         It 'flags a solution target' {
             $lines = Format-BuildResultLines -ResolvedTarget 'App.sln' -IsSolution
             ($lines -join "`n") | Should -Match 'App\.sln.*solution'
+        }
+        It 'REGRESSION issue #30: always carries a Frontend line, packed or not' {
+            # The agent relays only these lines, so a frontend that was skipped is invisible to the
+            # user unless the template itself says so.
+            $none = Format-BuildResultLines -ResolvedTarget 'Web.csproj'
+            ($none -join "`n") | Should -Match 'Frontend:.*未設定'
+
+            $packed = Format-BuildResultLines -ResolvedTarget 'Web.csproj' -FrontendDir 'src/web/frontend'
+            ($packed -join "`n") | Should -Match 'Frontend: 已執行 \(src/web/frontend\)'
         }
     }
 

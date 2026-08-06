@@ -83,7 +83,26 @@ try {
     # loop mutates it with `svn update -r R`.
     $svnUrl = (& svn info --show-item url $remote.Path | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not get SVN URL from '$($remote.Name)'. Is it a valid SVN working copy?" }
-    $headRev = [int]((& svn info --show-item revision $svnUrl | Out-String).Trim())
+    # A bridge whose SVN path (or any parent folder) was renamed AFTER the bridge was built points at
+    # a path that no longer exists, and svn's own error names that old path -- which the user never
+    # typed and will not recognise. There is no way to discover the new name from here: svn follows
+    # copy history backwards from an existing path, not forwards from a deleted one (issue #32). So
+    # the only honest thing to do is say precisely that.
+    $headRevRaw = ''
+    try {
+        $headRevRaw = (& svn info --show-item revision $svnUrl 2>$null | Out-String).Trim()
+    } catch {
+        $headRevRaw = ''
+    }
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headRevRaw)) {
+        throw @"
+Cannot read SVN at the path this bridge is attached to:
+  $svnUrl
+  Either SVN is unreachable, or that path (or one of its parent folders) was renamed or removed on SVN.
+  If it was renamed, re-run /tp-setup against the current URL -- a bridge cannot find its own new name.
+"@
+    }
+    $headRev = [int]$headRevRaw
     $wcRevStart = [int]((& svn info --show-item revision $remote.Path | Out-String).Trim())
 
     # cur (resume point) = the greatest MARKED revision reachable from the bridge branch, floored by
@@ -97,7 +116,9 @@ try {
     # svn 1.14.x never sees a `lo>hi` range (it errors "No such revision" on cur+1 > headRev).
     $count = 0
     if ($cur -lt $headRev) {
-        $logXml = (& svn log --xml -r "$($cur + 1):$headRev" $remote.Path | Out-String)
+        # Pegged URL, not the WC: same reason as Invoke-SvnReplayDispatch's enumeration (issue #32)
+        # -- a WC sitting at an older revision is bound to the path name of that revision.
+        $logXml = (& svn log --xml -r "$($cur + 1):$headRev" "$svnUrl@$headRev" | Out-String)
         if ($LASTEXITCODE -ne 0) { throw "svn log failed for r$($cur + 1):r$headRev" }
         $count = @(Get-SvnRevisions -LogXml $logXml).Count
     }
@@ -120,18 +141,21 @@ try {
     # Granularity gate (KTD7 / R2-R4). <=5 new revisions replay per-revision silently. >5 with no
     # explicit choice -> emit a structured signal and exit 0 (NO commits, residue-free) so the SKILL
     # can prompt; distinct from the merge-conflict path which exits 1.
+    # The threshold decides whether to ASK, never whether to HONOUR the answer: an explicitly passed
+    # -Granularity is used at any count. (Same fix as the bootstrap side; previously a caller's
+    # explicit choice was silently discarded whenever the count sat at or below the threshold.)
     $mode = 'per-revision'
-    if ($count -gt $TpGranularityThreshold) {
-        if ([string]::IsNullOrWhiteSpace($Granularity)) {
-            Write-Output "TP_TOKEN:GRANULARITY_REQUIRED count=$count range=r$($cur + 1):r$headRev"
-            exit 0
-        }
+    if (-not [string]::IsNullOrWhiteSpace($Granularity)) {
         $mode = $Granularity
+    }
+    elseif ($count -gt $TpGranularityThreshold) {
+        Write-Output "TP_TOKEN:GRANULARITY_REQUIRED count=$count range=r$($cur + 1):r$headRev"
+        exit 0
     }
 
     # Materialise the chosen granularity via the shared enumerate+replay dispatch (lib/Common.ps1),
     # the same body the first-import bootstrap (Initialize-GitSvnBridge) uses.
-    Invoke-SvnReplayDispatch -RemotePath $remote.Path -RemoteName $remote.Name -Cur $cur -HeadRev $headRev -Mode $mode -Range $Range
+    Invoke-SvnReplayDispatch -RemotePath $remote.Path -RemoteName $remote.Name -Cur $cur -HeadRev $headRev -Mode $mode -Range $Range -BaseUrl $svnUrl
 
     $switched = $false
     if ($originalBranch -ne $Branch) {

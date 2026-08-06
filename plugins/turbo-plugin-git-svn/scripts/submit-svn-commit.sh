@@ -154,9 +154,15 @@ if ! git -C "$REMOTE_PATH" commit --no-edit; then
 fi
 
 MSG_FILE="$(mktemp)"
-# Cleanup the temp message file unconditionally; SHA_FILE only on success
+# --targets files for the add / delete / commit steps (issue #35). Created OUT here, not inside the
+# subshell below: an EXIT trap set inside a subshell replaces the inherited one, so registering them
+# together keeps a single cleanup that covers every exit path.
+TARGETS_ADD="$(mktemp)"
+TARGETS_DEL="$(mktemp)"
+TARGETS_COMMIT="$(mktemp)"
+# Cleanup the temp files unconditionally; SHA_FILE only on success
 # (a failed commit retains the pin for retry — pin staleness is rechecked at top).
-trap 'rm -f "$MSG_FILE"' EXIT
+trap 'rm -f "$MSG_FILE" "$TARGETS_ADD" "$TARGETS_DEL" "$TARGETS_COMMIT"' EXIT
 write_utf8_no_bom "$MSG_FILE" "$FULL_MESSAGE"
 
 # Run the commit work in a subshell so a failure inside doesn't kill our cleanup logic.
@@ -181,21 +187,29 @@ set +e
       continue
     fi
 
+    # svn_target: append the peg-revision escape. A filename containing '@' is legal in SVN and
+    # checks out fine, but passing it as a TARGET makes svn read everything after the last '@' as a
+    # revision (issue #34). Escaped here at collection time so every downstream svn call gets it.
     case "$status" in
-      '?') TO_ADD+=("$filepath") ;;
-      '!') TO_DEL+=("$filepath") ;;
-      'M') MODIFIED_TO_COMMIT+=("$filepath") ;;
+      '?') TO_ADD+=("$(svn_target "$filepath")") ;;
+      '!') TO_DEL+=("$(svn_target "$filepath")") ;;
+      'M') MODIFIED_TO_COMMIT+=("$(svn_target "$filepath")") ;;
     esac
   done <<< "$XML_PASS1"
 
-  # `--` terminates option parsing so a filename beginning with '-' is never read as an svn flag.
+  # --targets, not argv: a push large enough (a first import of an existing project is typically
+  # thousands of files) overflows the command-line length limit and dies with
+  # "Argument list too long" before svn even starts (issue #35). The file carries the same escaped
+  # paths -- a targets file is peg-parsed line by line exactly like argv.
   if [[ ${#TO_ADD[@]} -gt 0 ]]; then
     echo "SVN adding ${#TO_ADD[@]} new file(s)..."
-    svn add --parents -- "${TO_ADD[@]}" || exit 1
+    write_svn_targets_file "$TARGETS_ADD" "${TO_ADD[@]}" || exit 1
+    svn add --parents --targets "$TARGETS_ADD" || exit 1
   fi
   if [[ ${#TO_DEL[@]} -gt 0 ]]; then
     echo "SVN deleting ${#TO_DEL[@]} removed file(s)..."
-    svn delete -- "${TO_DEL[@]}" || exit 1
+    write_svn_targets_file "$TARGETS_DEL" "${TO_DEL[@]}" || exit 1
+    svn delete --targets "$TARGETS_DEL" || exit 1
   fi
 
   COMMIT_TARGETS=()
@@ -204,7 +218,7 @@ set +e
   while IFS=$'\t' read -r status filepath; do
     [[ -z "$filepath" ]] && continue
     if [[ "$status" == 'A' || "$status" == 'D' ]]; then
-      COMMIT_TARGETS+=("$filepath")
+      COMMIT_TARGETS+=("$(svn_target "$filepath")")
     fi
   done <<< "$XML_PASS2"
   if [[ ${#MODIFIED_TO_COMMIT[@]} -gt 0 ]]; then
@@ -224,14 +238,19 @@ set +e
   # ordinary feature push (TP_ADVANCE=0) leaves the commit byte-identical to before -- no '.', no
   # --depth -- so it adds no property change.
   DEPTH_ARGS=()
+  DOT_TARGET=()
   if [[ "$TP_ADVANCE" == 1 ]]; then
     svn propset tp:last-aligned-rev "$TP_NEW_ALIGNED" '.' || exit 1
-    COMMIT_TARGETS+=('.')
+    # '.' stays on the COMMAND LINE rather than going into the targets file: it is svn's
+    # "this directory" token, not a collected path, so it must not pick up the peg escape that
+    # every real path gets. Verified working alongside --targets + --depth empty.
+    DOT_TARGET=('.')
     DEPTH_ARGS=(--depth empty)
   fi
 
   echo "Committing to SVN..."
-  COMMIT_OUT="$(svn commit ${DEPTH_ARGS[@]+"${DEPTH_ARGS[@]}"} --file "$MSG_FILE" --encoding UTF-8 -- "${COMMIT_TARGETS[@]}")" || exit 1
+  write_svn_targets_file "$TARGETS_COMMIT" "${COMMIT_TARGETS[@]}" || exit 1
+  COMMIT_OUT="$(svn commit ${DEPTH_ARGS[@]+"${DEPTH_ARGS[@]}"} --file "$MSG_FILE" --encoding UTF-8 --targets "$TARGETS_COMMIT" ${DOT_TARGET[@]+"${DOT_TARGET[@]}"})" || exit 1
   printf '%s\n' "$COMMIT_OUT"
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'
@@ -256,5 +275,31 @@ if [[ $svn_commit_status -eq 0 ]]; then
   rm -f "$SVN_STATUS_FILE" 2>/dev/null || true
   rm -f "$BODY_FILE" 2>/dev/null || true
 else
+  # A failed svn commit leaves a half-finished state that nothing else reports: the merge commit was
+  # already made above, the adds/deletes are still SCHEDULED in the bridge working copy, and the pins
+  # are deliberately kept so a retry need not redo the merge. Previously the script said none of this
+  # and the user was left to reverse-engineer it (issue #34).
+  #
+  # No automatic rollback: whether to retry or unwind depends on WHY svn refused, and the script
+  # cannot tell. A transient failure (network, lock, credentials) should be retried -- unwinding it
+  # would throw away a correct merge. A rejected commit needs unwinding -- retrying just fails again.
+  # So state the position plainly and give both exits.
+  MERGE_SHA="$(git -C "$REMOTE_PATH" rev-parse --verify -q HEAD 2>/dev/null || true)"
+  {
+    echo ''
+    echo 'TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE'
+    echo 'The SVN commit failed. Nothing reached SVN (an svn commit is atomic), but locally:'
+    echo '  - the merge commit has already been made on the bridge branch'
+    echo '  - the add/delete are still scheduled in the bridge working copy'
+    echo '  - the prepare pins are kept, so a retry does not have to redo the merge'
+    echo ''
+    echo 'RETRY (transient cause -- network, lock, credentials): fix the cause, re-run /tp-push-to-svn.'
+    echo 'UNWIND (the commit was rejected and would be rejected again):'
+    echo "  1. svn revert -R \"$REMOTE_PATH\""
+    echo "  2. git -C \"$REMOTE_PATH\" reset --hard ${MERGE_SHA:-<merge-sha>}^1"
+    echo "  3. rm -f \"$SHA_FILE\" \"$SVN_STATUS_FILE\" \"$BODY_FILE\""
+    echo '  ORDER MATTERS: revert BEFORE reset. The other way round deletes the files from disk while'
+    echo '  svn still has them scheduled, which is harder to clean up than the state you are in now.'
+  } >&2
   exit $svn_commit_status
 fi

@@ -247,15 +247,20 @@ if [[ "$HEAD_REV" =~ ^[0-9]+$ ]] && (( HEAD_REV > 0 )); then
   done < <(printf '%s' "$IMPORT_LOG_XML" | svn_enumerate_revisions)
 fi
 
+# The threshold decides whether to ASK, never whether to HONOUR the answer.
+#
+# It used to gate both: at or below the threshold, an explicitly passed --granularity was dropped on
+# the floor and the mode was always per-revision. That made a caller's explicit choice silently
+# ineffective -- and left the issue #32 case (2 revisions, so below the threshold) with no supported
+# way to select the mode that would have worked.
 MODE='per-revision'
 if (( IMPORT_COUNT == 0 )); then
   MODE='legacy-empty'
-elif (( IMPORT_COUNT > TP_GRANULARITY_THRESHOLD )); then
-  if [[ -z "$GRANULARITY" ]]; then
-    printf 'TP_TOKEN:GRANULARITY_REQUIRED count=%s range=r%s:r%s\n' "$IMPORT_COUNT" "$FIRST_REV" "$HEAD_REV"
-    exit 0
-  fi
+elif [[ -n "$GRANULARITY" ]]; then
   MODE="$GRANULARITY"
+elif (( IMPORT_COUNT > TP_GRANULARITY_THRESHOLD )); then
+  printf 'TP_TOKEN:GRANULARITY_REQUIRED count=%s range=r%s:r%s\n' "$IMPORT_COUNT" "$FIRST_REV" "$HEAD_REV"
+  exit 0
 fi
 
 # The worktrees container does not exist yet on a first bootstrap; create it so `git worktree add`
@@ -332,7 +337,10 @@ if [[ "$MODE" == "legacy-empty" ]]; then
     git -C "$REMOTE_PATH" commit -m "sync: svn r$SVN_REV"
   fi
 else
-  svn_replay_dispatch "$REMOTE_PATH" "$REMOTE_NAME" "$((FIRST_REV - 1))" "$HEAD_REV" "$MODE" "$RANGE"
+  # Pass the URL the user actually gave us: the bridge WC is checked out at FIRST_REV and is
+  # therefore bound to the path as it existed THEN, which is the wrong thing to enumerate from once
+  # any ancestor has been renamed since (issue #32).
+  svn_replay_dispatch "$REMOTE_PATH" "$REMOTE_NAME" "$((FIRST_REV - 1))" "$HEAD_REV" "$MODE" "$RANGE" "$SVN_URL"
 fi
 
 # ---- step 10 (REMOVED): the bridge no longer invents a .gitignore. ----

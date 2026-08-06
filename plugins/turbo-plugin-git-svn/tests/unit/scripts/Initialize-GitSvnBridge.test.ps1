@@ -246,6 +246,98 @@ BeforeAll {
         return $uri
     }
 
+    # Build an svn repo where an ANCESTOR of the project path is renamed AFTER the project's first
+    # revision -- the exact shape reported in issue #32:
+    #   r1: mkdir /SRC/OLD/proj/trunk
+    #   r2: first import under it
+    #   r3: svn move /SRC/OLD -> /SRC/NEW        <- the ancestor rename
+    #   r4: one more commit under the NEW name
+    # Returns the CURRENT (post-rename) URL, which is what a user would hand to tp-setup. Importing
+    # its history requires following the rename backwards; a checkout pinned at r2 binds to the OLD
+    # path, and enumerating from there dies with E160013 naming a path the user never typed.
+    function New-SvnRepoAncestorRenamed {
+        param([string]$Sandbox, [string]$Name = 'svnrepo-renamed', [string]$ConfigDir)
+        $repo = [System.IO.Path]::Combine($Sandbox, $Name)
+        & svnadmin create $repo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($repo -replace '\\', '/')
+        $enc = New-Object Text.UTF8Encoding($false)
+
+        & svn mkdir --parents -m 'r1: layout' "$uri/SRC/OLD/proj/trunk" --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        $co = [System.IO.Path]::Combine($Sandbox, "co-ren-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+        & svn checkout "$uri/SRC/OLD/proj/trunk" $co --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, 'a.txt'), "a`n", $enc)
+        & svn add ([System.IO.Path]::Combine($co, 'a.txt')) --config-dir $ConfigDir 2>$null | Out-Null
+        Push-Location $co
+        try { & svn commit -m 'r2: first import' --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        & svn move -m 'r3: rename the root folder' "$uri/SRC/OLD" "$uri/SRC/NEW" --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        $co2 = [System.IO.Path]::Combine($Sandbox, "co-ren2-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+        & svn checkout "$uri/SRC/NEW/proj/trunk" $co2 --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co2, 'b.txt'), "b`n", $enc)
+        & svn add ([System.IO.Path]::Combine($co2, 'b.txt')) --config-dir $ConfigDir 2>$null | Out-Null
+        Push-Location $co2
+        try { & svn commit -m 'r4: after the rename' --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        return "$uri/SRC/NEW/proj/trunk"
+    }
+
+    # Build an svn repo where the ancestor is renamed AWAY and then BACK inside one import window:
+    #   r1 mkdir /SRC/A/proj/trunk, r2 import, r3 move A->B, r4 commit under B, r5 move B->A,
+    #   r6 commit. The endpoints (r2 and HEAD) BOTH sit at /SRC/A/proj/trunk, so a rename check that
+    #   only compares the two ends sees nothing -- while r4 genuinely lives at /SRC/B/proj/trunk and
+    #   cannot be reached by a plain `svn update -r`.
+    function New-SvnRepoAncestorRenameRoundtrip {
+        param([string]$Sandbox, [string]$Name = 'svnrepo-roundtrip', [string]$ConfigDir)
+        $repo = [System.IO.Path]::Combine($Sandbox, $Name)
+        & svnadmin create $repo
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $uri = 'file:///' + ($repo -replace '\\', '/')
+        $enc = New-Object Text.UTF8Encoding($false)
+
+        & svn mkdir --parents -m 'r1: layout' "$uri/SRC/A/proj/trunk" --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $co = [System.IO.Path]::Combine($Sandbox, "co-rt-$([Guid]::NewGuid().ToString('N').Substring(0,6))")
+        & svn checkout "$uri/SRC/A/proj/trunk" $co --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, 'a.txt'), "a`n", $enc)
+        & svn add ([System.IO.Path]::Combine($co, 'a.txt')) --config-dir $ConfigDir 2>$null | Out-Null
+        Push-Location $co
+        try { & svn commit -m 'r2: first import' --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        & svn move -m 'r3: A -> B' "$uri/SRC/A" "$uri/SRC/B" --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        Push-Location $co
+        try { & svn switch --ignore-ancestry "$uri/SRC/B/proj/trunk" --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, 'b.txt'), "b`n", $enc)
+        & svn add ([System.IO.Path]::Combine($co, 'b.txt')) --config-dir $ConfigDir 2>$null | Out-Null
+        Push-Location $co
+        try { & svn commit -m 'r4: while named B' --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        & svn move -m 'r5: B -> A' "$uri/SRC/B" "$uri/SRC/A" --config-dir $ConfigDir 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        Push-Location $co
+        try { & svn switch --ignore-ancestry "$uri/SRC/A/proj/trunk" --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($co, 'c.txt'), "c`n", $enc)
+        & svn add ([System.IO.Path]::Combine($co, 'c.txt')) --config-dir $ConfigDir 2>$null | Out-Null
+        Push-Location $co
+        try { & svn commit -m 'r6: renamed back to A' --config-dir $ConfigDir 2>$null | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        return "$uri/SRC/A/proj/trunk"
+    }
+
     # Count trailer-bearing replay commits on remote-svn/main (numeric svn-revision trailers).
     function Get-BridgeTrailerCount {
         param([string]$Root)
@@ -266,6 +358,90 @@ Describe 'Initialize-GitSvnBridge' {
 
     It 'script-under-test exists' {
         [System.IO.File]::Exists($script:ScriptUnderTest) | Should -BeTrue
+    }
+
+    Context 'Scenario R (issue #32): an ANCESTOR of the SVN path was renamed after the first revision' {
+        It 'imports the history instead of dying on E160013, and keeps it per-revision' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-rename'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SvnRepoAncestorRenamed -Sandbox $sb -ConfigDir $cfg
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the renamed-ancestor svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+
+                # The reported symptom: an E160013 naming the path BEFORE the rename -- a path the
+                # user never entered, which is why it reads as "I typed the URL wrong".
+                $res.Stdout + $res.Stderr | Should -Not -Match 'E160013'
+                $res.ExitCode | Should -Be 0
+                $res.Stdout | Should -Match 'SVN bridge connected\.'
+
+                # The rename is REPORTED, not silently worked around: the user should learn that the
+                # path moved, because it explains the history they are about to see.
+                $res.Stdout | Should -Match 'TP_TOKEN:SVN_PATH_RENAMED'
+
+                $bridge = Get-BridgePath -Root $root
+                # Per-revision history survives. The documented workaround for this bug was to squash
+                # the whole import into one commit; the point of the fix is not having to.
+                (Get-BridgeTrailerCount -Root $root) | Should -BeGreaterThan 1
+                # Content from BOTH sides of the rename landed.
+                [System.IO.File]::Exists([System.IO.Path]::Combine($bridge, 'a.txt')) | Should -BeTrue
+                [System.IO.File]::Exists([System.IO.Path]::Combine($bridge, 'b.txt')) | Should -BeTrue
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+
+                # And the working copy ends up on the CURRENT path, so later pulls keep working.
+                $wcUrl = (& svn info --show-item url $bridge --config-dir $cfg 2>$null | Out-String).Trim()
+                $wcUrl | Should -Match '/SRC/NEW/proj/trunk$'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Scenario R2: the ancestor was renamed AWAY and BACK inside one import window' {
+        It 'still reaches the revisions that lived under the interim name' -Skip:(-not $SvnAvailable) {
+            # Raised in PR review: comparing only "URL at the first pending revision" against "URL
+            # at HEAD" reports no rename for an A->B->A round trip, yet the revisions in between
+            # live at B and a plain `svn update -r` cannot reach them. The recovery path (resolve
+            # that revision's own URL, then switch) is what makes this work.
+            $sb = New-Sandbox -Tag 'igsb-rt'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseARepo -Root $root
+                $uri = New-SvnRepoAncestorRenameRoundtrip -Sandbox $sb -ConfigDir $cfg
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build the round-trip rename svn repo'; return }
+
+                # -Granularity per-revision is REQUIRED here, not incidental: this fixture has 6
+                # revisions, over the prompt threshold, so without it the script correctly stops at
+                # GRANULARITY_REQUIRED having built nothing -- and every content assertion below
+                # would then fail for the wrong reason. It also exercises the #33 fix (an explicit
+                # granularity is honoured rather than silently dropped).
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri, '-Granularity', 'per-revision')
+
+                $combined = $res.Stdout + $res.Stderr
+                $combined | Should -Not -Match 'GRANULARITY_REQUIRED'  # explicit choice must win
+                $res.ExitCode | Should -Be 0
+
+                # An E160005 in the output is EXPECTED here, not a failure: the recovery is
+                # deliberately "try the plain update, pay for a URL lookup only once it fails", so
+                # svn reports the unreachable path first and the switch follows. What must hold is
+                # that the replay RECOVERED -- this note plus the content checks below.
+                $combined | Should -Match 'following the rename to'
+
+                $bridge = Get-BridgePath -Root $root
+                # All three phases must land: before the rename, while renamed, after renaming back.
+                # The middle one is the whole point of this case.
+                [System.IO.File]::Exists([System.IO.Path]::Combine($bridge, 'a.txt')) | Should -BeTrue
+                [System.IO.File]::Exists([System.IO.Path]::Combine($bridge, 'b.txt')) | Should -BeTrue
+                [System.IO.File]::Exists([System.IO.Path]::Combine($bridge, 'c.txt')) | Should -BeTrue
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
     }
 
     Context 'Scenario 1b: case (a) + a landing path that EXISTS BUT IS EMPTY, in a repo with history' {

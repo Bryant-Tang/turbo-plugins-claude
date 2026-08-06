@@ -212,12 +212,11 @@ function Resolve-IisSettings {
 
     $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot
 
-    # `git -C $repoRoot`, not a bare `git`: with -RepoRoot naming a sibling project the ambient cwd
+    # Anchored on $repoRoot, not the ambient cwd: with -RepoRoot naming a sibling project the cwd
     # is a different repository, and its toplevel would produce a wrong relative path -> a wrong
     # identity hash -> a runtime site name that stop / orphan-cleanup cannot match back.
-    $topLevel = (& git -C $repoRoot rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($topLevel)) { throw 'Not inside a git repository.' }
-    $topLevel = Get-NormalizedAbsolutePath -Path $topLevel
+    # Outside git the anchor is $repoRoot itself, so a non-git project can still run (issue #29).
+    $topLevel = Resolve-IdentityAnchor -RepoRoot $repoRoot
     $projectAbs = Get-NormalizedAbsolutePath -Path $projectFile
     $relPath = (Get-RelativePathSafe -From $topLevel -To $projectAbs) -replace '\\', '/'
     $identityHash = Get-ProjectIdentityHash -RepoPath $topLevel -CsprojRelPath $relPath

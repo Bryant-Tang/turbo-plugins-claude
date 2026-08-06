@@ -70,13 +70,35 @@ parse stdout 的 `ARGV_SAFE_FOR_UNICODE`:
 - `True` → 略過。
 - `False` → **本機與跨平台對「codepage 內的檔名」都無虞**;只有「要用超出系統 codepage 的字元當檔名」才需處理。用 `AskUserQuestion` 問**實際情境**(不用技術術語):
 
-  **Question text**(對新使用者**直接講限制**就好——不要鋪陳「你本來沒問題」這種他根本不知道存在的問題):
-  > 小提醒:在你目前的環境(Windows 中文版 + PowerShell 5.1)下,**SVN 檔名不能用「中文以外」的特殊文字**——例如日文假名、韓文、emoji(一般中文與英數字檔名不受影響)。你之後會需要用這類文字當**檔名**嗎?
+  **Question text ——「哪些字可以用」必須依偵測到的 codepage 渲染,不可假設主機語系。**
+
+  先從 stdout 讀出 `ANSI_CODEPAGE=<name> (<cp>)`,用下表決定這台機器的檔名能用什麼字:
+
+  | 偵測到的 codepage | 檔名可安全使用 | 會壞掉的 |
+  |---|---|---|
+  | `950` / `big5` | 英數 + **繁體中文** | 日文假名、韓文、簡體專用字、emoji |
+  | `936` / `gb2312` / `gbk` | 英數 + **簡體中文** | 日文假名、韓文、繁體專用字、emoji |
+  | `932` / `shift_jis` | 英數 + **日文** | 韓文、中文專用字、emoji |
+  | `949` / `ks_c_5601` | 英數 + **韓文** | 日文假名、中文專用字、emoji |
+  | `1252` / `windows-1252` | 英數 + **西歐字母**(é ü ñ 等) | **中文、日文、韓文、emoji 全部會壞** |
+  | 其他 | 英數 + 該 codepage 涵蓋的語言文字 | 該 codepage 涵蓋不到的所有文字 |
+
+  > **`windows-1252` 那一列不是邊角情況**:那是英文版 Windows 的預設,而台灣公司用英文版映像檔並不罕見。
+  > 在那種機器上**中文檔名正是會壞的那一種**——2026-08-04 於 CI(GitHub Windows runner,windows-1252)
+  > 實測:Big5 主機裝得下中文檔名,windows-1252 主機得到 `??????.txt`。
+  > 所以**絕對不要**照搬「中文沒問題」這句話。講反了,使用者會把壞掉的檔名推上 SVN,而 SVN 的提交是永久的。
+
+  依上表取「可安全使用」與「會壞」兩段文字填進下面的模板。**填進去的是那兩欄的白話內容本身**
+  (例如「英數字與繁體中文」),不要把角括號、欄位名或 codepage 代號原封不動唸給使用者聽。
+  對新使用者**直接講限制**就好——不要鋪陳「你本來沒問題」這種他根本不知道存在的問題:
+
+  > 小提醒:在你目前的環境下,**SVN 檔名只能用 ⟨可安全使用⟩**;⟨會壞⟩ 這類文字傳給 svn 時會遺失。
+  > 你之後會需要用這類文字當**檔名**嗎?
 
   | 選項 | 動作 |
   |---|---|
-  | (a) 不會(只用中文 / 英數 / ASCII 檔名)— 預設、絕大多數情況 | 在 `.turbo-plugin/encoding-status.local.md` 記「codepage-representable + ASCII filenames only;push/pull 本機正確處理;SVN 存可攜 UTF-8;無需額外設定」。**不寫**任何 routing/force_bash。 |
-  | (b) 會用到中文以外的特殊文字(日文 / 韓文 / emoji 等) | nested `AskUserQuestion` 二選一:**(b1) 裝 PowerShell 7+**(`winget install --id Microsoft.PowerShell --silent ...`;winget 缺則導向 https://aka.ms/powershell;裝後在 `.claude/settings.local.json` 寫 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`、請使用者改用 pwsh.exe 重啟)。**(b2) 開 Windows UTF-8 設定**(`Start-Process intl.cpl -Verb RunAs`,引導勾「Beta:UTF-8」後重開機)。 |
+  | (a) 不會(只用 ⟨可安全使用⟩ 當檔名)— 預設、絕大多數情況 | 在 `.turbo-plugin/encoding-status.local.md` 記「codepage-representable + ASCII filenames only;push/pull 本機正確處理;SVN 存可攜 UTF-8;無需額外設定」,並**記下實際偵測到的 codepage**。**不寫**任何 routing/force_bash。 |
+  | (b) 會用到 ⟨會壞⟩ 那類文字 | nested `AskUserQuestion` 二選一:**(b1) 裝 PowerShell 7+**(`winget install --id Microsoft.PowerShell --silent ...`;winget 缺則導向 https://aka.ms/powershell;裝後在 `.claude/settings.local.json` 寫 `{"env":{"TURBO_PLUGIN_SHELL_HINT":"pwsh"}}`、請使用者改用 pwsh.exe 重啟)。**(b2) 開 Windows UTF-8 設定**(`Start-Process intl.cpl -Verb RunAs`,引導勾「Beta:UTF-8」後重開機)。 |
 
   純資訊性、不阻塞;完成印一句確認後繼續。
 
@@ -166,6 +188,23 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      - 壓成一顆:PowerShell `-Granularity squash` / bash `--granularity squash`
      - 指定範圍:PowerShell `-Granularity range -Range <lo>:<hi>` / bash `--granularity range --range <lo>:<hi>`
    - **≤5 個修訂**時腳本不發此 token(直接逐筆匯入),agent 無需處理。
+   - **粒度參數一律生效**:你明確帶 `-Granularity` / `--granularity` 時,不論修訂數多少腳本都會照辦
+     (以前 ≤5 筆會把你傳的值丟掉、一律逐筆)。所以使用者若在少量修訂時主動說要壓成一顆,直接帶參數即可。
+
+3b-2. **匯入期間 SVN 資料夾被改過名(`TP_TOKEN:SVN_PATH_RENAMED old=<url> new=<url> range=r<lo>:r<hi>`)**。
+   **這不是錯誤、不需要任何處理**——腳本已自動跟著改名走完,逐筆歷史完整保留。但**要用白話提一句**,
+   因為使用者會在匯入的歷史裡看到路徑變動,不講他會以為是自己 URL 給錯:
+
+   > 這個專案在 SVN 上的資料夾中途改過名(<舊資料夾名> → <新資料夾名>),已經自動跟著處理,歷史完整帶進來了。
+
+   只講**資料夾名**的變化就好,不要把整串 URL 或 token 原樣貼給使用者。
+
+   > **匯入途中出現 `svn: E160005: Target path ... does not exist`,只要緊接著有
+   > `Note: r<N> is not reachable at the current path; following the rename to ...`,那就不是失敗。**
+   > 資料夾在匯入範圍**中途**改過名(甚至改走又改回來)時,腳本是刻意「先照常試,失敗了才去查那個修訂
+   > 當時的位置」——沒改過名的專案因此一次多餘查詢都不用付。那行 E160005 是觸發修正的訊號,後面的
+   > `At revision <N>.` 就是已經跨過去了。**不要**把這行 svn 錯誤轉述給使用者當成問題;整個匯入的成敗
+   > 看最後有沒有 `SVN bridge connected.` 與腳本的離開碼。
 
 3c. **目標專案已連著 git 遠端(`TP_TOKEN:EXISTING_GIT_REMOTE remotes=<names>`)→ 確認後才重呼叫**。腳本在**動任何
    東西之前**偵測到目標 repo 已設定 git remote 時印此 token 並非零 exit(**零變更、可乾淨重跑**)。這絕大多數

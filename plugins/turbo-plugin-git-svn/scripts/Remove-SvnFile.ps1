@@ -132,21 +132,25 @@ try {
         # fails, `svn revert` the path so the bridge working copy is left CLEAN -- otherwise a dangling
         # scheduled deletion wedges the next /tp-pull-from-svn and re-runs of this script.
         $msgFile = [System.IO.Path]::GetTempFileName()
+        # A filename containing '@' is legal in SVN, but passing it as a TARGET makes svn read
+        # everything after the last '@' as a peg revision and fail with E200009 (issue #34). `--`
+        # does not cover this -- it only terminates option parsing. Messages keep the RAW path.
+        $svnTarget = ConvertTo-SvnTarget -Path $Path
         try {
-            if ($useForce) { & svn delete --force -- $Path } else { & svn delete -- $Path }
+            if ($useForce) { & svn delete --force -- $svnTarget } else { & svn delete -- $svnTarget }
             if ($LASTEXITCODE -ne 0) { throw "svn delete failed for: $Path" }
             Write-Utf8NoBom -Path $msgFile -Content "remove $Path from svn (turbo-plugin)"
             # EAP-soften the commit so a native stderr write does not throw before we can revert.
             $eaCommit = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
-            & svn commit --file $msgFile --encoding UTF-8 -- $Path
+            & svn commit --file $msgFile --encoding UTF-8 -- $svnTarget
             $commitRc = $LASTEXITCODE
             $ErrorActionPreference = $eaCommit
             if ($commitRc -ne 0) { throw "svn commit (delete) failed for: $Path" }
         } catch {
             $eaRevert = $ErrorActionPreference
             $ErrorActionPreference = 'SilentlyContinue'
-            & svn revert -- $Path 2>$null | Out-Null
+            & svn revert -- $svnTarget 2>$null | Out-Null
             $ErrorActionPreference = $eaRevert
             throw
         } finally {

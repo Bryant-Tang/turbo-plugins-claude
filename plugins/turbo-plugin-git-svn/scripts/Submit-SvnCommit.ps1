@@ -159,6 +159,11 @@ try {
     $noCommit = $false
     # UTF-8 (no BOM) message file: critical to keep Big5/CP_ACP from mangling non-ASCII.
     $msgFile = [System.IO.Path]::GetTempFileName()
+    # Pre-created so the finally block can clean them up even if we throw before they are used
+    # (StrictMode makes referencing an unset variable an error, not an empty string).
+    $targetsAdd = [System.IO.Path]::GetTempFileName()
+    $targetsDel = [System.IO.Path]::GetTempFileName()
+    $targetsCommit = [System.IO.Path]::GetTempFileName()
     Push-Location $remote.Path
     try {
         Write-Utf8NoBom -Path $msgFile -Content $fullMessage
@@ -184,29 +189,39 @@ try {
                 continue
             }
 
+            # ConvertTo-SvnTarget: append the peg-revision escape. A filename containing '@' is legal
+            # in SVN and checks out fine, but passing it as a TARGET makes svn read everything after
+            # the last '@' as a revision (issue #34). Escaped here at collection time so every
+            # downstream svn call gets it.
             switch ($statusChar) {
-                '?' { $toAdd += $filePath }
-                '!' { $toDel += $filePath }
-                'M' { $modifiedToCommit += $filePath }
+                '?' { $toAdd += (ConvertTo-SvnTarget -Path $filePath) }
+                '!' { $toDel += (ConvertTo-SvnTarget -Path $filePath) }
+                'M' { $modifiedToCommit += (ConvertTo-SvnTarget -Path $filePath) }
             }
         }
 
         # `--` terminates option parsing so a filename beginning with '-' is never read as a flag.
+        # It does NOT cover peg revisions -- that is what ConvertTo-SvnTarget above is for.
+        # --targets, not argv: a push large enough (a first import of an existing project is
+        # typically thousands of files) overflows the command-line length limit (issue #35). The
+        # file carries the same escaped paths -- a targets file is peg-parsed line by line like argv.
         if ($toAdd.Count -gt 0) {
             Write-Output "SVN adding $($toAdd.Count) new file(s)..."
-            & svn add --parents -- $toAdd
+            Write-SvnTargetsFile -Path $targetsAdd -Targets $toAdd
+            & svn add --parents --targets $targetsAdd
             if ($LASTEXITCODE -ne 0) { throw 'svn add failed' }
         }
         if ($toDel.Count -gt 0) {
             Write-Output "SVN deleting $($toDel.Count) removed file(s)..."
-            & svn delete -- $toDel
+            Write-SvnTargetsFile -Path $targetsDel -Targets $toDel
+            & svn delete --targets $targetsDel
             if ($LASTEXITCODE -ne 0) { throw 'svn delete failed' }
         }
 
         $commitTargets = @()
         foreach ($line in (& svn status)) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            if ($line -match '^([AD])\s+(.+)$') { $commitTargets += $Matches[2].Trim() }
+            if ($line -match '^([AD])\s+(.+)$') { $commitTargets += (ConvertTo-SvnTarget -Path $Matches[2].Trim()) }
         }
         $commitTargets += $modifiedToCommit
 
@@ -220,15 +235,53 @@ try {
             # --depth empty (proven by new-remote-bridge.sh's svn:ignore + '.git' commit). An ordinary
             # feature push ($tpAdvance = $false) leaves the commit byte-identical -- no '.', no --depth.
             $depthArgs = @()
+            $dotTarget = @()
             if ($tpAdvance) {
                 & svn propset tp:last-aligned-rev $tpNewAligned '.'
                 if ($LASTEXITCODE -ne 0) { throw 'svn propset tp:last-aligned-rev failed' }
-                $commitTargets += '.'
+                # '.' stays on the COMMAND LINE rather than going into the targets file: it is svn's
+                # "this directory" token, not a collected path, so it must not pick up the peg
+                # escape every real path gets. Verified working alongside --targets + --depth empty.
+                $dotTarget = @('.')
                 $depthArgs = @('--depth', 'empty')
             }
             Write-Output "Committing to SVN..."
-            $commitLines = & svn commit @depthArgs --file $msgFile --encoding UTF-8 -- $commitTargets
-            if ($LASTEXITCODE -ne 0) { throw 'svn commit failed' }
+            Write-SvnTargetsFile -Path $targetsCommit -Targets $commitTargets
+            $commitLines = & svn commit @depthArgs --file $msgFile --encoding UTF-8 --targets $targetsCommit @dotTarget
+            if ($LASTEXITCODE -ne 0) {
+                # A failed svn commit leaves a half-finished state that nothing else reports: the
+                # merge commit was already made above, the adds/deletes are still SCHEDULED in the
+                # bridge working copy, and the pins are deliberately kept so a retry need not redo
+                # the merge. Previously the script said none of this and the user was left to
+                # reverse-engineer it (issue #34).
+                #
+                # No automatic rollback: whether to retry or unwind depends on WHY svn refused, and
+                # the script cannot tell. A transient failure (network, lock, credentials) should be
+                # retried -- unwinding would throw away a correct merge. A rejected commit needs
+                # unwinding -- retrying just fails again. So state the position and give both exits.
+                $mergeSha = ''
+                try { $mergeSha = (& git -C $remote.Path rev-parse --verify -q HEAD 2>$null | Out-String).Trim() } catch { $mergeSha = '' }
+                if ([string]::IsNullOrWhiteSpace($mergeSha)) { $mergeSha = '<merge-sha>' }
+                $pinDir = ''
+                try { $pinDir = (& git -C $remote.Path rev-parse --absolute-git-dir 2>$null | Out-String).Trim() } catch { $pinDir = '' }
+                [Console]::Error.WriteLine(@"
+
+TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE
+The SVN commit failed. Nothing reached SVN (an svn commit is atomic), but locally:
+  - the merge commit has already been made on the bridge branch
+  - the add/delete are still scheduled in the bridge working copy
+  - the prepare pins are kept, so a retry does not have to redo the merge
+
+RETRY (transient cause -- network, lock, credentials): fix the cause, re-run /tp-push-to-svn.
+UNWIND (the commit was rejected and would be rejected again):
+  1. svn revert -R "$($remote.Path)"
+  2. git -C "$($remote.Path)" reset --hard $mergeSha^1
+  3. remove the three MERGE_HEAD.tp_* files in "$pinDir"
+  ORDER MATTERS: revert BEFORE reset. The other way round deletes the files from disk while
+  svn still has them scheduled, which is harder to clean up than the state you are in now.
+"@)
+                throw 'svn commit failed'
+            }
             $commitLines | ForEach-Object { Write-Output $_ }
             $newRevLine = $commitLines | Where-Object { $_ -match 'Committed revision (\d+)\.' } | Select-Object -Last 1
             if ($newRevLine -and $newRevLine -match 'Committed revision (\d+)\.') {
@@ -261,8 +314,10 @@ try {
         }
     } finally {
         Pop-Location
-        if (Test-Path -LiteralPath $msgFile) {
-            Remove-Item -LiteralPath $msgFile -Force -ErrorAction SilentlyContinue
+        foreach ($tmp in @($msgFile, $targetsAdd, $targetsDel, $targetsCommit)) {
+            if (-not [string]::IsNullOrWhiteSpace($tmp) -and (Test-Path -LiteralPath $tmp)) {
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

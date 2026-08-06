@@ -10,24 +10,22 @@ $ErrorActionPreference = 'Stop'
 
 try {
     Probe-GitVersion
-    # F-U(synth 19): use git toplevel as repoRoot (not cwd) so csproj discovery works
-    # regardless of which subfolder the user invoked the script from. Mirrors line 16
-    # which already uses --show-toplevel for the identity hash path.
-    # `git -C <root>`: -RepoRoot names the project outright (multi-project workspace); omitted it is
-    # '.', i.e. the ambient cwd, which is the historical behaviour.
+    # F-U(synth 19): anchor on the git toplevel rather than the cwd so csproj discovery works
+    # regardless of which subfolder the user invoked the script from -- and, outside git, on the
+    # project root itself so a non-git project still resolves (issue #29).
+    # `-RepoRoot` names the project outright (multi-project workspace); omitted it is '.', i.e. the
+    # ambient cwd, which is the historical behaviour. Resolved ONCE: discovery root and identity
+    # anchor must be the same directory, or the relative path fed to the hash would not match the
+    # one Resolve-IisSettings computes.
     $identityRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
-    $repoRoot = (& git -C $identityRoot rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($repoRoot)) { throw 'Not inside a git repository.' }
-    $repoRoot = Get-NormalizedAbsolutePath -Path $repoRoot
+    $repoRoot = Resolve-IdentityAnchor -RepoRoot $identityRoot
 
     # Explicit target only (no auto-detect). run/stop family => section 'run' (falls back to
     # [build].project). A .sln is rejected (no -AllowSolution): identity is per-csproj.
     $target = Resolve-ProjectTarget -RepoRoot $repoRoot -Section 'run' -CliProjectValue $Project
     $projectFile = $target.Path
 
-    $topLevel = (& git -C $identityRoot rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($topLevel)) { throw 'Not inside a git repository.' }
-    $topLevel = Get-NormalizedAbsolutePath -Path $topLevel
+    $topLevel = $repoRoot
     $projectAbs = Get-NormalizedAbsolutePath -Path $projectFile
     $relPath = Get-RelativePathSafe -From $topLevel -To $projectAbs
     $relPath = $relPath -replace '\\', '/'
