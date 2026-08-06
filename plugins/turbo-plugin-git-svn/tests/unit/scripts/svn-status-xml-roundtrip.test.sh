@@ -94,27 +94,49 @@ test_scripts_drop_column_offset_parse() {
     fi
 }
 
-# Guard the `--` option terminator on svn add/delete/commit in BOTH submit scripts. Without `--`,
-# a leading-dash filename is parsed as svn flags. The behavioral leading-dash test below exercises
-# this only via the env-gated re-pass (skipped under a hostile console codepage / on Windows CI),
-# so this always-running structural guard is the real cross-platform regression net.
-test_submit_scripts_keep_option_terminator() {
-    # .sh submit: add/delete/commit must each keep `-- ` before the array expansion.
-    grep -q 'svn add .*-- "${TO_ADD' "$SUBMIT"
-    assertTrue 'submit-svn-commit.sh: svn add keeps -- before "${TO_ADD[@]}"' $?
-    grep -q 'svn delete .*-- "${TO_DEL' "$SUBMIT"
-    assertTrue 'submit-svn-commit.sh: svn delete keeps -- before "${TO_DEL[@]}"' $?
-    grep -q 'svn commit .*-- "${COMMIT_TARGETS' "$SUBMIT"
-    assertTrue 'submit-svn-commit.sh: svn commit keeps -- before "${COMMIT_TARGETS[@]}"' $?
+# Guard HOW paths reach svn in BOTH submit scripts.
+#
+# This used to check for the `--` option terminator, which stopped a leading-dash filename from
+# being parsed as svn flags. Paths no longer travel as argv at all -- they go through a --targets
+# file (issue #35) -- which removes that surface entirely. Verified directly rather than assumed:
+# a targets file containing `-dash.txt` adds and commits cleanly with no `--` anywhere.
+#
+# So the guard is RE-POINTED, not dropped. Going back to expanding path arrays onto the command
+# line would reintroduce both failures at once: the leading-dash misparse AND the "Argument list
+# too long" ceiling that made a first import of any real project impossible.
+# The behavioral leading-dash test below only runs via the env-gated re-pass (skipped under a
+# hostile console codepage / on Windows CI), so this always-running structural check is still the
+# real cross-platform net.
+test_submit_scripts_pass_paths_via_targets_file() {
+    # .sh submit: add/delete/commit must each hand svn a --targets file.
+    grep -q 'svn add .*--targets' "$SUBMIT"
+    assertTrue 'submit-svn-commit.sh: svn add uses --targets' $?
+    grep -q 'svn delete .*--targets' "$SUBMIT"
+    assertTrue 'submit-svn-commit.sh: svn delete uses --targets' $?
+    grep -q 'svn commit .*--targets' "$SUBMIT"
+    assertTrue 'submit-svn-commit.sh: svn commit uses --targets' $?
 
-    # .ps1 submit: same `--` before the argv variables (grep is language-agnostic; runs on any OS).
+    # ...and must NOT expand the collected path arrays onto the command line again.
+    if grep -qE 'svn (add|delete|commit)[^#]*\$\{(TO_ADD|TO_DEL|COMMIT_TARGETS)\[@\]\}' "$SUBMIT"; then
+        fail 'submit-svn-commit.sh expands a path array onto the command line again (argv regression)'
+    else
+        assertTrue 'submit-svn-commit.sh keeps paths out of argv' 0
+    fi
+
+    # .ps1 submit: same contract (grep is language-agnostic; runs on any OS).
     if [ -f "$PS_SUBMIT" ]; then
-        grep -q 'svn add .*-- \$toAdd' "$PS_SUBMIT"
-        assertTrue 'Submit-SvnCommit.ps1: svn add keeps -- before $toAdd' $?
-        grep -q 'svn delete .*-- \$toDel' "$PS_SUBMIT"
-        assertTrue 'Submit-SvnCommit.ps1: svn delete keeps -- before $toDel' $?
-        grep -q 'svn commit .*-- \$commitTargets' "$PS_SUBMIT"
-        assertTrue 'Submit-SvnCommit.ps1: svn commit keeps -- before $commitTargets' $?
+        grep -q 'svn add .*--targets' "$PS_SUBMIT"
+        assertTrue 'Submit-SvnCommit.ps1: svn add uses --targets' $?
+        grep -q 'svn delete .*--targets' "$PS_SUBMIT"
+        assertTrue 'Submit-SvnCommit.ps1: svn delete uses --targets' $?
+        grep -q 'svn commit .*--targets' "$PS_SUBMIT"
+        assertTrue 'Submit-SvnCommit.ps1: svn commit uses --targets' $?
+
+        if grep -qE 'svn (add|delete|commit)[^#]*-- \$(toAdd|toDel|commitTargets)' "$PS_SUBMIT"; then
+            fail 'Submit-SvnCommit.ps1 expands a path array onto the command line again (argv regression)'
+        else
+            assertTrue 'Submit-SvnCommit.ps1 keeps paths out of argv' 0
+        fi
     fi
 }
 
@@ -198,6 +220,35 @@ test_leading_dash_filename_captures_and_repasses_with_terminator() {
         echo "WARNING: leading-dash re-pass unavailable in this shell env (console codepage / svn); capture verified above." >&2
         assertTrue 'leading-dash re-pass env-gated (capture verified above)' 0
     fi
+}
+
+# ── The assumption the structural guard now rests on ──────────────────────────
+# Dropping `--` is only safe because paths stopped being argv: inside a --targets file a
+# leading-dash name is data, not an option. That is load-bearing for the re-pointed guard above,
+# so it is asserted here instead of living in someone's one-off verification.
+test_leading_dash_filename_repasses_via_targets_file() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local wc fn targets
+    wc="$(_make_wc)" || { startSkipping; return 0; }
+    fn='-x.txt'
+    printf 'hello\n' > "$wc/$fn"
+    targets="$wc/../targets-dash-$RANDOM.txt"
+    # Peg-escaped exactly as the submit scripts write it (issue #34), and NO `--` anywhere.
+    printf '%s\n' "$fn@" > "$targets"
+
+    if ( cd "$wc" && svn add --targets "$targets" >/dev/null 2>&1 \
+         && svn commit --targets "$targets" -m 'add dash via targets' >/dev/null 2>&1 ); then
+        _load_svn_status_xml
+        if printf '%s\n' "$(svn_status_xml "$wc")" | grep -qF -- "$fn"; then
+            fail 'leading-dash file still unversioned after a --targets commit'
+        else
+            assertTrue 'leading-dash filename commits through a targets file without --' 0
+        fi
+    else
+        echo "WARNING: --targets re-pass unavailable in this shell env; skipping the behavioural half." >&2
+        assertTrue 'targets re-pass env-gated' 0
+    fi
+    rm -f "$targets"
 }
 
 # ── Re-pass round-trip: capture asserted always; native argv re-pass env-gated ──
