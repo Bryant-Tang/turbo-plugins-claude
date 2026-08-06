@@ -831,14 +831,21 @@ svn_url_at_rev() {
 #
 # `svn update -r R` cannot cross a rename: the WC is bound to the path as it existed at its own
 # revision, and updating to a revision where that path no longer exists fails with E160005. When the
-# caller knows the URL this path has at <rev>, switching to it (with an explicit peg) moves the WC
-# to the right place instead. --ignore-ancestry because a rename IS a delete+copy: svn otherwise
-# refuses the switch for having no common ancestry.
-# <target_url> empty (the common case: nothing was ever renamed) keeps the plain update path, so
-# repositories without renames behave exactly as before.
-# Args: <remote_path> <rev> [<target_url>]
+# URL this path has at <rev> is known, switching to it (with an explicit peg) moves the WC to the
+# right place instead. --ignore-ancestry because a rename IS a delete+copy: svn otherwise refuses
+# the switch for having no common ancestry.
+#
+# Two ways in, and BOTH are needed:
+#   - <target_url> non-empty: the caller already detected a rename across the range, so switch
+#     straight away instead of failing first.
+#   - <target_url> empty but <base_url> given: try the plain update, and if it fails, resolve this
+#     revision's own URL and switch. This is what covers a rename the range-endpoint check cannot
+#     see -- a path renamed A->B->A INSIDE one pending window looks unrenamed at both ends, yet the
+#     revisions in the middle live at B. Paying for the lookup only after a failure keeps the
+#     common (never-renamed) case at exactly one svn call, as before.
+# Args: <remote_path> <rev> [<target_url>] [<base_url>] [<peg_rev>]
 svn_position_wc_at_rev() {
-  local remote_path="$1" rev="$2" target_url="${3:-}" wc_url
+  local remote_path="$1" rev="$2" target_url="${3:-}" base_url="${4:-}" peg_rev="${5:-}" wc_url recovered
 
   if [[ -n "$target_url" ]]; then
     wc_url="$(svn info --show-item url "$remote_path" 2>/dev/null | tr -d '\r\n')"
@@ -849,12 +856,29 @@ svn_position_wc_at_rev() {
     fi
   fi
 
-  ( cd "$remote_path" && svn update -r "$rev" ) || { echo "Error: svn update -r $rev failed" >&2; return 1; }
+  if ( cd "$remote_path" && svn update -r "$rev" ); then
+    return 0
+  fi
+
+  # Update failed. If we can ask where this path lived at <rev>, a mid-range rename is the likely
+  # cause; switching there is a recovery, not a guess -- the URL comes from svn's own copy history.
+  if [[ -n "$base_url" && -n "$peg_rev" ]]; then
+    recovered="$(svn_url_at_rev "$base_url" "$peg_rev" "$rev" || true)"
+    if [[ -n "$recovered" ]]; then
+      echo "Note: r$rev is not reachable at the current path; following the rename to $recovered" >&2
+      ( cd "$remote_path" && svn switch --ignore-ancestry -r "$rev" "${recovered}@${rev}" ) \
+        || { echo "Error: svn switch to ${recovered}@${rev} failed" >&2; return 1; }
+      return 0
+    fi
+  fi
+
+  echo "Error: svn update -r $rev failed" >&2
+  return 1
 }
 
 svn_replay_one_revision() {
-  local remote_path="$1" rev="$2" author="$3" date="$4" message="$5" target_url="${6:-}" wc
-  svn_position_wc_at_rev "$remote_path" "$rev" "$target_url" || return 1
+  local remote_path="$1" rev="$2" author="$3" date="$4" message="$5" target_url="${6:-}" base_url="${7:-}" peg_rev="${8:-}" wc
+  svn_position_wc_at_rev "$remote_path" "$rev" "$target_url" "$base_url" "$peg_rev" || return 1
   wc="$(svn info --show-item revision "$remote_path" | tr -d '[:space:]')"
   if [[ "$wc" != "$rev" ]]; then
     echo "Error: remote worktree not uniformly at r$rev (got r$wc); refusing per-revision replay." >&2
@@ -951,11 +975,11 @@ svn_replay_dispatch() {
     echo "Replaying ${#REC_REV[@]} SVN revision(s) r$((cur + 1))..r$head_rev into $remote_name..."
     for i in "${!REC_REV[@]}"; do
       svn_replay_one_revision "$remote_path" "${REC_REV[$i]}" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" \
-        "$(_replay_target_url "${REC_REV[$i]}")" || return 1
+        "$(_replay_target_url "${REC_REV[$i]}")" "$base_url" "$head_rev" || return 1
     done
   elif [[ "$mode" == "squash" ]]; then
     echo "Squashing SVN r$((cur + 1))..r$head_rev into one commit in $remote_name..."
-    svn_position_wc_at_rev "$remote_path" "$head_rev" "$(_replay_target_url "$head_rev")" || return 1
+    svn_position_wc_at_rev "$remote_path" "$head_rev" "$(_replay_target_url "$head_rev")" "$base_url" "$head_rev" || return 1
     svn_boundary_commit "$remote_path" "$head_rev" || return 1
   elif [[ "$mode" == "range" ]]; then
     if [[ ! "$range" =~ ^[0-9]+:[0-9]+$ ]]; then
@@ -970,7 +994,7 @@ svn_replay_dispatch() {
     echo "Replaying r$lo..r$hi per-revision, squashing the rest, into $remote_name..."
     # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
     if (( lo - 1 >= cur + 1 )); then
-      svn_position_wc_at_rev "$remote_path" "$((lo - 1))" "$(_replay_target_url "$((lo - 1))")" || return 1
+      svn_position_wc_at_rev "$remote_path" "$((lo - 1))" "$(_replay_target_url "$((lo - 1))")" "$base_url" "$head_rev" || return 1
       svn_boundary_commit "$remote_path" "$((lo - 1))" || return 1
     fi
     # Per-revision inside [lo,hi].
@@ -978,12 +1002,12 @@ svn_replay_dispatch() {
       r="${REC_REV[$i]}"
       if (( r >= lo && r <= hi )); then
         svn_replay_one_revision "$remote_path" "$r" "${REC_AUTHOR[$i]}" "${REC_DATE[$i]}" "${REC_MSG[$i]}" \
-          "$(_replay_target_url "$r")" || return 1
+          "$(_replay_target_url "$r")" "$base_url" "$head_rev" || return 1
       fi
     done
     # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=head_rev.
     if (( hi < head_rev )); then
-      svn_position_wc_at_rev "$remote_path" "$head_rev" "$(_replay_target_url "$head_rev")" || return 1
+      svn_position_wc_at_rev "$remote_path" "$head_rev" "$(_replay_target_url "$head_rev")" "$base_url" "$head_rev" || return 1
       svn_boundary_commit "$remote_path" "$head_rev" || return 1
     fi
   else

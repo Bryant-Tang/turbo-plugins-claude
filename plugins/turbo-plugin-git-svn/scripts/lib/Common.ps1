@@ -699,16 +699,25 @@ function Get-SvnUrlAtRev {
 #
 # `svn update -r R` cannot cross a rename: the WC is bound to the path as it existed at its own
 # revision, and updating to a revision where that path no longer exists fails with E160005. When the
-# caller knows the URL this path has at -Rev, switching to it (with an explicit peg) moves the WC to
-# the right place instead. --ignore-ancestry because a rename IS a delete+copy: svn otherwise
-# refuses the switch for having no common ancestry.
-# -TargetUrl empty (the common case: nothing was renamed) keeps the plain update path, so
-# repositories without renames behave exactly as before.
+# URL this path has at -Rev is known, switching to it (with an explicit peg) moves the WC to the
+# right place instead. --ignore-ancestry because a rename IS a delete+copy: svn otherwise refuses
+# the switch for having no common ancestry.
+#
+# Two ways in, and BOTH are needed:
+#   - -TargetUrl given: the caller already detected a rename across the range, so switch straight
+#     away instead of failing first.
+#   - -TargetUrl empty but -BaseUrl given: try the plain update, and if it fails, resolve this
+#     revision's own URL and switch. This is what covers a rename the range-endpoint check cannot
+#     see -- a path renamed A->B->A INSIDE one pending window looks unrenamed at both ends, yet the
+#     revisions in the middle live at B. Paying for the lookup only after a failure keeps the
+#     common (never-renamed) case at exactly one svn call, as before.
 function Set-SvnWcPosition {
     param(
         [Parameter(Mandatory = $true)][string]$RemotePath,
         [Parameter(Mandatory = $true)][int]$Rev,
-        [string]$TargetUrl = ''
+        [string]$TargetUrl = '',
+        [string]$BaseUrl = '',
+        [int]$PegRev = 0
     )
     if (-not [string]::IsNullOrWhiteSpace($TargetUrl)) {
         $wcUrl = (& svn info --show-item url $RemotePath | Out-String).Trim()
@@ -724,13 +733,42 @@ function Set-SvnWcPosition {
         }
     }
 
+    # EAP-softened so a failed update surfaces as a non-zero exit we can act on, rather than a
+    # terminating NativeCommandError thrown the moment svn writes to stderr.
+    $updateExit = 0
     Push-Location $RemotePath
     try {
-        & svn update -r $Rev
-        if ($LASTEXITCODE -ne 0) { throw "svn update -r $Rev failed" }
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & svn update -r $Rev
+            $updateExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
     } finally {
         Pop-Location
     }
+    if ($updateExit -eq 0) { return }
+
+    # Update failed. If we can ask where this path lived at -Rev, a mid-range rename is the likely
+    # cause; switching there is a recovery, not a guess -- the URL comes from svn's own copy history.
+    if (-not [string]::IsNullOrWhiteSpace($BaseUrl) -and $PegRev -gt 0) {
+        $recovered = Get-SvnUrlAtRev -BaseUrl $BaseUrl -PegRev $PegRev -Rev $Rev
+        if (-not [string]::IsNullOrWhiteSpace($recovered)) {
+            [Console]::Error.WriteLine("Note: r$Rev is not reachable at the current path; following the rename to $recovered")
+            Push-Location $RemotePath
+            try {
+                & svn switch --ignore-ancestry -r $Rev "$recovered@$Rev"
+                if ($LASTEXITCODE -ne 0) { throw "svn switch to $recovered@$Rev failed" }
+            } finally {
+                Pop-Location
+            }
+            return
+        }
+    }
+
+    throw "svn update -r $Rev failed"
 }
 
 function Invoke-SvnOneReplay {
@@ -740,9 +778,11 @@ function Invoke-SvnOneReplay {
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Author,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Date,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message,
-        [string]$TargetUrl = ''
+        [string]$TargetUrl = '',
+        [string]$BaseUrl = '',
+        [int]$PegRev = 0
     )
-    Set-SvnWcPosition -RemotePath $RemotePath -Rev $Rev -TargetUrl $TargetUrl
+    Set-SvnWcPosition -RemotePath $RemotePath -Rev $Rev -TargetUrl $TargetUrl -BaseUrl $BaseUrl -PegRev $PegRev
     $wc = [int]((& svn info --show-item revision $RemotePath | Out-String).Trim())
     if ($wc -ne $Rev) { throw "Remote worktree not uniformly at r$Rev (got r$wc); refusing per-revision replay." }
     return (Invoke-SvnReplayCommit -RepoDir $RemotePath -Rev $Rev -Author $Author -Date $Date -Message $Message)
@@ -849,12 +889,12 @@ svn log failed for r$($Cur + 1):r$HeadRev on $BaseUrl@$HeadRev
     if ($Mode -eq 'per-revision') {
         Write-Output "Replaying $(@($revs).Count) SVN revision(s) r$($Cur + 1)..r$HeadRev into $RemoteName..."
         foreach ($rec in $revs) {
-            $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message -TargetUrl (& $targetUrlFor $rec.Rev)
+            $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message -TargetUrl (& $targetUrlFor $rec.Rev) -BaseUrl $BaseUrl -PegRev $HeadRev
         }
     }
     elseif ($Mode -eq 'squash') {
         Write-Output "Squashing SVN r$($Cur + 1)..r$HeadRev into one commit in $RemoteName..."
-        Set-SvnWcPosition -RemotePath $RemotePath -Rev $HeadRev -TargetUrl (& $targetUrlFor $HeadRev)
+        Set-SvnWcPosition -RemotePath $RemotePath -Rev $HeadRev -TargetUrl (& $targetUrlFor $HeadRev) -BaseUrl $BaseUrl -PegRev $HeadRev
         Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev $HeadRev
     }
     elseif ($Mode -eq 'range') {
@@ -868,18 +908,18 @@ svn log failed for r$($Cur + 1):r$HeadRev on $BaseUrl@$HeadRev
         Write-Output "Replaying r$lo..r$hi per-revision, squashing the rest, into $RemoteName..."
         # Leading squash: r(cur+1)..r(lo-1) -> one boundary commit at r(lo-1). Skipped when lo==cur+1.
         if (($lo - 1) -ge ($Cur + 1)) {
-            Set-SvnWcPosition -RemotePath $RemotePath -Rev ($lo - 1) -TargetUrl (& $targetUrlFor ($lo - 1))
+            Set-SvnWcPosition -RemotePath $RemotePath -Rev ($lo - 1) -TargetUrl (& $targetUrlFor ($lo - 1)) -BaseUrl $BaseUrl -PegRev $HeadRev
             Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev ($lo - 1)
         }
         # Per-revision inside [lo,hi].
         foreach ($rec in $revs) {
             if ($rec.Rev -ge $lo -and $rec.Rev -le $hi) {
-                $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message -TargetUrl (& $targetUrlFor $rec.Rev)
+                $null = Invoke-SvnOneReplay -RemotePath $RemotePath -Rev $rec.Rev -Author $rec.Author -Date $rec.Date -Message $rec.Message -TargetUrl (& $targetUrlFor $rec.Rev) -BaseUrl $BaseUrl -PegRev $HeadRev
             }
         }
         # Trailing squash: r(hi+1)..rHEAD -> one boundary commit at rHEAD. Skipped when hi>=HeadRev.
         if ($hi -lt $HeadRev) {
-            Set-SvnWcPosition -RemotePath $RemotePath -Rev $HeadRev -TargetUrl (& $targetUrlFor $HeadRev)
+            Set-SvnWcPosition -RemotePath $RemotePath -Rev $HeadRev -TargetUrl (& $targetUrlFor $HeadRev) -BaseUrl $BaseUrl -PegRev $HeadRev
             Invoke-SvnBoundaryCommit -RemotePath $RemotePath -Rev $HeadRev
         }
     }

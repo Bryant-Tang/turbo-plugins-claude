@@ -199,6 +199,13 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
 
    只講**資料夾名**的變化就好,不要把整串 URL 或 token 原樣貼給使用者。
 
+   > **匯入途中出現 `svn: E160005: Target path ... does not exist`,只要緊接著有
+   > `Note: r<N> is not reachable at the current path; following the rename to ...`,那就不是失敗。**
+   > 資料夾在匯入範圍**中途**改過名(甚至改走又改回來)時,腳本是刻意「先照常試,失敗了才去查那個修訂
+   > 當時的位置」——沒改過名的專案因此一次多餘查詢都不用付。那行 E160005 是觸發修正的訊號,後面的
+   > `At revision <N>.` 就是已經跨過去了。**不要**把這行 svn 錯誤轉述給使用者當成問題;整個匯入的成敗
+   > 看最後有沒有 `SVN bridge connected.` 與腳本的離開碼。
+
 3c. **目標專案已連著 git 遠端(`TP_TOKEN:EXISTING_GIT_REMOTE remotes=<names>`)→ 確認後才重呼叫**。腳本在**動任何
    東西之前**偵測到目標 repo 已設定 git remote 時印此 token 並非零 exit(**零變更、可乾淨重跑**)。這絕大多數
    情況代表**跑錯資料夾**——本 plugin 是給「只能用 SVN、沒有 git 伺服器」的專案用的。agent:

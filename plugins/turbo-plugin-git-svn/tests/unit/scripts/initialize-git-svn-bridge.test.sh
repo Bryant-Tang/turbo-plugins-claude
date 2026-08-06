@@ -161,6 +161,34 @@ make_svn_repo_ancestor_renamed() {
     printf '%s' "$uri/SRC/NEW/proj/trunk"
 }
 
+# Build an svn repo where the ancestor is renamed AWAY and then BACK inside one import window:
+#   r1 mkdir /SRC/A/proj/trunk, r2 import, r3 move A->B, r4 commit under B, r5 move B->A, r6 commit
+# The endpoints (r2 and HEAD) therefore BOTH sit at /SRC/A/proj/trunk, so a rename check that only
+# compares the two ends sees nothing -- while r4 genuinely lives at /SRC/B/proj/trunk and cannot be
+# reached by a plain `svn update -r`.
+make_svn_repo_ancestor_rename_roundtrip() {
+    local repo="$1" uri co
+    svnadmin create "$repo" >/dev/null 2>&1 || return 1
+    uri="$(svn_uri "$repo")"
+    svn mkdir --parents -m 'r1: layout' "$uri/SRC/A/proj/trunk" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    co="$SB/co-rt-$RANDOM"
+    svn checkout "$uri/SRC/A/proj/trunk" "$co" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    printf 'a\n' > "$co/a.txt"
+    svn add "$co/a.txt" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    ( cd "$co" && svn commit -m 'r2: first import' --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+    svn move -m 'r3: A -> B' "$uri/SRC/A" "$uri/SRC/B" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    ( cd "$co" && svn switch --ignore-ancestry "$uri/SRC/B/proj/trunk" --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+    printf 'b\n' > "$co/b.txt"
+    svn add "$co/b.txt" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    ( cd "$co" && svn commit -m 'r4: while named B' --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+    svn move -m 'r5: B -> A' "$uri/SRC/B" "$uri/SRC/A" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    ( cd "$co" && svn switch --ignore-ancestry "$uri/SRC/A/proj/trunk" --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+    printf 'c\n' > "$co/c.txt"
+    svn add "$co/c.txt" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    ( cd "$co" && svn commit -m 'r6: renamed back to A' --config-dir "$CFG" >/dev/null 2>&1 ) || return 1
+    printf '%s' "$uri/SRC/A/proj/trunk"
+}
+
 # Count of MARKED revisions (refs/tp/svn/<N>) -- one per replayed revision.
 count_trailer_commits() {
     git -C "$1" for-each-ref --format='%(refname:lstrip=3)' 'refs/tp/svn/*' 2>/dev/null \
@@ -259,6 +287,46 @@ test_ancestor_rename_is_followed() {
     # And the working copy ends up on the CURRENT path, so later pulls keep working.
     wc_url="$(svn info --show-item url "$bridge" --config-dir "$CFG" 2>/dev/null | tr -d '\r\n')"
     case "$wc_url" in */SRC/NEW/proj/trunk) assertTrue 'wc left on the current path' 0 ;; *) fail "wc left on: $wc_url" ;; esac
+}
+
+# ── Rename AWAY and BACK inside one window (the endpoint check cannot see this) ────────────────
+# Raised in PR review: comparing only "URL at the first pending revision" against "URL at HEAD"
+# reports no rename when a path went A->B->A, yet the revisions in the middle live at B and a plain
+# `svn update -r` cannot reach them. The recovery path (resolve that revision's own URL, then
+# switch) is what makes this work, so it gets its own case.
+test_ancestor_rename_roundtrip_is_followed() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root bridge url out rc
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    url="$(make_svn_repo_ancestor_rename_roundtrip "$SB/svnrepo-roundtrip")"
+    if [ -z "$url" ]; then startSkipping; return 0; fi
+
+    # --granularity per-revision is REQUIRED here, not incidental: this fixture has 6 revisions,
+    # which is over the prompt threshold, so without it the script correctly stops at
+    # GRANULARITY_REQUIRED having built nothing -- and every content assertion below would then be
+    # failing for the wrong reason. Passing it also exercises the #33 fix (an explicit granularity
+    # is honoured rather than silently dropped).
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$url" --granularity per-revision 2>&1)"; rc=$?
+    case "$out" in *GRANULARITY_REQUIRED*) fail "granularity prompt despite an explicit choice: $out" ;; esac
+    assertEquals "round-trip rename bootstrap exits 0 (out: $out)" 0 "$rc"
+
+    # NOTE: an E160005 in the output is EXPECTED here, not a failure. The recovery is deliberately
+    # "try the plain update, and only pay for a URL lookup once it fails", so svn reports the
+    # unreachable path first and the switch follows. What must be true is that the replay RECOVERED
+    # -- asserted by the note below plus the content checks.
+    case "$out" in
+        *'following the rename to'*) assertTrue 'recovered by following the rename' 0 ;;
+        *) fail "no rename recovery happened; the mid-window rename went unnoticed: $out" ;;
+    esac
+
+    bridge="$(bridge_path "$root")"
+    # Content from ALL THREE phases must be present: before the rename, while renamed, after the
+    # rename back. The middle one is the whole point.
+    assertTrue 'pre-rename file present'   "[ -f '$bridge/a.txt' ]"
+    assertTrue 'interim-name file present' "[ -f '$bridge/b.txt' ]"
+    assertTrue 'post-rename file present'  "[ -f '$bridge/c.txt' ]"
+    assertTrue 'bridge worktree clean' "[ -z \"\$(git -C '$bridge' status --porcelain)\" ]"
 }
 
 test_case_a_empty_trunk_in_populated_repo() {
