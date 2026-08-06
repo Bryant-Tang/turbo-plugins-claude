@@ -38,10 +38,17 @@ if [ "$#" -gt 0 ]; then
   exit 2
 fi
 
+# Diagnostics go to stderr, never stdout: stdout is the result and the caller writes it straight
+# into GITHUB_OUTPUT, so a second line there would corrupt the step output. They exist because
+# `ALL` on its own does not say WHY everything is about to run -- reading that back out of a CI
+# log is how anyone diagnoses a suite that ran when it did not need to.
+note() { printf '%s\n' "affected-plugins: $*" >&2; }
+
 input="$(cat)"
 
 # No paths at all means we learned nothing about the change, not that nothing changed.
 if [ -z "$input" ]; then
+  note 'no paths on stdin; widening to ALL'
   echo 'ALL'
   exit 0
 fi
@@ -61,6 +68,7 @@ while IFS= read -r f; do
       esac
       ;;
     *)
+      note "'$f' is not under plugins/<name>/; widening to ALL"
       echo 'ALL'
       exit 0
       ;;
@@ -70,6 +78,7 @@ done <<< "$input"
 # Reachable when every input line was blank -- treat it like empty input, not like "no plugin
 # is affected", which would skip every suite.
 if [ -z "$touched" ]; then
+  note 'no attributable paths on stdin; widening to ALL'
   echo 'ALL'
   exit 0
 fi

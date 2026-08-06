@@ -19,9 +19,16 @@ SCRIPT_UNDER_TEST="$TOOLS_DIR/affected-plugins.sh"
 SHUNIT2="$TOOLS_DIR/tests/lib/shunit2"
 
 # Feed paths on stdin, capture the single output line. Exit code lands in $RC.
+# stderr is deliberately NOT captured here: the diagnostics belong there, and every assertion
+# below would break if they ever leaked into stdout.
 run_with() {
     RC=0
-    OUT="$(printf '%s' "$1" | bash "$SCRIPT_UNDER_TEST")" || RC=$?
+    OUT="$(printf '%s' "$1" | bash "$SCRIPT_UNDER_TEST" 2>/dev/null)" || RC=$?
+}
+
+# Same, but stderr instead of stdout.
+err_of() {
+    printf '%s' "$1" | bash "$SCRIPT_UNDER_TEST" 2>&1 >/dev/null
 }
 
 test_script_exists() {
@@ -176,6 +183,44 @@ test_no_leading_space_in_list() {
     # would look wrong in logs and break naive equality checks.
     run_with 'plugins/turbo-plugin-git-svn/a.sh'
     assertEquals "$OUT" "${OUT# }"
+}
+
+# ── diagnostics: on stderr, and they name the culprit ────────────────────────
+# Widening to ALL without saying why leaves whoever reads the CI log with no way to tell a
+# correct decision from a bug. But the caller writes stdout straight into GITHUB_OUTPUT, so
+# these must never appear there.
+
+test_widening_names_the_offending_path_on_stderr() {
+    local e
+    e="$(err_of 'plugins/turbo-plugin-git-svn/a.sh
+release-please-config.json')"
+    assertNotNull 'stderr should not be empty when widening' "$e"
+    case "$e" in
+        *release-please-config.json*) ;;
+        *) fail "stderr should name the path that forced ALL; got: $e" ;;
+    esac
+}
+
+test_diagnostics_never_reach_stdout() {
+    # Same input as above: stdout must still be the single word ALL.
+    local o
+    o="$(printf 'plugins/turbo-plugin-git-svn/a.sh\nrelease-please-config.json\n' \
+        | bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"
+    assertEquals 'ALL' "$o"
+    assertEquals '1' "$(printf '%s\n' "$o" | wc -l | tr -d '[:space:]')"
+}
+
+test_empty_input_explains_itself_on_stderr() {
+    local e
+    e="$(err_of '')"
+    assertNotNull 'empty input should still explain why it widened' "$e"
+}
+
+test_narrowing_case_stays_quiet() {
+    # A clean attribution needs no explanation; noise on every run trains people to ignore it.
+    local e
+    e="$(err_of 'plugins/turbo-plugin-git-svn/a.sh')"
+    assertEquals 'no diagnostics when the answer is a real subset' '' "$e"
 }
 
 test_unexpected_argument_is_a_usage_error() {
