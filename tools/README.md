@@ -44,6 +44,10 @@ CI 由 `tests.yml` 的 **`tools-tests`** job 跑，而該 job **在 `tests-passe
   skill plugin）；`tools/` 現在有測試，探索不到只代表被改名或刪掉了，那正是「安靜地變綠」。
 - **邏輯是被呼叫、不是被複製。** `affected-plugins.sh` 從 `tests.yml` 的 `run:` 區塊裡抽出來，
   workflow 改成呼叫它。如果留兩份拷貝，測試會對著沒人跑的那份一直全綠。
+- **stdout 是結果，診斷走 stderr。** 呼叫端把 stdout 直接寫進 `GITHUB_OUTPUT`，多一行就把 step
+  output 弄壞了。所以 `affected-plugins.sh` 退回 `ALL` 時會在 **stderr** 說明是哪個路徑造成的——
+  想知道「為什麼這次全部都跑了」，去 CI log 的 `Compute affected plugins` 那個 step 找那一行。
+  反過來，答案是真子集時完全不出聲：每次都印會訓練人忽略它。
 
 ### 還沒被測到的
 
