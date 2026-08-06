@@ -2,6 +2,21 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.1.0...turbo-plugin-git-svn--v0.1.1) (2026-08-06)
+
+
+### Fixed
+
+* **git-svn:** SVN 祖先資料夾改過名時,首次匯入照樣能跨過去 ([c1d0478](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c1d0478c810ad7b5ced5cce2fadc2cc9d9dccb47)), closes [#32](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/32) [#33](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/33)
+* **git-svn:** 展開新資料夾時,Linux 上的 .git/.svn 排除也要生效 ([7bf0777](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7bf0777a4b899c8b5ef8bd71cc193732641d95c2))
+* **git-svn:** 幾千個檔案的推送不再撞命令列長度上限 ([be48535](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/be48535e1c61c002bba40af64e46b664ce1a3f28)), closes [#35](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/35)
+* **git-svn:** 推送清單展開全新資料夾內的檔案,svn 太舊時直接說要升級 ([77d2229](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/77d22296c8a77334a304bf033aed29d608f1b431)), closes [#24](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/24) [#26](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/26)
+* **git-svn:** 檔名含 @ 不再讓整批推送失敗,失敗後也講清楚怎麼收拾 ([f2e0250](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f2e025092687742ed47b067290f2a103e1369d34)), closes [#34](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/34)
+* **git-svn:** 檔名編碼提醒改看實際字碼頁,不再假設是中文版 Windows ([73572e3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/73572e3e5f8d48c9da36f18bfc0320af1311bde8)), closes [#27](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/27)
+* **git-svn:** 系統設成 UTF-8 的機器上,targets 檔不再被加上 BOM ([ead9309](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/ead9309f28c79d2e1d06a52e658a9a07d0603a2c))
+* **git-svn:** 資料夾改名又改回來時,中間那幾個修訂也追得到 ([c61cad7](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c61cad70df9517e3a4ddb5f051c7cffce964845b))
+* 修掉全部 open issue(dotnet 兩顆、git-svn 七顆) ([66d20a1](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/66d20a119b15d274882e62d7e7491f5d538f56a4))
+
 ## [Unreleased]
 
 ## [0.1.0] - 2026-06-20
