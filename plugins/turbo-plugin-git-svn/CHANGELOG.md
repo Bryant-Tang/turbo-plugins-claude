@@ -15,7 +15,6 @@
 * **git-svn:** 檔名編碼提醒改看實際字碼頁,不再假設是中文版 Windows ([73572e3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/73572e3e5f8d48c9da36f18bfc0320af1311bde8)), closes [#27](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/27)
 * **git-svn:** 系統設成 UTF-8 的機器上,targets 檔不再被加上 BOM ([ead9309](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/ead9309f28c79d2e1d06a52e658a9a07d0603a2c))
 * **git-svn:** 資料夾改名又改回來時,中間那幾個修訂也追得到 ([c61cad7](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c61cad70df9517e3a4ddb5f051c7cffce964845b))
-* 修掉全部 open issue(dotnet 兩顆、git-svn 七顆) ([66d20a1](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/66d20a119b15d274882e62d7e7491f5d538f56a4))
 
 ## [Unreleased]
 
