@@ -90,6 +90,12 @@ jobs:
       # plugins/ (tools/, .github/, root config -- any of which can affect every plugin). Getting
       # this wrong in the other direction means silently not testing something, and this repo has
       # been bitten by "quiet enough to look green" before.
+      #
+      # This step owns only what needs event/API context: resolving base..head, calling compare,
+      # and noticing a possibly-truncated response. The path CLASSIFICATION lives in
+      # tools/affected-plugins.sh so it can be tested (tools/tests/, run by the `tools-tests` job).
+      # It is called, NOT copied: a second copy of the branching would drift from this one and the
+      # tests would keep passing against the copy nobody runs.
       - name: Compute affected plugins
         id: affected
         env:
@@ -146,24 +152,18 @@ jobs:
             exit 0
           fi
 
-          touched=''
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            case "$f" in
-              plugins/*/*)
-                p="${f#plugins/}"; p="plugins/${p%%/*}"
-                case " $touched " in *" $p "*) ;; *) touched="$touched $p" ;; esac
-                ;;
-              *)
-                echo "Change outside plugins/ ($f); testing every plugin."
-                echo 'list=ALL' >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-            esac
-          done <<< "$files"
+          touched="$(printf '%s\n' "$files" | bash tools/affected-plugins.sh)"
+          rc=$?
+          # The classifier answers ALL for anything it cannot attribute, so a non-zero exit means
+          # it did not run at all (missing file, unreadable, bad invocation) -- not "no plugins".
+          # Taking its empty output at face value there would skip every suite.
+          if [ "$rc" -ne 0 ] || [ -z "$touched" ]; then
+            echo "tools/affected-plugins.sh did not produce a result (exit ${rc}); testing every plugin."
+            echo 'list=ALL' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          touched="${touched# }"
-          echo "Affected plugin(s): ${touched:-<none>}"
+          echo "Affected plugin(s): ${touched}"
           echo "list=${touched}" >> "$GITHUB_OUTPUT"
 
   # ── test-windows ────────────────────────────────────────────────────────────
@@ -424,6 +424,27 @@ jobs:
         shell: bash
         run: bash tools/verify-core-identical.sh
 
+  # ── tools-tests (repo-level tools/, NOT a plugin) ───────────────────────────
+  # tools/ sits outside plugins/, so the convention-based discovery above never sees it and the
+  # affected-plugins gate never applies (a change under tools/ makes every plugin affected
+  # anyway). It gets its own job, and that job is in `tests-passed`'s needs -- a suite nothing
+  # depends on is a suite that can stop running unnoticed.
+  #
+  # ubuntu only, deliberately: what these tests cover is bash consumed by GitHub Actions
+  # `shell: bash`, and that is where it runs. Add a windows leg when something under tools/ has
+  # behaviour that differs there.
+  tools-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run tools orchestrator (shUnit2)
+        shell: bash
+        run: bash tools/tests/invoke-script-tests.sh
+
   # ── tests-passed ────────────────────────────────────────────────────────────
   # The ONE check branch protection should point at. Its whole purpose is to have a name that never
   # changes.
@@ -445,7 +466,7 @@ jobs:
     # Without always(), this job is SKIPPED when an upstream job fails -- so it would stop
     # reporting at exactly the moment it matters, and a skipped required check never turns red.
     if: always()
-    needs: [discover, verify-core-identical, test-ubuntu, test-windows]
+    needs: [discover, verify-core-identical, tools-tests, test-ubuntu, test-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every test job succeeded
@@ -453,18 +474,20 @@ jobs:
         env:
           DISCOVER: ${{ needs.discover.result }}
           CORE: ${{ needs.verify-core-identical.result }}
+          TOOLS: ${{ needs.tools-tests.result }}
           UBUNTU: ${{ needs.test-ubuntu.result }}
           WINDOWS: ${{ needs.test-windows.result }}
         run: |
           echo "discover:              $DISCOVER"
           echo "verify-core-identical: $CORE"
+          echo "tools-tests:           $TOOLS"
           echo "test-ubuntu:           $UBUNTU"
           echo "test-windows:          $WINDOWS"
           # `skipped` and `cancelled` fail here too, on purpose: a test job that did not run is not
           # evidence that anything passed. This repo has already been bitten by "quiet enough to
           # look green" more than once.
           failed=0
-          for r in "$DISCOVER" "$CORE" "$UBUNTU" "$WINDOWS"; do
+          for r in "$DISCOVER" "$CORE" "$TOOLS" "$UBUNTU" "$WINDOWS"; do
             if [ "$r" != "success" ]; then failed=1; fi
           done
           if [ "$failed" -ne 0 ]; then
