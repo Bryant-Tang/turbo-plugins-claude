@@ -155,6 +155,12 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
 
 > 先前的「Skill 測試（人工、可重複）」層已退役——改以**自動化測試為唯一常駐驗證標準**。不再維護 `tests/docs/` 手動測試流程文件（schema / session 計畫 / budget / rollback / fail-then-fix）。
 
+**`tools/` 的 repo 層級腳本同樣要測**，佈局沿用 plugin 的 `tests/`（`tools/tests/invoke-script-tests.sh` + `unit/*.test.sh` + vendored `lib/shunit2`），由 `tests.yml` 的 `tools-tests` job 執行。細節與幾條刻意的決定（為何不做 `.ps1` 孿生、為何探索到零個測試檔要 FAIL）寫在 `tools/README.md`。
+
+**新增任何 CI job 都要加進 `tests-passed` 的 `needs`**：branch protection 只指向 `tests-passed` 這一個 check，沒被它 `needs` 到的 job 失敗**不會擋 merge**——一個沒人依賴的測試就是一個可以無聲停跑的測試。
+
+**判斷邏輯不要留在 workflow 的 `run:` 區塊裡**：那種程式碼只能靠 push 才驗得到，而它壞掉的方向通常不是紅燈，是「某些測試根本沒跑、畫面卻全綠」。抽成 `tools/` 底下的腳本、讓 workflow **呼叫**它（不是複製一份），再補測試。已經這樣處理的：`tools/affected-plugins.sh`。
+
 共通原則：
 
 - **Path-free**：所有測試（含 fixture、sandbox）一律不得寫死機器專屬絕對路徑；工作根用 repo 相對的 gitignored sandbox。
