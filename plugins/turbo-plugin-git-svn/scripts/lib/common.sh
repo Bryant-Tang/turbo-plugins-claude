@@ -537,10 +537,37 @@ _svn_ansi_codepage() {
 # Args: <out_file> <path>...
 write_svn_targets_file() {
   local out="$1"; shift
-  local cp
+  local cp non_ascii=0
   cp="$(_svn_ansi_codepage)"
 
-  if [[ -n "$cp" && "$cp" != '65001' ]] && command -v iconv >/dev/null 2>&1; then
+  # Does any path need an encoding that is not plain ASCII? ASCII is byte-identical in UTF-8 and in
+  # every ANSI codepage, so when every path is ASCII the encoding question is moot and none of the
+  # failure paths below apply. grep -E, never grep -P: PCRE mode refuses to run under the non-UTF-8
+  # locales common on zh-TW Git Bash installs.
+  if printf '%s\n' "$@" | LC_ALL=C grep -qE '[^ -~]'; then non_ascii=1; fi
+
+  # No re-encoding needed: either not Windows (svn reads the locale encoding, i.e. UTF-8), or
+  # CP_ACP already IS UTF-8. printf never emits a BOM -- and it must not, because svn would read
+  # those bytes as part of the first path.
+  if [[ "$cp" == '65001' ]] || [[ -z "$cp" && "${OS:-}" != 'Windows_NT' ]]; then
+    printf '%s\n' "$@" > "$out"
+    return 0
+  fi
+
+  # Windows, but the codepage lookup failed. Plain UTF-8 is right for ASCII and wrong for anything
+  # else, so only the non-ASCII case is a problem -- fail there instead of silently writing bytes
+  # svn will misread, which is exactly the mojibake this function exists to prevent.
+  if [[ -z "$cp" ]]; then
+    if (( non_ascii )); then
+      echo "Error: could not determine this system's ANSI codepage, and a path in this commit is not plain ASCII." >&2
+      echo "  Refusing to guess an encoding svn may misread. Run from a shell where reg.exe is available." >&2
+      return 1
+    fi
+    printf '%s\n' "$@" > "$out"
+    return 0
+  fi
+
+  if command -v iconv >/dev/null 2>&1; then
     if printf '%s\n' "$@" | iconv -f UTF-8 -t "CP$cp" > "$out" 2>/dev/null; then
       return 0
     fi
@@ -552,6 +579,12 @@ write_svn_targets_file() {
     return 1
   fi
 
+  # iconv missing (unusual in Git Bash, but possible): same reasoning as the unknown-codepage case.
+  if (( non_ascii )); then
+    echo "Error: 'iconv' is not available, so a non-ASCII path cannot be encoded for your system codepage (CP$cp)." >&2
+    echo "  Refusing to write an encoding svn may misread." >&2
+    return 1
+  fi
   printf '%s\n' "$@" > "$out"
 }
 

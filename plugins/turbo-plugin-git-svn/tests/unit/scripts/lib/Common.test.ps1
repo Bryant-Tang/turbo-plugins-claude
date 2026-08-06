@@ -896,6 +896,25 @@ Describe 'Write-SvnTargetsFile (issue #35)' {
         }
     }
 
+    It 'never writes a BOM, whatever the host codepage is' {
+        # Runs unconditionally, and that is the point: the ANSI test below has to skip when the
+        # host's codepage is already 65001, which left the UTF-8-system-locale branch untested.
+        # On such a host GetEncoding(65001) returns Encoding.UTF8, whose preamble IS a BOM, and
+        # File.WriteAllText emits it -- svn would then read three stray bytes as part of the first
+        # path. That configuration is not exotic: /tp-setup actively recommends it to users who
+        # need filenames beyond their codepage.
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            Write-SvnTargetsFile -Path $f -Targets @('Content/one.txt@')
+            $bytes = [System.IO.File]::ReadAllBytes($f)
+            @($bytes).Count | Should -BeGreaterThan 3
+            $startsWithBom = ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            $startsWithBom | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'writes in the ANSI codepage, not UTF-8, so svn reads the paths back correctly' {
         # svn reads a --targets file through CP_ACP on Windows. A UTF-8 file makes it look for a
         # mojibake path and fail "is not under version control" -- verified against a local repo.

@@ -645,7 +645,20 @@ function Write-SvnTargetsFile {
     $enc = $null
     try {
         $acp = [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage
-        if ($acp -gt 0) { $enc = [System.Text.Encoding]::GetEncoding($acp) }
+        if ($acp -eq 65001) {
+            # CP_ACP is already UTF-8 (the Windows "Use Unicode UTF-8 worldwide" system-locale
+            # option -- which is exactly what /tp-setup recommends to users who need filenames
+            # beyond their codepage, so this is a configuration we actively steer people into).
+            #
+            # It must NOT go through GetEncoding(65001): that returns Encoding.UTF8, whose preamble
+            # is a 3-byte BOM, and File.WriteAllText writes the preamble. svn would then read those
+            # bytes as part of the FIRST path in the file and fail to find it -- the same
+            # "is not under version control" class of failure this function exists to prevent.
+            # The bash side already sidesteps this by not re-encoding at all when cp == 65001.
+            $enc = New-Object System.Text.UTF8Encoding($false)
+        } elseif ($acp -gt 0) {
+            $enc = [System.Text.Encoding]::GetEncoding($acp)
+        }
     } catch {
         $enc = $null
     }
