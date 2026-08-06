@@ -3,10 +3,10 @@
 # Repo-level cross-plugin consistency check (U8 / KTD3) -- PowerShell sibling of
 # verify-core-identical.sh, for local Windows use. Same two checks:
 #
-#   1. Byte-identical shared copies: files copied verbatim into multiple plugins
-#      (universal Core.{ps1,sh} + shared tp-setup base assets) must NOT drift.
-#      Compared byte-for-byte (incl BOM and line endings) vs the canonical
-#      turbo-plugin-git-svn copy.
+#   1. Byte-identical shared copies: files copied verbatim into multiple test suites
+#      (universal Core.{ps1,sh}, shared tp-setup base assets, and the vendored shUnit2
+#      -- including the tools/ copy) must NOT drift. Compared byte-for-byte (incl BOM
+#      and line endings) vs the canonical turbo-plugin-git-svn copy.
 #   2. Marketplace installability: every plugin in marketplace.json points at a
 #      real dir with .claude-plugin/plugin.json and a tests/ orchestrator entry.
 #
@@ -42,12 +42,24 @@ function Test-FilesIdentical {
 # dotnet-framework is absent from the tp-setup asset specs on purpose: its tp-setup was
 # removed (setup is no longer a step for that plugin), so it carries no copy of those assets.
 # Keep this list byte-for-byte in sync with the sh sibling's shared_specs.
+#
+# The vendored shUnit2 is here for the same reason as the rest: every test suite carries its own
+# copy so it stays self-contained, and nothing else was checking that the copies agree. A suite
+# quietly running a different shUnit2 build from its neighbours is exactly the kind of drift that
+# shows up as a test behaving differently in one plugin for no visible reason.
 $sharedSpecs = @(
     @{ Rel = 'scripts/lib/Core.ps1';                            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace') },
     @{ Rel = 'scripts/lib/core.sh';                             Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace') },
     @{ Rel = 'scripts/lib/ps1-delegate.sh';                     Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework') },
     @{ Rel = 'skills/tp-setup/assets/setup-base.md';            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
-    @{ Rel = 'skills/tp-setup/assets/claudemd-base-snippet.md'; Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') }
+    @{ Rel = 'skills/tp-setup/assets/claudemd-base-snippet.md'; Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
+    @{ Rel = 'tests/lib/shunit2';                               Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-code-comment', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace') }
+)
+
+# Copies that do NOT live under plugins/<name>/, which the spec format above cannot express.
+# Keep in sync with the sh sibling's extra_copy_specs.
+$extraCopySpecs = @(
+    @{ Copy = 'tools/tests/lib/shunit2'; Canonical = 'plugins/turbo-plugin-git-svn/tests/lib/shunit2' }
 )
 
 foreach ($spec in $sharedSpecs) {
@@ -70,6 +82,26 @@ foreach ($spec in $sharedSpecs) {
         } else {
             $failures.Add("shared copy drifted: 'plugins/$plug/$rel' differs from canonical 'plugins/turbo-plugin-git-svn/$rel' (byte-for-byte incl BOM/newlines). Fix: overwrite with the canonical copy, or if intentional, sync ALL copies.")
         }
+    }
+}
+
+foreach ($spec in $extraCopySpecs) {
+    $copyRel = $spec.Copy
+    $canonRel = $spec.Canonical
+    $copyPath = [System.IO.Path]::Combine($repoRoot, ($copyRel -replace '/', [System.IO.Path]::DirectorySeparatorChar))
+    $canonPath = [System.IO.Path]::Combine($repoRoot, ($canonRel -replace '/', [System.IO.Path]::DirectorySeparatorChar))
+    if (-not (Test-Path -LiteralPath $canonPath -PathType Leaf)) {
+        $failures.Add("canonical shared copy missing: '$canonRel'")
+        continue
+    }
+    if (-not (Test-Path -LiteralPath $copyPath -PathType Leaf)) {
+        $failures.Add("expected shared copy missing: '$copyRel' (pinned in extraCopySpecs)")
+        continue
+    }
+    if (Test-FilesIdentical -A $canonPath -B $copyPath) {
+        Write-Output "OK identical: $copyRel == $canonRel"
+    } else {
+        $failures.Add("shared copy drifted: '$copyRel' differs from canonical '$canonRel' (byte-for-byte incl BOM/newlines). Fix: overwrite with the canonical copy, or if intentional, sync ALL copies.")
     }
 }
 
