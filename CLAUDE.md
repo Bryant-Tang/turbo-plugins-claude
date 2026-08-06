@@ -29,10 +29,9 @@ Claude Code 的 plugin 更新機制是基於 **版本號**。版本由 **release
 
 **所以**：① 不要手改 `plugin.json` 的 `version`、也不要手寫發版 CHANGELOG 區段（那兩處由 release-please 的 Release PR 維護）。② 想發版就把變更寫成清楚的 `feat:` / `fix:` commit。③ release-please 把「自上次發版以來的所有 commit」累積成一個 Release PR——等同「一批變更發一版」，不是每個 commit 發一版。④ major 仍須使用者明確同意才用 `!` / `BREAKING CHANGE`。
 
-### PR 標題不要用 `fix:` / `feat:` 前綴（會污染 CHANGELOG）
-
-**決定 CHANGELOG 內容的是分支上每一顆 commit 的標題，不是 PR 標題。** PR 標題只是給人看的，但如果它以
-`fix:` / `feat:` 開頭，merge 之後會多出一條假的 CHANGELOG 條目。
+**PR 標題不要用 `fix:` / `feat:` 前綴（會污染 CHANGELOG）**：決定 CHANGELOG 內容的是**分支上每一顆
+commit 的標題**，不是 PR 標題。PR 標題只是給人看的，但如果它以 `fix:` / `feat:` 開頭，merge 之後會多出
+一條假的 CHANGELOG 條目。
 
 原因是 GitHub 產生的 merge commit 長這樣：
 
