@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.1.0...turbo-plugin-dotnet-framework--v0.1.1) (2026-08-06)
+
+
+### Fixed
+
+* **dotnet:** 沒版控的專案也能 run IIS,前端未設定不再無聲略過 ([c1d83b6](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c1d83b6da0634c667e8ce178f6806a0030e5e58c)), closes [#29](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/29) [#30](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/30)
+
 ## [Unreleased]
 
 ## [0.1.0] - 2026-06-20
