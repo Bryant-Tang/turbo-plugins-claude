@@ -152,7 +152,12 @@ jobs:
             exit 0
           fi
 
-          touched="$(printf '%s\n' "$files" | bash tools/affected-plugins.sh)"
+          # `env -u GH_TOKEN`: this step is the only one in the workflow that both holds a token
+          # and runs a file out of the checkout (on a pull_request the workflow comes from the
+          # base branch, but the checked-out tree is the PR's). The classifier is a pure text
+          # function and has no use for a token, so do not hand it one. The other test jobs run
+          # checked-out code too, and none of them sets GH_TOKEN -- this keeps that property.
+          touched="$(printf '%s\n' "$files" | env -u GH_TOKEN bash tools/affected-plugins.sh)"
           rc=$?
           # The classifier answers ALL for anything it cannot attribute, so a non-zero exit means
           # it did not run at all (missing file, unreadable, bad invocation) -- not "no plugins".
