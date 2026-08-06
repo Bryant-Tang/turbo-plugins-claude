@@ -29,6 +29,41 @@ Claude Code 的 plugin 更新機制是基於 **版本號**。版本由 **release
 
 **所以**：① 不要手改 `plugin.json` 的 `version`、也不要手寫發版 CHANGELOG 區段（那兩處由 release-please 的 Release PR 維護）。② 想發版就把變更寫成清楚的 `feat:` / `fix:` commit。③ release-please 把「自上次發版以來的所有 commit」累積成一個 Release PR——等同「一批變更發一版」，不是每個 commit 發一版。④ major 仍須使用者明確同意才用 `!` / `BREAKING CHANGE`。
 
+### PR 標題不要用 `fix:` / `feat:` 前綴（會污染 CHANGELOG）
+
+**決定 CHANGELOG 內容的是分支上每一顆 commit 的標題，不是 PR 標題。** PR 標題只是給人看的，但如果它以
+`fix:` / `feat:` 開頭，merge 之後會多出一條假的 CHANGELOG 條目。
+
+原因是 GitHub 產生的 merge commit 長這樣：
+
+```
+subject: Merge pull request #31 from <owner>/<branch>
+body:    fix: 修掉全部 open issue(dotnet 兩顆、git-svn 七顆)   ← PR 標題被放進 body
+```
+
+release-please 會解析 merge commit 的 body，看到 `fix:` 就收成一筆變更。而且那條**沒有 scope**，所以會
+同時出現在**每一個**該次 merge 有動到的 plugin 的 CHANGELOG 裡。2026-08-06 實際發生過：PR #31 讓
+`turbo-plugin-git-svn` 與 `turbo-plugin-dotnet-framework` 兩個 Release PR 都多了一條
+「修掉全部 open issue…」——那不是一個具體修正，對讀 CHANGELOG 的人沒有意義。
+
+**寫 PR 標題時**：用 `chore:` 前綴，或乾脆不加前綴。`changelog-sections` 已把 `chore` 設成
+`hidden: true`，所以 `chore:` 開頭的 PR 標題不會進 CHANGELOG。
+
+**這件事沒有設定層的解，已經查證過，不要再花時間找**：
+
+- **GitHub 的 merge commit 設定救不了**。合法組合只有三種（API 會擋掉其它組合）：
+  `PR_TITLE`+`PR_BODY`、`PR_TITLE`+`BLANK`、`MERGE_MESSAGE`+`PR_TITLE`。後兩者分別把 PR 標題放進
+  subject 或 body，**三種都會被 release-please 解析到**。想要的「subject 保持 Merge pull request、
+  body 留空」這個組合並不存在。
+- **release-please 沒有排除 merge commit 的選項**。設定裡只有 `exclude-paths`（按路徑排除），而 merge
+  commit 觸及所有 plugin 的檔案，用不上。「filter merge commits」是開著的功能請求
+  （release-please-action issue #1046，p3，未實作）。
+- **不能改用 squash 迴避**。squash 會把個別 commit 壓成一顆，CHANGELOG 就只剩一條——那正是本檔一再強調
+  不要 squash 的理由。
+
+**已經污染了怎麼辦**：在 Release PR 的分支上直接編輯該 plugin 的 `CHANGELOG.md` 刪掉那行再 merge。
+release-please 只有在 main 有新 commit 時才重新生成，所以改完直接 merge 是安全的。
+
 ## Plugin Architecture
 
 ### 標準 plugin 內部結構

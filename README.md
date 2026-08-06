@@ -73,3 +73,16 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
 1. 選擇 `Installed`，對要更新的 plugin 選 `Update now`
 
 > plugin 更新依**版本號**（非 git commit）。每個 plugin 各自獨立版本化。
+
+## 發版（維護者）
+
+版本由 [release-please](https://github.com/googleapis/release-please) 依 conventional commit 自動管理，**不要手改 `plugin.json` 的 `version`，也不要手寫 CHANGELOG 的發版區段**。
+
+- merge 進 `main` 後，會自動為「有可發版變更」的 plugin 各開一個 Release PR
+- merge 那個 Release PR 才發版：自動打 tag（`<plugin>--v<version>`，**兩個減號**）並建立 GitHub Release
+- **merge 功能 PR 時不要 squash**：CHANGELOG 的每一條來自個別 commit 的標題，squash 會把它們壓成一條
+
+> **PR 標題不要用 `fix:` / `feat:` 前綴**，用 `chore:` 或不加。GitHub 會把 PR 標題放進 merge commit 的
+> body，release-please 讀到後會多生一條沒有 scope 的假條目，且**每個該次 merge 動到的 plugin 都會收到
+> 一份**。這件事沒有設定層的解（GitHub 的三種 merge commit 組合都會被解析到，release-please 也沒有排除
+> merge commit 的選項）——原委與已查證過的死路寫在 `CLAUDE.md` 的 Versioning Rules。
