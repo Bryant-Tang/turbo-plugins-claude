@@ -43,6 +43,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
       count: ${{ steps.set.outputs.count }}
+      affected: ${{ steps.affected.outputs.list }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -73,6 +74,98 @@ jobs:
           echo "matrix=${json}" >> "$GITHUB_OUTPUT"
           echo "count=${#plugins[@]}" >> "$GITHUB_OUTPUT"
 
+      # ── Which plugins did this change actually touch? ───────────────────────
+      # The windows git-svn leg alone takes ~20 minutes (it builds real SVN repositories); every
+      # other leg finishes inside 5. So a docs-only PR, or one touching a single plugin, spent 25
+      # minutes waiting on suites that could not possibly be affected -- and every `Update branch`
+      # or conflict fix paid it again.
+      #
+      # This emits the list of plugins worth testing. The matrix itself is NOT filtered: a leg that
+      # disappears from the matrix would make the aggregated job result `skipped`, which
+      # `tests-passed` deliberately treats as failure. Instead every leg still runs and reports
+      # success -- the untouched ones just exit early inside the job.
+      #
+      # FAILURE MODE IS "RUN EVERYTHING". Emitting ALL is the answer whenever anything is unclear:
+      # the compare API failed, this is a first push with no base, or a changed file lives outside
+      # plugins/ (tools/, .github/, root config -- any of which can affect every plugin). Getting
+      # this wrong in the other direction means silently not testing something, and this repo has
+      # been bitten by "quiet enough to look green" before.
+      - name: Compute affected plugins
+        id: affected
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          base=''
+          head=''
+          case "${{ github.event_name }}" in
+            pull_request)
+              base='${{ github.event.pull_request.base.sha }}'
+              head='${{ github.event.pull_request.head.sha }}'
+              ;;
+            push)
+              base='${{ github.event.before }}'
+              head='${{ github.sha }}'
+              # All-zero `before` means a branch's first push: there is no base to compare against.
+              case "$base" in *[!0]*) ;; *) base='' ;; esac
+              ;;
+          esac
+
+          if [ -z "$base" ] || [ -z "$head" ]; then
+            echo 'No usable base for comparison; testing every plugin.'
+            echo 'list=ALL' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          resp="$(gh api "repos/${{ github.repository }}/compare/${base}...${head}" 2>/dev/null)"
+          if [ -z "$resp" ]; then
+            echo 'Could not read the changed-file list; testing every plugin.'
+            echo 'list=ALL' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The compare API caps `files` at 300 entries and does NOT flag that it truncated. A
+          # change big enough to hit the cap would silently look like "only these 300 files
+          # changed", and anything past the cap would go untested. Treat a full page as "unknown".
+          n="$(printf '%s' "$resp" | jq '.files | length' 2>/dev/null)"
+          if [ -z "$n" ] || [ "$n" -ge 300 ]; then
+            echo "Changed-file list is missing or may be truncated (${n:-?} entries); testing every plugin."
+            echo 'list=ALL' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Take previous_filename too, not just filename: a file MOVED from one plugin to another
+          # changes both plugins, but `.filename` only names the destination. Without the old path
+          # the source plugin -- the one that just lost a file -- would not be tested.
+          files="$(printf '%s' "$resp" | jq -r '.files[] | .filename, (.previous_filename // empty)' 2>/dev/null)"
+          if [ -z "$files" ]; then
+            echo 'Changed-file list parsed empty; testing every plugin.'
+            echo 'list=ALL' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          touched=''
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "$f" in
+              plugins/*/*)
+                p="${f#plugins/}"; p="plugins/${p%%/*}"
+                case " $touched " in *" $p "*) ;; *) touched="$touched $p" ;; esac
+                ;;
+              *)
+                echo "Change outside plugins/ ($f); testing every plugin."
+                echo 'list=ALL' >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+          done <<< "$files"
+
+          touched="${touched# }"
+          echo "Affected plugin(s): ${touched:-<none>}"
+          echo "list=${touched}" >> "$GITHUB_OUTPUT"
+
   # ── test-windows ────────────────────────────────────────────────────────────
   # Windows PowerShell 5.1 (powershell.exe) runs the ONE orchestrator, which covers
   # BOTH .ps1 (Pester 5) and .sh (vendored shUnit2 via git-bash). Pester 5 is installed
@@ -90,12 +183,35 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Early-exit gate (see "Compute affected plugins" in `discover`). The job still RUNS and still
+      # reports success -- it just does nothing when this plugin was not touched. Skipping the job
+      # itself would make the aggregated matrix result `skipped`, which `tests-passed` counts as a
+      # failure on purpose.
+      - name: Is this plugin affected?
+        id: gate
+        shell: bash
+        run: |
+          set -uo pipefail
+          affected='${{ needs.discover.outputs.affected }}'
+          if [ "$affected" = 'ALL' ] || [ -z "$affected" ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case " $affected " in
+            *" ${{ matrix.plugin }} "*)
+              echo 'run=true' >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::notice::${{ matrix.plugin }} untouched by this change; skipping its suite."
+              echo 'run=false' >> "$GITHUB_OUTPUT" ;;
+          esac
+
       # `sliksvn`, NOT the `svn` package. Chocolatey's `svn` is win32svn, last published in 2015 and
       # pinned at Subversion 1.8.15 -- which predates `svn info --show-item` (added in 1.9). These
       # scripts use --show-item in a dozen places, so with that package the suite runs and fails 40
       # cases with "invalid option: --show-item", which looks like a product bug and is not one.
       # sliksvn tracks the 1.14 LTS line, the same one TortoiseSVN ships.
       - name: Install Subversion
+        if: steps.gate.outputs.run != 'false'
         shell: pwsh
         run: choco install sliksvn --no-progress -y
         continue-on-error: true
@@ -113,6 +229,7 @@ jobs:
       # registry and let `Get-Command` answer. The hardcoded list survives only as a fallback for a
       # provider that does not touch PATH at all.
       - name: Put Subversion on PATH for later steps
+        if: steps.gate.outputs.run != 'false'
         shell: pwsh
         run: |
           # For git-svn, a missing or too-old svn is not a degraded run, it is no run at all: the
@@ -172,12 +289,14 @@ jobs:
           Complain 'svn.exe not found after `choco install sliksvn`.'
 
       - name: Configure git identity (defensive)
+        if: steps.gate.outputs.run != 'false'
         shell: bash
         run: |
           git config --global user.email "ci@turbo-plugin"
           git config --global user.name "turbo-plugin-ci"
 
       - name: Install Pester 5 (Windows PowerShell 5.1)
+        if: steps.gate.outputs.run != 'false'
         shell: powershell
         run: |
           # Pin to the Pester 5 line. `-MinimumVersion 5.0` means "at least 5.0", so it installed
@@ -190,6 +309,7 @@ jobs:
           Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -Force -SkipPublisherCheck -Scope CurrentUser -AllowClobber
 
       - name: Run orchestrator (Windows PowerShell 5.1; .ps1 Pester + .sh shUnit2)
+        if: steps.gate.outputs.run != 'false'
         shell: cmd
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${{ matrix.plugin }}/tests/Invoke-ScriptTests.ps1
 
@@ -210,23 +330,46 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Same early-exit gate as test-windows; see "Compute affected plugins" in `discover`.
+      - name: Is this plugin affected?
+        id: gate
+        shell: bash
+        run: |
+          set -uo pipefail
+          affected='${{ needs.discover.outputs.affected }}'
+          if [ "$affected" = 'ALL' ] || [ -z "$affected" ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case " $affected " in
+            *" ${{ matrix.plugin }} "*)
+              echo 'run=true' >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::notice::${{ matrix.plugin }} untouched by this change; skipping its suite."
+              echo 'run=false' >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - name: Install Subversion
+        if: steps.gate.outputs.run != 'false'
         run: |
           sudo apt-get update
           sudo apt-get install -y subversion
 
       - name: Configure git identity (defensive)
+        if: steps.gate.outputs.run != 'false'
         run: |
           git config --global user.email "ci@turbo-plugin"
           git config --global user.name "turbo-plugin-ci"
 
       - name: Run bash orchestrator (shUnit2 .sh suite)
+        if: steps.gate.outputs.run != 'false'
         shell: bash
         run: |
           set -o pipefail
           bash ${{ matrix.plugin }}/tests/invoke-script-tests.sh 2>&1 | tee orchestrator-output.txt
 
       - name: Install Pester 5 (pwsh)
+        if: steps.gate.outputs.run != 'false'
         shell: pwsh
         run: |
           # Pin to the Pester 5 line. `-MinimumVersion 5.0` means "at least 5.0", so it installed
@@ -239,6 +382,7 @@ jobs:
           Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -Force -SkipPublisherCheck -Scope CurrentUser
 
       - name: Run PowerShell orchestrator (pwsh; .ps1 Pester only, -SkipPreflight)
+        if: steps.gate.outputs.run != 'false'
         shell: pwsh
         run: |
           # -SkipPreflight: the lint pre-flight invokes Windows powershell.exe (a PS 5.1 /
