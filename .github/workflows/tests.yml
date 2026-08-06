@@ -119,9 +119,29 @@ jobs:
             exit 0
           fi
 
-          files="$(gh api "repos/${{ github.repository }}/compare/${base}...${head}" --jq '.files[].filename' 2>/dev/null)"
-          if [ -z "$files" ]; then
+          resp="$(gh api "repos/${{ github.repository }}/compare/${base}...${head}" 2>/dev/null)"
+          if [ -z "$resp" ]; then
             echo 'Could not read the changed-file list; testing every plugin.'
+            echo 'list=ALL' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The compare API caps `files` at 300 entries and does NOT flag that it truncated. A
+          # change big enough to hit the cap would silently look like "only these 300 files
+          # changed", and anything past the cap would go untested. Treat a full page as "unknown".
+          n="$(printf '%s' "$resp" | jq '.files | length' 2>/dev/null)"
+          if [ -z "$n" ] || [ "$n" -ge 300 ]; then
+            echo "Changed-file list is missing or may be truncated (${n:-?} entries); testing every plugin."
+            echo 'list=ALL' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Take previous_filename too, not just filename: a file MOVED from one plugin to another
+          # changes both plugins, but `.filename` only names the destination. Without the old path
+          # the source plugin -- the one that just lost a file -- would not be tested.
+          files="$(printf '%s' "$resp" | jq -r '.files[] | .filename, (.previous_filename // empty)' 2>/dev/null)"
+          if [ -z "$files" ]; then
+            echo 'Changed-file list parsed empty; testing every plugin.'
             echo 'list=ALL' >> "$GITHUB_OUTPUT"
             exit 0
           fi
