@@ -29,6 +29,10 @@ bash tools/tests/invoke-script-tests.sh
 CI 由 `tests.yml` 的 **`tools-tests`** job 跑，而該 job **在 `tests-passed` 的 `needs` 裡**。
 新增測試檔不必改 workflow——orchestrator 自己找 `unit/*.test.sh`。
 
+`tools/tests/lib/shunit2` 與五個 plugin 的 vendored 副本**逐位元組一致**，由
+`verify-core-identical.{ps1,sh}` 守著（六份都釘在裡面）。要換 shUnit2 版本就六份一起換，
+不然 CI 會紅。
+
 ### 幾條刻意的決定
 
 - **沒有 `.ps1` 孿生也沒有 Pester 半邊。** 「每支 script 都要 `.ps1` + `.sh` 兩版」是**plugin 腳本**

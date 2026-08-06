@@ -6,9 +6,10 @@
 # invariants. This script does two things:
 #
 #   1. Byte-identical shared copies: files that are deliberately copied verbatim
-#      into multiple plugins (the universal Core.{ps1,sh} + the shared tp-setup
-#      base assets) must NOT drift. Each is compared byte-for-byte (incl BOM and
-#      line endings) against the canonical git-svn copy.
+#      into multiple test suites (the universal Core.{ps1,sh}, the shared tp-setup
+#      base assets, and the vendored shUnit2 -- including the tools/ copy) must NOT
+#      drift. Each is compared byte-for-byte (incl BOM and line endings) against the
+#      canonical git-svn copy.
 #   2. Marketplace installability: every plugin in .claude-plugin/marketplace.json
 #      must point at a real dir that has .claude-plugin/plugin.json and a tests/
 #      orchestrator entry.
@@ -42,12 +43,24 @@ err() { echo "FAIL: $*" >&2; fail=1; }
 #
 # dotnet-framework is absent from the tp-setup asset specs on purpose: its tp-setup was
 # removed (setup is no longer a step for that plugin), so it carries no copy of those assets.
+#
+# The vendored shUnit2 is here for the same reason as the rest: every test suite carries its own
+# copy so it stays self-contained, and nothing else was checking that the copies agree. A suite
+# quietly running a different shUnit2 build from its neighbours is exactly the kind of drift that
+# shows up as a test behaving differently in one plugin for no visible reason.
 shared_specs=(
   "scripts/lib/Core.ps1|turbo-plugin-git-svn turbo-plugin-dotnet-framework turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
   "scripts/lib/core.sh|turbo-plugin-git-svn turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
   "scripts/lib/ps1-delegate.sh|turbo-plugin-git-svn turbo-plugin-dotnet-framework"
   "skills/tp-setup/assets/setup-base.md|turbo-plugin-git-svn turbo-plugin-three-environment-db"
   "skills/tp-setup/assets/claudemd-base-snippet.md|turbo-plugin-git-svn turbo-plugin-three-environment-db"
+  "tests/lib/shunit2|turbo-plugin-git-svn turbo-plugin-dotnet-framework turbo-plugin-code-comment turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
+)
+
+# Copies that do NOT live under plugins/<name>/, which the spec format above cannot express.
+# Format: <path from repo root>|<canonical path from repo root>
+extra_copy_specs=(
+  "tools/tests/lib/shunit2|plugins/turbo-plugin-git-svn/tests/lib/shunit2"
 )
 
 for spec in "${shared_specs[@]}"; do
@@ -71,6 +84,24 @@ for spec in "${shared_specs[@]}"; do
       err "shared copy drifted: '$c' differs from canonical '$canon' (byte-for-byte incl BOM/newlines). Fix: overwrite with the canonical copy (cp '$canon' '$c'), or if the change is intentional, sync ALL copies."
     fi
   done
+done
+
+for spec in "${extra_copy_specs[@]}"; do
+  c="${spec%%|*}"
+  canon="${spec#*|}"
+  if [ ! -f "$canon" ]; then
+    err "canonical shared copy missing: '$canon'"
+    continue
+  fi
+  if [ ! -f "$c" ]; then
+    err "expected shared copy missing: '$c' (pinned in extra_copy_specs)"
+    continue
+  fi
+  if cmp -s "$canon" "$c"; then
+    echo "OK identical: $c == $canon"
+  else
+    err "shared copy drifted: '$c' differs from canonical '$canon' (byte-for-byte incl BOM/newlines). Fix: overwrite with the canonical copy (cp '$canon' '$c'), or if the change is intentional, sync ALL copies."
+  fi
 done
 
 # ── 2. marketplace installability ────────────────────────────────────────────
