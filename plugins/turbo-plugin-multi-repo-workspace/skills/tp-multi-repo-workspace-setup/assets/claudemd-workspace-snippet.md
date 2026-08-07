@@ -17,6 +17,17 @@
 - **會改動東西的 git 指令，必須把 repo 寫進指令本身**（`git -C <子專案路徑> add / commit / ...`）。
   只是查看狀態的話先 `cd` 過去也可以，但**不要在同一串指令裡先 `cd` 再做會改動的事**。
   理由：那等於讓「你剛好站在哪」決定「你動到誰」，而站錯的那個資料夾本身完全合法，不會有任何東西提醒你。
+- **`git -C <repo>` 指定了「動哪個 repo」，但沒有指定「動哪個分支」。** 各專案停在哪個分支是**各自獨立**
+  的——有的在 `main`，有的可能還停在上次沒切回去的功能分支或測試整合分支。**跨專案批次提交之前，先確認
+  每個 repo 站在哪個分支**：
+
+  ```bash
+  for d in */; do if [ -d "$d/.git" ]; then printf '%-30s %s\n' "$d" "$(git -C "$d" branch --show-current)"; fi; done
+  ```
+
+  理由跟上一條一模一樣，只是換一個維度：停在非預設分支的那個 repo 本身完全合法，`git status` 乾淨，
+  commit 也會成功，沒有任何東西提醒你。而如果那條分支不會併回主線，那顆 commit 就等於沒進去，事後得
+  切過去 cherry-pick 才救得回來。
 - **一次 commit 只包含一個子專案的變更。** 跨專案的一批改動 = 每個專案各自一顆 commit。
 - **這個工作區資料夾不要 `git init`。** 在這裡建 repo 會把所有子專案包進同一個 repo，而且事後沒有東西能還原。
 
@@ -25,6 +36,9 @@
 turbo-plugin 的指令預設從「當前目錄」往上找 repo，而這個資料夾不是 repo，所以在這裡直接跑會失敗
 （`not inside a git repository`）。呼叫時明確指定專案：bash 用 `--repo-root <子專案路徑>`、PowerShell 用
 `-RepoRoot <子專案路徑>`。判準見 `turbo-plugin-git-svn` 的 `assets/repo-target.md`。
+
+同一件事在這裡也成立：`--repo-root` / `-RepoRoot` 只指定「動哪個專案」，指令仍然是對那個專案**當前
+checkout 的分支**動作。專案指名對了不代表分支就是對的，兩個都要確認。
 
 ### 這裡刻意不列出有哪些子專案
 
