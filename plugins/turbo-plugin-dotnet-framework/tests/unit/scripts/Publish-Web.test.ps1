@@ -255,6 +255,28 @@ Describe 'Publish-Web' {
             ($script:rpSln.Exit -ne 0) | Should -BeTrue
             $script:rpSlnCombined | Should -Match '\.sln'
         }
+
+        # Publish BUILDS (/p:DeployOnBuild=true) and the SKILL never requires a prior build, so a
+        # fresh clone can hit publish first -- it needs restore in its own right, not by borrowing
+        # Build-Web's. Same switch-form requirement as Build-Web (see that script's comment).
+        It 'passes /restore as the switch (publish builds, so it needs restore too)' {
+            $script:rpOmit.Stdout | Should -Match '/restore'
+            $script:rpOmit.Stdout | Should -Not -Match '/t:Restore'
+        }
+        It 'passes /p:RestorePackagesConfig=true (without it NuGet ignores packages.config)' {
+            $script:rpOmit.Stdout | Should -Match '/p:RestorePackagesConfig=true'
+        }
+        # SolutionDir anchors the packages.config `<HintPath>..\packages\...` convention. Publish
+        # only ever takes a csproj, so without this the anchor would differ from Build-Web's.
+        # Asserted up to the following arg so a path containing spaces cannot loosen the match.
+        It 'passes /p:SolutionDir with the trailing separator $(SolutionDir) expects' {
+            $script:rpOmit.Stdout | Should -Match '/p:SolutionDir=.*\\ /p:DeployOnBuild=true'
+        }
+        # Anchored on DeployOnBuild, not on either restore flag: this It exists to prove the args are
+        # echoed at all, so it must not also go red when a restore flag changes -- one red, one cause.
+        It 'echoes the full MSBuild command line (agents diagnose failures from stdout)' {
+            $script:rpOmit.Stdout | Should -Match 'MSBuild args:.*/p:DeployOnBuild=true'
+        }
     }
 
     Context 'Case 4: real MSBuild publish (deferred to Phase 2 SKILL)' {

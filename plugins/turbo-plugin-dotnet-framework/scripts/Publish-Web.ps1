@@ -86,16 +86,34 @@ try {
     Write-Output "  Publish profile: $publishProfileName"
     Write-Output "  Profile root:    $publishProfileDir"
 
+    # SolutionDir for a csproj target, same as Build-Web does: publish only ever takes a csproj, and
+    # the packages.config `<HintPath>..\packages\...` convention is anchored on the solution / repo
+    # root rather than the project directory.
+    $solutionDir = $repoRoot.TrimEnd('\') + '\'
+
+    # /restore + /p:RestorePackagesConfig=true, matching Build-Web (see there for why /restore has to
+    # stay the switch form and what RestorePackagesConfig buys). Publish needs them in its own right:
+    # /p:DeployOnBuild=true means this invocation BUILDS the project, and the publish SKILL never
+    # requires a build first — so publish can legitimately be the first command run on a fresh clone.
+    # Without restore here, a packages.config project fails on first publish.
+    #
     # /p:Configuration carries the agent's value or, failing that, the pubxml's (resolved above).
     # /p:Platform is passed only when the agent supplied one.
     $publishArgs = @(
         $projectFile,
+        '/restore',
+        '/p:RestorePackagesConfig=true',
+        "/p:SolutionDir=$solutionDir",
         '/p:DeployOnBuild=true',
         "/p:PublishProfile=$publishProfileName",
         "/p:PublishProfileRootFolder=$publishProfileDir"
     )
     if (-not [string]::IsNullOrWhiteSpace($publishConfiguration)) { $publishArgs += "/p:Configuration=$publishConfiguration" }
     if (-not [string]::IsNullOrWhiteSpace($publishPlatform)) { $publishArgs += "/p:Platform=$publishPlatform" }
+
+    # Echo the whole command line — same reasoning as Build-Web: what the script did has to be
+    # readable from stdout, or an agent diagnosing a failure will guess at it.
+    Write-Output "  MSBuild args: $($publishArgs -join ' ')"
     & $msbuildPath @publishArgs
 
     # Backstop only: under EAP=Stop a real MSBuild failure that writes stderr throws a terminating
