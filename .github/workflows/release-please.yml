@@ -41,8 +41,31 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      # 為什麼不用 secrets.GITHUB_TOKEN(2026-08-07 實測後改的)
+      #
+      # 用它開出來的 Release PR,其 workflow run 的 actor 是 `github-actions[bot]`,而 2026-06-11
+      # 起 GitHub 對 bot 身分發動的 run 一律要人工核准(changelog: "Bot-created pull requests can
+      # run workflows if approved")。結果是 Release PR 上的 `tests-passed` /
+      # `review-with-tracking` 這兩個必要 check 永遠不會出現,PR 卡在 BLOCKED 無法 merge——
+      # 每次發版都要有人進 Actions 頁面按核准。release-please 官方 README 對此的建議原文是:
+      # "You will want to configure a GitHub Actions secret with a Personal Access Token if you
+      # want GitHub Actions CI checks to run on Release Please PRs."
+      #
+      # 這裡選 GitHub App 而不是 PAT,唯一理由是 PAT 會過期(fine-grained 上限一年),到期時
+      # 這支 workflow 會以一個裸的 401 紅掉,而那時候沒有人記得今天查過什麼。App token 是每次
+      # 執行現場產生、有效期以小時計,沒有任何需要定期處理的事。
+      #
+      # 代價是 actor 變成 `<app-slug>[bot]`,仍然是 bot 身分,所以 claude-code-action 那道
+      # `allowed_bots` 閘要另外開——見 pr-review-comprehensive.yml 的對應註解。
+      - name: Mint a GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - uses: googleapis/release-please-action@v4
         with:
           # config-file / manifest-file 預設就是 release-please-config.json
           # 與 .release-please-manifest.json,放在 repo 根即自動採用。
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
