@@ -92,6 +92,15 @@ EOF
     assertEquals 'case4: stub build exit 0' 0 "$e"
     echo "$out" | grep -q '/p:Configuration'; assertFalse 'case4: /p:Configuration OMITTED when unspecified' $?
     echo "$out" | grep -q 'BUILD_OUTPUT'; assertTrue 'case4: BUILD_OUTPUT template emitted' $?
+    # Restore flags for packages.config. Nothing else in this suite touches them, so without these
+    # three lines either flag could be deleted with the whole suite still green -- while every
+    # packages.config project silently stopped building. /restore must stay the SWITCH: as a
+    # /t:Restore;Build target list the project is evaluated once and post-restore .targets imports
+    # never bind.
+    echo "$out" | grep -q '/restore'; assertTrue 'case4: /restore passed' $?
+    echo "$out" | grep -q '/t:Restore'; assertFalse 'case4: /restore is the switch, not a target' $?
+    echo "$out" | grep -q '/p:RestorePackagesConfig=true'; assertTrue 'case4: /p:RestorePackagesConfig=true passed' $?
+    echo "$out" | grep -q 'MSBuild args:'; assertTrue 'case4: full MSBuild command line echoed' $?
 }
 
 # Case 4b (U8): `--repo-root` names the project outright, from a cwd that is NOT that project.

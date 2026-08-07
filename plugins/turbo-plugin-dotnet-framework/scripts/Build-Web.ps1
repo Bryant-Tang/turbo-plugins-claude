@@ -38,10 +38,27 @@ try {
     $solutionDirBase = if ($isSolution) { [System.IO.Path]::GetDirectoryName($projectFile) } else { $repoRoot }
     $solutionDir = $solutionDirBase.TrimEnd('\') + '\'
 
-    Write-Output "Running MSBuild for $projectFile"
+    # /restore + /p:RestorePackagesConfig=true — both are load-bearing for packages.config projects:
+    #
+    #   * /restore must stay the SWITCH. Never rewrite it as `/t:Restore;Build`. packages.config
+    #     projects pull their build-time .targets in through `<Import Condition="Exists(...)">`,
+    #     which only binds if the project is re-evaluated AFTER restore. The switch runs restore in
+    #     its own pass and then re-evaluates for build; one combined target list evaluates once and
+    #     those imports stay dead.
+    #   * RestorePackagesConfig is what makes NuGet look at packages.config at all. Without it,
+    #     restore reports "no projects contain packages to restore" and does nothing (measured on a
+    #     real 12-project packages.config solution, MSBuild 17.14, 2026-08-07 — with the flag the
+    #     same command resolved every package; without it, zero).
     $msbuildArgs = @($projectFile, '/restore', '/t:Build', "/p:SolutionDir=$solutionDir", '/p:RestorePackagesConfig=true')
     if (-not [string]::IsNullOrWhiteSpace($buildConfiguration)) { $msbuildArgs += "/p:Configuration=$buildConfiguration" }
     if (-not [string]::IsNullOrWhiteSpace($buildPlatform)) { $msbuildArgs += "/p:Platform=$buildPlatform" }
+
+    # Echo the whole command line, not just the target. An agent reading only "Running MSBuild for X"
+    # has no way to know restore already ran, so on a NuGet-shaped failure it invents its own remedy —
+    # in the field it told the user to go fetch nuget.exe, for a build that had already restored.
+    # Printing the args makes this script's behaviour self-evident to whoever reads stdout.
+    Write-Output "Running MSBuild for $projectFile"
+    Write-Output "  MSBuild args: $($msbuildArgs -join ' ')"
     & $msbuildPath @msbuildArgs
     # Backstop only: under EAP=Stop a real MSBuild failure that writes stderr throws a terminating
     # NativeCommandError BEFORE this line (caught by the outer catch -> exit 1, still fail-loud). This

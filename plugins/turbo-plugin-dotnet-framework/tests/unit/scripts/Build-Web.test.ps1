@@ -244,6 +244,23 @@ Describe 'Build-Web' {
             $script:rOmit.Stdout | Should -Match 'Configuration:.*MSBuild'
             $script:rOmit.Stdout | Should -Not -Match 'Configuration: Debug'
         }
+
+        # The two restore flags carry the whole packages.config story, and nothing else in this
+        # suite touches them: before these Its existed, deleting either one left every test green
+        # while silently breaking every packages.config project. /restore must also stay the SWITCH
+        # (not a /t:Restore;Build target list) or post-restore .targets imports never bind.
+        It 'passes /restore as the switch (so the project is re-evaluated after restore)' {
+            $script:rOmit.Stdout | Should -Match '/restore'
+            $script:rOmit.Stdout | Should -Not -Match '/t:Restore'
+        }
+        It 'passes /p:RestorePackagesConfig=true (without it NuGet ignores packages.config)' {
+            $script:rOmit.Stdout | Should -Match '/p:RestorePackagesConfig=true'
+        }
+        # Anchored on SolutionDir, not on either restore flag: this It exists to prove the args are
+        # echoed at all, so it must not also go red when a restore flag changes -- one red, one cause.
+        It 'echoes the full MSBuild command line (agents diagnose failures from stdout)' {
+            $script:rOmit.Stdout | Should -Match 'MSBuild args:.*/p:SolutionDir='
+        }
     }
 
     # -RepoRoot names the project outright. The scenario this exists for: a session opened at a
