@@ -20,10 +20,40 @@ jobs:
         with:
           fetch-depth: 1
 
+      # 這一步要的是 `app-slug`,不是 token。
+      #
+      # claude-code-action 預設拒絕由 bot 身分發動的 run(2026-08-07 在 Release PR 上實測:
+      # "Workflow initiated by non-human actor: github-actions (type: Bot). Add bot to
+      # allowed_bots list"),而 release-please 改用 GitHub App 之後,Release PR 的 actor 是
+      # `<app-slug>[bot]` —— 仍然是 bot,所以這道閘要為它開一個口。
+      #
+      # 為什麼用推導而不是寫死名字:寫死等於在兩個地方各存一份同樣的字串,App 一改名就靜默
+      # 失效(症狀是 Release PR 的 review 又紅起來,而沒有人會聯想到改名)。slug 從產生 token
+      # 的同一組 secret 推出來,不會漂移。
+      #
+      # 為什麼 continue-on-error:這支 workflow 跑在**每一個** PR 上。若 App secret 缺失或失效
+      # 就讓整步失敗,等於一個發版用的憑證可以連帶擋掉所有 PR 的 code review——爆炸半徑遠大於
+      # 它該有的範圍。失敗時 outputs 為空,`allowed_bots` 就是預設值(不允許任何 bot),退回
+      # 2026-08-07 之前的行為:人類 PR 完全不受影響,只有 Release PR 需要人工核准。
+      #
+      # 為什麼不用 '*':那會讓任何 App / bot 都能叫起這個 reviewer。這裡只開自己建立、且只有
+      # release-please 在用的那一個身分。
+      - name: Resolve the release bot's identity
+        id: release-app
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: PR Review with Progress Tracking
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # 允許 release bot 發動 review。action 會把兩邊都正規化(轉小寫、去掉 `[bot]` 後綴),
+          # 所以這裡給裸的 slug 即可,不必寫成 `<slug>[bot]`。
+          allowed_bots: ${{ steps.release-app.outputs.app-slug }}
 
           # Enable progress tracking
           track_progress: true
