@@ -2,6 +2,15 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.1.1...turbo-plugin-dotnet-framework--v0.1.2) (2026-08-07)
+
+
+### Fixed
+
+* **dotnet:** build skill 明講要走它而不是自己叫 MSBuild,並補上還原失敗的判讀規則 ([f541438](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f5414380e73cc35ed11e233072574a1f7cea3ccf))
+* **dotnet:** build 印出完整 MSBuild 命令列,套件沒還原不再被誤判成程式碼壞掉 ([d4461b9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d4461b9c8080381889ba3da6bd77a64935e4c4bf))
+* **dotnet:** publish 也會還原 NuGet 套件(含 packages.config),乾淨 clone 首次發佈不再失敗 ([e375d68](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/e375d68b36a12a4b53fa37a556959568f9d47290))
+
 ## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.1.0...turbo-plugin-dotnet-framework--v0.1.1) (2026-08-06)
 
 
