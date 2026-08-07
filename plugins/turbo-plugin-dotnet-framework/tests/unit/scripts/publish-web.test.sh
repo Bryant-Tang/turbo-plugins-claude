@@ -126,6 +126,14 @@ EOF
     echo "$out" | grep -q '/p:Configuration'; assertFalse 'case4: /p:Configuration OMITTED (no agent value, none in pubxml)' $?
     echo "$out" | grep -q 'PUBLISH_OUTPUT'; assertTrue 'case4: PUBLISH_OUTPUT preserved' $?
     echo "$out" | grep -Eq 'Target: .*HelloApp\.csproj'; assertTrue 'case4: PUBLISH_OUTPUT includes resolved Target line' $?
+    # Publish BUILDS (/p:DeployOnBuild=true) and the SKILL never requires a prior build, so a fresh
+    # clone can hit publish first -- it needs restore in its own right. Same switch-form requirement
+    # as build. SolutionDir anchors the packages.config `<HintPath>..\packages\...` convention.
+    echo "$out" | grep -q '/restore'; assertTrue 'case4: /restore passed' $?
+    echo "$out" | grep -q '/t:Restore'; assertFalse 'case4: /restore is the switch, not a target' $?
+    echo "$out" | grep -q '/p:RestorePackagesConfig=true'; assertTrue 'case4: /p:RestorePackagesConfig=true passed' $?
+    echo "$out" | grep -Eq '/p:SolutionDir=.*\\ /p:DeployOnBuild=true'; assertTrue 'case4: /p:SolutionDir passed with trailing separator' $?
+    echo "$out" | grep -q 'MSBuild args:'; assertTrue 'case4: full MSBuild command line echoed' $?
 }
 
 # Case 4b: the pubxml names a Configuration and the agent does not -> it must reach MSBuild as

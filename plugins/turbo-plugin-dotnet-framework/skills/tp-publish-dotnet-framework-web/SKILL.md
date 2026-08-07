@@ -103,6 +103,10 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
 - **pubxml 由你判斷**:多個 profile 無從判斷就 `AskUserQuestion`,別硬猜。
 - Frontend pack 是 publish 鏈的一部份;**不要在 SKILL 內額外呼叫** `pack-content`,script 已包含。
 - **MSBuild 找不到** → script fail loudly,提示在 `.turbo-plugin/config.local.toml` 的 `[tools]` 設 `msbuild_path`。
+- **一整片 `CS0246`「找不到類型或命名空間名稱」→ 先當成套件沒還原**:`/p:DeployOnBuild=true` 會**建置**
+  專案,所以 publish 也吃得到還原問題。script 已帶 `/restore /p:RestorePackagesConfig=true`,
+  **不要建議使用者手動跑 `nuget.exe`**;讀 stdout 的 `MSBuild args:` 那行確認旗標帶上了即可。
+  詳細判準見 `tp-build-dotnet-framework` 的同名規則。
 - Publish 影響外部 artifact(可能被 CD pipeline 消費),屬 **proactive suggestion only** 類別——agent 偵測到「使用者完成準備部署」時可建議,但需明確同意。
 
 ## Completion Checks
