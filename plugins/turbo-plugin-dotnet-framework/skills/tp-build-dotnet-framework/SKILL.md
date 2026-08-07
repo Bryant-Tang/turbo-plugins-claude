@@ -1,6 +1,6 @@
 ---
 name: tp-build-dotnet-framework
-description: 'MSBuild build for a .NET Framework project, web or console. You pick the csproj/`.sln` and configuration; omit what the user did not name. Run on request, or suggest it to verify a code change builds (reversible).'
+description: 'MSBuild build for a .NET Framework project, web or console. You pick the csproj/`.sln` and configuration; omit what the user did not name. Run on request, or suggest it to verify a code change builds (reversible). Use this instead of invoking MSBuild yourself, including when you are only building to check your own edits mid-task.'
 argument-hint: '[--configuration <name>] [--platform <name>] [--project <path-to-csproj-or-sln>] [--repo-root <path>]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
@@ -92,6 +92,14 @@ build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.
 - **config 預設省略**:沒明確理由(使用者指定 / 記憶有值)就別帶 `/p:Configuration|Platform`,讓 MSBuild/.sln/props 決定——這是對齊 VS 的關鍵。
 - **build 預設整方案、小改建單一**:見 Step 1;由你判斷,選錯可重跑。
 - **MSBuild 找不到** → script fail loudly,提示在 `.turbo-plugin/config.local.toml` 的 `[tools]` 設 `msbuild_path`(forward slash + 雙引號)。
+- **一整片 `CS0246`「找不到類型或命名空間名稱」→ 先當成套件沒還原,不要當成程式碼壞了**:
+  缺的型別若來自第三方套件(`ILog`、`ISheet`、`JObject` 這類),幾乎可斷定是還原問題而非原始碼問題。
+  script **已經**帶了 `/restore /p:RestorePackagesConfig=true`(後者是讓 NuGet 看得見 packages.config
+  的關鍵),所以**不要建議使用者去抓 `nuget.exe` 手動還原**——那是繞過去,不是把問題修好。
+  該做的是:讀 stdout 那行 `MSBuild args:` 確認兩個旗標真的帶上了,再確認 `packages\` 的位置跟
+  csproj 裡 `<HintPath>` 的相對路徑對得上。
+  **陷阱**:沒有 `EnsureNuGetPackageBuildImports` target 的舊 csproj **不會**印出「missing packages」
+  那句友善提示,套件沒還原時直接就是幾百個 `CS0246`。別因為沒看到那句話就排除還原的可能。
 - Build 失敗可逆(重跑即可),屬於 agent-proactive 觸發類別——偵測「剛改完程式碼」可建議跑。
 
 ## Completion Checks
