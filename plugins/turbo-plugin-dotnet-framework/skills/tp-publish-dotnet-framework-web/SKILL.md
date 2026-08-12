@@ -1,7 +1,7 @@
 ---
 name: tp-publish-dotnet-framework-web
 description: 'MSBuild publish for a .NET Framework WEB project (frontend pack included). You pick the csproj and `.pubxml`. **Publish output can reach a deployed environment: run ONLY on explicit request**; may be suggested, but requires explicit confirmation. Console projects publish via ClickOnce, which this does not do.'
-argument-hint: '[--pubxml <path>] [--configuration <name>] [--platform <name>] [--project <path-to-csproj>] [--repo-root <path>]'
+argument-hint: '[--pubxml <path>] [--configuration <name>] [--platform <name>] [--project <path-to-csproj>] [--repo-root <path>] [--msbuild-property Name=Value,Name2=Value2]'
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
@@ -67,7 +67,9 @@ publish 這條路徑比 build 更要緊:發佈產出會送到**部署環境**,�
 
 ### Step 2 — 執行 publish
 
-跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶明確參數:`-Project <csproj>`、(可選)`-Pubxml <path>`、(可選)`-Configuration`/`-Platform`。Script 會:解析 csproj target(CLI → `[publish].project` → 清楚報錯;**收到 `.sln` 報錯**)、找 MSBuild、解析 pubxml(CLI → `[publish].default_pubxml` → `Properties/PublishProfiles/` 單一)、跑 frontend pack(若 `[frontend]` 齊備)、跑 `msbuild /p:DeployOnBuild=true /p:PublishProfile=<name>`(`/p:Configuration` 取「你傳的值 → pubxml 的 `<Configuration>`」,兩者都沒有才省略;`/p:Platform` 仍是**有值才附**)、後處理 parse `<PublishUrl>` + `<WebPublishMethod>` 回報產出位置。
+跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶明確參數:`-Project <csproj>`、(可選)`-Pubxml <path>`、(可選)`-Configuration`/`-Platform`、(逃生口,平常不用)`-MsBuildProperty Name=Value,Name2=Value2`。Script 會:解析 csproj target(CLI → `[publish].project` → 清楚報錯;**收到 `.sln` 報錯**)、找 MSBuild、解析 pubxml(CLI → `[publish].default_pubxml` → `Properties/PublishProfiles/` 單一)、跑 frontend pack(若 `[frontend]` 齊備)、跑 `msbuild /restore /p:DeployOnBuild=true /p:PublishProfile=<name>`、後處理 parse `<PublishUrl>` + `<WebPublishMethod>` 回報產出位置。
+
+**configuration / platform 各有兩層 pubxml fallback**:`/p:Configuration` 取「你傳的值 → pubxml 的 `<Configuration>` → `<LastUsedBuildConfiguration>`」,`/p:Platform` 取「你傳的值 → `<Platform>` → `<LastUsedPlatform>`」,全都沒有才省略。**`LastUsed*` 那層是必要的**——Visual Studio 產生的 FileSystem profile 往往只有 `LastUsed*`、沒有 `<Configuration>` / `<Platform>`,少了這層就會悄悄落回 csproj 的 `Debug|AnyCPU`,和使用者在 VS 裡看到的選擇相反。
 
 ### Step 3 — 回報結果(逐字、路徑可點擊)
 
@@ -107,6 +109,23 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   專案,所以 publish 也吃得到還原問題。script 已帶 `/restore /p:RestorePackagesConfig=true`,
   **不要建議使用者手動跑 `nuget.exe`**;讀 stdout 的 `MSBuild args:` 那行確認旗標帶上了即可。
   詳細判準見 `tp-build-dotnet-framework` 的同名規則。
+- **`ASPNETCOMPILER : error ASPCONFIG` + 「試圖載入格式錯誤的程式」→ 32/64 位元不合,不是程式碼壞了**。
+  那句話是 `BadImageFormatException`,發生在**預先編譯**階段(pubxml 開了
+  `<PrecompileBeforePublish>true</PrecompileBeforePublish>`)。**同一個症狀有兩個不同的根因**,
+  分辨清楚再動手:
+  1. **建置產物是 MSIL,但相依的互通組件是 x64。** 先看 stdout 的 `MSBuild args:` 有沒有
+     `/p:Platform=x64`;沒有通常是 pubxml 沒有可讀的平台設定 → 傳 `--platform x64` 重跑。
+     **不要改用 `PlatformTarget`**:實測 `PlatformTarget=x64` 能消掉 MSB3270 架構警告但預先編譯
+     **仍然失敗**,只有 `Platform=x64` 會過(兩者中繼目錄不同,走的是不同建置路徑)。
+  2. **平台已經對了,是預先編譯器本身的位元不對。** MSBuild 的 `AspNetCompiler` task 預設用 32 位元的
+     `aspnet_compiler.exe`,載不動 x64-only 的組件 → 用
+     `--msbuild-property AspnetCompilerPath=$(MSBuildFrameworkToolsPath64)` 重跑
+     (那是 MSBuild 內建屬性,不是寫死的機器路徑)。
+
+  兩者都**不需要繞過 plugin 自己打 msbuild**——那樣會連帶失去前端打包與產出位置回報。
+- **`--msbuild-property` 是逃生口,不是常態**:格式 `Name=Value`,多個用逗號分隔,附加在**最後**
+  (所以會覆蓋 script 自己算出來的同名屬性)。用它之前先確認不是上面兩條規則能解的情況;若某個屬性
+  變成每次都要傳,那是「該把它記進專案設定或提 issue」的訊號,不是繼續手動傳。
 - Publish 影響外部 artifact(可能被 CD pipeline 消費),屬 **proactive suggestion only** 類別——agent 偵測到「使用者完成準備部署」時可建議,但需明確同意。
 
 ## Completion Checks
