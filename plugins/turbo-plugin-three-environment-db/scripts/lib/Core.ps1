@@ -200,7 +200,15 @@ function Read-TurboPluginConfig {
         if ([string]::IsNullOrWhiteSpace($pathItem)) { continue }
         if (-not (Test-Path -LiteralPath $pathItem -PathType Leaf)) { continue }
         $currentSection = ''
-        $lines = Get-Content -LiteralPath $pathItem
+        # -Encoding UTF8 is load-bearing. Without it, Windows PowerShell 5.1's Get-Content decodes
+        # using the system ANSI code page (cp950 on zh-TW Windows), and that does not merely garble
+        # non-ASCII text -- it swallows line breaks. A `[section]` header then gets merged into the
+        # preceding comment line, is skipped by the StartsWith('#') test below, and every key under
+        # that section silently vanishes: no parse error, no warning, the config simply behaves as
+        # if it had never been written. Measured on a real config: 9 lines read back as 5.
+        # Hardcoding UTF8 is correct rather than a guess -- the TOML spec requires UTF-8 -- and it
+        # handles both BOM and BOM-less files on 5.1.
+        $lines = Get-Content -LiteralPath $pathItem -Encoding UTF8
         foreach ($raw in $lines) {
             $line = $raw -replace '^\s+|\s+$', ''
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
