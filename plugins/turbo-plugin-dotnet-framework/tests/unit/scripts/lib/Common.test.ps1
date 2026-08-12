@@ -409,6 +409,151 @@ msbuild_path = "C:/this/path/does/not/exist/MSBuild.exe"
 
 Describe 'Find-IisExpressPath' {
 
+    # issue #50. Both Program Files roots are pointed at a sandbox holding a fake iisexpress.exe in
+    # each, so the ORDER is asserted against a known install layout rather than against whatever the
+    # test machine happens to have. Both variables are process-local and restored in finally.
+    # NOTE: no angle brackets in Describe/Context/It NAMES anywhere in this block. Pester 5 treats
+    # `<word>` in a test name as a -ForEach template placeholder and tries to expand $word, which
+    # under StrictMode throws "variable cannot be retrieved" and fails the whole Context in
+    # BeforeAll -- with an empty ErrorRecord, so the individual Its report no reason at all.
+    Context 'issue #50 - probe order follows the csproj Use64BitIISExpress property' {
+        BeforeAll {
+            $script:origPF64 = $env:ProgramFiles
+            $script:origPF86x = ${env:ProgramFiles(x86)}
+
+            # Declared in BeforeAll, not at Context scope: Pester 5 evaluates Context bodies during
+            # discovery, so a function declared there is gone by the time the tests run.
+            function New-FakeIisTree {
+                param([string]$Repo, [switch]$Only86)
+                $pf   = Join-Path $Repo 'PF'
+                $pf86 = Join-Path $Repo 'PF86'
+                foreach ($root in @($pf, $pf86)) {
+                    $null = New-Item -ItemType Directory -Path (Join-Path $root 'IIS Express') -Force
+                }
+                $exe86 = [System.IO.Path]::Combine($pf86, 'IIS Express', 'iisexpress.exe')
+                $exe64 = [System.IO.Path]::Combine($pf,   'IIS Express', 'iisexpress.exe')
+                [System.IO.File]::WriteAllText($exe86, '')
+                if (-not $Only86) { [System.IO.File]::WriteAllText($exe64, '') }
+                $env:ProgramFiles = $pf
+                ${env:ProgramFiles(x86)} = $pf86
+                return [pscustomobject]@{ Exe64 = $exe64; Exe86 = $exe86 }
+            }
+
+            function New-CsprojWith {
+                param([string]$Repo, [string]$Inner)
+                $p = Join-Path $Repo 'App.csproj'
+                [System.IO.File]::WriteAllText($p,
+                    "<Project><PropertyGroup>$Inner</PropertyGroup></Project>",
+                    (New-Object System.Text.UTF8Encoding($false)))
+                return $p
+            }
+        }
+        AfterAll {
+            $env:ProgramFiles = $script:origPF64
+            ${env:ProgramFiles(x86)} = $script:origPF86x
+        }
+
+        It 'returns the 64-bit binary when the csproj asks for it' {
+            $repo = New-IsolatedRepoRoot 'iisbit'
+            try {
+                $t = New-FakeIisTree -Repo $repo
+                $csproj = New-CsprojWith -Repo $repo -Inner '<Use64BitIISExpress>true</Use64BitIISExpress>'
+                Find-IisExpressPath -RepoRoot $repo -ProjectFile $csproj | Should -Be $t.Exe64
+            } finally {
+                $env:ProgramFiles = $script:origPF64
+                ${env:ProgramFiles(x86)} = $script:origPF86x
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'keeps the historical x86-first order when the property is absent' {
+            $repo = New-IsolatedRepoRoot 'iisbit'
+            try {
+                $t = New-FakeIisTree -Repo $repo
+                $csproj = New-CsprojWith -Repo $repo -Inner '<OutputType>Library</OutputType>'
+                Find-IisExpressPath -RepoRoot $repo -ProjectFile $csproj | Should -Be $t.Exe86
+            } finally {
+                $env:ProgramFiles = $script:origPF64
+                ${env:ProgramFiles(x86)} = $script:origPF86x
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        # The shipped test fixture carries the self-closing form, and VS writes it that way for
+        # projects that never opted in -- it must NOT be read as "true".
+        It 'treats a self-closing Use64BitIISExpress element as 32-bit' {
+            $repo = New-IsolatedRepoRoot 'iisbit'
+            try {
+                $t = New-FakeIisTree -Repo $repo
+                $csproj = New-CsprojWith -Repo $repo -Inner '<Use64BitIISExpress />'
+                Find-IisExpressPath -RepoRoot $repo -ProjectFile $csproj | Should -Be $t.Exe86
+            } finally {
+                $env:ProgramFiles = $script:origPF64
+                ${env:ProgramFiles(x86)} = $script:origPF86x
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'treats an explicit false as 32-bit' {
+            $repo = New-IsolatedRepoRoot 'iisbit'
+            try {
+                $t = New-FakeIisTree -Repo $repo
+                $csproj = New-CsprojWith -Repo $repo -Inner '<Use64BitIISExpress>false</Use64BitIISExpress>'
+                Find-IisExpressPath -RepoRoot $repo -ProjectFile $csproj | Should -Be $t.Exe86
+            } finally {
+                $env:ProgramFiles = $script:origPF64
+                ${env:ProgramFiles(x86)} = $script:origPF86x
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'omitting -ProjectFile keeps x86 first (back-compat for existing callers)' {
+            $repo = New-IsolatedRepoRoot 'iisbit'
+            try {
+                $t = New-FakeIisTree -Repo $repo
+                Find-IisExpressPath -RepoRoot $repo | Should -Be $t.Exe86
+            } finally {
+                $env:ProgramFiles = $script:origPF64
+                ${env:ProgramFiles(x86)} = $script:origPF86x
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        # Falling back is correct -- returning nothing would be worse -- but doing it silently
+        # recreates exactly the BadImageFormatException this ordering exists to prevent.
+        It 'warns (does not silently downgrade) when 64-bit is wanted but only 32-bit is installed' {
+            $repo = New-IsolatedRepoRoot 'iisbit'
+            try {
+                $t = New-FakeIisTree -Repo $repo -Only86
+                $csproj = New-CsprojWith -Repo $repo -Inner '<Use64BitIISExpress>true</Use64BitIISExpress>'
+                $warnings = @()
+                $result = Find-IisExpressPath -RepoRoot $repo -ProjectFile $csproj -WarningVariable warnings -WarningAction SilentlyContinue
+                $result | Should -Be $t.Exe86
+                @($warnings).Count | Should -BeGreaterThan 0
+                ($warnings -join "`n") | Should -Match 'Use64BitIISExpress'
+            } finally {
+                $env:ProgramFiles = $script:origPF64
+                ${env:ProgramFiles(x86)} = $script:origPF86x
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'does not warn when the 64-bit binary is actually there' {
+            $repo = New-IsolatedRepoRoot 'iisbit'
+            try {
+                $null = New-FakeIisTree -Repo $repo
+                $csproj = New-CsprojWith -Repo $repo -Inner '<Use64BitIISExpress>true</Use64BitIISExpress>'
+                $warnings = @()
+                $null = Find-IisExpressPath -RepoRoot $repo -ProjectFile $csproj -WarningVariable warnings -WarningAction SilentlyContinue
+                @($warnings).Count | Should -Be 0
+            } finally {
+                $env:ProgramFiles = $script:origPF64
+                ${env:ProgramFiles(x86)} = $script:origPF86x
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+    }
+
     Context 'happy path - config.local.toml points to an existing file' {
         It 'returns the configured path' {
             $repo = New-IsolatedRepoRoot 'tools'

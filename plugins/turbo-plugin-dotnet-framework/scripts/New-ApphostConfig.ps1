@@ -81,7 +81,9 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     }
 
     # Generating needs IIS Express itself: its shipped applicationhost.config is the template.
-    $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot
+    # -ProjectFile so the template comes from the SAME install tp-run will later launch: with
+    # <Use64BitIISExpress>true</Use64BitIISExpress> that is the 64-bit one (issue #50).
+    $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot -ProjectFile $projectFile
 
     $result = Initialize-ApplicationhostSite `
         -ConfigPath $canonical `
