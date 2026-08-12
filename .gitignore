@@ -21,3 +21,16 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Private keys / credentials — nothing in this repo ever needs one committed.
+#
+# 這裡沒有既有的違規要清,是純預防:2026-08-07 為 release-please 建 GitHub App 時會下載一份
+# private key,而下載後最自然的動作就是把它丟在手邊某個資料夾。憑證外洩不像壞掉的測試會自己
+# 表現出來——它安靜地留在歷史裡,而 git 歷史清不乾淨(要 rewrite + 強推 + 所有 clone 重來)。
+# 這類規則的價值全在「加在事情發生之前」。
+#
+# 正式的存放位置是 repo secret(GitHub Actions 從那裡讀),本機那份用完就該刪。
+*.pem
+*.key
+*.p12
+*.pfx
