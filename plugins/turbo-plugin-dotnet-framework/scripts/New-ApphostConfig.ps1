@@ -81,9 +81,15 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     }
 
     # Generating needs IIS Express itself: its shipped applicationhost.config is the template.
-    # -ProjectFile so the template comes from the SAME install tp-run will later launch: with
-    # <Use64BitIISExpress>true</Use64BitIISExpress> that is the 64-bit one (issue #50).
-    $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot -ProjectFile $projectFile
+    #
+    # Deliberately does NOT pass -ProjectFile, even though issue #50 made Find-IisExpressPath able
+    # to prefer the 64-bit install. What is wanted here is the shipped AppServer template, and the
+    # 32- and 64-bit copies of it are not known to differ in any way that reaches the generated
+    # site: module paths resolve through %IIS_BIN% at runtime, out of whichever iisexpress.exe
+    # actually starts. Passing it would be an unverified behaviour change that no test covers --
+    # the launch path (Resolve-IisSettings) is where the bitness genuinely matters, and that one
+    # does pass it.
+    $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot
 
     $result = Initialize-ApplicationhostSite `
         -ConfigPath $canonical `
