@@ -1243,3 +1243,80 @@ Describe 'Get-MsbuildProperty' {
         Get-MsbuildProperty -Path $p -Name 'Configuration' | Should -Be 'Release'
     }
 }
+
+# =============================================================================
+# Test-NodeVersionSatisfied (issue #49)
+# =============================================================================
+#
+# The reported bug: a requirement written as a range rejected EVERY Node version, because the old
+# code took Split('.')[0] of ">=16.0.0" (yielding ">=16") and string-compared it to "18". The three
+# versions named in the issue are pinned below so that exact scenario can never come back.
+Describe 'Test-NodeVersionSatisfied' {
+
+    Context 'bare value keeps its historical "major only" meaning' {
+        It 'accepts any patch/minor within the same major' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v18.20.8' -Requirement '18' | Should -BeTrue
+        }
+        It 'rejects a different major' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v16.0.0' -Requirement '18' | Should -BeFalse
+        }
+        It 'ignores extra components in the requirement (18.20.8 still means "major 18")' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v18.4.0' -Requirement '18.20.8' | Should -BeTrue
+        }
+    }
+
+    Context 'issue #49 - a >= range no longer rejects everything' {
+        # These are the three versions the issue reported as blocked. v10 genuinely does not
+        # satisfy >=16; the other two must now pass.
+        It 'v18.20.8 satisfies >=16.0.0' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v18.20.8' -Requirement '>=16.0.0' | Should -BeTrue
+        }
+        It 'v24.14.0 satisfies >=16.0.0' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v24.14.0' -Requirement '>=16.0.0' | Should -BeTrue
+        }
+        It 'v10.15.3 does NOT satisfy >=16.0.0 (still a real rejection)' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v10.15.3' -Requirement '>=16.0.0' | Should -BeFalse
+        }
+    }
+
+    Context 'comparisons are numeric, not lexical' {
+        # The case that catches a string-compare regression: lexically "10" < "9", so a naive
+        # implementation calls v18.10.0 older than 18.9 and rejects it.
+        It 'v18.10.0 satisfies >=18.9' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v18.10.0' -Requirement '>=18.9' | Should -BeTrue
+        }
+        It '>= is inclusive at the boundary' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v16.0.0' -Requirement '>=16' | Should -BeTrue
+        }
+        It '> is exclusive at the boundary' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v16.0.0' -Requirement '>16' | Should -BeFalse
+        }
+        It 'supports an upper bound' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v18.20.8' -Requirement '<=20' | Should -BeTrue
+            Test-NodeVersionSatisfied -CurrentVersion 'v20.1.0'  -Requirement '<20'  | Should -BeFalse
+        }
+        It 'tolerates a leading v and whitespace in the requirement' {
+            Test-NodeVersionSatisfied -CurrentVersion 'v18.20.8' -Requirement '>= v16' | Should -BeTrue
+        }
+    }
+
+    Context 'unsupported syntax fails loudly instead of silently rejecting' {
+        # This is the half of the fix that matters most: the old behaviour for an unparseable
+        # requirement was "reject every version and blame the Node install".
+        It 'throws on npm caret ranges' {
+            { Test-NodeVersionSatisfied -CurrentVersion 'v18.20.8' -Requirement '^18' } | Should -Throw '*not supported*'
+        }
+        It 'throws on npm tilde ranges' {
+            { Test-NodeVersionSatisfied -CurrentVersion 'v18.20.8' -Requirement '~18' } | Should -Throw '*not supported*'
+        }
+        It 'throws on unions' {
+            { Test-NodeVersionSatisfied -CurrentVersion 'v18.20.8' -Requirement '16 || 18' } | Should -Throw '*not supported*'
+        }
+        It 'the message names the offending value so the config line can be found' {
+            { Test-NodeVersionSatisfied -CurrentVersion 'v18.20.8' -Requirement '^18' } | Should -Throw '*^18*'
+        }
+        It 'throws when the reported Node version is unparseable' {
+            { Test-NodeVersionSatisfied -CurrentVersion 'not-a-version' -Requirement '18' } | Should -Throw '*not-a-version*'
+        }
+    }
+}
