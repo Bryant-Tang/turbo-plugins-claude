@@ -3,14 +3,49 @@ $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'Common.ps1'))
 
+# Does the csproj ask for the 64-bit IIS Express? Visual Studio picks its executable from exactly
+# this property, so reading it is what keeps tp-run aligned with VS.
+#
+# Absent, self-closing (`<Use64BitIISExpress />`) or any value other than `true` means 32-bit --
+# that is both VS's default and what every project predating the property gets.
+#
+# Never throws: bitness is a preference, and a missing or unreadable csproj is a problem the
+# callers' own error paths already report with far better messages than this helper could.
+function Test-ProjectPrefers64BitIisExpress {
+    param([string]$ProjectFile = '')
+
+    if ([string]::IsNullOrWhiteSpace($ProjectFile)) { return $false }
+    if (-not (Test-Path -LiteralPath $ProjectFile -PathType Leaf)) { return $false }
+    $content = ''
+    try {
+        $content = Get-Content -LiteralPath $ProjectFile -Raw -Encoding UTF8
+    } catch {
+        return $false
+    }
+    $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $match = [regex]::Match($content, '<Use64BitIISExpress>\s*([^<]*)</Use64BitIISExpress>', $ic)
+    if (-not $match.Success) { return $false }
+    # -eq on strings is case-insensitive in PowerShell, so `True` counts too.
+    return ($match.Groups[1].Value.Trim() -eq 'true')
+}
+
 # Locate iisexpress.exe. Lookup order (strict cut, no env fallback):
 #   1. .turbo-plugin/config.local.toml [tools] iis_express_path  (machine-specific, gitignored)
-#   2. Standard install paths (Program Files (x86) / Program Files)
+#   2. Standard install paths, ordered by the csproj's <Use64BitIISExpress>
 #   3. Throw, pointing at config.local.toml.
 # $env:TURBO_PLUGIN_IIS_EXPRESS_PATH is deliberately NOT read — this is the first release;
 # no legacy users to migrate. If the env var happens to be set externally, it is ignored.
+#
+# -ProjectFile is optional and only affects the ORDER of step 2. Omitting it keeps the historical
+# x86-first order, which is why the existing callers and tests are unaffected.
+# [CmdletBinding()] is here so the fallback warning below is reachable via -WarningVariable, i.e.
+# so it can be asserted in a test. A warning nobody tests is a warning that can be deleted silently.
 function Find-IisExpressPath {
-    param([string]$RepoRoot = '')
+    [CmdletBinding()]
+    param(
+        [string]$RepoRoot = '',
+        [string]$ProjectFile = ''
+    )
 
     # Step 1: config.local.toml [tools] iis_express_path
     if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -28,13 +63,28 @@ IIS Express 路徑設定指向不存在的檔案: $resolved
         }
     }
 
-    # Step 2: probe standard install paths
-    $candidates = @(
-        "${env:ProgramFiles(x86)}\IIS Express\iisexpress.exe",
-        "${env:ProgramFiles}\IIS Express\iisexpress.exe"
-    )
+    # Step 2: probe standard install paths, 64-bit first when the csproj asks for it.
+    #
+    # Before this, x86 was unconditionally first, so on a machine with both installed the 32-bit
+    # binary ALWAYS won. A project whose dependency chain contains an AMD64 assembly then died in
+    # ASP.NET's FirstRequestInit with a BadImageFormatException naming neither IIS Express nor
+    # bitness -- so every page 500s and the message points at the assembly instead (issue #50).
+    $path64 = "${env:ProgramFiles}\IIS Express\iisexpress.exe"
+    $path86 = "${env:ProgramFiles(x86)}\IIS Express\iisexpress.exe"
+    $prefer64 = Test-ProjectPrefers64BitIisExpress -ProjectFile $ProjectFile
+    $candidates = @($path86, $path64)
+    if ($prefer64) { $candidates = @($path64, $path86) }
+
     foreach ($c in $candidates) {
         if (Test-Path -LiteralPath $c -PathType Leaf) {
+            # Say so rather than quietly handing back the 32-bit binary: falling back silently
+            # reproduces exactly the failure this ordering exists to prevent, and the resulting
+            # BadImageFormatException gives the user nothing to go on.
+            if ($prefer64 -and $c -ne $path64) {
+                Write-Warning ("The project sets <Use64BitIISExpress>true</Use64BitIISExpress>, but no 64-bit " +
+                    "IIS Express was found at '$path64'. Falling back to '$c'. A dependency chain containing " +
+                    "64-bit native assemblies will fail to load under it.")
+            }
             return $c
         }
     }
@@ -152,7 +202,10 @@ function Get-IisProjectBinding {
     param([Parameter(Mandatory = $true)][string]$ProjectFile)
 
     $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    $projectContent = Get-Content -LiteralPath $ProjectFile -Raw
+    # -Encoding UTF8 for the same reason Core.ps1's config reader needs it (issue #53): on 5.1 the
+    # default is the system ANSI code page, which mis-decodes a UTF-8 csproj. XML is UTF-8 by
+    # default per the spec, so pinning it is correct rather than a guess.
+    $projectContent = Get-Content -LiteralPath $ProjectFile -Raw -Encoding UTF8
 
     $sslPort = ''
     $sslPortMatch = [regex]::Match($projectContent, '<IISExpressSSLPort>([^<]+)</IISExpressSSLPort>', $ic)
@@ -210,7 +263,7 @@ function Resolve-IisSettings {
     $iisUrl = $binding.Url
     $iisUri = $binding.Uri
 
-    $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot
+    $iisExpressPath = Find-IisExpressPath -RepoRoot $repoRoot -ProjectFile $projectFile
 
     # Anchored on $repoRoot, not the ambient cwd: with -RepoRoot naming a sibling project the cwd
     # is a different repository, and its toplevel would produce a wrong relative path -> a wrong

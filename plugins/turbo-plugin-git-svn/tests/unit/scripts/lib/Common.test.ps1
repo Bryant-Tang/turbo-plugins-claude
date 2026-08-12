@@ -188,6 +188,45 @@ key = "v"
         }
     }
 
+    # Only git-svn's suite carries this case. Core.ps1 is byte-identical across every plugin
+    # (enforced by tools/verify-core-identical.sh in CI), so exercising one copy exercises them all
+    # -- that invariant is precisely what buys us the right not to quadruplicate the test.
+    Context 'issue #53 - config is read as UTF-8, not the system ANSI code page' {
+        It 'round-trips a non-ASCII value, and keeps the section header that follows a non-ASCII comment' {
+            $repo = New-IsolatedRepoRoot 'utf8cfg'
+            try {
+                # Built from code points on purpose: this test is about how a file gets DECODED, so
+                # it must not itself depend on how its own source file is decoded. U+6E2C U+8A66.
+                $cjk = [string]([char]0x6E2C) + [string]([char]0x8A66)
+
+                $cfgToml = Join-Path $repo '.turbo-plugin\config.toml'
+                Write-Toml -Path $cfgToml -Content @"
+# $cjk
+[tools]
+msbuild_path = "C:/MSBuild.exe"
+note = "$cjk"
+"@
+                $note    = Resolve-ConfigValue -RepoRoot $repo -Section 'tools' -Key 'note'         -CliValue $null -Default $null
+                $msbuild = Resolve-ConfigValue -RepoRoot $repo -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null
+
+                # The two assertions below fail under DIFFERENT code pages, which is why both exist:
+                #
+                #   * value round-trip: any non-UTF-8 ANSI code page mis-decodes the bytes, so this
+                #     one goes red on cp1252 (an English CI runner) as well as on cp950. It is the
+                #     portable guard -- without it the whole case would pass on CI whether or not
+                #     the fix is present, which is the failure mode this repo keeps getting bitten by.
+                #   * section survival: a DOUBLE-byte code page (cp950 on zh-TW Windows) also
+                #     swallows line breaks, merging `[tools]` into the comment above it so the whole
+                #     section vanishes. That is the reported symptom, and it cannot reproduce on
+                #     cp1252 -- on CI this assertion only proves the parse did not regress.
+                $note | Should -Be $cjk
+                $msbuild | Should -Be 'C:/MSBuild.exe'
+            } finally {
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+    }
+
     Context 'override - same section.key in both files, config.local.toml wins' {
         It 'returns the local override value for [iis] enabled' {
             $repo = New-IsolatedRepoRoot 'merge'

@@ -482,3 +482,80 @@ function Remove-PerLaunchTempFile {
     return [pscustomobject]@{ Removed = $false; Error = $lastError }
 }
 
+# Component-wise numeric version compare. Missing components count as 0, so 18 == 18.0.0 and
+# 18.20 > 18.4 (which a string compare gets backwards). Returns -1 / 0 / 1.
+function Compare-DottedVersion {
+    param(
+        [Parameter(Mandatory = $true)][int[]]$Left,
+        [Parameter(Mandatory = $true)][int[]]$Right
+    )
+    $count = [Math]::Max($Left.Count, $Right.Count)
+    for ($i = 0; $i -lt $count; $i++) {
+        $l = 0
+        $r = 0
+        if ($i -lt $Left.Count) { $l = $Left[$i] }
+        if ($i -lt $Right.Count) { $r = $Right[$i] }
+        if ($l -lt $r) { return -1 }
+        if ($l -gt $r) { return 1 }
+    }
+    return 0
+}
+
+# Does the running Node satisfy the [frontend] node_version requirement?
+#
+# Accepted forms (leading `v` and surrounding spaces optional):
+#   18 / 18.20.8      exact MAJOR match  -- `18` accepts v18.20.8. This is the historical meaning
+#                     of a bare value and is kept so existing configs do not change behaviour.
+#   >=16 / >=16.0.0   minimum, compared numerically over the components actually written
+#   >16 / <=20 / <20  same, other directions
+#
+# npm range syntax (^18, ~18, `||` unions, hyphen ranges) is REJECTED with a message rather than
+# guessed at. Silently misreading a requirement is what made issue #49 so hard to diagnose.
+#
+# The bug it replaces: the old code did Split('.')[0] on the requirement, so ">=16.0.0" yielded the
+# literal ">=16", which was string-compared against "18" and never matched -- so EVERY Node version
+# was rejected, while the message still read "Required major: >=16.0.0". That phrasing points at
+# the Node install, so the natural response is to go switch Node versions, which cannot ever help.
+#
+# Returns $true/$false. Throws only when the requirement (or the reported Node version) cannot be
+# parsed at all -- an unusable config should fail loudly, not quietly reject everything.
+function Test-NodeVersionSatisfied {
+    param(
+        [Parameter(Mandatory = $true)][string]$CurrentVersion,
+        [Parameter(Mandatory = $true)][string]$Requirement
+    )
+
+    $operator = ''
+    $requiredText = $Requirement.Trim()
+    # Split the comparator off first rather than making it an optional regex group: under
+    # StrictMode a non-participating group is an awkward thing to read back out of $Matches.
+    if ($requiredText -match '^(>=|<=|>|<|=)\s*(.*)$') {
+        $operator = $Matches[1]
+        $requiredText = $Matches[2].Trim()
+    }
+    $requiredText = $requiredText -replace '^v', ''
+    if ($requiredText -notmatch '^\d+(\.\d+)*$') {
+        throw ("Unsupported [frontend] node_version: '$Requirement'. Use an exact major (18) or a " +
+               "comparison (>=16, >=16.0.0, >16, <=20, <20). npm range syntax such as ^18, ~18, " +
+               "unions (||) and hyphen ranges are not supported.")
+    }
+    $requiredParts = @($requiredText.Split('.') | ForEach-Object { [int]$_ })
+
+    $currentText = ($CurrentVersion -replace '^\s*v', '').Trim()
+    if ($currentText -notmatch '^(\d+(\.\d+)*)') {
+        throw "Unable to parse the running Node version: '$CurrentVersion'."
+    }
+    $currentParts = @($Matches[1].Split('.') | ForEach-Object { [int]$_ })
+
+    if ([string]::IsNullOrEmpty($operator) -or $operator -eq '=') {
+        return ($currentParts[0] -eq $requiredParts[0])
+    }
+
+    $comparison = Compare-DottedVersion -Left $currentParts -Right $requiredParts
+    if ($operator -eq '>=') { return ($comparison -ge 0) }
+    if ($operator -eq '>')  { return ($comparison -gt 0) }
+    if ($operator -eq '<=') { return ($comparison -le 0) }
+    if ($operator -eq '<')  { return ($comparison -lt 0) }
+    return $false
+}
+

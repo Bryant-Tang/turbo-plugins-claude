@@ -75,10 +75,13 @@ try {
         $nodeCurrentOutput = (& $nodeCommand -v 2>$null | Out-String).Trim()
         $ErrorActionPreference = $eaNodeVer
         Write-Output "Active Node version: $nodeCurrentOutput"
-        $currentMajor = ($nodeCurrentOutput -replace '^v', '').Split('.')[0]
-        $requiredMajor = ($requiredNodeVersion.ToString() -replace '^v', '').Split('.')[0]
-        if ($currentMajor -ne $requiredMajor) {
-            throw "Unexpected Node version. Current: $nodeCurrentOutput, Required major: $requiredNodeVersion"
+        # Test-NodeVersionSatisfied understands both the historical bare-major form and comparison
+        # operators; see its comment in lib/Common.ps1 for the accepted grammar. The wording below
+        # deliberately says "does not satisfy" rather than the old "Unexpected Node version /
+        # Required major", which read as "you are on the wrong Node" even when the requirement was
+        # the unparseable half of the problem (issue #49).
+        if (-not (Test-NodeVersionSatisfied -CurrentVersion $nodeCurrentOutput -Requirement $requiredNodeVersion.ToString())) {
+            throw "Node version does not satisfy [frontend] node_version. Current: $nodeCurrentOutput, required: $requiredNodeVersion"
         }
     }
 
