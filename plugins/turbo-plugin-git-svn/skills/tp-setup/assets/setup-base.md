@@ -51,9 +51,17 @@
    ```
    # turbo-plugin
    .claude/**/*.local.*
+   .claude/worktrees/
    .turbo-plugin/**/*.local.*
    !*.example.local.*
    ```
+   - **`.claude/worktrees/` 是必要的,上面那條 `.claude/**/*.local.*` 擋不住它**:Claude Code 內建的
+     worktree 功能預設把工作副本建在 `<repo>/.claude/worktrees/`,那底下是**一份完整的 checkout**
+     (含 `node_modules` 與建置產物,動輒數百 MB),而裡面的檔案**不含 `.local.`**,所以完全不受上一條
+     規則影響。少了這行有兩個後果:`git status` 永遠掛著一筆 `?? .claude/`,雜訊會蓋掉真正該注意的未
+     追蹤檔;以及任何一次 `git add -A` 都可能把整包工作副本塞進版控——**在 SVN 那側是永久的**。
+     以**目錄**形式忽略也順帶保證底下的東西不會被後面的 `!` 規則重新納入(git 不允許重新納入被排除
+     目錄底下的檔案),這正是這裡要的。
    - **那條 `!` 放行是必要的,不是裝飾**:`*.example.local.*` 是刻意要進版控的**範本**(例如
      `dbhub.example.local.toml`),讓同事看得到該填哪些欄位。少了它,前一條規則會把範本一起擋掉,
      於是「附一份範本給同事」這件事永遠不會成立——而真正含密碼的 `dbhub.local.toml` 仍然被擋住,
