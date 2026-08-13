@@ -2,6 +2,14 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.1.0...turbo-plugin-three-environment-db--v0.1.1) (2026-08-13)
+
+
+### Fixed
+
+* **core:** config 改用 UTF-8 讀取,非 ASCII 註解不再讓後面整段設定消失 ([c65b4a5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c65b4a50807b71fe8f0cf0c4e1a310d856473fd1))
+* **git-svn:** tp-setup 注入的 base ignore 加上 .claude/worktrees/ ([bfc3264](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/bfc32649ba0fac901a4a63b656a181bd0c779688))
+
 ## [Unreleased]
 
 ## [0.1.0] - 2026-06-20
