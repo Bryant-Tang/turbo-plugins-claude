@@ -2,6 +2,16 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.1.1...turbo-plugin-git-svn--v0.1.2) (2026-08-13)
+
+
+### Fixed
+
+* **core:** config 改用 UTF-8 讀取,非 ASCII 註解不再讓後面整段設定消失 ([c65b4a5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c65b4a50807b71fe8f0cf0c4e1a310d856473fd1))
+* **git-svn:** git commit 前提示套用 tp-commit-msg,規範不再靜默落空 ([0f32a29](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0f32a29f7435e41d632efee3e3db82394535297e))
+* **git-svn:** tp-setup 注入的 base ignore 加上 .claude/worktrees/ ([bfc3264](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/bfc32649ba0fac901a4a63b656a181bd0c779688))
+* **git-svn:** 另一個指令的 --no-edit 不再讓 commit 的提醒被略過 ([27b3ace](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/27b3ace4edae7fc4e1fe7f8e0c706ca80c8d4486))
+
 ## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.1.0...turbo-plugin-git-svn--v0.1.1) (2026-08-06)
 
 
