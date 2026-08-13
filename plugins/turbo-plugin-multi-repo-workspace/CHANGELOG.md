@@ -2,6 +2,14 @@
 
 本檔記錄 turbo-plugin-multi-repo-workspace 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.1.0...turbo-plugin-multi-repo-workspace--v0.1.1) (2026-08-13)
+
+
+### Fixed
+
+* **core:** config 改用 UTF-8 讀取,非 ASCII 註解不再讓後面整段設定消失 ([c65b4a5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c65b4a50807b71fe8f0cf0c4e1a310d856473fd1))
+* **multi-repo-workspace:** 注入的規範補上「動錯分支」,不只擋「動錯 repo」 ([6559003](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/65590034627489972400322ddcf97da4fc35ae8e))
+
 ## [Unreleased]
 
 ## [0.1.0] - 2026-07-30
