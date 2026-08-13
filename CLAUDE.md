@@ -82,6 +82,8 @@ plugins/<plugin-name>/
 ├── assets/                      # 可選 — 跨多個 skill 共用、沒有單一擁有者的資產
 ├── scripts/<name>.ps1           # 可選 — PowerShell 實作（Windows）
 ├── scripts/<name>.sh            # 可選 — Bash 實作（Linux / macOS / Git Bash）
+├── hooks/hooks.json             # 可選 — Claude Code hook 宣告（只放宣告；事件包在頂層 `hooks` 鍵底下）
+├── scripts/hooks/<name>.sh      # 可選 — hook 實作（與其它 script 同樣放 scripts/ 底下）
 ├── default-files/               # 可選 — `setup` 類 skill 會複製這些範本到 workspace
 └── tests/                       # 必要 — 自動化測試套件（見「測試標準」）
 ```
@@ -119,6 +121,22 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
 - **Script**：實際做事的地方。**所有 script 都要同時提供 `.ps1` 和 `.sh` 兩個版本**，行為一致；Windows 走 PowerShell、其它平台走 Bash。命名為配對，**`.ps1` 用 PascalCase（Verb-Noun）、`.sh` 用小寫連字**（如 `Build-SvnCommit.ps1` + `build-svn-commit.sh`、`Remove-OrphanIis.ps1` + `remove-orphan-iis.sh`）。
 
   > **唯一的例外：`.mcp.json` 直接啟動的腳本寫成一支 `.js`。** plugin 的 `.mcp.json` 只吃字面的 `command`、沒有平台條件式，而且 Claude Code 是**直接 spawn** 它（不像 hook 那樣走 Claude Code 自己的 shell）——Windows PATH 上的 `bash` 是 WSL 轉接器、`sh` 不存在，所以 `"command": "bash"` 在標準 Git for Windows 機器上必然起不來。`node` 是三平台同名都在 PATH 上的唯一選擇。這條規則的目的是「兩個平台不會漂移」，單一實作更直接達成它；仍要用 Pester + shUnit2 兩套測試驅動同一支腳本。現況只有 `turbo-plugin-three-environment-db/scripts/start-dbhub.js`，理由寫在該 plugin 的 README。**不要「順手」幫它補一組 `.ps1` + `.sh`。**
+
+  > **第二個例外:每次工具呼叫都會跑的 hook,只寫一支 `.sh`。** 這條**不是**「hook 都免配對」——
+  > `scripts/hooks/invoke-sessionstart.sh` 就照規約配了 `Invoke-SessionStart.ps1`,在 Windows 上委派過去,
+  > 那是對的。差別在**觸發頻率**:`SessionStart` 一個 session 只跑一次,委派多花的一次 PowerShell
+  > 行程啟動無所謂;而 `PreToolUse` + matcher `Bash` 的 hook **在 agent 每一次 Bash 呼叫之前都會跑**,
+  > 每次都啟一個 PowerShell 行程等於在每一條指令前面插一次行程啟動延遲。寫一支永遠不會被呼叫的
+  > `.ps1`(`hooks.json` 一律走 `bash`)則是死程式碼。所以這類 hook 用單一 bash 實作,且工作要限縮在
+  > Git Bash 原生就能做的純文字處理。現況只有 `turbo-plugin-git-svn/scripts/hooks/remind-commit-msg.sh`。
+
+  > **寫 hook 時的三個實務重點**(踩過才知道,不要重踩):
+  > ① plugin 的 `hooks.json` 事件要包在頂層 `hooks` 鍵底下(`{"description": ..., "hooks": {"PreToolUse": [...]}}`);
+  > 寫成事件直接放頂層**不會報錯,只會靜默不載入**。
+  > ② hook 腳本放 `scripts/hooks/`(不是 `hooks/`,那裡只放 `hooks.json`);測試放 `tests/unit/scripts/hooks/`。
+  > ③ PreToolUse 若只是要給 agent 一段訊息,輸出**只含 `systemMessage` 的 JSON**,**絕不要帶
+  > `permissionDecision`**——回 `"allow"` 等於替使用者放行該工具的每一次呼叫,是在權限設定上開洞;
+  > 而純文字 stdout 對 PreToolUse 只會進 debug log,等於沒說。沒話要說時印 `{}`。
 
 ### Cross-platform script 約定
 
