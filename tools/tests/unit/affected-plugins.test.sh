@@ -166,6 +166,65 @@ test_marketplace_manifest_widens_to_all() {
     assertEquals 'ALL' "$OUT"
 }
 
+# ── the one root path that does NOT widen: release-please's state file ───────
+#
+# Read the mixed case FIRST: it is the only one of these that can fail if the exception is
+# removed. With `.release-please-manifest.json` alone, nothing is attributed, so the
+# "no attributable paths" fallback returns ALL either way -- exactly the trap already documented
+# on test_plugin_file_mixed_with_a_root_file_widens_to_all. Verified by mutation: deleting the
+# exception branch leaves every other case here green and reddens only the two mixed ones.
+#
+# (That mutation run reports `failures=4`, not 2. shUnit2 records two entries per failing test --
+# the ASSERT line, and a "returned non-zero return code" line, because the failed assertion makes
+# the test function itself return non-zero. Two failing tests, four counted failures. Worth knowing
+# before anyone reads that number as "I broke four things".)
+
+test_release_manifest_with_its_plugin_narrows_to_that_plugin() {
+    # The real shape of a Release PR: the root manifest plus the releasing plugin's own two files.
+    run_with '.release-please-manifest.json
+plugins/turbo-plugin-dotnet-framework/CHANGELOG.md
+plugins/turbo-plugin-dotnet-framework/.claude-plugin/plugin.json'
+    assertEquals 'exit 0' 0 "$RC"
+    assertEquals 'plugins/turbo-plugin-dotnet-framework' "$OUT"
+}
+
+test_release_manifest_listed_last_also_narrows() {
+    # Order must not matter, same as for the widening paths.
+    run_with 'plugins/turbo-plugin-git-svn/CHANGELOG.md
+.release-please-manifest.json'
+    assertEquals 'plugins/turbo-plugin-git-svn' "$OUT"
+}
+
+test_release_manifest_alone_still_widens_to_all() {
+    # Skipping the manifest is not a claim that nothing is affected. On its own it attributes
+    # nothing, and "nothing attributed" must keep meaning ALL -- never "run no suites".
+    run_with '.release-please-manifest.json'
+    assertEquals 'ALL' "$OUT"
+}
+
+test_release_please_config_still_widens_to_all() {
+    # The exception is for the STATE file only. The config decides behaviour (changelog-sections,
+    # tag-separator, the package list), so it must keep widening. Same-name-different-file is
+    # exactly the sort of thing a later edit could conflate.
+    run_with 'release-please-config.json
+plugins/turbo-plugin-git-svn/CHANGELOG.md'
+    assertEquals 'ALL' "$OUT"
+}
+
+test_release_manifest_skip_is_announced_on_stderr() {
+    # Every other narrowing decision is silent, but this one overrides the documented "root widens"
+    # rule, so it says so -- reading that back out of a CI log is how anyone diagnoses a suite that
+    # did not run.
+    local err
+    err="$(err_of '.release-please-manifest.json
+plugins/turbo-plugin-git-svn/CHANGELOG.md')"
+    assertNotNull 'the skip should be explained on stderr' "$err"
+    case "$err" in
+        *release-please\ state*) ;;
+        *) fail "stderr should say the manifest was skipped as release-please state; got: $err" ;;
+    esac
+}
+
 # ── output shape ─────────────────────────────────────────────────────────────
 
 test_output_is_exactly_one_line() {
