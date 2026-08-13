@@ -90,14 +90,25 @@ bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用
 
 ## Hooks
 
-`turbo-plugin-git-svn` 自帶一個 hook,安裝即生效:
+`turbo-plugin-git-svn` 自帶兩個 hook,安裝即生效:
 
 - **`SessionStart`**:每次 Claude session 啟動時觸發,依以下順序檢查:
   1. 非 git repo / submodule 內 → silent exit
   2. `.turbo-plugin/` marker 存在 → silent 通過（dbhub / IIS 的執行期檢查屬 sibling plugin）
   3. marker 不存在 → 提示主 worktree 路徑(若在 peer)或「請執行 `/tp-setup`」(若在主 worktree)
 
-hook 是 advisory 不會 block session。
+- **`PreToolUse`(matcher `Bash`)**:偵測到即將執行 `git commit` 時,提示先套用 `tp-commit-msg`,
+  並附上核對該 repo 既有 type 慣例的指令。`git -C <path> commit`、`git -c k=v commit`、
+  `git commit -F -` 加 heredoc 都攔得到;`--no-edit`(沒有在寫訊息)與其它 git 子指令則安靜通過。
+
+  存在的理由是 `tp-commit-msg` 標了 proactive 卻**沒有任何機制保證它被載入**——agent 可以直接
+  `git commit` 而整份規範靜默落空,且不會有任何訊號。那個失效發生在「agent 意識到需要查」之前,
+  所以記憶或 CLAUDE.md 這類「要先被讀到才有效」的手段救不了它。
+
+**兩個 hook 都是 advisory**:不會 block session、不會擋下指令,也**不會代為授予權限**(不回
+`permissionDecision`,所以你原本的權限設定完全不受影響)。
+
+> hook 在 Claude Code **session 啟動時載入**。剛安裝或剛更新 plugin 的話,要重開一次 session 才會生效。
 
 ## 與其它 turbo-plugin 的關係
 
