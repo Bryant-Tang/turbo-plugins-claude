@@ -67,6 +67,28 @@ while IFS= read -r f; do
         *) touched="$touched $p" ;;
       esac
       ;;
+    .release-please-manifest.json)
+      # The one root path that does NOT widen. The distinction is release-please's CONFIG versus
+      # its STATE:
+      #
+      #   release-please-config.json     decides behaviour (changelog-sections, tag-separator,
+      #                                  which packages exist) -> still widens, see the `*` branch
+      #   .release-please-manifest.json  is a map of package path -> version string, nothing else
+      #
+      # A version number cannot change how any plugin behaves or how any test runs, so this file
+      # carries no information that justifies running anything.
+      #
+      # Why it is worth an exception at all: a Release PR's diff is exactly three files -- this
+      # manifest, plus the releasing plugin's CHANGELOG.md and .claude-plugin/plugin.json, both
+      # already under plugins/<name>/ and attributed correctly. This single path was therefore
+      # dragging the full five-plugin x two-OS matrix onto a diff containing no code whatsoever
+      # (~26 minutes), and charging it again on every "Update branch" after a sibling Release PR
+      # merged. Four plugins release together whenever Core.ps1 changes, so that compounds.
+      #
+      # Skipping is not the same as answering "nothing is affected": if this were somehow the only
+      # changed path, `$touched` stays empty and the guard below still widens to ALL.
+      note "'$f' is release-please state (version numbers only); not widening"
+      ;;
     *)
       note "'$f' is not under plugins/<name>/; widening to ALL"
       echo 'ALL'
