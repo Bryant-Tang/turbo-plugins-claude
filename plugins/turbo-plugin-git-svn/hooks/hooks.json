@@ -1,5 +1,5 @@
 {
-  "description": "turbo-plugin-git-svn: SessionStart 提示性 prompt（marker 缺失時提示 /tp-setup）。advisory（不會 block session）。",
+  "description": "turbo-plugin-git-svn: SessionStart 提示性 prompt（marker 缺失時提示 /tp-setup）+ git commit 前提示套用 tp-commit-msg。兩者皆 advisory（不會 block session、不會擋下指令、不會代為授予權限）。",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,18 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/invoke-sessionstart.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/remind-commit-msg.sh\"",
             "timeout": 10
           }
         ]
