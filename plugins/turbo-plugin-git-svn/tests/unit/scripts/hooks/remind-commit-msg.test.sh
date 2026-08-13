@@ -106,6 +106,32 @@ test_git_dash_lowercase_c_triggers() {
     esac
 }
 
+# Found in review of PR #64, and it reproduced: the --no-edit test used to look at the whole
+# payload, so an unrelated --no-edit anywhere in a chain silenced a commit that WAS authoring a
+# message. That is the same silent skip issue #56 exists to catch, occurring inside the hook meant
+# to catch it -- and `&&`-chained one-liners are an ordinary shape for agent-issued Bash calls.
+test_no_edit_from_another_command_does_not_silence_the_commit() {
+    run_hook 'git merge --no-edit && git commit -m \"fix: x\"'
+    case "$OUT" in
+        *tp-commit-msg*) ;;
+        *) fail "another command's --no-edit must not suppress the reminder; got: $OUT" ;;
+    esac
+}
+
+test_no_edit_on_the_commit_itself_still_silences_in_a_chain() {
+    # The other direction: scoping must not break the case --no-edit was added for.
+    run_hook 'git add -A && git commit --amend --no-edit'
+    assertEquals '{}' "$OUT"
+}
+
+test_commit_later_in_a_chain_still_triggers() {
+    run_hook 'npm run build && git add -A && git commit -m \"fix: x\"'
+    case "$OUT" in
+        *tp-commit-msg*) ;;
+        *) fail "a commit later in a chain should trigger; got: $OUT" ;;
+    esac
+}
+
 test_heredoc_form_triggers() {
     # Issue #56 called `git commit -F -` with a heredoc the hard case to intercept. It is not hard
     # here: the whole heredoc arrives inside the same command string.

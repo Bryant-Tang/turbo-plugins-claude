@@ -52,15 +52,36 @@ emit_nothing() {
 # Is a `git commit` about to run? Global options are allowed in between, so `git -C <path> commit`
 # and `git -c key=value commit` match too -- those are the ordinary forms in a multi-repo
 # workspace, which is exactly the setting issue #56 came out of.
-if ! printf '%s' "$payload" | grep -Eq '(^|[^A-Za-z0-9_-])git([[:space:]]+-[cC][[:space:]]*[^[:space:]]+)*[[:space:]]+commit([^A-Za-z0-9_-]|$)'; then
-    emit_nothing
-fi
+COMMIT_RE='(^|[^A-Za-z0-9_-])git([[:space:]]+-[cC][[:space:]]*[^[:space:]]+)*[[:space:]]+commit([^A-Za-z0-9_-]|$)'
 
 # `--no-edit` means no message is being authored (typically `--amend --no-edit`, or concluding a
-# merge). There is nothing for tp-commit-msg to do, so silence is correct rather than merely polite.
-if printf '%s' "$payload" | grep -Eq '(^|[^A-Za-z0-9_-])--no-edit([^A-Za-z0-9_-]|$)'; then
-    emit_nothing
-fi
+# merge), so tp-commit-msg has nothing to contribute and silence is correct.
+NO_EDIT_RE='(^|[^A-Za-z0-9_-])--no-edit([^A-Za-z0-9_-]|$)'
+
+# Both tests are scoped to a single CLAUSE, not to the whole payload.
+#
+# Testing the payload as one blob was wrong: in `git merge --no-edit && git commit -m "..."` the
+# merge's --no-edit silenced the reminder for a commit that IS authoring a message. That is exactly
+# the silent skip this hook exists to prevent, reproduced inside the hook itself -- and &&-chained
+# one-liners are an ordinary shape for agent-issued Bash calls, not a corner case.
+#
+# Split with bash parameter expansion rather than sed: `\n` in a sed replacement is a GNU
+# extension, and this runs on whatever sed the developer's machine has. Order matters -- `||` must
+# be replaced before `|`, or the single-pipe pass would cut it in half.
+clauses="${payload//&&/$'\n'}"
+clauses="${clauses//||/$'\n'}"
+clauses="${clauses//;/$'\n'}"
+clauses="${clauses//|/$'\n'}"
+
+reminder_needed=0
+while IFS= read -r clause; do
+    printf '%s' "$clause" | grep -Eq "$COMMIT_RE" || continue
+    printf '%s' "$clause" | grep -Eq "$NO_EDIT_RE" && continue
+    reminder_needed=1
+    break
+done <<< "$clauses"
+
+[ "$reminder_needed" -eq 1 ] || emit_nothing
 
 # One line on purpose: the value is a JSON string, so every newline has to be a literal \n escape.
 # A heredoc with real newlines would produce invalid JSON.
