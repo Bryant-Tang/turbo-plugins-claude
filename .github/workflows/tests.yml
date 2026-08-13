@@ -22,6 +22,30 @@ name: Script Tests
 # Linux. Run on every push so the feedback arrives while the change is fresh, not at merge time.
 on:
   push:
+    # release-please's own branches are excluded from the PUSH trigger only; their `pull_request`
+    # runs still happen, so the Release PR still gets tests-passed and branch protection is intact.
+    #
+    # What this removes: release-please creates a branch in two steps -- first pointing at main's
+    # HEAD, then pushing the release commit onto it. That first push fires a run whose `github.sha`
+    # IS main's HEAD, and the second push then cancels it via the concurrency group below. The
+    # cancelled run's `tests-passed` records a FAILURE, and GitHub aggregates every check-run for a
+    # SHA -- so main's own commit goes red even though its real push run passed.
+    #
+    # Measured on 12eb846 (the PR #54 merge): 4 tests-passed check-runs on that one SHA -- the real
+    # push-to-main run (success, 22m53s) plus three cancelled ones, exactly the three release-please
+    # branches that were newly CREATED that round. The pre-existing one (multi-repo-workspace) did
+    # not produce the artifact, because it was updated rather than created.
+    #
+    # This is worth fixing for the same reason the rest of this file is careful: a main branch whose
+    # commits are permanently red is a main branch where a genuine failure is invisible.
+    #
+    # Does this reopen the gap the comment above warns about ("a long-lived branch that has not
+    # opened a PR yet gets ZERO CI")? No. release-please opens the Release PR in the same run that
+    # creates the branch, so these branches always have one by construction -- they are the single
+    # branch family where the push trigger is guaranteed redundant. The exclusion is written as an
+    # exact prefix rather than something broad, so no human branch can accidentally fall into it.
+    branches-ignore:
+      - 'release-please--**'
   pull_request:
   workflow_dispatch:
 
