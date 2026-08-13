@@ -2,6 +2,16 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.3](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.1.2...turbo-plugin-dotnet-framework--v0.1.3) (2026-08-13)
+
+
+### Fixed
+
+* **core:** config 改用 UTF-8 讀取,非 ASCII 註解不再讓後面整段設定消失 ([c65b4a5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c65b4a50807b71fe8f0cf0c4e1a310d856473fd1))
+* **dotnet:** node_version 寫成版本範圍時不再擋下所有 Node 版本 ([6866802](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6866802f23a3b53525156acd8f86a65b6fed9d26))
+* **dotnet:** publish 跟上 VS 實際寫入的組態/平台,並開放傳入額外 MSBuild 屬性 ([23dc97f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/23dc97f23add7bb02ef98363576c2f61853e27c1))
+* **dotnet:** 依 csproj 的 Use64BitIISExpress 決定啟動哪一支 IIS Express ([193c872](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/193c872c22ea16d9eb66e0301115364300b9490c))
+
 ## [0.1.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.1.1...turbo-plugin-dotnet-framework--v0.1.2) (2026-08-07)
 
 
