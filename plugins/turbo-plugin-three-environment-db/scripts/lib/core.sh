@@ -174,12 +174,22 @@ read_turbo_plugin_config() {
   [[ -f "$config_path" ]] || return 0
   local section=''
   local line key val
+  local __tp_re_section='^\[([^]]+)\][[:space:]]*(#.*)?$'
+  local __tp_re_dq='^"([^"]*)"[[:space:]]*(#.*)?$'
+  local __tp_re_sq="^'([^']*)'[[:space:]]*(#.*)?\$"
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
     [[ "${line:0:1}" == '#' ]] && continue
-    if [[ "$line" =~ ^\[([^\]]+)\]$ ]]; then
+    # A table header may carry a trailing comment -- TOML allows it. Requiring the line to END at
+    # ']' dropped the header, and with it EVERY key under that section, in silence.
+    #
+    # The regexes live in variables because a backslash inside a POSIX bracket expression is a
+    # LITERAL backslash, not an escape: writing [^\"] would also exclude '\' and would therefore
+    # stop matching any Windows path value. Unquoted "$re" expansion is how bash takes a pattern
+    # from a variable.
+    if [[ "$line" =~ $__tp_re_section ]]; then
       section="${BASH_REMATCH[1]}"
       section="${section#"${section%%[![:space:]]*}"}"
       section="${section%"${section##*[![:space:]]}"}"
@@ -188,13 +198,15 @@ read_turbo_plugin_config() {
     if [[ "$line" =~ ^([A-Za-z0-9_-]+)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
-      # strip trailing inline comment if value isn't a quoted string
-      if [[ ! "$val" =~ ^[\"\'] ]] && [[ "$val" =~ ^([^#]+)[[:space:]]+\#.* ]]; then
+      # A quoted value ends at its closing quote, so match through the quote and allow a comment
+      # after it; '#' INSIDE the quotes stays part of the value (a path may contain one). A quoted
+      # value with a trailing comment used to match neither the comment-stripping branch (it starts
+      # with a quote) nor the unquoting branch (it does not end with one), so it kept both.
+      if [[ "$val" =~ $__tp_re_dq ]]; then val="${BASH_REMATCH[1]}"
+      elif [[ "$val" =~ $__tp_re_sq ]]; then val="${BASH_REMATCH[1]}"
+      elif [[ "$val" =~ ^([^#]+)[[:space:]]+\#.* ]]; then
         val="${BASH_REMATCH[1]}"
         val="${val%"${val##*[![:space:]]}"}"
-      fi
-      if [[ "$val" =~ ^\"(.*)\"$ ]]; then val="${BASH_REMATCH[1]}"
-      elif [[ "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"
       fi
       if [[ -n "$filter_key" ]]; then
         # Targeted lookup: emit sentinel-prefixed value when section+key match.

@@ -213,7 +213,9 @@ function Read-TurboPluginConfig {
             $line = $raw -replace '^\s+|\s+$', ''
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             if ($line.StartsWith('#')) { continue }
-            if ($line -match '^\[([^\]]+)\]$') {
+            # A table header may carry a trailing comment -- TOML allows it. Requiring the line to
+            # END at ']' dropped the header, and with it EVERY key under that section, in silence.
+            if ($line -match '^\[([^\]]+)\]\s*(#.*)?$') {
                 $currentSection = $Matches[1].Trim()
                 if (-not $result.ContainsKey($currentSection)) {
                     $result[$currentSection] = @{}
@@ -223,18 +225,22 @@ function Read-TurboPluginConfig {
             if ($line -match '^([A-Za-z0-9_\-]+)\s*=\s*(.+)$') {
                 $key = $Matches[1].Trim()
                 $val = $Matches[2].Trim()
-                # strip trailing inline comment (only if not inside a quoted string)
-                if ($val -notmatch '^"' -and $val -notmatch "^'") {
-                    if ($val -match '^(.*?)\s+#') {
-                        $val = $Matches[1].Trim()
-                    }
+                # A quoted value ends at its closing quote, so match through the quote and allow a
+                # comment after it. '#' INSIDE the quotes stays part of the value (a path may
+                # contain one). Previously a quoted value with a trailing comment matched neither
+                # the comment-stripping branch (it starts with a quote) nor the unquoting branch
+                # (it does not end with one), so the value kept its quotes AND the comment.
+                if ($val -match '^"([^"]*)"\s*(#.*)?$') { $val = $Matches[1] }
+                elseif ($val -match "^'([^']*)'\s*(#.*)?$") { $val = $Matches[1] }
+                else {
+                    # Unquoted: the trailing inline comment is not part of the value, and only an
+                    # unquoted token may be a bool/number ("true" in quotes is the string).
+                    if ($val -match '^(.*?)\s+#') { $val = $Matches[1].Trim() }
+                    if ($val -eq 'true') { $val = $true }
+                    elseif ($val -eq 'false') { $val = $false }
+                    elseif ($val -match '^-?\d+$') { $val = [int]$val }
+                    elseif ($val -match '^-?\d+\.\d+$') { $val = [double]$val }
                 }
-                if ($val -match '^"(.*)"$') { $val = $Matches[1] }
-                elseif ($val -match "^'(.*)'$") { $val = $Matches[1] }
-                elseif ($val -eq 'true') { $val = $true }
-                elseif ($val -eq 'false') { $val = $false }
-                elseif ($val -match '^-?\d+$') { $val = [int]$val }
-                elseif ($val -match '^-?\d+\.\d+$') { $val = [double]$val }
                 if ([string]::IsNullOrEmpty($currentSection)) {
                     if (-not $result.ContainsKey('')) { $result[''] = @{} }
                     $result[''][$key] = $val

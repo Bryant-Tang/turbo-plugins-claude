@@ -623,6 +623,51 @@ test_read_config_tolerates_markers() {
     assertEquals 'unknown section tolerated'          'v'                        "$unknown"
 }
 
+# Issue #60: both constructs below are legal TOML that the reader used to drop without a word --
+# the same silent-fallback symptom as the encoding bug, a different cause.
+test_read_config_inline_comments_do_not_swallow_section_or_value() {
+    local tmp rr msbuild note sharp
+    tmp="$(mktemp -d -t turbo-common-inline-XXXXXX)"
+    rr="$tmp/repo"
+    mkdir -p "$rr/.turbo-plugin"
+    {
+        echo '[tools] # machine-specific tool paths'
+        echo 'msbuild_path = "C:/MSBuild.exe" # pinned for this machine'
+        echo 'note = "sharp # inside"'
+    } > "$rr/.turbo-plugin/config.toml"
+
+    msbuild="$(resolve_config_value "$rr" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    note="$(resolve_config_value "$rr" 'tools' 'note' '' '' 2>/dev/null || true)"
+    rm -rf "$tmp" 2>/dev/null || true
+
+    # Header had to END at ']', so no section was opened and every key under it vanished.
+    # Quoted values skipped comment-stripping AND failed the unquote (line does not end at the
+    # quote), so the value kept both its quotes and the comment.
+    assertEquals 'section survives a trailing comment on its header' 'C:/MSBuild.exe' "$msbuild"
+    assertEquals 'a # inside quotes is part of the value'            'sharp # inside' "$note"
+}
+
+# A backslash inside a POSIX bracket expression is LITERAL, so a [^\"] class would also exclude
+# '\' and stop matching every Windows path. Bidirectional guard on the regex form.
+test_read_config_preserves_backslash_windows_paths() {
+    local tmp rr msbuild iis
+    tmp="$(mktemp -d -t turbo-common-bslash-XXXXXX)"
+    rr="$tmp/repo"
+    mkdir -p "$rr/.turbo-plugin"
+    {
+        echo '[tools]'
+        echo 'msbuild_path = "C:\Program Files\MSBuild\MSBuild.exe"'
+        echo 'iis_express_path = "C:\Program Files\IIS Express\iisexpress.exe" # 64-bit'
+    } > "$rr/.turbo-plugin/config.toml"
+
+    msbuild="$(resolve_config_value "$rr" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    iis="$(resolve_config_value "$rr" 'tools' 'iis_express_path' '' '' 2>/dev/null || true)"
+    rm -rf "$tmp" 2>/dev/null || true
+
+    assertEquals 'backslash path preserved'                'C:\Program Files\MSBuild\MSBuild.exe'        "$msbuild"
+    assertEquals 'backslash path preserved past a comment' 'C:\Program Files\IIS Express\iisexpress.exe' "$iis"
+}
+
 # ─── get_svn_push_body (U9) ──────────────────────────────────────────────────
 # Builds a repo with a 'svnbase' marker at the base commit, feat/fix on main, refactor on a
 # side branch, then a --no-ff merge of side into main. The range svnbase..main therefore holds

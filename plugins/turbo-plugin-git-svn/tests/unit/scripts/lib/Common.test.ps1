@@ -262,6 +262,91 @@ note = "$cjk"
         }
     }
 
+    # Same silent-fallback symptom as #53/#60, different cause: both constructs below are legal
+    # TOML that the reader dropped without a word. Found while verifying #60 -- the encoding fix
+    # cleared the reported case, these two were still live.
+    Context 'issue #60 - inline comments must not swallow a section or a value' {
+        It 'keeps a section whose header carries a trailing comment' {
+            $repo = New-IsolatedRepoRoot 'cfg-sec-comment'
+            try {
+                $cfgToml = Join-Path $repo '.turbo-plugin\config.toml'
+                Write-Toml -Path $cfgToml -Content @"
+[tools] # machine-specific tool paths
+msbuild_path = "C:/MSBuild.exe"
+"@
+                # Previously the header had to END at ']', so the line was treated as a plain key
+                # line, no section was opened, and EVERY key under it vanished.
+                Resolve-ConfigValue -RepoRoot $repo -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null |
+                    Should -Be 'C:/MSBuild.exe'
+            } finally {
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'strips a comment after a quoted value but keeps a # inside the quotes' {
+            $repo = New-IsolatedRepoRoot 'cfg-val-comment'
+            try {
+                $cfgToml = Join-Path $repo '.turbo-plugin\config.toml'
+                Write-Toml -Path $cfgToml -Content @"
+[tools]
+msbuild_path = "C:/MSBuild.exe" # pinned for this machine
+note = "sharp # inside"
+"@
+                # The comment-stripping branch skipped quoted values and the unquoting branch
+                # required the line to END at the quote, so the value kept BOTH its quotes and the
+                # comment: '"C:/MSBuild.exe" # pinned for this machine'.
+                Resolve-ConfigValue -RepoRoot $repo -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null |
+                    Should -Be 'C:/MSBuild.exe'
+                Resolve-ConfigValue -RepoRoot $repo -Section 'tools' -Key 'note' -CliValue $null -Default $null |
+                    Should -Be 'sharp # inside'
+            } finally {
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'preserves a backslash Windows path, with and without a trailing comment' {
+            $repo = New-IsolatedRepoRoot 'cfg-backslash'
+            try {
+                $cfgToml = Join-Path $repo '.turbo-plugin\config.toml'
+                Write-Toml -Path $cfgToml -Content @"
+[tools]
+msbuild_path = "C:\Program Files\MSBuild\MSBuild.exe"
+iis_express_path = "C:\Program Files\IIS Express\iisexpress.exe" # 64-bit
+"@
+                Resolve-ConfigValue -RepoRoot $repo -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null |
+                    Should -Be 'C:\Program Files\MSBuild\MSBuild.exe'
+                Resolve-ConfigValue -RepoRoot $repo -Section 'tools' -Key 'iis_express_path' -CliValue $null -Default $null |
+                    Should -Be 'C:\Program Files\IIS Express\iisexpress.exe'
+            } finally {
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'still treats a QUOTED true/1 as a string, not a bool/int' {
+            $repo = New-IsolatedRepoRoot 'cfg-quoted-scalar'
+            try {
+                $cfgToml = Join-Path $repo '.turbo-plugin\config.toml'
+                Write-Toml -Path $cfgToml -Content @"
+[iis]
+enabled = true
+label = "true"
+port = 8080
+tag = "1"
+"@
+                Resolve-ConfigValue -RepoRoot $repo -Section 'iis' -Key 'enabled' -CliValue $null -Default $null |
+                    Should -BeOfType [bool]
+                Resolve-ConfigValue -RepoRoot $repo -Section 'iis' -Key 'label' -CliValue $null -Default $null |
+                    Should -BeOfType [string]
+                Resolve-ConfigValue -RepoRoot $repo -Section 'iis' -Key 'port' -CliValue $null -Default $null |
+                    Should -BeOfType [int]
+                Resolve-ConfigValue -RepoRoot $repo -Section 'iis' -Key 'tag' -CliValue $null -Default $null |
+                    Should -BeOfType [string]
+            } finally {
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+    }
+
     Context 'override - same section.key in both files, config.local.toml wins' {
         It 'returns the local override value for [iis] enabled' {
             $repo = New-IsolatedRepoRoot 'merge'
