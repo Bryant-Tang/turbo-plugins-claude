@@ -267,6 +267,10 @@ function Get-InheritedLocalConfigPath {
     param([string]$RepoRoot)
 
     if ([string]::IsNullOrWhiteSpace($RepoRoot)) { return '' }
+    # Free discriminator: a linked worktree's .git is a FILE ("gitdir: ..."), so a DIRECTORY means
+    # this IS the main worktree and there is nothing to inherit -- the common case never forks git.
+    # An absent .git falls through: it may be a subdirectory of a worktree, and git answers that.
+    if (Test-Path -LiteralPath ([System.IO.Path]::Combine($RepoRoot, '.git')) -PathType Container) { return '' }
     if (-not $script:TpMainWorktreeCache.ContainsKey($RepoRoot)) {
         $main = ''
         try { $main = Get-MainWorktree -RepoRoot $RepoRoot } catch { $main = '' }
@@ -280,10 +284,11 @@ function Get-InheritedLocalConfigPath {
     return [System.IO.Path]::Combine($mainRoot, '.turbo-plugin', 'config.local.toml')
 }
 
-# Lookup chain: CLI arg → config.toml → built-in default
+# Lookup chain: CLI arg → config.toml → inherited local → local → built-in default
 #   1. $CliValue (already-resolved CLI argument; pass $null if not provided)
 #   2. config.toml under repo-root .turbo-plugin/config.toml, $Section.$Key
-#   3. $Default (built-in default; pass $null to skip)
+#   3. the MAIN worktree's config.local.toml (linked worktrees only), then this root's own
+#   4. $Default (built-in default; pass $null to skip)
 function Resolve-ConfigValue {
     param(
         [string]$RepoRoot,

@@ -224,15 +224,6 @@ read_turbo_plugin_config() {
   done < "$config_path"
 }
 
-# Lookup chain: CLI arg → config.local.toml → config.toml → built-in default
-# Args: <repo_root> <section> <key> <cli_value> <default>
-# Echoes resolved value (empty string if nothing resolved).
-# Uses sentinel __TP_FOUND__: so empty-string config values are distinguished from "not found".
-#
-# config.local.toml (gitignored, machine-specific) is consulted BEFORE
-# config.toml so its key-level values override the canonical version-controlled file.
-# This is the bash equivalent of Core.ps1's "read config.toml then merge local on top"
-# — semantically identical for the get-one-key API surface.
 # Path of the MAIN worktree's config.local.toml, or '' when there is nothing to inherit (this IS
 # the main worktree, or the directory is not a git repo at all -- a plain directory is a legitimate
 # caller, so this must not fail the caller). Cached per root: it shells out to git, and
@@ -242,6 +233,12 @@ __TP_MAIN_WT_CACHE_VAL=''
 get_inherited_local_config_path() {
   local repo_root="${1:-}" main_root here
   [[ -n "$repo_root" ]] || return 0
+  # Free discriminator, and it matters: callers invoke resolve_config_value inside $( ), so the
+  # cache below lives in a subshell and does not survive. A linked worktree's .git is a FILE
+  # ("gitdir: ..."); a directory means this IS the main worktree and there is nothing to inherit,
+  # so the common case never forks git. Absent .git falls through -- it may be a subdirectory of a
+  # worktree, and git answers that correctly.
+  [[ -d "$repo_root/.git" ]] && return 0
   if [[ "$__TP_MAIN_WT_CACHE_KEY" != "$repo_root" ]]; then
     __TP_MAIN_WT_CACHE_KEY="$repo_root"
     __TP_MAIN_WT_CACHE_VAL="$(get_main_worktree "$repo_root" 2>/dev/null || true)"
@@ -254,6 +251,16 @@ get_inherited_local_config_path() {
   echo "$main_root/.turbo-plugin/config.local.toml"
 }
 
+# Lookup chain: CLI arg → config.local.toml → main worktree's config.local.toml → config.toml
+#                       → built-in default
+# Args: <repo_root> <section> <key> <cli_value> <default>
+# Echoes resolved value (empty string if nothing resolved).
+# Uses sentinel __TP_FOUND__: so empty-string config values are distinguished from "not found".
+#
+# config.local.toml (gitignored, machine-specific) is consulted BEFORE
+# config.toml so its key-level values override the canonical version-controlled file.
+# This is the bash equivalent of Core.ps1's "read config.toml then merge local on top"
+# — semantically identical for the get-one-key API surface.
 resolve_config_value() {
   local repo_root="$1"
   local section="$2"
