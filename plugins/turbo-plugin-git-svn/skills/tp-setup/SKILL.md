@@ -266,8 +266,9 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      # <<< turbo-plugin:git-svn <<<
      ```
      - 標記的理由與 base 區塊完全相同(issue #65):沒有標記就沒辦法調和,日後多加一條規則時
-       既有專案永遠拿不到。既有專案那兩行沒有標記 → **只在檔尾追加帶標記的新區塊,舊的留著**,
-       清理要另外問過使用者(見 base 段第 3 項)。
+       既有專案永遠拿不到。既有專案那兩行沒有標記 → **只在檔尾追加帶標記的新區塊,舊的留著**。
+     - **這裡不要再問一次清理**:base 段第 3 項的舊區塊詢問已經把這兩行算進判定範圍(舊版把
+       base 與 concern 的行寫在一起、中間沒有分隔),同一件事問兩次只會讓使用者困惑。
      - `.turbo-plugin/worktrees/`:nested bridge worktree 容器不污染主 worktree `git status`。
      - `.svn/`:讓 git 忽略 bridge worktree 內的 SVN 管理目錄。
    - 4c. **git-svn 設定**:`.turbo-plugin/config.toml` 的 `git-svn` 標記區塊確保含 `[svn]` section(目前無必填
