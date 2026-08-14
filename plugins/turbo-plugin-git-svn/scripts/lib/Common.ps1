@@ -416,6 +416,38 @@ function Get-UnversionedDirectoryFiles {
     return $lines
 }
 
+# Read the SOURCE BRANCH off a merge commit's own subject. Returns the name, or '' when the
+# subject does not record one -- the caller must then NOT guess (see Get-SvnPushBody).
+#
+# Handles git's own default merge subjects (`Merge branch 'x'`, `... into y`, `Merge
+# remote-tracking branch 'origin/x'`) and GitHub's (`Merge pull request #N from owner/x`);
+# every plugin-generated merge uses the first form. The bridge-ref prefix is stripped so the
+# internal `remote-svn/*` name never surfaces (a trunk-replay resolves to `main`).
+function Get-MergeSourceBranch {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Subject)
+
+    if (-not $Subject.StartsWith('Merge ')) { return '' }
+    $name = ''
+    if ($Subject -match "^Merge pull request #\S+ from (\S+)") {
+        $name = $Matches[1]
+        $slash = $name.IndexOf('/')
+        if ($slash -ge 0) { $name = $name.Substring($slash + 1) }   # drop the owner
+    } elseif ($Subject -match "branch '([^']*)'") {
+        $name = $Matches[1]
+    } else {
+        return ''
+    }
+    if ([string]::IsNullOrEmpty($name)) { return '' }
+    # A real branch name has no whitespace, and must not be able to forge a group header.
+    if ($name -match '\s') { return '' }
+    # U+3010 / U+3011 are the group-header brackets, referenced by code point so this guard does
+    # not itself depend on the file's encoding.
+    if ($name.IndexOf([char]0x3010) -ge 0 -or $name.IndexOf([char]0x3011) -ge 0) { return '' }
+    if ($name.StartsWith('remote-svn/')) { $name = $name.Substring('remote-svn/'.Length) }
+    if ([string]::IsNullOrEmpty($name)) { return '' }
+    return $name
+}
+
 function Get-SvnPushBody {
     param(
         [Parameter(Mandatory = $true)][string]$RepoDir,
@@ -427,29 +459,63 @@ function Get-SvnPushBody {
     $ErrorActionPreference = 'SilentlyContinue'
     $gName = New-Object System.Collections.ArrayList
     $gBody = New-Object System.Collections.ArrayList
+    $flat = New-Object System.Collections.ArrayList
+    $unresolved = $false
     try {
         # OWN commits = the current branch's first-parent mainline (non-merge); everything else in
-        # range arrived via a merge. Deciding "own" by topology (not name-rev) stops a commit the
-        # current branch shares with a sibling from being mis-attributed to the sibling.
+        # range arrived via a merge. Deciding "own" by topology stops a commit the current branch
+        # shares with a sibling from being mis-attributed to the sibling.
         $own = @{}
         foreach ($o in @(& git -C $RepoDir rev-list --first-parent --no-merges $Range 2>$null)) {
             if (-not [string]::IsNullOrWhiteSpace($o)) { $own[$o] = $true }
         }
+
+        # Attribute each merged-in commit to the merge that INTRODUCED it into the pushed branch,
+        # and take the source-branch name from that merge commit's own subject.
+        #
+        # This used to ask `git name-rev` which branch describes the commit, and that answers a
+        # different question: name-rev minimises (generation, distance) over ALL local heads, which
+        # has no relation to how the commit entered the branch being pushed. Any branch that merely
+        # DESCENDS from the commit is a candidate -- and `/tp-merge-main-into-branches` plus
+        # ordinary stacked branches make that set large. Issue #67 hit exactly that: a commit that
+        # reached `main` through one branch was labelled with another branch that had never been
+        # merged into `main` at all, permanently, in an SVN log. Reading the merge commit instead
+        # uses the record git wrote AT MERGE TIME, so a later branch rename, deletion or merge
+        # cannot change the answer.
+        $attr = @{}
+        foreach ($m in @(& git -C $RepoDir rev-list --first-parent --merges $Range 2>$null)) {
+            if ([string]::IsNullOrWhiteSpace($m)) { continue }
+            $src = ''
+            $parents = @("$(& git -C $RepoDir rev-list --parents -n 1 $m 2>$null)" -split '\s+' |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            # Only an ordinary two-parent merge has one unambiguous "other side" to name.
+            if ($parents.Count -eq 3) {
+                $src = Get-MergeSourceBranch -Subject "$(& git -C $RepoDir log -1 --format='%s' $m 2>$null)"
+            }
+            if ([string]::IsNullOrEmpty($src)) { $unresolved = $true; break }
+            # Commits this merge brought in = reachable from the merged side but not from the
+            # mainline. An earlier merge of the same branch already claimed its own commits, so
+            # `--not <first parent>` keeps each commit with the merge that FIRST introduced it.
+            foreach ($c in @(& git -C $RepoDir rev-list --no-merges "$m^2" --not "$m^1" 2>$null)) {
+                if ([string]::IsNullOrWhiteSpace($c)) { continue }
+                if (-not $attr.ContainsKey($c)) { $attr[$c] = $src }
+            }
+        }
+
         $shas = @(& git -C $RepoDir rev-list --no-merges --reverse $Range 2>$null)
         foreach ($sha in $shas) {
             if ([string]::IsNullOrWhiteSpace($sha)) { continue }
+            $subj = "$(& git -C $RepoDir log -1 --format='%s' $sha 2>$null)"
+            [void]$flat.Add("- $subj")
             if ($own.ContainsKey($sha)) {
                 $branch = $tip
+            } elseif ($attr.ContainsKey($sha)) {
+                $branch = $attr[$sha]
             } else {
-                # Attribute a merged-in commit to the LOCAL branch it most directly came from;
-                # strip the ~N/^N locator and the internal remote-svn/ prefix (trunk-replay -> `main`).
-                # Undefined (source branch deleted) falls back to the current branch.
-                $name = "$(& git -C $RepoDir name-rev --name-only --refs='refs/heads/*' $sha 2>$null)"
-                $branch = ($name -split '[~^]')[0]
-                if ($branch -like 'remote-svn/*') { $branch = $branch.Substring('remote-svn/'.Length) }
-                if ([string]::IsNullOrWhiteSpace($branch) -or $branch -eq 'undefined') { $branch = $tip }
+                # Reachable but attributable to no merge on the mainline: do not invent a source.
+                $unresolved = $true
+                $branch = $tip
             }
-            $subj = "$(& git -C $RepoDir log -1 --format='%s' $sha 2>$null)"
             $idx = $gName.IndexOf($branch)
             if ($idx -lt 0) {
                 [void]$gName.Add($branch); [void]$gBody.Add("- $subj")
@@ -463,7 +529,9 @@ function Get-SvnPushBody {
     $n = $gName.Count
     if ($n -eq 0) { return '' }
     # ONE source branch -> flat "- <subject>" list (backward compatible; no group header).
-    if ($n -eq 1) { return [string]$gBody[0] }
+    # Anything unattributable -> flat as well: a wrong group is worse than no group, because the
+    # SVN log is permanent and the agent may only write the title, never the body.
+    if ($unresolved -or $n -eq 1) { return ($flat -join "`n") }
     # 2+ source branches -> group by branch, current branch first, others in first-appearance order.
     $order = New-Object System.Collections.ArrayList
     for ($i = 0; $i -lt $n; $i++) { if ($gName[$i] -eq $tip) { [void]$order.Add($i) } }

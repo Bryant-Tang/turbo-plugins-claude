@@ -83,6 +83,12 @@ BeforeAll {
     # git wrapper: PS 5.1 + EAP=Stop (set by Common.ps1) throws on harmless git stderr; soften.
     # NOTE: ValueFromRemainingArguments — a [Parameter()] attribute makes this an ADVANCED
     # function, which disables the automatic $args; remaining tokens must be bound explicitly.
+    # It also brings in the COMMON PARAMETERS, and those win over ValueFromRemainingArguments:
+    # any short git flag that is an unambiguous prefix of one (-D → -Debug, -v → -Verbose,
+    # -p → -PipelineVariable) is bound by PowerShell and never reaches git. It disappears in
+    # silence — `branch -q -D x` ran as `branch -q x`, which is a no-op that exits 0, so the
+    # fixture built the wrong repo and the test still passed. Pass long options (--delete
+    # --force) for anything in that set.
     function Invoke-GitSilent {
         param(
             [Parameter(Mandatory = $true, Position = 0)][string]$RepoDir,
@@ -109,7 +115,36 @@ BeforeAll {
         Invoke-GitSilent $dir checkout -q -b side
         Invoke-GitSilent $dir commit -q --allow-empty -m 'refactor: tidy C'
         Invoke-GitSilent $dir checkout -q main
-        Invoke-GitSilent $dir merge -q --no-ff -m 'Merge branch side into main' side
+        # Spelled the way git itself writes a merge subject -- grouping reads the source branch off
+        # this line, so a fixture with an ad-hoc message would not exercise the real path.
+        Invoke-GitSilent $dir merge -q --no-ff -m "Merge branch 'side' into main" side
+        return $dir
+    }
+
+    # Issue #67 fixture. X reached main through the merge of feat/a. feat/b was branched off X,
+    # never merged into main, and feat/a was deleted afterwards -- an entirely ordinary sequence.
+    # `git name-rev` answers "feat/b" here, and naming it would put a claim in the SVN log --
+    # permanently -- that a branch which shipped nothing was the source.
+    function New-Issue67Repo {
+        param([string]$Tag = 'issue67')
+        $dir = New-IsolatedRepoRoot $Tag
+        Invoke-GitSilent $dir init -q -b main
+        Invoke-GitSilent $dir config user.email 'test@turbo-plugin'
+        Invoke-GitSilent $dir config user.name 'turbo-plugin-test'
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'base'
+        Invoke-GitSilent $dir branch svnbase
+        Invoke-GitSilent $dir checkout -q -b 'feat/a'
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'fix: the real fix'
+        $x = (& git -C $dir rev-parse HEAD 2>$null | Out-String).Trim()
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'test: cover the fix'
+        Invoke-GitSilent $dir checkout -q main
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'chore: main work'
+        Invoke-GitSilent $dir merge -q --no-ff -m "Merge branch 'feat/a' into main" 'feat/a'
+        Invoke-GitSilent $dir checkout -q -b 'feat/b' $x
+        Invoke-GitSilent $dir commit -q --allow-empty -m 'wip: never merged anywhere'
+        Invoke-GitSilent $dir checkout -q main
+        # Long options: -D would be eaten by the common -Debug parameter (see Invoke-GitSilent).
+        Invoke-GitSilent $dir branch --quiet --delete --force 'feat/a'
         return $dir
     }
 
@@ -741,7 +776,7 @@ Describe 'Get-SvnPushBody' {
             Invoke-GitSilent $repo commit -q --allow-empty -m 'chore: main one'
             Invoke-GitSilent $repo commit -q --allow-empty -m 'chore: main two'
             Invoke-GitSilent $repo checkout -q 'feat/x'
-            Invoke-GitSilent $repo merge -q --no-ff -m 'Merge main into feat/x' main
+            Invoke-GitSilent $repo merge -q --no-ff -m "Merge branch 'main' into feat/x" main
             $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..feat/x'
             $body | Should -Match '(?m)^【feat/x】$'
             $body | Should -Match '(?m)^【main】$'
@@ -811,6 +846,88 @@ Describe 'Get-SvnPushBody' {
         } finally {
             Remove-IsolatedRepoRoot -Dir $repo
         }
+    }
+
+    # The fixture only proves anything while it still reproduces the misattribution. If a future
+    # git changes name-rev's tie-breaking, this fails loudly rather than passing for the wrong
+    # reason.
+    It 'still reproduces the name-rev misattribution the fix is about (#67 fixture guard)' {
+        $repo = New-Issue67Repo 'pb-i67-guard'
+        try {
+            $x = (& git -C $repo rev-list --no-merges --grep='fix: the real fix' 'svnbase..main' 2>$null | Out-String).Trim()
+            $named = (& git -C $repo name-rev --name-only --refs='refs/heads/*' $x 2>$null | Out-String).Trim()
+            $named | Should -Be 'feat/b~1'
+            & git -C $repo merge-base --is-ancestor 'feat/b' main 2>$null | Out-Null
+            $LASTEXITCODE | Should -Not -Be 0   # feat/b is genuinely not in main
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    It 'attributes a merged-in commit via the merge that introduced it, not via name-rev (#67)' {
+        $repo = New-Issue67Repo 'pb-i67'
+        try {
+            $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
+            # The never-merged branch must not appear at all -- not as a header, not anywhere.
+            $body | Should -Not -Match 'feat/b'
+            # The branch that WAS merged is named, even though it has since been deleted: the name
+            # comes from the merge commit, which still records it.
+            $body | Should -Match '(?m)^【feat/a】$'
+            # Both of feat/a's commits belong to the same group; name-rev used to split them.
+            $body | Should -Match "(?m)^【feat/a】`n- fix: the real fix`n- test: cover the fix$"
+            $body | Should -Match "(?m)^【main】`n- chore: main work$"
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+
+    # A merge subject that records no source branch -> no grouping at all. A wrong group is worse
+    # than no group: the body is locked, so the agent cannot correct it in the SVN log afterwards.
+    It 'falls back to a flat list when a merge subject records no source branch (#67)' {
+        $repo = New-IsolatedRepoRoot 'pb-nosrc'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Invoke-GitSilent $repo config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $repo config user.name 'turbo-plugin-test'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'base'
+            Invoke-GitSilent $repo branch svnbase
+            Invoke-GitSilent $repo checkout -q -b side
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'refactor: tidy C'
+            Invoke-GitSilent $repo checkout -q main
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'feat: add A'
+            Invoke-GitSilent $repo merge -q --no-ff -m 'hand-written message with no branch name' side
+            $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
+            $body | Should -Not -Match '【'
+            $body | Should -Match '(?m)^- feat: add A$'
+            $body | Should -Match '(?m)^- refactor: tidy C$'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
+}
+
+Describe 'Get-MergeSourceBranch' {
+
+    It 'reads the source branch off git''s own merge subjects' {
+        Get-MergeSourceBranch -Subject "Merge branch 'feat/a' into main" | Should -Be 'feat/a'
+        Get-MergeSourceBranch -Subject "Merge branch 'feat/a'" | Should -Be 'feat/a'
+        Get-MergeSourceBranch -Subject "Merge remote-tracking branch 'origin/feat/a'" | Should -Be 'origin/feat/a'
+        Get-MergeSourceBranch -Subject 'Merge pull request #12 from someone/feat/a' | Should -Be 'feat/a'
+    }
+
+    # The bridge ref is an implementation detail; a trunk replay must read as `main` to the user.
+    It 'strips the bridge-ref prefix so a trunk replay reads as main' {
+        Get-MergeSourceBranch -Subject "Merge branch 'remote-svn/main' into feat/x" | Should -Be 'main'
+    }
+
+    It 'returns nothing rather than guessing when the subject records no branch' {
+        Get-MergeSourceBranch -Subject 'Merge two things together' | Should -Be ''
+        Get-MergeSourceBranch -Subject 'feat: not a merge at all' | Should -Be ''
+        Get-MergeSourceBranch -Subject "Merge branch 'has a space' into main" | Should -Be ''
+        Get-MergeSourceBranch -Subject "Merge branch '' into main" | Should -Be ''
+        # A crafted name must not be able to forge a group header inside the locked body.
+        $forged = "Merge branch 'x" + [char]0x3011 + 'fake' + [char]0x3010 + "y' into main"
+        Get-MergeSourceBranch -Subject $forged | Should -Be ''
     }
 }
 

@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
 
 ## Purpose
 
-把本地 git working branch 的新 commits push 上 SVN。SVN message body 由 prepare 腳本**確定性鎖定**為這次推送範圍內**所有非-merge commit 的 subject 條列**(`- ` 開頭、無 hash、無 commit-type 過濾);跨多個來源分支時(例如把 main 併進分支後再推),body 會自動**按來源分支分組**、各組冠上 `【<分支名>】` 標題,目前分支排最前。agent 只負責寫一行 **title**。body 經 temp 檔交付給 commit 腳本自行組合(title + 換行 + 鎖定 body,中間不空行),agent 無法竄改 body。
+把本地 git working branch 的新 commits push 上 SVN。SVN message body 由 prepare 腳本**確定性鎖定**為這次推送範圍內**所有非-merge commit 的 subject 條列**(`- ` 開頭、無 hash、無 commit-type 過濾);跨多個來源分支時(例如把 main 併進分支後再推),body 會自動**按來源分支分組**、各組冠上 `【<分支名>】` 標題,目前分支排最前;來源取自**當初那顆 merge commit 的標題**,任何一顆判定不出來源就整份改回平坦條列(錯的分組比沒有分組更糟——SVN 紀錄是永久的)。agent 只負責寫一行 **title**。body 經 temp 檔交付給 commit 腳本自行組合(title + 換行 + 鎖定 body,中間不空行),agent 無法竄改 body。
 
 **設計理念**:SVN history 的可讀性來自「完整保留每個 code-level subject」,不再做 type 篩選或逐筆未知 type 詢問。要改 body 內容,請對對應 commit `git rebase` / amend subject 後重跑本 skill。commit 訊息的語意品質由獨立的 `tp-commit-msg` 負責(它**不**驗證 / 限制 commit type),與本 skill 無關。
 
@@ -152,8 +152,8 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
      ```
 
      `<title>` 之後**直接接** `BODY`、**中間不空行**,且 `BODY` 要**原樣照搬**(不要自己重排、補空行或改寫)——
-     這樣預覽才會跟腳本真正送出的訊息逐字一致。`BODY` 只有一個來源分支時是平坦的 `- <subject>` 條列;
-     跨多個來源分支時會自帶 `【<分支名>】` 分組標題,例如:
+     這樣預覽才會跟腳本真正送出的訊息逐字一致。`BODY` 只有一個來源分支、或腳本無法可靠判定來源時,
+     是平坦的 `- <subject>` 條列;跨多個來源分支時會自帶 `【<分支名>】` 分組標題,例如:
 
      ```
      <title>

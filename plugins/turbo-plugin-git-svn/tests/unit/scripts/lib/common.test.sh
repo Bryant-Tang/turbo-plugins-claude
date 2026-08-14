@@ -640,7 +640,9 @@ _build_push_body_repo() {
     git -C "$repo" checkout -q -b side >/dev/null 2>&1
     git -C "$repo" commit -q --allow-empty -m 'refactor: tidy C' >/dev/null 2>&1
     git -C "$repo" checkout -q main >/dev/null 2>&1
-    git -C "$repo" merge -q --no-ff -m 'Merge branch side into main' side >/dev/null 2>&1
+    # Spelled the way git itself writes a merge subject -- grouping reads the source branch off
+    # this line, so a fixture with an ad-hoc message would not exercise the real path.
+    git -C "$repo" merge -q --no-ff -m "Merge branch 'side' into main" side >/dev/null 2>&1
     printf '%s' "$repo"
 }
 
@@ -769,7 +771,7 @@ test_get_svn_push_body_groups_merged_main() {
     git -C "$repo" commit -q --allow-empty -m 'chore: main one' >/dev/null 2>&1
     git -C "$repo" commit -q --allow-empty -m 'chore: main two' >/dev/null 2>&1
     git -C "$repo" checkout -q 'feat/x' >/dev/null 2>&1
-    git -C "$repo" merge -q --no-ff -m 'Merge main into feat/x' main >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m "Merge branch 'main' into feat/x" main >/dev/null 2>&1
     body="$(get_svn_push_body "$repo" 'svnbase..feat/x')"
     rm -rf "$repo" 2>/dev/null || true
     case "$body" in *"【feat/x】"*) assertTrue '【feat/x】 header present' 0 ;; *) fail "feat/x header missing: $body" ;; esac
@@ -782,6 +784,136 @@ test_get_svn_push_body_groups_merged_main() {
     esac
     case "$body" in *"- feat: feature one"*) assertTrue 'own commit present' 0 ;; *) fail "f1 missing: $body" ;; esac
     case "$body" in *"- chore: main two"*) assertTrue 'merged-in trunk commit present' 0 ;; *) fail "m2 missing: $body" ;; esac
+}
+
+# ── #67: attribution must follow how the commit ENTERED the pushed branch ────
+#
+# X reached main through the merge of feat/a. feat/b was branched off X, never merged into main,
+# and feat/a was deleted afterwards -- an entirely ordinary sequence. `git name-rev` answers
+# "feat/b" here (it minimises generation-then-distance over all local heads, and main can only
+# reach X across a second parent, which costs MERGE_TRAVERSAL_WEIGHT). Naming feat/b would put a
+# claim in the SVN log -- permanently -- that a branch which shipped nothing was the source.
+_build_issue67_repo() {
+    local repo x
+    repo="$(mktemp -d -t turbo-common-issue67-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    git -C "$repo" checkout -q -b 'feat/a' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'fix: the real fix' >/dev/null 2>&1
+    x="$(git -C "$repo" rev-parse HEAD 2>/dev/null)"
+    git -C "$repo" commit -q --allow-empty -m 'test: cover the fix' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'chore: main work' >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m "Merge branch 'feat/a' into main" 'feat/a' >/dev/null 2>&1
+    git -C "$repo" checkout -q -b 'feat/b' "$x" >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'wip: never merged anywhere' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" branch -q -D 'feat/a' >/dev/null 2>&1
+    printf '%s' "$repo"
+}
+
+# The fixture only proves anything while it still reproduces the misattribution. If a future git
+# changes name-rev's tie-breaking, this fails loudly rather than passing for the wrong reason.
+test_issue67_fixture_still_reproduces() {
+    local repo x named contained
+    repo="$(_build_issue67_repo)"
+    x="$(git -C "$repo" rev-list --no-merges --grep='fix: the real fix' 'svnbase..main')"
+    named="$(git -C "$repo" name-rev --name-only --refs='refs/heads/*' "$x" 2>/dev/null)"
+    if git -C "$repo" merge-base --is-ancestor 'feat/b' main 2>/dev/null; then contained=yes; else contained=no; fi
+    rm -rf "$repo" 2>/dev/null || true
+    assertEquals 'name-rev still names the never-merged branch (fixture reproduces #67)' 'feat/b~1' "$named"
+    assertEquals 'feat/b is genuinely not merged into main' 'no' "$contained"
+}
+
+test_get_svn_push_body_attributes_via_the_merge_not_name_rev() {
+    local repo body
+    repo="$(_build_issue67_repo)"
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    # The never-merged branch must not appear at all -- not as a header, not anywhere.
+    case "$body" in
+        *'feat/b'*) fail "never-merged branch named in body: $body" ;;
+        *) assertTrue 'never-merged branch absent' 0 ;;
+    esac
+    # The branch that WAS merged is named, even though it has since been deleted: the name comes
+    # from the merge commit, which still records it.
+    case "$body" in
+        *"【feat/a】"*) assertTrue 'deleted-but-merged source branch named' 0 ;;
+        *) fail "feat/a header missing: $body" ;;
+    esac
+    # Both of feat/a's commits belong to the same group; name-rev used to split them.
+    case "$body" in
+        *"【feat/a】"$'\n'"- fix: the real fix"$'\n'"- test: cover the fix"*)
+            assertTrue 'both source-branch commits in one group' 0 ;;
+        *) fail "feat/a group is not intact: $body" ;;
+    esac
+    case "$body" in
+        *"【main】"$'\n'"- chore: main work"*) assertTrue 'main keeps only its own commit' 0 ;;
+        *) fail "main group wrong: $body" ;;
+    esac
+}
+
+# A merge subject that records no source branch -> no grouping at all. A wrong group is worse than
+# no group: the body is locked, so the agent cannot correct it in the SVN log afterwards.
+test_get_svn_push_body_flat_when_merge_subject_records_no_branch() {
+    local repo body
+    repo="$(mktemp -d -t turbo-common-nosrc-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    git -C "$repo" checkout -q -b side >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'refactor: tidy C' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: add A' >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m 'hand-written message with no branch name' side >/dev/null 2>&1
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    case "$body" in
+        *"【"*) fail "grouped despite an unattributable merge: $body" ;;
+        *) assertTrue 'falls back to a flat list' 0 ;;
+    esac
+    case "$body" in
+        *"- feat: add A"*) assertTrue 'own subject still present' 0 ;;
+        *) fail "own subject dropped: $body" ;;
+    esac
+    case "$body" in
+        *"- refactor: tidy C"*) assertTrue 'merged-in subject still present' 0 ;;
+        *) fail "merged-in subject dropped: $body" ;;
+    esac
+}
+
+# ── merge_source_branch ──────────────────────────────────────────────────────
+
+test_merge_source_branch_reads_git_default_subjects() {
+    assertEquals 'with into-clause'   'feat/a' "$(merge_source_branch "Merge branch 'feat/a' into main")"
+    assertEquals 'without into-clause' 'feat/a' "$(merge_source_branch "Merge branch 'feat/a'")"
+    assertEquals 'remote-tracking'  'origin/feat/a' "$(merge_source_branch "Merge remote-tracking branch 'origin/feat/a'")"
+    assertEquals 'github pull request' 'feat/a' "$(merge_source_branch 'Merge pull request #12 from someone/feat/a')"
+}
+
+# The bridge ref is an implementation detail; a trunk replay must read as `main` to the user.
+test_merge_source_branch_strips_bridge_prefix() {
+    assertEquals 'remote-svn/ stripped' 'main' "$(merge_source_branch "Merge branch 'remote-svn/main' into feat/x")"
+}
+
+test_merge_source_branch_rejects_what_it_cannot_read() {
+    local out
+    out="$(merge_source_branch 'Merge two things together' || true)"
+    assertEquals 'unquoted prose yields nothing' '' "$out"
+    out="$(merge_source_branch 'feat: not a merge at all' || true)"
+    assertEquals 'non-merge subject yields nothing' '' "$out"
+    out="$(merge_source_branch "Merge branch 'has a space' into main" || true)"
+    assertEquals 'whitespace is not a branch name' '' "$out"
+    out="$(merge_source_branch "Merge branch '' into main" || true)"
+    assertEquals 'empty quotes yield nothing' '' "$out"
+    # A crafted name must not be able to forge a group header inside the locked body.
+    out="$(merge_source_branch "Merge branch 'x】fake【y' into main" || true)"
+    assertEquals 'group-header brackets rejected' '' "$out"
 }
 
 # ── resolve_path_within_worktree ─────────────────────────────────────────────
