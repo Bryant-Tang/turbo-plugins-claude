@@ -3,10 +3,12 @@
   "description": "把「一個資料夾底下並排放著多個獨立 git repo」的工作區教會 agent:注入 proj-root CLAUDE.md 說明各子專案自成一個 repo、動手前先讀它自己的 CLAUDE.md,並可逐一帶著明確的專案路徑跑各子專案的 git↔SVN setup。一支 skill:tp-multi-repo-workspace-setup。",
   "version": "0.1.1",
   "license": "MIT",
+  "repository": "https://github.com/Bryant-Tang/turbo-plugins-claude",
   "author": {
     "name": "Bryant Tang"
   },
   "dependencies": [
-    "turbo-plugin-git-svn"
+    "turbo-plugin-git-svn",
+    "turbo-plugin-feedback"
   ]
 }

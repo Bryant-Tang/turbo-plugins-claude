@@ -3,7 +3,11 @@
   "description": "三環境 DB 開發輔助:tp-setup + tp-db-management skill + tp-dbhub MCP server(.mcp.json,經 DBHub 容器連 SQL Server)。SessionStart advisory hook 在 peer worktree 缺 dbhub.local.toml 時提示。",
   "version": "0.1.1",
   "license": "MIT",
+  "repository": "https://github.com/Bryant-Tang/turbo-plugins-claude",
   "author": {
     "name": "Bryant Tang"
-  }
+  },
+  "dependencies": [
+    "turbo-plugin-feedback"
+  ]
 }

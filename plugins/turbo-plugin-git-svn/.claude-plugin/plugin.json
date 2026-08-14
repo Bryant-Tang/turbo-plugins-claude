@@ -3,7 +3,11 @@
   "description": "git↔SVN bridge 本機開發工具集（8 個 skill:setup / pull / push / checkout-svn-branch / svn-log / merge / suggest-ignore / commit-msg）。env-free 設計,集中設定於 .turbo-plugin/。",
   "version": "0.1.2",
   "license": "MIT",
+  "repository": "https://github.com/Bryant-Tang/turbo-plugins-claude",
   "author": {
     "name": "Bryant Tang"
-  }
+  },
+  "dependencies": [
+    "turbo-plugin-feedback"
+  ]
 }
