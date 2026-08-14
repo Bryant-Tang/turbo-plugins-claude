@@ -347,6 +347,78 @@ tag = "1"
         }
     }
 
+    # config.local.toml describes THIS MACHINE, so it has no per-worktree meaning -- but being
+    # gitignored is exactly what keeps it out of a newly created worktree, so every new worktree
+    # started from defaults and the user re-entered settings already given.
+    Context 'issue #61 - a linked worktree inherits the main worktree local config' {
+        BeforeAll {
+            $script:i61Main = New-IsolatedRepoRoot 'wt-inherit'
+            Invoke-GitSilent $script:i61Main init -q -b main
+            Invoke-GitSilent $script:i61Main config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $script:i61Main config user.name 'turbo-plugin-test'
+            Write-Toml -Path (Join-Path $script:i61Main '.turbo-plugin\config.toml') -Content @"
+[tools]
+msbuild_path = "FROM-CONFIG-TOML"
+"@
+            Invoke-GitSilent $script:i61Main add -A
+            Invoke-GitSilent $script:i61Main -c commit.gpgsign=false commit -q -m init
+            Write-Toml -Path (Join-Path $script:i61Main '.turbo-plugin\config.local.toml') -Content @"
+[tools]
+msbuild_path = "FROM-MAIN-LOCAL"
+iis_express_path = "MAIN-IIS"
+"@
+            $script:i61Wt = Join-Path ([System.IO.Path]::GetDirectoryName($script:i61Main)) (
+                [System.IO.Path]::GetFileName($script:i61Main) + '-linked')
+            Invoke-GitSilent $script:i61Main worktree add -q -b feat $script:i61Wt
+        }
+        AfterAll {
+            Invoke-GitSilent $script:i61Main worktree remove --force $script:i61Wt
+            Remove-IsolatedRepoRoot -Dir $script:i61Main
+            Remove-IsolatedRepoRoot -Dir $script:i61Wt
+        }
+
+        It 'reads the main worktree local value from a linked worktree that has no local file' {
+            Resolve-ConfigValue -RepoRoot $script:i61Wt -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null |
+                Should -Be 'FROM-MAIN-LOCAL'
+            Resolve-ConfigValue -RepoRoot $script:i61Wt -Section 'tools' -Key 'iis_express_path' -CliValue $null -Default $null |
+                Should -Be 'MAIN-IIS'
+        }
+
+        It 'still lets the linked worktree own local file win, key by key' {
+            Write-Toml -Path (Join-Path $script:i61Wt '.turbo-plugin\config.local.toml') -Content @"
+[tools]
+msbuild_path = "FROM-WORKTREE-LOCAL"
+"@
+            # Deliberate per-worktree overrides keep working -- the inherited layer sits BELOW.
+            Resolve-ConfigValue -RepoRoot $script:i61Wt -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null |
+                Should -Be 'FROM-WORKTREE-LOCAL'
+            # ...and a key it does NOT set is still inherited rather than lost.
+            Resolve-ConfigValue -RepoRoot $script:i61Wt -Section 'tools' -Key 'iis_express_path' -CliValue $null -Default $null |
+                Should -Be 'MAIN-IIS'
+        }
+
+        It 'leaves the main worktree itself unchanged' {
+            Resolve-ConfigValue -RepoRoot $script:i61Main -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null |
+                Should -Be 'FROM-MAIN-LOCAL'
+        }
+
+        # A plain directory is a legitimate caller (tests, a project not under git yet). Looking up
+        # the main worktree must not turn that into a failure.
+        It 'does not fail on a directory that is not a git repository' {
+            $plain = New-IsolatedRepoRoot 'wt-plain'
+            try {
+                Write-Toml -Path (Join-Path $plain '.turbo-plugin\config.toml') -Content @"
+[tools]
+msbuild_path = "PLAIN"
+"@
+                Resolve-ConfigValue -RepoRoot $plain -Section 'tools' -Key 'msbuild_path' -CliValue $null -Default $null |
+                    Should -Be 'PLAIN'
+            } finally {
+                Remove-IsolatedRepoRoot -Dir $plain
+            }
+        }
+    }
+
     Context 'override - same section.key in both files, config.local.toml wins' {
         It 'returns the local override value for [iis] enabled' {
             $repo = New-IsolatedRepoRoot 'merge'

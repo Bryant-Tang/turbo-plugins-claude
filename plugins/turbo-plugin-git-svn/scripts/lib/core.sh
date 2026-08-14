@@ -233,6 +233,27 @@ read_turbo_plugin_config() {
 # config.toml so its key-level values override the canonical version-controlled file.
 # This is the bash equivalent of Core.ps1's "read config.toml then merge local on top"
 # — semantically identical for the get-one-key API surface.
+# Path of the MAIN worktree's config.local.toml, or '' when there is nothing to inherit (this IS
+# the main worktree, or the directory is not a git repo at all -- a plain directory is a legitimate
+# caller, so this must not fail the caller). Cached per root: it shells out to git, and
+# resolve_config_value runs many times in one script.
+__TP_MAIN_WT_CACHE_KEY=''
+__TP_MAIN_WT_CACHE_VAL=''
+get_inherited_local_config_path() {
+  local repo_root="${1:-}" main_root here
+  [[ -n "$repo_root" ]] || return 0
+  if [[ "$__TP_MAIN_WT_CACHE_KEY" != "$repo_root" ]]; then
+    __TP_MAIN_WT_CACHE_KEY="$repo_root"
+    __TP_MAIN_WT_CACHE_VAL="$(get_main_worktree "$repo_root" 2>/dev/null || true)"
+  fi
+  main_root="$__TP_MAIN_WT_CACHE_VAL"
+  [[ -n "$main_root" ]] || return 0
+  here="$(get_normalized_absolute_path "$repo_root" 2>/dev/null || true)"
+  [[ -n "$here" ]] || return 0
+  [[ "$main_root" == "$here" ]] && return 0
+  echo "$main_root/.turbo-plugin/config.local.toml"
+}
+
 resolve_config_value() {
   local repo_root="$1"
   local section="$2"
@@ -246,11 +267,24 @@ resolve_config_value() {
   fi
   local config_path="$repo_root/.turbo-plugin/config.toml"
   local config_local_path="$repo_root/.turbo-plugin/config.local.toml"
-  local sentinel_line
+  local sentinel_line inherited_local_path
 
   # 1. config.local.toml first (highest precedence after CLI arg)
   if [[ -f "$config_local_path" ]]; then
     sentinel_line="$(read_turbo_plugin_config "$config_local_path" "$section" "$key")"
+    if [[ "$sentinel_line" == __TP_FOUND__:* ]]; then
+      echo "${sentinel_line#__TP_FOUND__:}"
+      return 0
+    fi
+  fi
+  # 1b. the MAIN worktree's config.local.toml, when this is a linked worktree. That file describes
+  # THIS MACHINE (tool paths, credentials), so it has no per-worktree meaning -- yet being
+  # gitignored is exactly what keeps it out of a newly created worktree, so every new worktree
+  # started from defaults and the user re-entered settings already given (issue #61). It sits
+  # BELOW this worktree's own file, so a deliberate per-worktree override still wins.
+  inherited_local_path="$(get_inherited_local_config_path "$repo_root")"
+  if [[ -n "$inherited_local_path" && -f "$inherited_local_path" ]]; then
+    sentinel_line="$(read_turbo_plugin_config "$inherited_local_path" "$section" "$key")"
     if [[ "$sentinel_line" == __TP_FOUND__:* ]]; then
       echo "${sentinel_line#__TP_FOUND__:}"
       return 0

@@ -163,6 +163,7 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
 - `.claude/settings.json`：可進版控的設定（這個 repo 自己的 `enabledPlugins` 等）。
 - `.claude/settings.local.json`：每個 workspace / worktree 自己的 env / 機器專屬設定，**不進版控**（已經在 `.gitignore` 用 `.claude/**/*.local.*` 排除）。plugin 的 `setup` 類 skill 若要寫 env，只動這個檔案，**不會** 覆蓋其它 plugin 的 keys。
 - plugin 自己的設定檔（machine-specific tool paths、credentials 等）一律用 `*.local.*` 命名落在 gitignored 路徑；可進版控的偏好設定與範本則用非 `.local.` 命名。
+- **`.turbo-plugin/config.local.toml` 在 linked worktree 會繼承主 worktree 那份**（查找順序：`config.toml` → 主 worktree 的 `config.local.toml` → 本 worktree 的 `config.local.toml`，後者逐 key 覆蓋）。它描述的是「這台機器」，本來就跟哪個 worktree 無關，而 gitignored 正好讓新開的 worktree 一定沒有它——不繼承的話每開一個 worktree 就要把機器設定重填一次。要針對單一 worktree 覆寫仍然可以，在該 worktree 自己寫一份即可。
 - plugin 之間若共用 env key，各自加命名前綴避免衝突（每個 plugin 的前綴與 key 清單寫在該 plugin 的 README）。
 
 ## 測試標準（每個 plugin 必須遵守）

@@ -623,6 +623,67 @@ test_read_config_tolerates_markers() {
     assertEquals 'unknown section tolerated'          'v'                        "$unknown"
 }
 
+# Issue #61: config.local.toml describes THIS MACHINE, so it has no per-worktree meaning -- but
+# being gitignored is exactly what keeps it out of a newly created worktree, so every new worktree
+# started from defaults and the user re-entered settings already given.
+#
+# The sentinel values are what makes this discriminating: FROM-MAIN-LOCAL exists ONLY in the main
+# worktree's local file, so reading it back from the linked worktree cannot happen any other way.
+_build_worktree_inherit_repo() {
+    local tmp main
+    tmp="$(mktemp -d -t turbo-common-wtinherit-XXXXXX)"
+    main="$tmp/main"
+    mkdir -p "$main/.turbo-plugin"
+    git -C "$main" init -q -b main >/dev/null 2>&1 || git init -q -b main "$main" >/dev/null 2>&1
+    git -C "$main" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$main" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    printf '[tools]\nmsbuild_path = "FROM-CONFIG-TOML"\n' > "$main/.turbo-plugin/config.toml"
+    git -C "$main" add -A >/dev/null 2>&1
+    git -C "$main" -c commit.gpgsign=false commit -q -m init >/dev/null 2>&1
+    printf '[tools]\nmsbuild_path = "FROM-MAIN-LOCAL"\niis_express_path = "MAIN-IIS"\n' \
+        > "$main/.turbo-plugin/config.local.toml"
+    git -C "$main" worktree add -q -b feat "$tmp/wt" >/dev/null 2>&1
+    printf '%s' "$tmp"
+}
+
+test_resolve_config_value_linked_worktree_inherits_main_local() {
+    local tmp msbuild iis
+    tmp="$(_build_worktree_inherit_repo)"
+    msbuild="$(resolve_config_value "$tmp/wt" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    iis="$(resolve_config_value "$tmp/wt" 'tools' 'iis_express_path' '' '' 2>/dev/null || true)"
+    git -C "$tmp/main" worktree remove --force "$tmp/wt" >/dev/null 2>&1 || true
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'linked worktree inherits the main local value' 'FROM-MAIN-LOCAL' "$msbuild"
+    assertEquals 'and every other inherited key'                 'MAIN-IIS'        "$iis"
+}
+
+test_resolve_config_value_worktree_own_local_still_wins() {
+    local tmp msbuild iis
+    tmp="$(_build_worktree_inherit_repo)"
+    mkdir -p "$tmp/wt/.turbo-plugin"
+    printf '[tools]\nmsbuild_path = "FROM-WORKTREE-LOCAL"\n' > "$tmp/wt/.turbo-plugin/config.local.toml"
+    msbuild="$(resolve_config_value "$tmp/wt" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    iis="$(resolve_config_value "$tmp/wt" 'tools' 'iis_express_path' '' '' 2>/dev/null || true)"
+    git -C "$tmp/main" worktree remove --force "$tmp/wt" >/dev/null 2>&1 || true
+    rm -rf "$tmp" 2>/dev/null || true
+    # A deliberate per-worktree override keeps working: the inherited layer sits BELOW it...
+    assertEquals 'own local file wins for the key it sets' 'FROM-WORKTREE-LOCAL' "$msbuild"
+    # ...and a key it does not set is inherited rather than lost.
+    assertEquals 'unset keys still inherited'              'MAIN-IIS'            "$iis"
+}
+
+# A plain directory is a legitimate caller (tests, a project not under git yet). Looking up the
+# main worktree must not turn that into a failure.
+test_resolve_config_value_tolerates_non_git_directory() {
+    local tmp out
+    tmp="$(mktemp -d -t turbo-common-nongit-XXXXXX)"
+    mkdir -p "$tmp/.turbo-plugin"
+    printf '[tools]\nmsbuild_path = "PLAIN"\n' > "$tmp/.turbo-plugin/config.toml"
+    out="$(resolve_config_value "$tmp" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'non-git directory resolves normally' 'PLAIN' "$out"
+}
+
 # Issue #60: both constructs below are legal TOML that the reader used to drop without a word --
 # the same silent-fallback symptom as the encoding bug, a different cause.
 test_read_config_inline_comments_do_not_swallow_section_or_value() {

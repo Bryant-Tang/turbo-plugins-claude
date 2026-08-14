@@ -254,6 +254,32 @@ function Read-TurboPluginConfig {
     return $result
 }
 
+# The gitignored local config describes THIS MACHINE (tool paths, credentials), so it has no
+# per-worktree meaning -- yet being gitignored is exactly what keeps it out of a newly created
+# worktree. Every new worktree therefore started from defaults and the user had to re-enter
+# machine settings they had already given (issue #61). Resolved once per root and cached: this
+# shells out to git, and Resolve-ConfigValue is called many times in a single script run.
+#
+# Returns '' when there is no separate main worktree to inherit from, or when the directory is
+# not a git repo at all (a plain directory is a legitimate caller -- do not throw).
+$script:TpMainWorktreeCache = @{}
+function Get-InheritedLocalConfigPath {
+    param([string]$RepoRoot)
+
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) { return '' }
+    if (-not $script:TpMainWorktreeCache.ContainsKey($RepoRoot)) {
+        $main = ''
+        try { $main = Get-MainWorktree -RepoRoot $RepoRoot } catch { $main = '' }
+        $script:TpMainWorktreeCache[$RepoRoot] = $main
+    }
+    $mainRoot = $script:TpMainWorktreeCache[$RepoRoot]
+    if ([string]::IsNullOrWhiteSpace($mainRoot)) { return '' }
+    $here = ''
+    try { $here = Get-NormalizedAbsolutePath -Path $RepoRoot } catch { return '' }
+    if ($mainRoot -eq $here) { return '' }
+    return [System.IO.Path]::Combine($mainRoot, '.turbo-plugin', 'config.local.toml')
+}
+
 # Lookup chain: CLI arg → config.toml → built-in default
 #   1. $CliValue (already-resolved CLI argument; pass $null if not provided)
 #   2. config.toml under repo-root .turbo-plugin/config.toml, $Section.$Key
@@ -271,9 +297,18 @@ function Resolve-ConfigValue {
     }
     # read config.toml first then merge config.local.toml on top of it.
     # config.local.toml is gitignored (machine-specific tool paths etc.) and takes precedence.
+    # In a linked worktree the MAIN worktree's local config is layered in between, so machine
+    # settings are inherited -- but this worktree's own file still wins, so anyone who has
+    # deliberately set one per worktree keeps that behaviour.
     $configPath      = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
     $configLocalPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.local.toml')
-    $cfg = Read-TurboPluginConfig -ConfigPath @($configPath, $configLocalPath)
+    $inheritedPath   = Get-InheritedLocalConfigPath -RepoRoot $RepoRoot
+    $chain = if ([string]::IsNullOrWhiteSpace($inheritedPath)) {
+        @($configPath, $configLocalPath)
+    } else {
+        @($configPath, $inheritedPath, $configLocalPath)
+    }
+    $cfg = Read-TurboPluginConfig -ConfigPath $chain
     if ($cfg.ContainsKey($Section) -and $cfg[$Section].ContainsKey($Key)) {
         return $cfg[$Section][$Key]
     }

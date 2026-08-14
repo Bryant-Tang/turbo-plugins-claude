@@ -51,10 +51,22 @@ try {
         $sha256.Dispose()
     }
     $commandHash = ($hashBytes | ForEach-Object { $_.ToString('x2') }) -join ''
-    $trustFile = [System.IO.Path]::Combine($repoRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
+
+    # The approval covers install_command + build_command, and BOTH come from the
+    # version-controlled config.toml -- so every worktree of a repo hashes to the same value and a
+    # per-worktree approval buys no extra safety. It only made the user re-approve identical
+    # commands in each new worktree, because the record is gitignored and therefore absent from a
+    # fresh one (issue #61). The record is kept in the main worktree; this worktree's own file is
+    # still honoured so approvals granted before this change keep working.
+    $mainRoot = $repoRoot
+    try { $mainRoot = Get-MainWorktree -RepoRoot $repoRoot } catch { $mainRoot = $repoRoot }
+    $trustFile = [System.IO.Path]::Combine($mainRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
+    $localTrustFile = [System.IO.Path]::Combine($repoRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
     $trustApproved = $false
-    if (Test-Path -LiteralPath $trustFile -PathType Leaf) {
-        $trustContent = (Get-Content -LiteralPath $trustFile -Raw -Encoding UTF8)
+    foreach ($candidate in @($trustFile, $localTrustFile)) {
+        if ($trustApproved) { break }
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        $trustContent = (Get-Content -LiteralPath $candidate -Raw -Encoding UTF8)
         if ($trustContent -match 'approved_hash\s*=\s*"([^"]+)"') {
             $trustApproved = ($Matches[1] -eq $commandHash)
         }
@@ -63,6 +75,9 @@ try {
         $installDisplay = if ([string]::IsNullOrWhiteSpace($installCmd)) { '(not set)' } else { $installCmd }
         $buildDisplay = if ([string]::IsNullOrWhiteSpace($buildCmd)) { '(not set)' } else { $buildCmd }
         Write-Output "TRUST_REQUIRED hash=$commandHash install_command=$installDisplay build_command=$buildDisplay"
+        # Own line: the path may contain spaces, and the TRUST_REQUIRED fields are already
+        # free-form, so appending another key= there would make both ambiguous to parse.
+        Write-Output "TRUST_FILE $trustFile"
         throw "pack-content: commands not approved. Re-invoke via /tp-build or /tp-publish skill — the skill will prompt for confirmation and record approval."
     }
 
