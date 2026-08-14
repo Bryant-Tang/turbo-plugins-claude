@@ -46,6 +46,13 @@ NAME="$(json_str name)"
 RAW_CWD="$(json_str cwd)"
 [[ -n "$NAME" ]] || die "no 'name' in the hook payload"
 
+# The name is pasted straight into a path and a branch name below. It is a Claude Code session
+# slug today, not user input, but a separator or a `..` in it would silently place the worktree
+# outside the directory we mean to use. Refuse loudly instead of creating it somewhere else.
+case "$NAME" in
+  */*|*\\*|*..*|-*) die "implausible worktree name from the hook payload: $NAME" ;;
+esac
+
 # The payload carries a Windows path with escaped backslashes (C:\\Users\\…). Turn it into the
 # forward-slash form git and bash both accept on every platform.
 to_unix_path() {

@@ -29,16 +29,36 @@ to_unix_path() {
 }
 
 NAME="$(json_str name)"
+
+# A name is pasted straight into a path and a branch name below. It is a Claude Code session slug
+# today, not user input, but a separator or a `..` in it would silently place the target outside
+# the directory we mean to touch -- and this script removes things. Refuse loudly instead.
+case "$NAME" in
+  */*|*\\*|*..*|-*) log "refusing an implausible worktree name: $NAME"; exit 0 ;;
+esac
+
 # The payload field naming for the created location is not pinned down in the docs, so try the
-# plausible spellings before falling back to reconstructing from cwd + name.
+# plausible spellings first.
 TARGET=''
 for key in worktreePath worktree_path path; do
   TARGET="$(to_unix_path "$(json_str "$key")")"
   [[ -n "$TARGET" ]] && break
 done
-if [[ -z "$TARGET" ]]; then
+
+# No path field: reconstruct. BOTH shapes create-worktree.sh can produce have to be considered --
+# the mirror in a workspace AND the ordinary-repo worktree. Only checking the mirror would leave
+# every ordinary-repo worktree behind forever, and the ordinary repo is the COMMON case, because
+# this hook replaces the built-in everywhere and not just in workspaces.
+if [[ -z "$TARGET" && -n "$NAME" ]]; then
   base="$(to_unix_path "$(json_str cwd)")"
-  [[ -n "$base" && -n "$NAME" ]] && TARGET="$base/.worktrees/$NAME"
+  if [[ -n "$base" ]]; then
+    if [[ -d "$base/.worktrees/$NAME" ]]; then
+      TARGET="$base/.worktrees/$NAME"
+    else
+      top="$(git -C "$base" rev-parse --show-toplevel 2>/dev/null || true)"
+      [[ -n "$top" && -d "$top/.claude/worktrees/$NAME" ]] && TARGET="$top/.claude/worktrees/$NAME"
+    fi
+  fi
 fi
 
 [[ -n "$TARGET" ]] || { log "nothing identifiable to remove"; exit 0; }

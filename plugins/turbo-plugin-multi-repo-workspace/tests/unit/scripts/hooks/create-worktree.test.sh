@@ -198,5 +198,32 @@ test_remove_keeps_a_worktree_with_uncommitted_work() {
     assertTrue  'the mirror is kept because something is left' "[ -d '$out' ]"
 }
 
+# The ordinary-repo removal path. Worth its own case because the payload may carry no path field,
+# and reconstructing only the workspace mirror would leave every ordinary-repo worktree behind
+# forever -- and the ordinary repo is the COMMON case, since this hook replaces the built-in
+# everywhere, not only in workspaces.
+test_remove_finds_an_ordinary_repo_worktree_without_a_path_field() {
+    skip_without_git
+    local out
+    out="$(payload_for "$WS/proj-2" WorktreeCreate wt-k | bash "$CREATE" 2>/dev/null)"
+    assertTrue 'precondition: the worktree exists' "[ -d '$out' ]"
+    # Deliberately only cwd + name, no path field.
+    payload_for "$WS/proj-2" WorktreeRemove wt-k | bash "$REMOVE" >/dev/null 2>&1
+    assertFalse 'ordinary-repo worktree removed' "[ -d '$out' ]"
+    if git -C "$WS/proj-2" worktree list 2>/dev/null | grep -q 'wt-k'; then
+        fail 'proj-2 still registers the removed worktree'
+    fi
+}
+
+# A name is pasted into a path and a branch name. It is a Claude Code slug today, but a separator
+# or a `..` would place the worktree somewhere else entirely -- and the remove hook deletes things.
+test_implausible_name_is_refused_rather_than_escaping_the_directory() {
+    skip_without_git
+    local rc=0
+    payload_for "$WS" WorktreeCreate '../escaped' | bash "$CREATE" >/dev/null 2>&1 || rc=$?
+    assertNotEquals 'a traversing name must fail creation' 0 "$rc"
+    assertFalse 'nothing was created outside the workspace' "[ -d '$(dirname "$WS")/escaped' ]"
+}
+
 # shellcheck source=/dev/null
 . "$SHUNIT2"

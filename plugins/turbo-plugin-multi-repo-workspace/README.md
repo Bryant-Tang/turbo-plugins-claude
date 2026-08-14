@@ -107,7 +107,7 @@ worktree、**沒有任何東西動到主 checkout**。離開時一次收掉整�
 > **已知落差**：分支基準點固定採 Claude Code 的預設語意 `fresh`（從 `origin/<主分支>` 長；沒有 origin
 > 時退回 HEAD），**不讀 `worktree.baseRef` 設定**。要正確讀它得在這裡解析並合併 Claude Code 的多層
 > settings，而在沒有保證存在的 JSON parser 的情況下那麼做，弄壞 hook 的機率高過幫上忙——hook 壞掉的
->後果是「開不了隔離 session」。把 `baseRef` 設成 `head` 的人，在這裡會拿到 `fresh` 的行為。
+> 後果是「開不了隔離 session」。把 `baseRef` 設成 `head` 的人，在這裡會拿到 `fresh` 的行為。
 
 ## 測試
 
