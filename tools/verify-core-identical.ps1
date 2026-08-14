@@ -53,7 +53,7 @@ $sharedSpecs = @(
     @{ Rel = 'scripts/lib/ps1-delegate.sh';                     Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework') },
     @{ Rel = 'skills/tp-setup/assets/setup-base.md';            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
     @{ Rel = 'skills/tp-setup/assets/claudemd-base-snippet.md'; Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
-    @{ Rel = 'tests/lib/shunit2';                               Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-code-comment', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace') }
+    @{ Rel = 'tests/lib/shunit2';                               Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-code-comment', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace', 'turbo-plugin-feedback') }
 )
 
 # Copies that do NOT live under plugins/<name>/, which the spec format above cannot express.

@@ -28,6 +28,11 @@
       "name": "turbo-plugin-multi-repo-workspace",
       "description": "「一個資料夾底下並排放著多個獨立 git repo」的工作區設定（tp-multi-repo-workspace-setup）:注入工作區根 CLAUDE.md，並逐一帶著明確的專案路徑委派各子專案的 git↔SVN setup。相依 turbo-plugin-git-svn。",
       "source": "./plugins/turbo-plugin-multi-repo-workspace"
+    },
+    {
+      "name": "turbo-plugin-feedback",
+      "description": "把 turbo-plugin 的 bug / 沉默失敗 / 功能缺口回報成 GitHub issue 的 skill（tp-report-issue），含 public repo 的消毒規則。純 skill；其它 turbo-plugin 都相依它，裝任何一個都會帶到。",
+      "source": "./plugins/turbo-plugin-feedback"
     }
   ]
 }
