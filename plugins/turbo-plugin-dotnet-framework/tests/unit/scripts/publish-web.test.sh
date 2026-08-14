@@ -126,6 +126,12 @@ EOF
     echo "$out" | grep -q '/p:Configuration'; assertFalse 'case4: /p:Configuration OMITTED (no agent value, none in pubxml)' $?
     echo "$out" | grep -q 'PUBLISH_OUTPUT'; assertTrue 'case4: PUBLISH_OUTPUT preserved' $?
     echo "$out" | grep -Eq 'Target: .*HelloApp\.csproj'; assertTrue 'case4: PUBLISH_OUTPUT includes resolved Target line' $?
+    # Issue #63: the marker used to tell the agent to keep the path line BARE. A bare Windows path
+    # in a markdown-rendered reply silently loses one separator per hidden directory ('\.claude' ->
+    # '.claude'), because '\' + ASCII punctuation is a markdown escape. The instruction the agent
+    # reads has to ask for a fenced code block instead.
+    echo "$out" | grep -q 'PUBLISH_OUTPUT.*fenced code block'; assertTrue 'case4: marker asks for a fenced code block (#63)' $?
+    echo "$out" | grep -qi 'PUBLISH_OUTPUT.*bare'; assertFalse 'case4: marker no longer says "bare" (#63)' $?
     # Publish BUILDS (/p:DeployOnBuild=true) and the SKILL never requires a prior build, so a fresh
     # clone can hit publish first -- it needs restore in its own right. Same switch-form requirement
     # as build. SolutionDir anchors the packages.config `<HintPath>..\packages\...` convention.

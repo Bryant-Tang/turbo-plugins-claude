@@ -247,6 +247,15 @@ Describe 'Publish-Web' {
             # file:/// line ends without trailing punctuation (stays clickable)
             ($script:rpOmit.Stdout -split "`r?`n" | Where-Object { $_ -match '^file:///' } | Select-Object -First 1) | Should -Match '[^.,;:]$'
         }
+        # Issue #63: the marker used to tell the agent to keep the path line BARE. A bare Windows
+        # path in a markdown-rendered reply silently loses one separator per hidden directory
+        # ('\.claude' -> '.claude'), because '\' + ASCII punctuation is a markdown escape. The
+        # instruction the agent reads has to ask for a fenced code block instead.
+        It 'PUBLISH_OUTPUT tells the agent to relay inside a fenced code block, not bare (#63)' {
+            $marker = @($script:rpOmit.Stdout -split "`r?`n" | Where-Object { $_ -match '^PUBLISH_OUTPUT' })[0]
+            $marker | Should -Match 'fenced code block'
+            $marker | Should -Not -Match '(?i)bare'
+        }
         It 'PUBLISH_OUTPUT includes the resolved Target line (糾錯閘, consistent with build/run/stop)' {
             ($script:rpOmit.Stdout -split "`r?`n" | Where-Object { $_ -match '^Target: ' } | Select-Object -First 1) | Should -Match 'HelloApp\.csproj'
         }
