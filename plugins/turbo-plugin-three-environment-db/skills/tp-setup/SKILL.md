@@ -41,8 +41,9 @@ db 的動作都是 repo-only,無「動到外部」副作用。
 
 ### Phase 2 — base 骨架 + db concern
 
-先依 base 段建立 concern-neutral 共用檔骨架(`.turbo-plugin/` 目錄、`.gitignore` base、`CLAUDE.md` base;
-**db 跳過 config.toml**)。再做 db concern:
+先依 base 段建立 concern-neutral 共用檔骨架(`.turbo-plugin/` 目錄、`.gitignore` 的 `base` 標記區塊、
+`TODO.md` 骨架、`CLAUDE.md` base;**db 跳過 config.toml**)。**`.gitignore` / `CLAUDE.md` 這兩個標記區塊
+要調和(找到就取代),不是「已存在就跳過」**——見 base 段開頭那兩種 idempotent 語意。再做 db concern:
 
 #### Case (b) init-from-existing / Case (c) 主 worktree 補設定
 
@@ -50,7 +51,8 @@ db 的動作都是 repo-only,無「動到外部」副作用。
    `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/dbhub.example.local.toml`(此檔進 git,是給同事看的範本);
    **已存在則不覆寫**。部署完**確認它真的沒有被 ignore**(`git check-ignore` 應回非零):base 的
    `.turbo-plugin/**/*.local.*` 會連範本一起擋掉,靠 base 骨架裡那條 `!*.example.local.*` 放行。
-   若這個專案的 `.gitignore` 是舊版、缺那一行,就照 base 骨架補上——否則範本永遠傳不到同事手上。
+   舊版 `.gitignore` 缺那一行的情況,base 段的標記調和已經會補上(issue #65 之前不會,所以這裡才要
+   自己驗一次);**驗出來仍然被 ignore 就停下回報**,不要默默放過——範本被擋掉的話它永遠傳不到同事手上。
 2. **`.turbo-plugin/dbhub.local.toml`** — **永不自動建立**(避免使用者誤以為已 ready)。不存在則提醒:
    「dbhub 需要你自填 credentials:`cp .turbo-plugin/dbhub.example.local.toml .turbo-plugin/dbhub.local.toml`
    後編輯填入連線資訊」(`.gitignore` base 已排除 `*.local.*`,**真正含密碼的這一份不會進 git**;
@@ -105,6 +107,8 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 
 - `.turbo-plugin/` 存在;db 未在 `config.toml` 寫入任何內容(亦不涉及 `conventions.md`——該機制已退役)。
 - `.turbo-plugin/dbhub.example.local.toml` 存在(進 git);`dbhub.local.toml` **未**被自動建立(只提示)。
+- `.gitignore` 含 `base` 標記區塊(只有一組);`CLAUDE.md` 的 `base` 區塊開頭有「重跑會整段取代」的自我說明;
+  `TODO.md` 存在(既有的不動)。
 - Case (a)(無 `.git/`):setup fail-loud 停止,**未** `git init`、**未**建任何檔。
 - Case (b)/(c):跑兩次結果同跑一次(idempotent)。
 - Case (d):只處理 `dbhub.local.toml`,未動 git-versioned shared file。
