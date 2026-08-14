@@ -1,0 +1,27 @@
+{
+  "description": "turbo-plugin-multi-repo-workspace: WorktreeCreate / WorktreeRemove。讓隔離工作副本在「本身不是 repo、底下並排多個 repo」的工作區根也能建立——交還一份工作區鏡像，其子目錄是各專案真正的 worktree，所以 session 仍站在根目錄、`git -C <專案>` 照樣打得到每一個專案，而沒有任何東西動到主 checkout。注意：設了這組 hook 之後，一般 repo 的隔離工作副本也走這裡（實測確認），腳本內含對應的分支。",
+  "hooks": {
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/create-worktree.sh\"",
+            "timeout": 300
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/remove-worktree.sh\"",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

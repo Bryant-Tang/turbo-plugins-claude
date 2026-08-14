@@ -81,6 +81,34 @@ TP_TOKEN:PROJECTS count=<N>
 與其它 turbo-plugin 的標記慣例一致（`<!-- turbo-plugin:begin <concern> -->`）：只動自己的區塊，不碰標記外的內容
 或別的 concern 的區塊。重跑不會產生第二組標記。
 
+## Hooks：讓隔離工作副本在工作區根也能用
+
+工作區根**本身不是 repo**，所以 Claude Code 內建的隔離在那裡直接失敗；先 `cd` 進某個子專案再開，
+session 就被釘在那一個專案上——「站在根目錄一次管全部」這件事就沒了。
+
+`WorktreeCreate` / `WorktreeRemove` hook 解掉這個兩難：它交還一份**工作區的鏡像**，
+
+```
+<工作區根>/.worktrees/<session名>/
+    ├─ proj-1/     ← proj-1 真正的 git worktree
+    └─ proj-2/     ← proj-2 真正的 git worktree
+```
+
+session 就站在那個鏡像目錄裡，於是 `git -C <專案>` 照樣打得到每一個專案，而所有編輯都落在各自的隔離
+worktree、**沒有任何東西動到主 checkout**。離開時一次收掉整組；有未提交變更的那個**會被留下來**
+（`git worktree remove` 不加 `--force`，所以這裡不可能弄丟你的修改）。
+
+> **⚠ 這組 hook 會接管你「所有」repo 的隔離工作副本建立，不只多專案工作區。**
+> Claude Code 的規則是「只要宣告了 `WorktreeCreate`，它就取代內建行為」——實測確認在普通 git repo 裡
+> 也會被呼叫。所以腳本自己處理了一般 repo 那條路徑：worktree 一樣落在 `<repo>/.claude/worktrees/<name>`、
+> 一樣開新分支。**不想要這個行為的話就不要裝這個 plugin**，因為 hook 是 plugin 層級的、沒辦法只對某些
+> 資料夾生效。
+>
+> **已知落差**：分支基準點固定採 Claude Code 的預設語意 `fresh`（從 `origin/<主分支>` 長；沒有 origin
+> 時退回 HEAD），**不讀 `worktree.baseRef` 設定**。要正確讀它得在這裡解析並合併 Claude Code 的多層
+> settings，而在沒有保證存在的 JSON parser 的情況下那麼做，弄壞 hook 的機率高過幫上忙——hook 壞掉的
+>後果是「開不了隔離 session」。把 `baseRef` 設成 `head` 的人，在這裡會拿到 `fresh` 的行為。
+
 ## 測試
 
 ```powershell

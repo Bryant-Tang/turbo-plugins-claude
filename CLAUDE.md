@@ -130,6 +130,23 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
   > `.ps1`(`hooks.json` 一律走 `bash`)則是死程式碼。所以這類 hook 用單一 bash 實作,且工作要限縮在
   > Git Bash 原生就能做的純文字處理。現況只有 `turbo-plugin-git-svn/scripts/hooks/remind-commit-msg.sh`。
 
+  > **第三個例外:`WorktreeCreate` / `WorktreeRemove` 只寫一支 `.sh`。** 理由不是頻率(它一個 session
+  > 只跑一次,跟 `SessionStart` 同級),而是**這支腳本的錯誤方向是靜默的**:它決定新 worktree 從哪個
+  > ref 長出來,而「從錯的基準點長出來」會產生一個**完全合法**的 worktree,Claude Code 不會有任何
+  > 意見。把那段邏輯寫兩份就是替這個靜默錯誤多開一個入口。工作內容全是 git + 純文字,Git Bash 在三個
+  > 平台行為一致,所以單一實作**更直接**達成配對規則真正的目的(兩個平台不會漂移)——與 `.mcp.json`
+  > 那個例外同一個理由。現況只有 `turbo-plugin-multi-repo-workspace/scripts/hooks/{create,remove}-worktree.sh`。
+
+  > **`WorktreeCreate` 一旦宣告,就接管「所有」repo 的隔離工作副本建立,不只你的目標情境。**
+  > 2026-08-14 實測確認:session 開在一個**普通 git repo** 裡時,hook 照樣被呼叫。文件兩處說法不一致
+  > (EnterWorktree 寫「Outside a git repository: delegates to hooks」,Hooks reference 寫
+  > 「Replaces default git behavior」),**以後者為準**。所以這種 hook 一定要自己處理「一般 repo」
+  > 那條路徑,而且要復刻內建行為(worktree 落在 `<repo>/.claude/worktrees/<name>`、開新分支、基準點
+  > 預設是 `origin/<主分支>` 而**不是**當前 HEAD)。實測到的 stdin 是
+  > `{"session_id","transcript_path","cwd","hook_event_name","name"}`,stdout 只能印出建好的絕對路徑。
+  > Claude Code **會驗證**那個路徑(git 若把它解析到外層 checkout 就拒絕並清楚報錯),但**不會**驗證
+  > 分支基準點。
+
   > **寫 hook 時的三個實務重點**(踩過才知道,不要重踩):
   > ① plugin 的 `hooks.json` 事件要包在頂層 `hooks` 鍵底下(`{"description": ..., "hooks": {"PreToolUse": [...]}}`);
   > 寫成事件直接放頂層**不會報錯,只會靜默不載入**。
