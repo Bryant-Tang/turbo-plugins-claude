@@ -69,7 +69,7 @@ Script 會:解析 target(CLI `-Project` → `config.toml [build].project` → �
 
 ### Step 3 — 回報結果模板
 
-腳本結尾印一行 `BUILD_OUTPUT (...)` marker + 數行:**解析後的實際 target**、configuration、platform(未指定者標「未指定 (由 MSBuild / solution / Directory.Build.props 決定)」)、**Frontend**(有打包標「已執行 (<dir>)」、沒有標「未設定 (未執行前端打包)」)。把這些**逐字轉述**給使用者當結果,**一行都不要略過**。
+腳本結尾印一行 `BUILD_OUTPUT (...)` marker + 數行:**解析後的實際 target**、configuration、platform(未指定者標「未指定 (由 MSBuild / solution / Directory.Build.props 決定)」)、**Frontend**(有打包標「已執行 (<dir>)」、沒有標「未設定 (未執行前端打包)」)。把這些**逐字轉述**給使用者當結果,**一行都不要略過**,並把整段放進一個 **fenced code block**(三個反引號)——`Target:` 是 Windows 絕對路徑,而 Markdown 會把「`\` + ASCII 標點」當跳脫序列吃掉反斜線,經過 `.claude` / `.turbo-plugin` 這類隱藏目錄時就會少一個分隔符;code block 不做算繪,路徑才會逐字保留。
 
 其中兩行各自是一道閘:「解析後 target」讓使用者確認建的是不是對的專案(建錯了就改 `-Project` 重跑);
 「Frontend」讓「前端沒被打包」這件事**一定會被說出口**——那正是它會被漏掉的原因(Step 1.5)。
@@ -87,7 +87,7 @@ build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
-- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 `.turbo-plugin/pack-content-trust.local.toml`(格式:`approved_hash = "<h>"`)並重新呼叫 script。使用者選 No → 終止 skill。
+- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 script 緊接著印出的 `TRUST_FILE <絕對路徑>` 那個檔(格式:`approved_hash = "<h>"`)並重新呼叫 script;**要用它給的路徑,不要自己組**——它指向主 worktree,所以同一個 repo 的其它 worktree 不必再問一次同樣的指令。使用者選 No → 終止 skill。
 - **全權判斷 target,不靠 script 偵測**:要建哪個由你看 context / 記憶 / 必要時 `AskUserQuestion`;script 不再自動偵測單一 csproj、多個也不 throw,純吃你給的明確 target。
 - **config 預設省略**:沒明確理由(使用者指定 / 記憶有值)就別帶 `/p:Configuration|Platform`,讓 MSBuild/.sln/props 決定——這是對齊 VS 的關鍵。
 - **build 預設整方案、小改建單一**:見 Step 1;由你判斷,選錯可重跑。

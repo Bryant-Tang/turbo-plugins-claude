@@ -114,7 +114,7 @@ console 走這裡,**不要**碰 IIS。跑
 
 ### Step 3 — 回報結果模板
 
-腳本結尾印 `Listening on <url>` 與一行 `RUN_OUTPUT (...)` marker + 數行:**解析後的實際 target** 與 web URL(run 不涉 configuration)。把這些**逐字轉述**給使用者;URL 那行保持原樣(不接散文/句號)讓它可點擊。「解析後 target」是糾錯閘——確認跑的是不是對的專案。
+腳本結尾印 `Listening on <url>` 與一行 `RUN_OUTPUT (...)` marker + 數行:**解析後的實際 target** 與 web URL(run 不涉 configuration)。把這些**逐字轉述**給使用者,整段放進一個 **fenced code block**(三個反引號)——`Target:` 是 Windows 絕對路徑,而 Markdown 會把「`\` + ASCII 標點」當跳脫序列吃掉反斜線(經過 `.claude` 這類隱藏目錄時就少一個分隔符);code block 不做算繪,路徑才會逐字保留。URL 那行保持原樣、不接散文或句號。「解析後 target」是糾錯閘——確認跑的是不是對的專案。
 
 ### Step 4 — 記憶存回(save-back)
 

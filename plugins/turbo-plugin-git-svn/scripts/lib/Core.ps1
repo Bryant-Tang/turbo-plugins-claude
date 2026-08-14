@@ -213,7 +213,9 @@ function Read-TurboPluginConfig {
             $line = $raw -replace '^\s+|\s+$', ''
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             if ($line.StartsWith('#')) { continue }
-            if ($line -match '^\[([^\]]+)\]$') {
+            # A table header may carry a trailing comment -- TOML allows it. Requiring the line to
+            # END at ']' dropped the header, and with it EVERY key under that section, in silence.
+            if ($line -match '^\[([^\]]+)\]\s*(#.*)?$') {
                 $currentSection = $Matches[1].Trim()
                 if (-not $result.ContainsKey($currentSection)) {
                     $result[$currentSection] = @{}
@@ -223,18 +225,22 @@ function Read-TurboPluginConfig {
             if ($line -match '^([A-Za-z0-9_\-]+)\s*=\s*(.+)$') {
                 $key = $Matches[1].Trim()
                 $val = $Matches[2].Trim()
-                # strip trailing inline comment (only if not inside a quoted string)
-                if ($val -notmatch '^"' -and $val -notmatch "^'") {
-                    if ($val -match '^(.*?)\s+#') {
-                        $val = $Matches[1].Trim()
-                    }
+                # A quoted value ends at its closing quote, so match through the quote and allow a
+                # comment after it. '#' INSIDE the quotes stays part of the value (a path may
+                # contain one). Previously a quoted value with a trailing comment matched neither
+                # the comment-stripping branch (it starts with a quote) nor the unquoting branch
+                # (it does not end with one), so the value kept its quotes AND the comment.
+                if ($val -match '^"([^"]*)"\s*(#.*)?$') { $val = $Matches[1] }
+                elseif ($val -match "^'([^']*)'\s*(#.*)?$") { $val = $Matches[1] }
+                else {
+                    # Unquoted: the trailing inline comment is not part of the value, and only an
+                    # unquoted token may be a bool/number ("true" in quotes is the string).
+                    if ($val -match '^(.*?)\s+#') { $val = $Matches[1].Trim() }
+                    if ($val -eq 'true') { $val = $true }
+                    elseif ($val -eq 'false') { $val = $false }
+                    elseif ($val -match '^-?\d+$') { $val = [int]$val }
+                    elseif ($val -match '^-?\d+\.\d+$') { $val = [double]$val }
                 }
-                if ($val -match '^"(.*)"$') { $val = $Matches[1] }
-                elseif ($val -match "^'(.*)'$") { $val = $Matches[1] }
-                elseif ($val -eq 'true') { $val = $true }
-                elseif ($val -eq 'false') { $val = $false }
-                elseif ($val -match '^-?\d+$') { $val = [int]$val }
-                elseif ($val -match '^-?\d+\.\d+$') { $val = [double]$val }
                 if ([string]::IsNullOrEmpty($currentSection)) {
                     if (-not $result.ContainsKey('')) { $result[''] = @{} }
                     $result[''][$key] = $val
@@ -248,10 +254,41 @@ function Read-TurboPluginConfig {
     return $result
 }
 
-# Lookup chain: CLI arg → config.toml → built-in default
+# The gitignored local config describes THIS MACHINE (tool paths, credentials), so it has no
+# per-worktree meaning -- yet being gitignored is exactly what keeps it out of a newly created
+# worktree. Every new worktree therefore started from defaults and the user had to re-enter
+# machine settings they had already given (issue #61). Resolved once per root and cached: this
+# shells out to git, and Resolve-ConfigValue is called many times in a single script run.
+#
+# Returns '' when there is no separate main worktree to inherit from, or when the directory is
+# not a git repo at all (a plain directory is a legitimate caller -- do not throw).
+$script:TpMainWorktreeCache = @{}
+function Get-InheritedLocalConfigPath {
+    param([string]$RepoRoot)
+
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) { return '' }
+    # Free discriminator: a linked worktree's .git is a FILE ("gitdir: ..."), so a DIRECTORY means
+    # this IS the main worktree and there is nothing to inherit -- the common case never forks git.
+    # An absent .git falls through: it may be a subdirectory of a worktree, and git answers that.
+    if (Test-Path -LiteralPath ([System.IO.Path]::Combine($RepoRoot, '.git')) -PathType Container) { return '' }
+    if (-not $script:TpMainWorktreeCache.ContainsKey($RepoRoot)) {
+        $main = ''
+        try { $main = Get-MainWorktree -RepoRoot $RepoRoot } catch { $main = '' }
+        $script:TpMainWorktreeCache[$RepoRoot] = $main
+    }
+    $mainRoot = $script:TpMainWorktreeCache[$RepoRoot]
+    if ([string]::IsNullOrWhiteSpace($mainRoot)) { return '' }
+    $here = ''
+    try { $here = Get-NormalizedAbsolutePath -Path $RepoRoot } catch { return '' }
+    if ($mainRoot -eq $here) { return '' }
+    return [System.IO.Path]::Combine($mainRoot, '.turbo-plugin', 'config.local.toml')
+}
+
+# Lookup chain: CLI arg → config.toml → inherited local → local → built-in default
 #   1. $CliValue (already-resolved CLI argument; pass $null if not provided)
 #   2. config.toml under repo-root .turbo-plugin/config.toml, $Section.$Key
-#   3. $Default (built-in default; pass $null to skip)
+#   3. the MAIN worktree's config.local.toml (linked worktrees only), then this root's own
+#   4. $Default (built-in default; pass $null to skip)
 function Resolve-ConfigValue {
     param(
         [string]$RepoRoot,
@@ -265,9 +302,18 @@ function Resolve-ConfigValue {
     }
     # read config.toml first then merge config.local.toml on top of it.
     # config.local.toml is gitignored (machine-specific tool paths etc.) and takes precedence.
+    # In a linked worktree the MAIN worktree's local config is layered in between, so machine
+    # settings are inherited -- but this worktree's own file still wins, so anyone who has
+    # deliberately set one per worktree keeps that behaviour.
     $configPath      = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
     $configLocalPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.local.toml')
-    $cfg = Read-TurboPluginConfig -ConfigPath @($configPath, $configLocalPath)
+    $inheritedPath   = Get-InheritedLocalConfigPath -RepoRoot $RepoRoot
+    $chain = if ([string]::IsNullOrWhiteSpace($inheritedPath)) {
+        @($configPath, $configLocalPath)
+    } else {
+        @($configPath, $inheritedPath, $configLocalPath)
+    }
+    $cfg = Read-TurboPluginConfig -ConfigPath $chain
     if ($cfg.ContainsKey($Section) -and $cfg[$Section].ContainsKey($Key)) {
         return $cfg[$Section][$Key]
     }

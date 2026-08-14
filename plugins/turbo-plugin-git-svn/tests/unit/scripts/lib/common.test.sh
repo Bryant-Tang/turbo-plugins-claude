@@ -623,6 +623,112 @@ test_read_config_tolerates_markers() {
     assertEquals 'unknown section tolerated'          'v'                        "$unknown"
 }
 
+# Issue #61: config.local.toml describes THIS MACHINE, so it has no per-worktree meaning -- but
+# being gitignored is exactly what keeps it out of a newly created worktree, so every new worktree
+# started from defaults and the user re-entered settings already given.
+#
+# The sentinel values are what makes this discriminating: FROM-MAIN-LOCAL exists ONLY in the main
+# worktree's local file, so reading it back from the linked worktree cannot happen any other way.
+_build_worktree_inherit_repo() {
+    local tmp main
+    tmp="$(mktemp -d -t turbo-common-wtinherit-XXXXXX)"
+    main="$tmp/main"
+    mkdir -p "$main/.turbo-plugin"
+    git -C "$main" init -q -b main >/dev/null 2>&1 || git init -q -b main "$main" >/dev/null 2>&1
+    git -C "$main" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$main" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    printf '[tools]\nmsbuild_path = "FROM-CONFIG-TOML"\n' > "$main/.turbo-plugin/config.toml"
+    git -C "$main" add -A >/dev/null 2>&1
+    git -C "$main" -c commit.gpgsign=false commit -q -m init >/dev/null 2>&1
+    printf '[tools]\nmsbuild_path = "FROM-MAIN-LOCAL"\niis_express_path = "MAIN-IIS"\n' \
+        > "$main/.turbo-plugin/config.local.toml"
+    git -C "$main" worktree add -q -b feat "$tmp/wt" >/dev/null 2>&1
+    printf '%s' "$tmp"
+}
+
+test_resolve_config_value_linked_worktree_inherits_main_local() {
+    local tmp msbuild iis
+    tmp="$(_build_worktree_inherit_repo)"
+    msbuild="$(resolve_config_value "$tmp/wt" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    iis="$(resolve_config_value "$tmp/wt" 'tools' 'iis_express_path' '' '' 2>/dev/null || true)"
+    git -C "$tmp/main" worktree remove --force "$tmp/wt" >/dev/null 2>&1 || true
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'linked worktree inherits the main local value' 'FROM-MAIN-LOCAL' "$msbuild"
+    assertEquals 'and every other inherited key'                 'MAIN-IIS'        "$iis"
+}
+
+test_resolve_config_value_worktree_own_local_still_wins() {
+    local tmp msbuild iis
+    tmp="$(_build_worktree_inherit_repo)"
+    mkdir -p "$tmp/wt/.turbo-plugin"
+    printf '[tools]\nmsbuild_path = "FROM-WORKTREE-LOCAL"\n' > "$tmp/wt/.turbo-plugin/config.local.toml"
+    msbuild="$(resolve_config_value "$tmp/wt" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    iis="$(resolve_config_value "$tmp/wt" 'tools' 'iis_express_path' '' '' 2>/dev/null || true)"
+    git -C "$tmp/main" worktree remove --force "$tmp/wt" >/dev/null 2>&1 || true
+    rm -rf "$tmp" 2>/dev/null || true
+    # A deliberate per-worktree override keeps working: the inherited layer sits BELOW it...
+    assertEquals 'own local file wins for the key it sets' 'FROM-WORKTREE-LOCAL' "$msbuild"
+    # ...and a key it does not set is inherited rather than lost.
+    assertEquals 'unset keys still inherited'              'MAIN-IIS'            "$iis"
+}
+
+# A plain directory is a legitimate caller (tests, a project not under git yet). Looking up the
+# main worktree must not turn that into a failure.
+test_resolve_config_value_tolerates_non_git_directory() {
+    local tmp out
+    tmp="$(mktemp -d -t turbo-common-nongit-XXXXXX)"
+    mkdir -p "$tmp/.turbo-plugin"
+    printf '[tools]\nmsbuild_path = "PLAIN"\n' > "$tmp/.turbo-plugin/config.toml"
+    out="$(resolve_config_value "$tmp" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'non-git directory resolves normally' 'PLAIN' "$out"
+}
+
+# Issue #60: both constructs below are legal TOML that the reader used to drop without a word --
+# the same silent-fallback symptom as the encoding bug, a different cause.
+test_read_config_inline_comments_do_not_swallow_section_or_value() {
+    local tmp rr msbuild note sharp
+    tmp="$(mktemp -d -t turbo-common-inline-XXXXXX)"
+    rr="$tmp/repo"
+    mkdir -p "$rr/.turbo-plugin"
+    {
+        echo '[tools] # machine-specific tool paths'
+        echo 'msbuild_path = "C:/MSBuild.exe" # pinned for this machine'
+        echo 'note = "sharp # inside"'
+    } > "$rr/.turbo-plugin/config.toml"
+
+    msbuild="$(resolve_config_value "$rr" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    note="$(resolve_config_value "$rr" 'tools' 'note' '' '' 2>/dev/null || true)"
+    rm -rf "$tmp" 2>/dev/null || true
+
+    # Header had to END at ']', so no section was opened and every key under it vanished.
+    # Quoted values skipped comment-stripping AND failed the unquote (line does not end at the
+    # quote), so the value kept both its quotes and the comment.
+    assertEquals 'section survives a trailing comment on its header' 'C:/MSBuild.exe' "$msbuild"
+    assertEquals 'a # inside quotes is part of the value'            'sharp # inside' "$note"
+}
+
+# A backslash inside a POSIX bracket expression is LITERAL, so a [^\"] class would also exclude
+# '\' and stop matching every Windows path. Bidirectional guard on the regex form.
+test_read_config_preserves_backslash_windows_paths() {
+    local tmp rr msbuild iis
+    tmp="$(mktemp -d -t turbo-common-bslash-XXXXXX)"
+    rr="$tmp/repo"
+    mkdir -p "$rr/.turbo-plugin"
+    {
+        echo '[tools]'
+        echo 'msbuild_path = "C:\Program Files\MSBuild\MSBuild.exe"'
+        echo 'iis_express_path = "C:\Program Files\IIS Express\iisexpress.exe" # 64-bit'
+    } > "$rr/.turbo-plugin/config.toml"
+
+    msbuild="$(resolve_config_value "$rr" 'tools' 'msbuild_path' '' '' 2>/dev/null || true)"
+    iis="$(resolve_config_value "$rr" 'tools' 'iis_express_path' '' '' 2>/dev/null || true)"
+    rm -rf "$tmp" 2>/dev/null || true
+
+    assertEquals 'backslash path preserved'                'C:\Program Files\MSBuild\MSBuild.exe'        "$msbuild"
+    assertEquals 'backslash path preserved past a comment' 'C:\Program Files\IIS Express\iisexpress.exe' "$iis"
+}
+
 # ─── get_svn_push_body (U9) ──────────────────────────────────────────────────
 # Builds a repo with a 'svnbase' marker at the base commit, feat/fix on main, refactor on a
 # side branch, then a --no-ff merge of side into main. The range svnbase..main therefore holds
@@ -640,7 +746,9 @@ _build_push_body_repo() {
     git -C "$repo" checkout -q -b side >/dev/null 2>&1
     git -C "$repo" commit -q --allow-empty -m 'refactor: tidy C' >/dev/null 2>&1
     git -C "$repo" checkout -q main >/dev/null 2>&1
-    git -C "$repo" merge -q --no-ff -m 'Merge branch side into main' side >/dev/null 2>&1
+    # Spelled the way git itself writes a merge subject -- grouping reads the source branch off
+    # this line, so a fixture with an ad-hoc message would not exercise the real path.
+    git -C "$repo" merge -q --no-ff -m "Merge branch 'side' into main" side >/dev/null 2>&1
     printf '%s' "$repo"
 }
 
@@ -769,7 +877,7 @@ test_get_svn_push_body_groups_merged_main() {
     git -C "$repo" commit -q --allow-empty -m 'chore: main one' >/dev/null 2>&1
     git -C "$repo" commit -q --allow-empty -m 'chore: main two' >/dev/null 2>&1
     git -C "$repo" checkout -q 'feat/x' >/dev/null 2>&1
-    git -C "$repo" merge -q --no-ff -m 'Merge main into feat/x' main >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m "Merge branch 'main' into feat/x" main >/dev/null 2>&1
     body="$(get_svn_push_body "$repo" 'svnbase..feat/x')"
     rm -rf "$repo" 2>/dev/null || true
     case "$body" in *"【feat/x】"*) assertTrue '【feat/x】 header present' 0 ;; *) fail "feat/x header missing: $body" ;; esac
@@ -782,6 +890,174 @@ test_get_svn_push_body_groups_merged_main() {
     esac
     case "$body" in *"- feat: feature one"*) assertTrue 'own commit present' 0 ;; *) fail "f1 missing: $body" ;; esac
     case "$body" in *"- chore: main two"*) assertTrue 'merged-in trunk commit present' 0 ;; *) fail "m2 missing: $body" ;; esac
+}
+
+# ── #67: attribution must follow how the commit ENTERED the pushed branch ────
+#
+# X reached main through the merge of feat/a. feat/b was branched off X, never merged into main,
+# and feat/a was deleted afterwards -- an entirely ordinary sequence. `git name-rev` answers
+# "feat/b" here (it minimises generation-then-distance over all local heads, and main can only
+# reach X across a second parent, which costs MERGE_TRAVERSAL_WEIGHT). Naming feat/b would put a
+# claim in the SVN log -- permanently -- that a branch which shipped nothing was the source.
+_build_issue67_repo() {
+    local repo x
+    repo="$(mktemp -d -t turbo-common-issue67-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    git -C "$repo" checkout -q -b 'feat/a' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'fix: the real fix' >/dev/null 2>&1
+    x="$(git -C "$repo" rev-parse HEAD 2>/dev/null)"
+    git -C "$repo" commit -q --allow-empty -m 'test: cover the fix' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'chore: main work' >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m "Merge branch 'feat/a' into main" 'feat/a' >/dev/null 2>&1
+    git -C "$repo" checkout -q -b 'feat/b' "$x" >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'wip: never merged anywhere' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" branch -q -D 'feat/a' >/dev/null 2>&1
+    printf '%s' "$repo"
+}
+
+# The fixture only proves anything while it still reproduces the misattribution. If a future git
+# changes name-rev's tie-breaking, this fails loudly rather than passing for the wrong reason.
+test_issue67_fixture_still_reproduces() {
+    local repo x named contained
+    repo="$(_build_issue67_repo)"
+    x="$(git -C "$repo" rev-list --no-merges --grep='fix: the real fix' 'svnbase..main')"
+    named="$(git -C "$repo" name-rev --name-only --refs='refs/heads/*' "$x" 2>/dev/null)"
+    if git -C "$repo" merge-base --is-ancestor 'feat/b' main 2>/dev/null; then contained=yes; else contained=no; fi
+    rm -rf "$repo" 2>/dev/null || true
+    assertEquals 'name-rev still names the never-merged branch (fixture reproduces #67)' 'feat/b~1' "$named"
+    assertEquals 'feat/b is genuinely not merged into main' 'no' "$contained"
+}
+
+test_get_svn_push_body_attributes_via_the_merge_not_name_rev() {
+    local repo body
+    repo="$(_build_issue67_repo)"
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    # The never-merged branch must not appear at all -- not as a header, not anywhere.
+    case "$body" in
+        *'feat/b'*) fail "never-merged branch named in body: $body" ;;
+        *) assertTrue 'never-merged branch absent' 0 ;;
+    esac
+    # The branch that WAS merged is named, even though it has since been deleted: the name comes
+    # from the merge commit, which still records it.
+    case "$body" in
+        *"【feat/a】"*) assertTrue 'deleted-but-merged source branch named' 0 ;;
+        *) fail "feat/a header missing: $body" ;;
+    esac
+    # Both of feat/a's commits belong to the same group; name-rev used to split them.
+    case "$body" in
+        *"【feat/a】"$'\n'"- fix: the real fix"$'\n'"- test: cover the fix"*)
+            assertTrue 'both source-branch commits in one group' 0 ;;
+        *) fail "feat/a group is not intact: $body" ;;
+    esac
+    case "$body" in
+        *"【main】"$'\n'"- chore: main work"*) assertTrue 'main keeps only its own commit' 0 ;;
+        *) fail "main group wrong: $body" ;;
+    esac
+}
+
+# A merge subject that records no source branch -> no grouping at all. A wrong group is worse than
+# no group: the body is locked, so the agent cannot correct it in the SVN log afterwards.
+test_get_svn_push_body_flat_when_merge_subject_records_no_branch() {
+    local repo body
+    repo="$(mktemp -d -t turbo-common-nosrc-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    git -C "$repo" checkout -q -b side >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'refactor: tidy C' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: add A' >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m 'hand-written message with no branch name' side >/dev/null 2>&1
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    case "$body" in
+        *"【"*) fail "grouped despite an unattributable merge: $body" ;;
+        *) assertTrue 'falls back to a flat list' 0 ;;
+    esac
+    case "$body" in
+        *"- feat: add A"*) assertTrue 'own subject still present' 0 ;;
+        *) fail "own subject dropped: $body" ;;
+    esac
+    case "$body" in
+        *"- refactor: tidy C"*) assertTrue 'merged-in subject still present' 0 ;;
+        *) fail "merged-in subject dropped: $body" ;;
+    esac
+}
+
+# An octopus merge has more than one "other side", so no single source branch can be named for the
+# commits it brought in. Same rule as an unreadable subject: flatten rather than pick one.
+#
+# The subject here is deliberately one that DOES parse (`Merge branch 'sideA' into main`). git's
+# own octopus subject is "Merge branches 'a' and 'b'", which merge_source_branch already rejects
+# on wording alone -- using it would leave the parent-count guard untested while the case still
+# went green.
+test_get_svn_push_body_flat_on_octopus_merge() {
+    local repo body parents
+    repo="$(mktemp -d -t turbo-common-octopus-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    git -C "$repo" checkout -q -b sideA >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: from A' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" checkout -q -b sideB >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: from B' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'chore: on main' >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m "Merge branch 'sideA' into main" sideA sideB >/dev/null 2>&1
+    parents="$(git -C "$repo" rev-list --parents -n 1 main 2>/dev/null | wc -w)"
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    # Guard the fixture: without three parents this would be testing an ordinary merge.
+    assertEquals 'fixture really produced an octopus merge (sha + 3 parents)' '4' "$(echo "$parents" | tr -d ' ')"
+    case "$body" in
+        *"【"*) fail "grouped despite an octopus merge: $body" ;;
+        *) assertTrue 'octopus merge falls back to a flat list' 0 ;;
+    esac
+    # Nothing may be dropped on the way to the fallback.
+    case "$body" in *"- feat: from A"*) assertTrue 'A subject kept' 0 ;; *) fail "A missing: $body" ;; esac
+    case "$body" in *"- feat: from B"*) assertTrue 'B subject kept' 0 ;; *) fail "B missing: $body" ;; esac
+    case "$body" in *"- chore: on main"*) assertTrue 'main subject kept' 0 ;; *) fail "main missing: $body" ;; esac
+}
+
+# ── merge_source_branch ──────────────────────────────────────────────────────
+
+test_merge_source_branch_reads_git_default_subjects() {
+    assertEquals 'with into-clause'   'feat/a' "$(merge_source_branch "Merge branch 'feat/a' into main")"
+    assertEquals 'without into-clause' 'feat/a' "$(merge_source_branch "Merge branch 'feat/a'")"
+    assertEquals 'remote-tracking'  'origin/feat/a' "$(merge_source_branch "Merge remote-tracking branch 'origin/feat/a'")"
+    assertEquals 'github pull request' 'feat/a' "$(merge_source_branch 'Merge pull request #12 from someone/feat/a')"
+}
+
+# The bridge ref is an implementation detail; a trunk replay must read as `main` to the user.
+test_merge_source_branch_strips_bridge_prefix() {
+    assertEquals 'remote-svn/ stripped' 'main' "$(merge_source_branch "Merge branch 'remote-svn/main' into feat/x")"
+}
+
+test_merge_source_branch_rejects_what_it_cannot_read() {
+    local out
+    out="$(merge_source_branch 'Merge two things together' || true)"
+    assertEquals 'unquoted prose yields nothing' '' "$out"
+    out="$(merge_source_branch 'feat: not a merge at all' || true)"
+    assertEquals 'non-merge subject yields nothing' '' "$out"
+    out="$(merge_source_branch "Merge branch 'has a space' into main" || true)"
+    assertEquals 'whitespace is not a branch name' '' "$out"
+    out="$(merge_source_branch "Merge branch '' into main" || true)"
+    assertEquals 'empty quotes yield nothing' '' "$out"
+    # A crafted name must not be able to forge a group header inside the locked body.
+    out="$(merge_source_branch "Merge branch 'x】fake【y' into main" || true)"
+    assertEquals 'group-header brackets rejected' '' "$out"
 }
 
 # ── resolve_path_within_worktree ─────────────────────────────────────────────

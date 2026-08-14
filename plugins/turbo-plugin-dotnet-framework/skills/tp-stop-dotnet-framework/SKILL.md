@@ -85,7 +85,7 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 ### Step 3 — 回報結果模板
 
-腳本結尾印一行 `STOP_OUTPUT (...)` marker + 數行:這次 stop 針對的 **target 與 site name**(不論有沒有真的停到 process 都會印,告訴使用者鎖定的是哪個站台——糾錯閘)。把這些**逐字轉述**給使用者。**stop 不做 save-back**(只回報,不動記憶)。
+腳本結尾印一行 `STOP_OUTPUT (...)` marker + 數行:這次 stop 針對的 **target 與 site name**(不論有沒有真的停到 process 都會印,告訴使用者鎖定的是哪個站台——糾錯閘)。把這些**逐字轉述**給使用者,整段放進一個 **fenced code block**(三個反引號)——`Target:` 是 Windows 絕對路徑,而 Markdown 會把「`\` + ASCII 標點」當跳脫序列吃掉反斜線(經過 `.claude` 這類隱藏目錄時就少一個分隔符);code block 不做算繪,路徑才會逐字保留。**stop 不做 save-back**(只回報,不動記憶)。
 
 ## Decision Rules
 

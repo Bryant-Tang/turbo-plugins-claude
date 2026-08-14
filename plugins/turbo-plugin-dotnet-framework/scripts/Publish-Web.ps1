@@ -215,7 +215,12 @@ try {
     # Target = the csproj actually resolved/published, Profile = the pubxml used. They sit above the
     # bare path/URL line(s) so the agent relays "which project" the same way build/run/stop do
     # (Format-*ResultLines / KTD5), while the path/URL lines stay bare for terminal clickability.
-    $publishMarker = 'PUBLISH_OUTPUT (relay these lines to the user as the publish result; keep the path/URL line(s) bare so they stay clickable):'
+    # The relay instruction says "fenced code block", NOT "bare": the agent's reply is rendered as
+    # markdown, where '\' followed by ASCII punctuation is an escape sequence and the backslash is
+    # eaten. A Windows path loses exactly one separator before every hidden directory
+    # (...\.claude\... -> ....claude\...), which reads as a typo rather than as corruption. A code
+    # block is not rendered, so the path survives verbatim AND stays on its own selectable line.
+    $publishMarker = 'PUBLISH_OUTPUT (relay these lines to the user as the publish result, inside a fenced code block so the path is not mangled by markdown):'
     $publishLead   = @("Target: $projectFile", "Profile: $publishProfileName", (Format-FrontendStatusLine -FrontendDir $frontendDir))
 
     if ($publishUrlRaw -match '\$\(') {

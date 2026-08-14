@@ -619,33 +619,105 @@ expand_unversioned_dir() {
   done < <(find "$abs_dir" -type f -not -path '*/.git/*' -not -path '*/.svn/*' | LC_ALL=C sort)
 }
 
+# Read the SOURCE BRANCH off a merge commit's own subject. Prints the name, or returns 1 when
+# the subject does not record one -- the caller must then NOT guess (see get_svn_push_body).
+#
+# Handles git's own default merge subjects (`Merge branch 'x'`, `... into y`, `Merge
+# remote-tracking branch 'origin/x'`) and GitHub's (`Merge pull request #N from owner/x`);
+# every plugin-generated merge uses the first form. The bridge-ref prefix is stripped so the
+# internal `remote-svn/*` name never surfaces (a trunk-replay resolves to `main`).
+merge_source_branch() {
+  local subj="$1" name=""
+  case "$subj" in
+    "Merge "*) ;;
+    *) return 1 ;;
+  esac
+  case "$subj" in
+    "Merge pull request #"*" from "*)
+      name="${subj#*" from "}"
+      name="${name%% *}"        # owner/branch
+      name="${name#*/}"         # drop the owner
+      ;;
+    *"branch '"*)
+      name="${subj#*"branch '"}"
+      name="${name%%"'"*}"
+      ;;
+    *) return 1 ;;
+  esac
+  [[ -z "$name" ]] && return 1
+  # A real branch name has no whitespace, and must not be able to forge a group header.
+  case "$name" in
+    *[[:space:]]*|*'【'*|*'】'*) return 1 ;;
+  esac
+  name="${name#remote-svn/}"
+  [[ -z "$name" ]] && return 1
+  printf '%s' "$name"
+}
+
 get_svn_push_body() {
   local repo_dir="$1" range="$2"
   local tip="${range##*..}"
-  local own sha name branch subj i found
+  local own sha branch subj i found
   # The current branch's OWN commits = its first-parent mainline (non-merge). Everything else in
   # range arrived via a merge and is attributed to its SOURCE branch below. Deciding "own" by
-  # topology (not name-rev) keeps a commit that the current branch and a sibling share from being
-  # mis-attributed to the sibling.
+  # topology keeps a commit that the current branch and a sibling share from being mis-attributed
+  # to the sibling.
   own=" $(git -C "$repo_dir" rev-list --first-parent --no-merges "$range" 2>/dev/null | tr '\n' ' ') "
-  # Parallel arrays (no `declare -A` -- macOS bash 3.2 has none): g_name[i] -> source branch,
-  # g_body[i] -> its accumulated "- <subject>" block. First-appearance order.
-  local -a g_name=() g_body=()
+
+  # Attribute each merged-in commit to the merge that INTRODUCED it into the pushed branch, and
+  # take the source-branch name from that merge commit's own subject.
+  #
+  # This used to ask `git name-rev` which branch describes the commit, and that answers a
+  # different question: name-rev minimises (generation, distance) over ALL local heads, which has
+  # no relation to how the commit entered the branch being pushed. Any branch that merely
+  # DESCENDS from the commit is a candidate -- and `/tp-merge-main-into-branches` plus ordinary
+  # stacked branches make that set large. Issue #67 hit exactly that: a commit that reached `main`
+  # through one branch was labelled with another branch that had never been merged into `main`
+  # at all, permanently, in an SVN log. Reading the merge commit instead uses the record git wrote
+  # AT MERGE TIME, so a later branch rename, deletion or merge cannot change the answer.
+  #
+  # attr accumulates " <sha>|<branch> " (no `declare -A` -- macOS bash 3.2 has none). Branch names
+  # are whitespace-free (merge_source_branch rejects anything else), so '%% *' extracts exactly one.
+  local attr=" " unresolved=0 m src c rest parents
+  local -a pp=()
+  while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    parents="$(git -C "$repo_dir" rev-list --parents -n 1 "$m" 2>/dev/null)"
+    pp=($parents)
+    src=""
+    # Only an ordinary two-parent merge has one unambiguous "other side" to name.
+    if (( ${#pp[@]} == 3 )); then
+      subj="$(git -C "$repo_dir" log -1 --format='%s' "$m" 2>/dev/null)"
+      src="$(merge_source_branch "$subj" || true)"
+    fi
+    if [[ -z "$src" ]]; then unresolved=1; break; fi
+    # Commits this merge brought in = reachable from the merged side but not from the mainline.
+    # An earlier merge of the same branch already claimed its own commits, so `--not <first
+    # parent>` keeps each commit with the merge that FIRST introduced it.
+    while IFS= read -r c; do
+      [[ -z "$c" ]] && continue
+      case "$attr" in *" $c|"*) continue ;; esac
+      attr="$attr$c|$src "
+    done < <(git -C "$repo_dir" rev-list --no-merges "$m^2" --not "$m^1" 2>/dev/null)
+  done < <(git -C "$repo_dir" rev-list --first-parent --merges "$range" 2>/dev/null)
+
+  # Parallel arrays: g_name[i] -> source branch, g_body[i] -> its accumulated "- <subject>" block,
+  # in first-appearance order. flat[] is the same subjects ungrouped, used when grouping is unsafe.
+  local -a g_name=() g_body=() flat=()
   while IFS= read -r sha; do
     [[ -z "$sha" ]] && continue
+    subj="$(git -C "$repo_dir" log -1 --format='%s' "$sha" 2>/dev/null)"
+    flat+=("- $subj")
     if [[ "$own" == *" $sha "* ]]; then
       branch="$tip"
     else
-      # Attribute a merged-in commit to the LOCAL branch it most directly came from (merge
-      # topology). Restrict to local heads; strip the ~N/^N locator; strip the bridge-ref prefix so
-      # the internal `remote-svn/*` name never surfaces (a trunk-replay resolves to `main`).
-      # Undefined (e.g. the source branch was deleted) falls back to the current branch.
-      name="$(git -C "$repo_dir" name-rev --name-only --refs='refs/heads/*' "$sha" 2>/dev/null || true)"
-      branch="${name%%[~^]*}"
-      branch="${branch#remote-svn/}"
-      [[ -z "$branch" || "$branch" == "undefined" ]] && branch="$tip"
+      branch=""
+      case "$attr" in
+        *" $sha|"*) rest="${attr#*" $sha|"}"; branch="${rest%% *}" ;;
+      esac
+      # Reachable but attributable to no merge on the mainline: do not invent a source.
+      if [[ -z "$branch" ]]; then unresolved=1; branch="$tip"; fi
     fi
-    subj="$(git -C "$repo_dir" log -1 --format='%s' "$sha" 2>/dev/null)"
     found=-1
     for ((i = 0; i < ${#g_name[@]}; i++)); do
       if [[ "${g_name[$i]}" == "$branch" ]]; then found=$i; break; fi
@@ -660,8 +732,14 @@ get_svn_push_body() {
   local n=${#g_name[@]}
   (( n == 0 )) && return 0
   # ONE source branch -> flat "- <subject>" list (backward compatible; no group header).
-  if (( n == 1 )); then
-    printf '%s\n' "${g_body[0]}"
+  # Anything unattributable -> flat as well: a wrong group is worse than no group, because the
+  # SVN log is permanent and the agent may only write the title, never the body.
+  if (( unresolved )) || (( n == 1 )); then
+    local out_flat="" f first_f=1
+    for f in "${flat[@]}"; do
+      if (( first_f )); then first_f=0; out_flat="$f"; else out_flat="$out_flat"$'\n'"$f"; fi
+    done
+    printf '%s\n' "$out_flat"
     return 0
   fi
   # 2+ source branches -> group by branch, current branch first, others in first-appearance order.

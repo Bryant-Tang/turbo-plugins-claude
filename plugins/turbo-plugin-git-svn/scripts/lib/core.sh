@@ -174,12 +174,22 @@ read_turbo_plugin_config() {
   [[ -f "$config_path" ]] || return 0
   local section=''
   local line key val
+  local __tp_re_section='^\[([^]]+)\][[:space:]]*(#.*)?$'
+  local __tp_re_dq='^"([^"]*)"[[:space:]]*(#.*)?$'
+  local __tp_re_sq="^'([^']*)'[[:space:]]*(#.*)?\$"
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
     [[ "${line:0:1}" == '#' ]] && continue
-    if [[ "$line" =~ ^\[([^\]]+)\]$ ]]; then
+    # A table header may carry a trailing comment -- TOML allows it. Requiring the line to END at
+    # ']' dropped the header, and with it EVERY key under that section, in silence.
+    #
+    # The regexes live in variables because a backslash inside a POSIX bracket expression is a
+    # LITERAL backslash, not an escape: writing [^\"] would also exclude '\' and would therefore
+    # stop matching any Windows path value. Unquoted "$re" expansion is how bash takes a pattern
+    # from a variable.
+    if [[ "$line" =~ $__tp_re_section ]]; then
       section="${BASH_REMATCH[1]}"
       section="${section#"${section%%[![:space:]]*}"}"
       section="${section%"${section##*[![:space:]]}"}"
@@ -188,13 +198,15 @@ read_turbo_plugin_config() {
     if [[ "$line" =~ ^([A-Za-z0-9_-]+)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
-      # strip trailing inline comment if value isn't a quoted string
-      if [[ ! "$val" =~ ^[\"\'] ]] && [[ "$val" =~ ^([^#]+)[[:space:]]+\#.* ]]; then
+      # A quoted value ends at its closing quote, so match through the quote and allow a comment
+      # after it; '#' INSIDE the quotes stays part of the value (a path may contain one). A quoted
+      # value with a trailing comment used to match neither the comment-stripping branch (it starts
+      # with a quote) nor the unquoting branch (it does not end with one), so it kept both.
+      if [[ "$val" =~ $__tp_re_dq ]]; then val="${BASH_REMATCH[1]}"
+      elif [[ "$val" =~ $__tp_re_sq ]]; then val="${BASH_REMATCH[1]}"
+      elif [[ "$val" =~ ^([^#]+)[[:space:]]+\#.* ]]; then
         val="${BASH_REMATCH[1]}"
         val="${val%"${val##*[![:space:]]}"}"
-      fi
-      if [[ "$val" =~ ^\"(.*)\"$ ]]; then val="${BASH_REMATCH[1]}"
-      elif [[ "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"
       fi
       if [[ -n "$filter_key" ]]; then
         # Targeted lookup: emit sentinel-prefixed value when section+key match.
@@ -212,7 +224,33 @@ read_turbo_plugin_config() {
   done < "$config_path"
 }
 
-# Lookup chain: CLI arg → config.local.toml → config.toml → built-in default
+# Path of the MAIN worktree's config.local.toml, or '' when there is nothing to inherit (this IS
+# the main worktree, or the directory is not a git repo at all -- a plain directory is a legitimate
+# caller, so this must not fail the caller).
+#
+# Cost, stated honestly: in the MAIN worktree this is free (see the .git check below). In a LINKED
+# worktree it costs one `git rev-parse` per resolve_config_value call, and there is deliberately no
+# memo here -- every caller invokes resolve_config_value inside $( ), so anything this function
+# assigned would die with that subshell. (The PowerShell peer runs in-process and does memoize.)
+# A bash caller that resolves config in a hot loop should hoist the lookup instead.
+get_inherited_local_config_path() {
+  local repo_root="${1:-}" main_root here
+  [[ -n "$repo_root" ]] || return 0
+  # Free discriminator, and it carries the common case: a linked worktree's .git is a FILE
+  # ("gitdir: ..."), so a DIRECTORY means this IS the main worktree and there is nothing to
+  # inherit. Absent .git falls through -- it may be a subdirectory of a worktree, and git answers
+  # that correctly.
+  [[ -d "$repo_root/.git" ]] && return 0
+  main_root="$(get_main_worktree "$repo_root" 2>/dev/null || true)"
+  [[ -n "$main_root" ]] || return 0
+  here="$(get_normalized_absolute_path "$repo_root" 2>/dev/null || true)"
+  [[ -n "$here" ]] || return 0
+  [[ "$main_root" == "$here" ]] && return 0
+  echo "$main_root/.turbo-plugin/config.local.toml"
+}
+
+# Lookup chain: CLI arg → config.local.toml → main worktree's config.local.toml → config.toml
+#                       → built-in default
 # Args: <repo_root> <section> <key> <cli_value> <default>
 # Echoes resolved value (empty string if nothing resolved).
 # Uses sentinel __TP_FOUND__: so empty-string config values are distinguished from "not found".
@@ -234,11 +272,24 @@ resolve_config_value() {
   fi
   local config_path="$repo_root/.turbo-plugin/config.toml"
   local config_local_path="$repo_root/.turbo-plugin/config.local.toml"
-  local sentinel_line
+  local sentinel_line inherited_local_path
 
   # 1. config.local.toml first (highest precedence after CLI arg)
   if [[ -f "$config_local_path" ]]; then
     sentinel_line="$(read_turbo_plugin_config "$config_local_path" "$section" "$key")"
+    if [[ "$sentinel_line" == __TP_FOUND__:* ]]; then
+      echo "${sentinel_line#__TP_FOUND__:}"
+      return 0
+    fi
+  fi
+  # 1b. the MAIN worktree's config.local.toml, when this is a linked worktree. That file describes
+  # THIS MACHINE (tool paths, credentials), so it has no per-worktree meaning -- yet being
+  # gitignored is exactly what keeps it out of a newly created worktree, so every new worktree
+  # started from defaults and the user re-entered settings already given (issue #61). It sits
+  # BELOW this worktree's own file, so a deliberate per-worktree override still wins.
+  inherited_local_path="$(get_inherited_local_config_path "$repo_root")"
+  if [[ -n "$inherited_local_path" && -f "$inherited_local_path" ]]; then
+    sentinel_line="$(read_turbo_plugin_config "$inherited_local_path" "$section" "$key")"
     if [[ "$sentinel_line" == __TP_FOUND__:* ]]; then
       echo "${sentinel_line#__TP_FOUND__:}"
       return 0

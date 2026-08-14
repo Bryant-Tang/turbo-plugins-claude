@@ -77,9 +77,11 @@ publish 這條路徑比 build 更要緊:發佈產出會送到**部署環境**,�
 
 - `Target: <csproj>`、`Profile: <pubxml>` ——**糾錯閘**,讓使用者確認發佈的是不是對的專案 / profile(尤其 target 來自記憶、你沒明傳 `-Project` 時)。這兩行是標籤、照常轉述即可。
 - `Frontend: 已執行 (<dir>)` 或 `Frontend: 未設定 (未執行前端打包)` ——讓「這次發佈有沒有帶前端」**一定會被說出口**。同樣照常轉述,不要因為它看起來像雜訊就略過:發佈缺前端資產正是靠這行才看得見。
-- 接著是產出位置:第一行 raw Windows 絕對路徑、第二行 `file:///` URL(非 FileSystem 發佈方式則只有一行 URL)。這(些)路徑/URL 行必須**各自單獨成行、前後不接任何散文或標點**(不要包成「產出在:…」、也不要在行尾加句號),終端機才會把它算成可點擊連結。
+- 接著是產出位置:第一行 raw Windows 絕對路徑、第二行 `file:///` URL(非 FileSystem 發佈方式則只有一行 URL)。這(些)路徑/URL 行必須**各自單獨成行、前後不接任何散文或標點**(不要包成「產出在:…」、也不要在行尾加句號)。
 
-**不要轉述 marker 行本身**;`Target:` / `Profile:` 照常轉述,只有路徑/URL 那幾行要保持光禿可點擊。
+**不要轉述 marker 行本身**;marker 之後那幾行(`Target:` / `Profile:` / `Frontend:` / 路徑 / URL)**整段放進一個 fenced code block**(三個反引號)逐字轉述。
+
+> **為什麼一定要 code block**:你的回覆會被當 Markdown 算繪,而 Markdown 規定「`\` + 任一 ASCII 標點」是跳脫序列,反斜線會被吃掉。Windows 路徑只要經過隱藏目錄(`.claude`、`.turbo-plugin`、`.git`、`.vs`)就會**少掉那一個分隔符**——`...\.claude\...` 變成 `....claude\...`。因為只少一個、其餘都在,看起來像手誤,使用者往往是貼進檔案總管打不開才發現。Code block 不做算繪,路徑逐字保留,而且那一行仍然乾淨、可整行複製。
 
 ### Step 4 — 記憶存回(save-back)
 
@@ -92,7 +94,7 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
-- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 `.turbo-plugin/pack-content-trust.local.toml`(格式:`approved_hash = "<h>"`)並重新呼叫 script。使用者選 No → 終止 skill。
+- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 script 緊接著印出的 `TRUST_FILE <絕對路徑>` 那個檔(格式:`approved_hash = "<h>"`)並重新呼叫 script;**要用它給的路徑,不要自己組**——它指向主 worktree,所以同一個 repo 的其它 worktree 不必再問一次同樣的指令。使用者選 No → 終止 skill。
 - **target 只能 csproj**:publish 收到 `.sln` 會報錯;發佈是針對單一 web 專案。
 - **console 專案不走這一支**:`<OutputType>` 是 `Exe` / `WinExe` 時不要跑 publish。
   **不要說「主控台專案沒有發佈」——那是錯的。** VS 右鍵那個「發行」對 .NET Framework 主控台專案
@@ -144,7 +146,7 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
 - **config 從 pubxml 讀出來傳**: pubxml 有 `<Configuration>Release</Configuration>` 且不傳 `--configuration` → MSBuild 命令列**含** `/p:Configuration=Release`,產出是 Release 組建。
 - **兩邊都沒有才省略**: pubxml 沒有 `<Configuration>` 且不傳 `--configuration` → 命令列不含 `/p:Configuration`。
 - **`.sln` 被拒**: 傳 `-Project <.sln>` → script 報錯(publish 需 csproj)。
-- **結果模板**: publish 成功後 stdout 含 `PUBLISH_OUTPUT (...)` marker,緊接數行——`Target: <csproj>` / `Profile: <pubxml>`(糾錯閘)+ raw Windows 路徑 + `file:///` URL(非 FileSystem 則只有 URL 一行)。路徑/URL 行**無結尾標點**、各自成行,agent 須**逐字**轉述(不轉述 marker 行)。含空白的路徑仍須完整保留在單行。
+- **結果模板**: publish 成功後 stdout 含 `PUBLISH_OUTPUT (...)` marker,緊接數行——`Target: <csproj>` / `Profile: <pubxml>`(糾錯閘)+ raw Windows 路徑 + `file:///` URL(非 FileSystem 則只有 URL 一行)。路徑/URL 行**無結尾標點**、各自成行,agent 須把 marker 之後那幾行**整段放進 fenced code block 逐字**轉述(不轉述 marker 行)。含空白的路徑仍須完整保留在單行,反斜線一個都不能少。
 
 ## Tool Preference
 

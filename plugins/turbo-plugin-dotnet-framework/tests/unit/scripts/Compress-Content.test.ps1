@@ -294,4 +294,128 @@ Describe 'Compress-Content' {
             [System.IO.File]::Exists($script:sentinel7) | Should -BeTrue -Because "sentinel missing at $script:sentinel7; stdout:`n$($script:res7.Stdout)`nstderr:`n$($script:res7.Stderr)"
         }
     }
+
+    # Issue #61. Both hashed commands come from the VERSION-CONTROLLED config.toml, so every
+    # worktree of a repo hashes identically -- re-approving per worktree bought no safety, it just
+    # asked the user to nod at the same two commands again in each new worktree (the approval file
+    # is gitignored, so a fresh worktree never has it).
+    Context 'Case 8: a linked worktree honours the main worktree approval (#61)' {
+        BeforeAll {
+            $sb8 = New-Sandbox -Tag 'pc-8'
+            $script:sb8 = $sb8
+            $mainRoot = [System.IO.Path]::Combine($sb8, 'test-turbo-plugin')
+            $script:mainRoot8 = $mainRoot
+            $null = Mirror-Base-To -TestRoot $mainRoot
+            $sentinel = New-SpaceFreeSentinel -Leaf 'sentinel-wt-inherit'
+            $script:sentinel8 = $sentinel
+            $cmds = New-FrontendWithSentinel -TestRoot $mainRoot -SentinelPath $sentinel
+
+            # A real repo with a real linked worktree: the whole point is that the approval file is
+            # gitignored and therefore absent from the new worktree.
+            $script:git8 = $true
+            $ea = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                & git -C $mainRoot init -q -b main 2>$null | Out-Null
+                & git -C $mainRoot config user.email 'test@turbo-plugin' 2>$null | Out-Null
+                & git -C $mainRoot config user.name 'turbo-plugin-test' 2>$null | Out-Null
+                & git -C $mainRoot add -A 2>$null | Out-Null
+                & git -C $mainRoot -c commit.gpgsign=false commit -q -m init 2>$null | Out-Null
+                $script:wt8 = [System.IO.Path]::Combine($sb8, 'linked-worktree')
+                & git -C $mainRoot worktree add -q -b feat $script:wt8 2>$null | Out-Null
+            } catch {
+                $script:git8 = $false
+            } finally {
+                $ErrorActionPreference = $ea
+            }
+            if ($script:git8 -and -not (Test-Path -LiteralPath $script:wt8 -PathType Container)) { $script:git8 = $false }
+
+            if ($script:git8) {
+                # Approval recorded ONLY in the main worktree.
+                $hash = Compute-TrustHash -InstallCmd $cmds.InstallCmd -BuildCmd $cmds.BuildCmd
+                Write-Utf8NoBom-Local -Path ([System.IO.Path]::Combine($mainRoot, '.turbo-plugin', 'pack-content-trust.local.toml')) -Content "approved_hash = `"$hash`"`n"
+                $script:res8 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $script:wt8 -ScriptArgs @()
+            }
+        }
+        AfterAll {
+            if ($script:git8 -and $script:wt8) {
+                $ea = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try { & git -C $script:mainRoot8 worktree remove --force $script:wt8 2>$null | Out-Null } catch { } finally { $ErrorActionPreference = $ea }
+            }
+            Remove-Sandbox -Dir $script:sb8
+            if ($script:sentinel8) { Remove-Sandbox -Dir ([System.IO.Path]::GetDirectoryName($script:sentinel8)) }
+        }
+
+        # Skip decided in the RUN phase, not via -Skip:. A -Skip: expression is evaluated at
+        # DISCOVERY, when a flag set in BeforeAll is still $null -- the case would silently skip
+        # itself and still report green.
+        It 'runs without asking again (exit 0, no TRUST_REQUIRED)' {
+            if (-not $script:git8) { Set-ItResult -Skipped -Because 'git worktree could not be created here'; return }
+            $script:res8.ExitCode | Should -Be 0 -Because "stdout:`n$($script:res8.Stdout)`nstderr:`n$($script:res8.Stderr)"
+            $script:res8.Stdout | Should -Not -Match 'TRUST_REQUIRED'
+        }
+
+        It 'actually ran the command from the linked worktree (control: gate did not just pass silently)' {
+            if (-not $script:git8) { Set-ItResult -Skipped -Because 'git worktree could not be created here'; return }
+            [System.IO.File]::Exists($script:sentinel8) | Should -BeTrue -Because "sentinel missing at $script:sentinel8; stdout:`n$($script:res8.Stdout)"
+        }
+    }
+
+    Context 'Case 9: an unapproved linked worktree is told to record approval in the MAIN worktree (#61)' {
+        BeforeAll {
+            $sb9 = New-Sandbox -Tag 'pc-9'
+            $script:sb9 = $sb9
+            $mainRoot = [System.IO.Path]::Combine($sb9, 'test-turbo-plugin')
+            $script:mainRoot9 = $mainRoot
+            $null = Mirror-Base-To -TestRoot $mainRoot
+            $frontendDir = [System.IO.Path]::Combine($mainRoot, 'frontend')
+            $null = New-Item -ItemType Directory -Path $frontendDir -Force
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($frontendDir, 'package.json'), '{"name":"x"}')
+            Append-Utf8 -Path ([System.IO.Path]::Combine($mainRoot, '.turbo-plugin', 'config.toml')) `
+                -Content "`n[frontend]`ndir = `"./frontend`"`ninstall_command = `"cmd /c echo install`"`nbuild_command = `"cmd /c echo build`"`n"
+
+            $script:git9 = $true
+            $ea = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                & git -C $mainRoot init -q -b main 2>$null | Out-Null
+                & git -C $mainRoot config user.email 'test@turbo-plugin' 2>$null | Out-Null
+                & git -C $mainRoot config user.name 'turbo-plugin-test' 2>$null | Out-Null
+                & git -C $mainRoot add -A 2>$null | Out-Null
+                & git -C $mainRoot -c commit.gpgsign=false commit -q -m init 2>$null | Out-Null
+                $script:wt9 = [System.IO.Path]::Combine($sb9, 'linked-worktree')
+                & git -C $mainRoot worktree add -q -b feat $script:wt9 2>$null | Out-Null
+            } catch {
+                $script:git9 = $false
+            } finally {
+                $ErrorActionPreference = $ea
+            }
+            if ($script:git9 -and -not (Test-Path -LiteralPath $script:wt9 -PathType Container)) { $script:git9 = $false }
+            if ($script:git9) {
+                $script:res9 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $script:wt9 -ScriptArgs @()
+            }
+        }
+        AfterAll {
+            if ($script:git9 -and $script:wt9) {
+                $ea = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try { & git -C $script:mainRoot9 worktree remove --force $script:wt9 2>$null | Out-Null } catch { } finally { $ErrorActionPreference = $ea }
+            }
+            Remove-Sandbox -Dir $script:sb9
+        }
+
+        # Without this line the SKILL would write the approval into the worktree it happens to be
+        # standing in, and the next worktree would ask all over again.
+        It 'emits a TRUST_FILE line pointing at the main worktree' {
+            if (-not $script:git9) { Set-ItResult -Skipped -Because 'git worktree could not be created here'; return }
+            $script:res9.Stdout | Should -Match 'TRUST_REQUIRED'
+            $line = @($script:res9.Stdout -split "`r?`n" | Where-Object { $_ -match '^TRUST_FILE ' })[0]
+            $line | Should -Not -BeNullOrEmpty -Because "stdout:`n$($script:res9.Stdout)"
+            $emitted = $line.Substring('TRUST_FILE '.Length).Trim()
+            $expected = [System.IO.Path]::Combine($script:mainRoot9, '.turbo-plugin', 'pack-content-trust.local.toml')
+            # Compare resolved forms: the sandbox path may reach the script via a different spelling.
+            ([System.IO.Path]::GetFullPath($emitted)) | Should -Be ([System.IO.Path]::GetFullPath($expected))
+        }
+    }
 }

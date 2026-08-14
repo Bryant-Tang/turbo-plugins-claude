@@ -57,8 +57,9 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
   `build_command`(可選 `node_version`),build 與 publish 成功後會在該目錄跑安裝與打包。**沒設定也不會
   默默跳過**——skill 偵測到專案裡有 `package.json` 就會主動問要不要設定,而結果模板一律回報
   `Frontend: 已執行 (<dir>)` 或 `Frontend: 未設定`。確定不需要前端打包就寫 `[frontend] enabled = false`,
-  之後不再詢問。首次執行(或指令改過)會要求確認實際要跑的指令,核准記在
-  `.turbo-plugin/pack-content-trust.local.toml`。
+  之後不再詢問。首次執行(或指令改過)會要求確認實際要跑的指令,核准記在**主 worktree** 的
+  `.turbo-plugin/pack-content-trust.local.toml`——被 hash 的兩個指令都來自進版控的 `config.toml`,
+  同一個 repo 的每個 worktree 一定算出同一個值,所以新開 worktree 不會再問你一次同樣的指令。
 - **哪些檔案不該進版控**(`bin/` / `obj/` / `.vs/` / 本機設定 …)由 `turbo-plugin-git-svn` 的
   `/tp-suggest-ignore` 判斷,本 plugin 不寫死清單。唯一的例外是 `*.local.*`:記憶存回在寫
   `config.local.toml` 之前會先確保 `.gitignore` 擋住它(誰寫這種檔誰負責)。
