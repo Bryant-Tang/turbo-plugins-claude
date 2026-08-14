@@ -1061,6 +1061,44 @@ Describe 'Get-SvnPushBody' {
             Remove-IsolatedRepoRoot -Dir $repo
         }
     }
+    # An octopus merge has more than one "other side", so no single source branch can be named for
+    # the commits it brought in. Same rule as an unreadable subject: flatten rather than pick one.
+    #
+    # The subject here deliberately DOES parse (`Merge branch 'sideA' into main`). git's own
+    # octopus subject is "Merge branches 'a' and 'b'", which Get-MergeSourceBranch already rejects
+    # on wording alone -- using it would leave the parent-count guard untested while the case still
+    # went green.
+    It 'falls back to a flat list on an octopus merge (#67)' {
+        $repo = New-IsolatedRepoRoot 'pb-octopus'
+        try {
+            Invoke-GitSilent $repo init -q -b main
+            Invoke-GitSilent $repo config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $repo config user.name 'turbo-plugin-test'
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'base'
+            Invoke-GitSilent $repo branch svnbase
+            Invoke-GitSilent $repo checkout -q -b sideA
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'feat: from A'
+            Invoke-GitSilent $repo checkout -q main
+            Invoke-GitSilent $repo checkout -q -b sideB
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'feat: from B'
+            Invoke-GitSilent $repo checkout -q main
+            Invoke-GitSilent $repo commit -q --allow-empty -m 'chore: on main'
+            Invoke-GitSilent $repo merge -q --no-ff -m "Merge branch 'sideA' into main" sideA sideB
+            # Guard the fixture: without three parents this would be testing an ordinary merge.
+            $parents = @((& git -C $repo rev-list --parents -n 1 main 2>$null | Out-String).Trim() -split '\s+' |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            ($parents | Measure-Object).Count | Should -Be 4
+
+            $body = Get-SvnPushBody -RepoDir $repo -Range 'svnbase..main'
+            $body | Should -Not -Match '【'
+            # Nothing may be dropped on the way to the fallback.
+            $body | Should -Match '(?m)^- feat: from A$'
+            $body | Should -Match '(?m)^- feat: from B$'
+            $body | Should -Match '(?m)^- chore: on main$'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $repo
+        }
+    }
 }
 
 Describe 'Get-MergeSourceBranch' {

@@ -226,24 +226,22 @@ read_turbo_plugin_config() {
 
 # Path of the MAIN worktree's config.local.toml, or '' when there is nothing to inherit (this IS
 # the main worktree, or the directory is not a git repo at all -- a plain directory is a legitimate
-# caller, so this must not fail the caller). Cached per root: it shells out to git, and
-# resolve_config_value runs many times in one script.
-__TP_MAIN_WT_CACHE_KEY=''
-__TP_MAIN_WT_CACHE_VAL=''
+# caller, so this must not fail the caller).
+#
+# Cost, stated honestly: in the MAIN worktree this is free (see the .git check below). In a LINKED
+# worktree it costs one `git rev-parse` per resolve_config_value call, and there is deliberately no
+# memo here -- every caller invokes resolve_config_value inside $( ), so anything this function
+# assigned would die with that subshell. (The PowerShell peer runs in-process and does memoize.)
+# A bash caller that resolves config in a hot loop should hoist the lookup instead.
 get_inherited_local_config_path() {
   local repo_root="${1:-}" main_root here
   [[ -n "$repo_root" ]] || return 0
-  # Free discriminator, and it matters: callers invoke resolve_config_value inside $( ), so the
-  # cache below lives in a subshell and does not survive. A linked worktree's .git is a FILE
-  # ("gitdir: ..."); a directory means this IS the main worktree and there is nothing to inherit,
-  # so the common case never forks git. Absent .git falls through -- it may be a subdirectory of a
-  # worktree, and git answers that correctly.
+  # Free discriminator, and it carries the common case: a linked worktree's .git is a FILE
+  # ("gitdir: ..."), so a DIRECTORY means this IS the main worktree and there is nothing to
+  # inherit. Absent .git falls through -- it may be a subdirectory of a worktree, and git answers
+  # that correctly.
   [[ -d "$repo_root/.git" ]] && return 0
-  if [[ "$__TP_MAIN_WT_CACHE_KEY" != "$repo_root" ]]; then
-    __TP_MAIN_WT_CACHE_KEY="$repo_root"
-    __TP_MAIN_WT_CACHE_VAL="$(get_main_worktree "$repo_root" 2>/dev/null || true)"
-  fi
-  main_root="$__TP_MAIN_WT_CACHE_VAL"
+  main_root="$(get_main_worktree "$repo_root" 2>/dev/null || true)"
   [[ -n "$main_root" ]] || return 0
   here="$(get_normalized_absolute_path "$repo_root" 2>/dev/null || true)"
   [[ -n "$here" ]] || return 0

@@ -993,6 +993,44 @@ test_get_svn_push_body_flat_when_merge_subject_records_no_branch() {
     esac
 }
 
+# An octopus merge has more than one "other side", so no single source branch can be named for the
+# commits it brought in. Same rule as an unreadable subject: flatten rather than pick one.
+#
+# The subject here is deliberately one that DOES parse (`Merge branch 'sideA' into main`). git's
+# own octopus subject is "Merge branches 'a' and 'b'", which merge_source_branch already rejects
+# on wording alone -- using it would leave the parent-count guard untested while the case still
+# went green.
+test_get_svn_push_body_flat_on_octopus_merge() {
+    local repo body parents
+    repo="$(mktemp -d -t turbo-common-octopus-XXXXXX)"
+    git -C "$repo" init -q -b main >/dev/null 2>&1
+    git -C "$repo" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$repo" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'base' >/dev/null 2>&1
+    git -C "$repo" branch svnbase >/dev/null 2>&1
+    git -C "$repo" checkout -q -b sideA >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: from A' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" checkout -q -b sideB >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'feat: from B' >/dev/null 2>&1
+    git -C "$repo" checkout -q main >/dev/null 2>&1
+    git -C "$repo" commit -q --allow-empty -m 'chore: on main' >/dev/null 2>&1
+    git -C "$repo" merge -q --no-ff -m "Merge branch 'sideA' into main" sideA sideB >/dev/null 2>&1
+    parents="$(git -C "$repo" rev-list --parents -n 1 main 2>/dev/null | wc -w)"
+    body="$(get_svn_push_body "$repo" 'svnbase..main')"
+    rm -rf "$repo" 2>/dev/null || true
+    # Guard the fixture: without three parents this would be testing an ordinary merge.
+    assertEquals 'fixture really produced an octopus merge (sha + 3 parents)' '4' "$(echo "$parents" | tr -d ' ')"
+    case "$body" in
+        *"【"*) fail "grouped despite an octopus merge: $body" ;;
+        *) assertTrue 'octopus merge falls back to a flat list' 0 ;;
+    esac
+    # Nothing may be dropped on the way to the fallback.
+    case "$body" in *"- feat: from A"*) assertTrue 'A subject kept' 0 ;; *) fail "A missing: $body" ;; esac
+    case "$body" in *"- feat: from B"*) assertTrue 'B subject kept' 0 ;; *) fail "B missing: $body" ;; esac
+    case "$body" in *"- chore: on main"*) assertTrue 'main subject kept' 0 ;; *) fail "main missing: $body" ;; esac
+}
+
 # ── merge_source_branch ──────────────────────────────────────────────────────
 
 test_merge_source_branch_reads_git_default_subjects() {
