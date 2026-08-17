@@ -90,6 +90,34 @@ function Get-IisLaunchLogTail {
     return ($lines -join "`n")
 }
 
+# Win32_Process.Create is handed a cmd.exe command line (see the launch site for why), so the PID it
+# returns is the SHELL's, not the server's. Everything downstream means the iisexpress.exe
+# underneath -- the PID we report, Wait-PortListening's premature-exit check, Stop-Iis -- so resolve
+# it here and hand back a real Process object.
+#
+# `cmd /c` waits for its child, so the shell staying alive is the signal that the server is still
+# running; the shell disappearing before any iisexpress.exe shows up means the launch died outright,
+# and that is exactly when IIS Express's own message matters most -- so it is read back here rather
+# than leaving the caller with a bare timeout.
+function Wait-IisExpressProcess {
+    param([uint32]$ShellProcessId, [int]$Seconds = 20, [string[]]$LogPaths = @())
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        $child = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ShellProcessId AND Name='iisexpress.exe'" -ErrorAction SilentlyContinue)
+        if ($child.Count -gt 0) {
+            $p = Get-Process -Id $child[0].ProcessId -ErrorAction SilentlyContinue
+            if ($null -ne $p) { return $p }
+        }
+        $shell = @(Get-CimInstance Win32_Process -Filter "ProcessId=$ShellProcessId" -ErrorAction SilentlyContinue)
+        if ($shell.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    $detail = Get-IisLaunchLogTail -LogPaths $LogPaths
+    $msg = 'IIS Express 沒有啟動起來(找不到 iisexpress.exe 行程)。'
+    if (-not [string]::IsNullOrWhiteSpace($detail)) { $msg += "`nIIS Express 自己的訊息:`n$detail" }
+    throw $msg
+}
+
 function Wait-PortListening {
     param([string]$Port, [int]$Seconds, [System.Diagnostics.Process]$Process, [string[]]$LogPaths = @())
     $deadline = (Get-Date).AddSeconds($Seconds)
@@ -285,28 +313,56 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         $null = Rename-ApplicationhostSite -ConfigPath $tempApphost -FromName $canonicalSiteInFile -ToName $settings.IisConfigSiteName
     }
 
-    # -NoNewWindow, NOT -WindowStyle. -WindowStyle forces UseShellExecute=$true, and a console app
-    # launched that way under a non-interactive host gets a console it cannot actually use: IIS
-    # Express prints "Enter 'Q' to stop", finds no usable stdin, and exits with code 0 before ever
-    # binding the port. Measured on Windows 11 + IIS Express 10 against a VALID config: Hidden and
-    # Minimized both die that way; -NoNewWindow (UseShellExecute=$false, child inherits this
-    # process's handles) stays up and keeps serving after this script exits. It also shows no
-    # window at all, which is what a background dev server should do.
+    # LAUNCHED VIA WMI, NOT Start-Process -- and that is a correctness fix, not a style choice.
     #
-    # Arguments are quoted EXPLICITLY: unlike the -WindowStyle path, -NoNewWindow does not quote
-    # them for us, and the temp config lives under %TEMP% whose path routinely contains a space
-    # (IIS Express then reports "Command-line switches must be preceded by '-' or '/'").
+    # Start-Process -NoNewWindow means UseShellExecute=$false, which makes CreateProcess pass
+    # bInheritHandles=TRUE. The long-lived iisexpress.exe therefore receives EVERY inheritable
+    # handle this process holds, including the WRITE END OF THE PIPE the agent harness gave this
+    # powershell.exe to collect its output. When this script exits the server keeps that write end
+    # open, the reader never sees EOF, and the harness's tool call never finishes -- the session UI
+    # hangs until it is restarted (issue #82). -RedirectStandardOutput/-Error do not help: they
+    # replace two of the three standard handles and leave everything else inherited.
     #
-    # stdout/stderr are redirected so (a) IIS Express's own banner does not interleave with
-    # RUN_OUTPUT, and (b) a failed launch leaves its reason somewhere readable -- see
-    # Get-IisLaunchLogTail. They must be two different files; Start-Process rejects one.
-    $launchArgs = @(
-        ('"/config:' + $tempApphost + '"'),
-        ('"/site:' + $settings.IisConfigSiteName + '"')
-    )
+    # Win32_Process.Create builds the process from the WMI service, so it inherits nothing of ours.
+    # Measured here, launcher process started with a real stdout PIPE and then allowed to exit:
+    #   Start-Process -NoNewWindow -> launcher exited, pipe NEVER reached EOF
+    #   Win32_Process.Create       -> launcher exited, pipe reached EOF immediately
+    #
+    # CREATE_NEW_CONSOLE (16) is required: without a console of its own IIS Express finds no usable
+    # stdin and exits with code 0 before binding the port. SW_HIDE (0) keeps that console invisible,
+    # which is what a background dev server should do. -WindowStyle is still wrong for the original
+    # reason (it forces UseShellExecute=$true and dies the same way).
+    #
+    # The command line goes through cmd.exe ONLY to keep the stdout/stderr redirection:
+    # Win32_Process.Create cannot redirect, and those two files are the only place a failed launch
+    # leaves its reason (Get-IisLaunchLogTail reads them, and a config IIS Express rejects is the
+    # most common failure). `cmd /s /c` takes the rest of the line verbatim after stripping the
+    # outer quotes, so the inner quoting survives intact. cmd waits for the server, so one extra
+    # cmd.exe lives alongside it and exits by itself when the server stops.
+    #
+    # Arguments stay quoted EXPLICITLY: the temp config lives under %TEMP%, whose path routinely
+    # contains a space (IIS Express then reports "Command-line switches must be preceded by '-' or
+    # '/'"). The `/` switch prefix, the quoting shape and the `/site:` token are all load-bearing --
+    # Stop-Iis and Remove-OrphanIis identify this instance by matching them on its command line.
+    $comspec = if ([string]::IsNullOrWhiteSpace($env:ComSpec)) { 'cmd.exe' } else { $env:ComSpec }
+    $innerCommandLine = '"{0}" "/config:{1}" "/site:{2}" >"{3}" 2>"{4}"' -f `
+        $settings.IisExpressPath, $tempApphost, $settings.IisConfigSiteName, $tempStdout, $tempStderr
+    $spawnCommandLine = '{0} /s /c "{1}"' -f $comspec, $innerCommandLine
     try {
-        $process = Start-Process -FilePath $settings.IisExpressPath -ArgumentList $launchArgs `
-            -NoNewWindow -PassThru -RedirectStandardOutput $tempStdout -RedirectStandardError $tempStderr
+        $startupClass = Get-CimClass -ClassName Win32_ProcessStartup
+        $startupInfo = New-CimInstance -CimClass $startupClass -ClientOnly -Property @{
+            CreateFlags = [uint32]16   # CREATE_NEW_CONSOLE
+            ShowWindow  = [uint16]0    # SW_HIDE
+        }
+        $spawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+            CommandLine               = $spawnCommandLine
+            ProcessStartupInformation = $startupInfo
+        }
+        if ($null -eq $spawn -or $spawn.ReturnValue -ne 0) {
+            $rv = if ($null -eq $spawn) { 'null' } else { $spawn.ReturnValue }
+            throw "無法啟動 IIS Express:Win32_Process.Create 回傳 $rv。"
+        }
+        $process = Wait-IisExpressProcess -ShellProcessId $spawn.ProcessId -LogPaths @($tempStdout, $tempStderr)
     } catch {
         # Nothing was launched, so the temp files rendered a moment ago are dead weight. Remove them
         # here instead of leaving files behind that tp-cleanup-orphan-iis would later report as

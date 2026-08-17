@@ -297,6 +297,9 @@ Describe 'Start-Iis' {
     #      is covered behaviourally in ApplicationHostHelpers.test.ps1).
     #   2. IIS Express was started with -WindowStyle Hidden, which makes it exit immediately with
     #      code 0 before it ever binds the port.
+    #   3. IIS Express was started with Start-Process -NoNewWindow, which hands the server every
+    #      inheritable handle this process holds -- including the agent harness's output pipe, so
+    #      the tool call never ended and the session UI hung (issue #82).
     # These are source-level assertions deliberately: actually launching IIS Express depends on the
     # machine, but neither defect may silently return.
     Context 'Case 5: canonical site naming + launch window regression locks' {
@@ -311,18 +314,49 @@ Describe 'Start-Iis' {
 
         # Measured on Windows 11 + IIS Express 10 against a VALID config: -WindowStyle (either
         # Hidden or Minimized) forces UseShellExecute=$true, and IIS Express then exits with code 0
-        # before binding the port -- it wants stdin it can read. -NoNewWindow hands it this
-        # process's handles, it stays up, survives this script exiting, and shows no window at all.
+        # before binding the port -- it wants stdin it can read.
         It 'case5: 不用 -WindowStyle 啟動(那會讓 IIS Express 立刻 exit 0)' {
             $script:startIisCode | Should -Not -Match '-WindowStyle'
         }
-        It 'case5: 用 -NoNewWindow 啟動' {
-            $script:startIisCode | Should -Match '-NoNewWindow'
+
+        # issue #82. -NoNewWindow was the previous answer and it is now a REGRESSION, not a fix:
+        # UseShellExecute=$false makes CreateProcess pass bInheritHandles=TRUE, so the long-lived
+        # iisexpress.exe also receives the write end of the pipe the agent harness handed this
+        # powershell.exe. The launcher exits, the server keeps that end open, the reader never sees
+        # EOF, and the harness's tool call never returns.
+        #
+        # Measured directly, launcher started with a real stdout pipe and then allowed to exit:
+        #   Start-Process -NoNewWindow -> launcher exited, pipe NEVER reached EOF
+        #   Win32_Process.Create       -> launcher exited, pipe reached EOF immediately
+        # Source-level assertions on purpose, like the rest of this Context: actually launching IIS
+        # Express depends on the machine, but neither defect may silently come back.
+        It 'case5: 不用 Start-Process 啟動(子行程會繼承呼叫端的 pipe,工具呼叫就永遠不結束)' {
+            $script:startIisCode | Should -Not -Match '-NoNewWindow'
+            $script:startIisCode | Should -Not -Match 'Start-Process'
         }
-        It 'case5: 啟動參數自己加引號(-NoNewWindow 不會代勞,而 %TEMP% 路徑常含空白)' {
-            # 引號是字面加進參數字串裡的,例如 ('"/config:' + $tempApphost + '"')。
+        It 'case5: 用 Win32_Process.Create 啟動,而且帶 CREATE_NEW_CONSOLE' {
+            # WMI 服務建立行程,所以什麼都不會從這裡繼承過去。
+            $script:startIisCode | Should -Match 'Win32_Process'
+            # 沒有自己的 console,IIS Express 找不到可用的 stdin,會直接 exit 0 不綁 port。
+            $script:startIisCode | Should -Match 'CreateFlags'
+            $script:startIisCode | Should -Match 'ShowWindow'
+        }
+        It 'case5: 仍然保留 stdout / stderr 重導向(啟動失敗的原因只留在那裡)' {
+            # Win32_Process.Create 本身不支援重導向,所以命令列走 cmd 包一層;拿掉這層等於
+            # 讓「設定檔被 IIS Express 拒收」這個最常見的失敗變成只有一句 timeout。
+            $script:startIisCode | Should -Match '/s /c'
+            $script:startIisCode | Should -Match ([regex]::Escape('2>"{4}"'))
+        }
+        It 'case5: 回報的是 iisexpress 的 PID,不是外層 shell 的' {
+            # Win32_Process.Create 回傳的是 cmd.exe 的 PID;stop / orphan / 提前結束偵測要的都是
+            # 底下那個 iisexpress.exe。
+            $script:startIisCode | Should -Match 'Wait-IisExpressProcess'
+        }
+        It 'case5: 啟動參數自己加引號(%TEMP% 路徑常含空白)' {
+            # 引號是字面寫在命令列格式字串裡的:'"{0}" "/config:{1}" "/site:{2}" ...'。
             # (PowerShell 的跳脫字元是反引號不是反斜線,所以這裡用 [regex]::Escape 避開引號地獄。)
-            $script:startIisCode | Should -Match ([regex]::Escape('(''"/config:'))
+            $script:startIisCode | Should -Match ([regex]::Escape('"/config:{1}"'))
+            $script:startIisCode | Should -Match ([regex]::Escape('"/site:{2}"'))
         }
         It 'case5: 啟動失敗時把 IIS Express 自己的訊息讀回來' {
             # 舊訊息指向一個正常安裝根本不存在的 TraceLogFiles 目錄,等於什麼都沒說。
