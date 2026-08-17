@@ -239,6 +239,13 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
    git push origin "<component>--v0.1.0"
    ```
    **漏了這步的後果是靜默的**：那個 tag 不只是「忽略之前的歷史」，它還是 release-please 找「從哪裡開始算 commit」的**起點錨**。沒有起點就找不到任何 commit，該 plugin 會被判定成「沒有可發版的變更」，於是**永遠不會出現在 Release PR 裡**——不會報錯，只是那個 plugin 的版本永遠不動。2026-08-17 `turbo-plugin-feedback` 就這樣漏過一次。
+6. **手動補一個 0.1.0 的 GitHub Release**（內容用該 plugin `CHANGELOG.md` 的 `## [0.1.0]` 段落）：
+   ```
+   gh release create "<component>--v0.1.0" --title "<component>: v0.1.0" \
+     --notes-file <暫存檔> --verify-tag
+   ```
+   **release-please 永遠不會替 0.1.0 建 Release**，因為 0.1.0 是手寫的種子、manifest 也直接填 0.1.0——它看到的狀態是「0.1.0 已經發過了」，所以第一次動手是**下一個**版本。上一步的 tag 也不會順便產生 Release（裸的 `git tag` 只是 tag）。不補的話 Release 頁面就少那一條，看起來像沒發布過。
+   > 這是刻意接受的一步：另一條路是 manifest 從 `0.0.0` 起、不手寫種子，讓 release-please 自己算出 0.1.0——但那樣初版 CHANGELOG 就變成由 commit 標題生成，而「手寫一份描述最終 ship 狀態的乾淨初版」正是這個 repo 要的。寧可多手動補一次。
 
 > **只動 `plugin.json` 的變更不會觸發發版。** 那個檔是 release-please 自己管理的 `extra-files` 目標，所以「只改了它」的 commit 不算可發版變更。想讓某個 plugin 因為 `plugin.json` 的內容變更（例如新增 `dependencies`）而發版、好讓**既有安裝**收得到，必須同時動一個非受管的檔（README 通常就夠）並用 `feat:` / `fix:` 開頭。2026-08-17 `turbo-plugin-code-comment` 加了 `dependencies` 卻沒升版，既有安裝因此拿不到那條相依。
 
