@@ -2,6 +2,29 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.1.3...turbo-plugin-dotnet-framework--v0.2.0) (2026-08-17)
+
+
+### Added
+
+* **core:** linked worktree 繼承主 worktree 的機器層設定與 pack-content 核准 ([5a8ffc0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/5a8ffc01774e018bd58d5b8c04d63e176bc51007)), closes [#61](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/61)
+
+
+### Fixed
+
+* **core:** 設定檔的行內註解不再吃掉整個 section 或整個值 ([7b0a34e](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7b0a34e0cb84d88435c0d1f2da1e357c2b1ae253)), closes [#60](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/60)
+* **dotnet:** 結果模板改用 fenced code block 轉述,路徑不再被 Markdown 吃掉反斜線 ([c5ad9f0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c5ad9f02dbf3ef2d5707dd0e0ba0cfdd38b382be)), closes [#63](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/63)
+
+
+### Changed
+
+* **core:** 主 worktree 直接短路,不為了繼承設定多 fork 一次 git ([7d98b3b](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7d98b3b0cabea5d3513e5968d81d6ba2644f9ea3))
+
+
+### Documentation
+
+* 其餘四個 plugin 的 README 也寫上 turbo-plugin-feedback 相依,並清掉指向已刪除文件的註解 ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
+
 ## [0.1.3](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.1.2...turbo-plugin-dotnet-framework--v0.1.3) (2026-08-13)
 
 

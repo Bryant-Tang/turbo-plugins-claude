@@ -2,6 +2,18 @@
 
 本檔記錄 turbo-plugin-code-comment 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-code-comment--v0.1.0...turbo-plugin-code-comment--v0.1.1) (2026-08-17)
+
+
+### Fixed
+
+* **code-comment:** 讓既有安裝也收得到 turbo-plugin-feedback 相依 ([bc22b51](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/bc22b51610f1cee45658c60cd307565954675d69))
+
+
+### Documentation
+
+* 其餘四個 plugin 的 README 也寫上 turbo-plugin-feedback 相依,並清掉指向已刪除文件的註解 ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
+
 ## [Unreleased]
 
 ## [0.1.0] - 2026-06-20
