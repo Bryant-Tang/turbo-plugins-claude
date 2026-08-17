@@ -1,6 +1,6 @@
 ---
 name: tp-svn-log
-description: 'Show SVN history via svn log in the named remote-<branch> worktree. Run on request, or whenever an SVN revision needs confirming (read-only, safe to auto-trigger).'
+description: 'Show SVN history via svn log in the named remote-<branch> worktree; output is parsed from --xml, so non-ASCII commit messages and filenames survive any console codepage. Run on request, whenever an SVN revision needs confirming, or when diagnosing garbled SVN text (read-only, safe to auto-trigger).'
 argument-hint: '[--branch <branch>] [--limit <n>] [-r/--revision <spec>] [--verbose]'
 user-invocable: true
 allowed-tools: Bash, Read
