@@ -94,7 +94,17 @@ try {
     # this sibling has the identical shape and was missed by that fix.
     Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
 
-    foreach ($k in @('stdout', 'stderr')) {
+    # The cmd wrapper outlives the program by a moment: it writes the exit-code file only after the
+    # program returned, so deleting that file the instant the program dies races the write and can
+    # leave the file behind (re-created after the delete). Waiting for the wrapper closes that
+    # window -- the same reasoning as the line above, one level out.
+    if ($state.PSObject.Properties.Name -contains 'shellPid') {
+        $sp = 0
+        [int]::TryParse([string]$state.shellPid, [ref]$sp) | Out-Null
+        if ($sp -gt 0) { Wait-Process -Id $sp -Timeout 10 -ErrorAction SilentlyContinue }
+    }
+
+    foreach ($k in @('stdout', 'stderr', 'exitCode')) {
         if ($state.PSObject.Properties.Name -contains $k) {
             $f = [string]$state.$k
             if (-not [string]::IsNullOrWhiteSpace($f) -and (Test-Path -LiteralPath $f -PathType Leaf)) {

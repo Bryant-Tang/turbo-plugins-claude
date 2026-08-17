@@ -172,10 +172,16 @@ Describe 'Start-Console / Stop-Console (U11)' {
         $recordedPid = 0
         try {
             $null = Add-FakeBuiltExe -SandboxDir $sb -Kind 'longrunning'
-            # NOT the -Wait harness used elsewhere. The launched console inherits the redirected
-            # stdout handle, so `Start-Process -Wait` on the powershell child does not return until
-            # the GRANDCHILD also exits -- i.e. it would wait out the full ping and there would be
-            # nothing still running left to observe. Launch detached and poll for the state file.
+            # NOT the -Wait harness used elsewhere: this case needs the launcher to come back while
+            # the console is STILL RUNNING, so there is something to observe and stop.
+            #
+            # This used to be forced rather than chosen. Start-Console launched the console with
+            # Start-Process -NoNewWindow, so it inherited this harness's redirected stdout handle
+            # and `Start-Process -Wait` on the powershell child did not return until the GRANDCHILD
+            # exited -- i.e. it waited out the full ping. That is issue #82 in miniature, and this
+            # very comment was the evidence that the defect reached the console path too. The launch
+            # now goes through Win32_Process.Create and inherits nothing, so the handle no longer
+            # leaks; the detached shape is kept because it is what this case actually wants.
             $startOut = [System.IO.Path]::Combine($sb, 'start.out.txt')
             $launcher = Start-Process -FilePath 'powershell.exe' `
                 -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $script:StartScript + '"'),
@@ -188,8 +194,10 @@ Describe 'Start-Console / Stop-Console (U11)' {
             # then prints its status, so polling only for the state file and reading the output on
             # the very next line races that ordering: on a fast dev box the line is always there,
             # on a loaded CI runner it is not yet -- green that depended on the machine's speed.
-            # Shared read throughout: the launched console inherited this handle and still holds
-            # it, so ReadAllText would fail with "used by another process".
+            # Shared read throughout. This was mandatory while the launched console inherited this
+            # handle (ReadAllText failed with "used by another process"); since the WMI launch it no
+            # longer inherits anything, but a shared read costs nothing and keeps the case immune to
+            # whoever else happens to hold the file open.
             $deadline = [datetime]::UtcNow.AddSeconds(30)
             $startText = ''
             while ([datetime]::UtcNow -lt $deadline) {
@@ -304,5 +312,57 @@ Describe 'Start-Console / Stop-Console (U11)' {
                 try { Stop-Process -Id $victim.Id -Force -ErrorAction SilentlyContinue } catch { }
             }
         } finally { Remove-ConsoleSandbox -Dir $sb }
+    }
+
+    # issue #82 -- launch-mechanism regression locks. Source-level on purpose, like Start-Iis's:
+    # both defects below are invisible in a passing run and only surface as a hung agent session or
+    # a wrong exit code, so the assertion has to be on HOW the script launches, not on an outcome.
+    Context 'issue #82: the launched console must not inherit this process''s handles' {
+        BeforeAll {
+            $script:startConsoleText = [System.IO.File]::ReadAllText($script:StartScript, [System.Text.Encoding]::UTF8)
+            # Comments deliberately name the rejected approach, so a whole-file match would flag the
+            # very note that documents the fix.
+            $script:startConsoleCode = (($script:startConsoleText -split "`r?`n") |
+                Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        }
+
+        # Start-Process -NoNewWindow passes bInheritHandles=TRUE, so a console still running past
+        # the timeout -- which this script deliberately leaves alive -- keeps the agent harness's
+        # stdout pipe open and the tool call never returns. Measured, launcher started with a real
+        # stdout pipe and then allowed to exit:
+        #   Start-Process -NoNewWindow -> launcher exited, pipe NEVER reached EOF
+        #   Win32_Process.Create       -> launcher exited, pipe reached EOF immediately
+        It 'does not launch with Start-Process' {
+            $script:startConsoleCode | Should -Not -Match 'Start-Process'
+            $script:startConsoleCode | Should -Not -Match '-NoNewWindow'
+        }
+        It 'launches with Win32_Process.Create and a new hidden console' {
+            $script:startConsoleCode | Should -Match 'Win32_Process'
+            $script:startConsoleCode | Should -Match 'CreateFlags'
+            $script:startConsoleCode | Should -Match 'ShowWindow'
+        }
+        It 'keeps stdout / stderr redirection through the cmd wrapper' {
+            $script:startConsoleCode | Should -Match '/s /c'
+            $script:startConsoleCode | Should -Match ([regex]::Escape('2>"{3}"'))
+        }
+
+        # The exit code must not come from a process handle on this path: opening one right after
+        # Win32_Process.Create loses about 1 in 25 times when the program exits instantly (measured
+        # over 25 runs), and retrying cannot help because Create returns only once the process
+        # exists. An unreadable code used to bind $null to the result template's [int] as 0, i.e. a
+        # failed run reported as a success -- so it is captured to a file by cmd itself instead.
+        It 'captures the exit code to a file rather than from a process handle' {
+            $script:startConsoleCode | Should -Match ([regex]::Escape('%^ERRORLEVEL%'))
+            $script:startConsoleCode | Should -Not -Match '\$process\.ExitCode'
+        }
+        It 'refuses to invent an exit code it could not read' {
+            # Reporting 0 for an unreadable code is the silent failure this whole path prevents, so
+            # the parse is CHECKED and the failure path throws.
+            # (Asserted on the ASCII guard expression, not on the Chinese message it throws: this
+            # file is ASCII-only and BOM-free, and a non-ASCII literal in a BOM-free .ps1 is read as
+            # Big5 by Windows PowerShell 5.1 on a zh-TW host -- the whole file then fails to parse.)
+            $script:startConsoleCode | Should -Match 'rawCode -notmatch'
+            $script:startConsoleCode | Should -Match 'throw'
+        }
     }
 }
