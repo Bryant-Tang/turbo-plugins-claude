@@ -215,6 +215,69 @@ test_remove_finds_an_ordinary_repo_worktree_without_a_path_field() {
     fi
 }
 
+# ── issue #87: removal is asymmetric unless the BRANCHES come down too ───────────────────────
+# create-worktree.sh opens one branch per project, so a workspace of N projects leaves N branches
+# behind per session, named after a slug nobody can attribute afterwards. The registration being
+# clean is not enough -- that was already true while the branches piled up.
+#
+# This case also exercises BOTH deletion paths at once, which is why it asserts on both projects:
+#   proj-1 has an origin AND its local HEAD deliberately sits on `stray`, so the branch (cut from
+#          origin/main) is NOT merged into HEAD and `git branch -d` refuses it -- only the
+#          "is this tip already contained in another ref?" fallback can remove it.
+#   proj-2 has no origin, so the branch is cut from HEAD and the plain safe delete handles it.
+test_remove_deletes_the_branches_it_created() {
+    skip_without_git
+    local out
+    out="$(payload_for "$WS" WorktreeCreate wt-l | bash "$CREATE" 2>/dev/null)"
+    assertTrue 'precondition: the mirror exists' "[ -d '$out' ]"
+    assertTrue 'precondition: proj-1 has the branch' "git -C '$WS/proj-1' rev-parse --verify --quiet refs/heads/wt-l >/dev/null"
+    assertTrue 'precondition: proj-2 has the branch' "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-l >/dev/null"
+
+    payload_for "$WS" WorktreeRemove wt-l | bash "$REMOVE" >/dev/null 2>&1
+
+    assertFalse 'proj-1 branch deleted (via the contained-elsewhere fallback)' \
+        "git -C '$WS/proj-1' rev-parse --verify --quiet refs/heads/wt-l >/dev/null"
+    assertFalse 'proj-2 branch deleted (via the plain safe delete)' \
+        "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-l >/dev/null"
+    assertFalse 'mirror removed' "[ -d '$out' ]"
+}
+
+# The other half of the same rule: a branch that carries work of its own is NEVER deleted. The
+# worktree is clean (the work is committed), so removal proceeds -- but the commit exists nowhere
+# else, so the branch has to survive or the commit is gone for good.
+test_remove_keeps_a_branch_that_carries_its_own_commits() {
+    skip_without_git
+    local out
+    out="$(payload_for "$WS" WorktreeCreate wt-m | bash "$CREATE" 2>/dev/null)"
+    echo work > "$out/proj-2/new-work.txt"
+    git -C "$out/proj-2" add -A >/dev/null 2>&1
+    git -C "$out/proj-2" -c commit.gpgsign=false commit -q -m 'work that exists nowhere else' >/dev/null 2>&1
+
+    payload_for "$WS" WorktreeRemove wt-m | bash "$REMOVE" >/dev/null 2>&1
+
+    assertTrue 'the branch holding unique commits is kept' \
+        "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-m >/dev/null"
+    # ...and the commit is still reachable through it, which is the point of keeping it.
+    assertTrue 'the unique commit is still reachable' \
+        "git -C '$WS/proj-2' cat-file -e refs/heads/wt-m:new-work.txt"
+    # The branch with no work of its own is still cleaned up in the same run.
+    assertFalse 'the untouched project'\''s branch is still deleted' \
+        "git -C '$WS/proj-1' rev-parse --verify --quiet refs/heads/wt-m >/dev/null"
+}
+
+# The ordinary-repo path creates a branch too (this hook replaces the built-in everywhere), so it
+# has to clean one up as well.
+test_remove_deletes_the_branch_in_an_ordinary_repo() {
+    skip_without_git
+    local out
+    out="$(payload_for "$WS/proj-2" WorktreeCreate wt-n | bash "$CREATE" 2>/dev/null)"
+    assertTrue 'precondition: the branch exists' "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-n >/dev/null"
+    payload_for "$WS/proj-2" WorktreeRemove wt-n | bash "$REMOVE" >/dev/null 2>&1
+    assertFalse 'ordinary-repo branch deleted' \
+        "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-n >/dev/null"
+    assertFalse 'ordinary-repo worktree removed' "[ -d '$out' ]"
+}
+
 # A name is pasted into a path and a branch name. It is a Claude Code slug today, but a separator
 # or a `..` would place the worktree somewhere else entirely -- and the remove hook deletes things.
 test_implausible_name_is_refused_rather_than_escaping_the_directory() {
