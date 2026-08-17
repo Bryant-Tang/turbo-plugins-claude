@@ -93,6 +93,18 @@ jobs:
             Provide detailed feedback using inline comments for specific issues.
             Use top-level comments for general observations or praise.
 
+            **Output language: write every review comment in Traditional Chinese
+            (正體中文), regardless of the language of the PR title, description, or
+            diff.** This applies to inline comments, top-level comments, and the
+            progress-tracking comment alike.
+
+            Keep the following in their original form — do NOT translate them:
+            code identifiers (variable / function / class / file / branch names),
+            file paths, shell commands and flags, config keys, log and error
+            messages quoted from the code, and established technical terms that
+            have no settled Chinese rendering (e.g. worktree, hook, commit,
+            pull request, merge, rebase, plugin, marketplace).
+
           # Tools for comprehensive PR review
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
