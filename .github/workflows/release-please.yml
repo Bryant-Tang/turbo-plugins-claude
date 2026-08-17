@@ -1,5 +1,8 @@
 # release-please:merge 進 main 時,依 conventional commit 自動為「版本有變更」的 plugin
-# 開一個 Release PR(更新 plugin.json version + CHANGELOG);merge 那個 PR 即發版 + 打 tag。
+# 收進「一個」Release PR(更新各 plugin 的 plugin.json version + CHANGELOG);merge 那個 PR 即發版,
+# 並為每個 plugin 各打一個 tag。各 plugin 的版本仍獨立計算,只是共用一條 release 分支——分開開的話
+# `.release-please-manifest.json` 那幾行相鄰的版本號會讓任兩個 Release PR 互相衝突,而 release-please
+# 不會把既有的 Release PR 分支 rebase 到新的 main(實測),所以每次發版都要重解同樣的衝突。
 #
 # 設定檔(repo 根,自動偵測):
 #   - release-please-config.json     四個 plugin 各自一個 component、版本寫進各自 plugin.json

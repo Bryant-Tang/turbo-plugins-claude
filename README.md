@@ -82,7 +82,8 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
 
 版本由 [release-please](https://github.com/googleapis/release-please) 依 conventional commit 自動管理，**不要手改 `plugin.json` 的 `version`，也不要手寫 CHANGELOG 的發版區段**。
 
-- merge 進 `main` 後，會自動為「有可發版變更」的 plugin 各開一個 Release PR
+- merge 進 `main` 後，所有「有可發版變更」的 plugin 會被收進**一個** Release PR（各 plugin 版本仍獨立計算，只是共用一條 release 分支——分開開的話 `.release-please-manifest.json` 那幾行相鄰的版本號會讓任兩個 PR 互相衝突）
+- 因此 **merge 進 `main` 就等於打算發版**；想壓著某個變更先不發，就先不要 merge 它的 feature PR
 - merge 那個 Release PR 才發版：自動打 tag（`<plugin>--v<version>`，**兩個減號**）並建立 GitHub Release
 - **merge 功能 PR 時不要 squash**：CHANGELOG 的每一條來自個別 commit 的標題，squash 會把它們壓成一條
 
