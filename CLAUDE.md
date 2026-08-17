@@ -12,7 +12,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Claude Code 的 plugin 更新機制是基於 **版本號**。版本由 **release-please** 依 conventional commit 自動管理——**不要手動 bump `plugin.json`、也不要手寫發版的 CHANGELOG 區段**。
 
-**怎麼運作**：每次 merge 進 `main`，`.github/workflows/release-please.yml` 會依各 plugin 自上次發版以來的 commit type，為「有可發版變更」的 plugin 各開一個 **Release PR**（自動更新該 plugin 的 `.claude-plugin/plugin.json` `version` + `CHANGELOG.md`）；merge 那個 Release PR 即發版 + 打 tag（**`<plugin>--v<version>`，兩個減號**）。設定在 repo 根的 `release-please-config.json` + `.release-please-manifest.json`（四個 plugin 各自獨立版本 / 各自 Release PR）。
+**怎麼運作**：每次 merge 進 `main`，`.github/workflows/release-please.yml` 會依各 plugin 自上次發版以來的 commit type，把所有「有可發版變更」的 plugin 收進**一個** Release PR（自動更新各該 plugin 的 `.claude-plugin/plugin.json` `version` + `CHANGELOG.md`）；merge 那個 Release PR 即發版 + 為每個 plugin 各打一個 tag（**`<plugin>--v<version>`，兩個減號**）。設定在 repo 根的 `release-please-config.json` + `.release-please-manifest.json`（各 plugin **版本仍各自獨立**，只是共用一個 Release PR）。
+
+**為什麼是一個 PR 而不是每個 plugin 一個**（`separate-pull-requests: false`，2026-08-14 改）：分開開時，
+`.release-please-manifest.json` 那幾行版本號**相鄰**，任兩個 plugin 的修改都落進同一個 git hunk，所以只要
+merge 掉其中一個，其餘全部立刻變成衝突——而且 release-please **不會**把既有的 Release PR 分支 rebase 到新
+的 main（實測：完整跑完一輪 success 之後，其它 Release PR 的分支基底仍停在舊 commit）。四個 PR 就是解三次
+同樣的衝突，每次發版重演一遍。合成一條 release 分支之後這種衝突**不可能發生**。
+
+代價是「只發 A、先壓著 B」不能在 Release PR 這一層做——但那個決定本來就該在上游做完：**merge 進 `main`
+就等於打算發版**。分支是整個 marketplace 共用的，想壓著 B 就不要 merge B 的 feature PR。唯一殘留的情境是
+「merge 進 main 之後才改變主意」，那種情況用 revert 處理。
 
 **tag 名稱格式是 load-bearing，不要改成單一減號**：Claude Code 解析 plugin 相依的版本約束時，是去 marketplace repo 列 tag、篩出開頭為 `<plugin-name>--v` 的那些，再取滿足 semver range 的最高版；用單一減號一個都篩不到，帶約束的相依會直接讓依賴方**被停用**（`no-matching-tag`）。所以 `release-please-config.json` 的 `tag-separator` 必須是 `--`，才跟官方 `claude plugin tag` 產生的 tag 同名。另：pre-1.0 的相依**不要用 `^0.1.0` / `~0.1.0`**——0.x 的 caret / tilde 都只允許 patch，而本 repo 設了 `bump-minor-pre-major`，每個 `feat:` 都跳 minor，約束會立刻對不上；用 `>=0.1.0` 之類的寫法。
 
@@ -42,7 +52,7 @@ body:    fix: 修掉全部 open issue(dotnet 兩顆、git-svn 七顆)   ← PR �
 
 release-please 會解析 merge commit 的 body，看到 `fix:` 就收成一筆變更。而且那條**沒有 scope**，所以會
 同時出現在**每一個**該次 merge 有動到的 plugin 的 CHANGELOG 裡。2026-08-06 實際發生過：PR #31 讓
-`turbo-plugin-git-svn` 與 `turbo-plugin-dotnet-framework` 兩個 Release PR 都多了一條
+`turbo-plugin-git-svn` 與 `turbo-plugin-dotnet-framework` 的 CHANGELOG 都多了一條
 「修掉全部 open issue…」——那不是一個具體修正，對讀 CHANGELOG 的人沒有意義。
 
 **寫 PR 標題時**：用 `chore:` 前綴，或乾脆不加前綴。`changelog-sections` 已把 `chore` 設成
