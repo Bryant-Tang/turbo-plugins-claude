@@ -15,18 +15,21 @@
 # release-please-config.json 的 `tag-separator` 必須是 `--`,才跟官方 `claude plugin tag`
 # 產生的 tag 同名。
 #
-# ── 基準 tag:只有「已有歷史」的 component 才需要(首次啟用已完成,不必重跑)──────
-# 打一個 0.1.0 基準 tag 的用途是讓 release-please「忽略該 component 在那之前的所有歷史」。
-# 當初拆分時需要它,是因為那幾個 plugin 的路徑底下有一堆單體時期的幽靈 commit。
+# ── 新增 plugin 時,一定要補一個基準 tag ──────────────────────────────────────
+# **每個 component 都需要**,包括後來才新增的。那個 tag 有兩個用途,第二個容易被忽略:
+#   ① 讓 release-please 忽略該路徑在那之前的歷史(當初拆分時的目的);
+#   ② 它是 release-please 找「從哪裡開始算 commit」的**起點錨**——沒有它就等於沒有起點,
+#      該 component 會被判定成「沒有可發版的變更」,於是**永遠不會發版**。
 #
-# **後來新增的 plugin 不需要補**:它的路徑是全新的,底下本來就沒有要忽略的歷史,而 manifest
-# 裡的版本號在 manifest 模式下就是權威來源。`turbo-plugin-feedback` 就沒有 0.1.0 tag,它的第一個
-# tag 會直接是發版當下算出來的版本。
+# 2026-08-17 實際踩到:`turbo-plugin-feedback` 加進來時沒補 tag,結果它不在合併的 Release PR
+# 裡,而其它五個(都有 0.1.0 tag)都正常。補上 `turbo-plugin-feedback--v0.1.0` 之後才正常。
 #
-# 真的需要補的時候(例如把一段既有歷史搬進新的 component 路徑):
+# 新增 plugin 的最後一步(接在 CLAUDE.md 的「新增 plugin 時要」清單之後):
 #
-#   git tag "<component>--v<基準版本>" "$(git rev-parse origin/main)"
-#   git push origin --tags
+#   git tag "<component>--v0.1.0" <引進該 plugin 的 commit>
+#   git push origin "<component>--v0.1.0"
+#
+# 打在「引進該 plugin 的那顆 commit」上,語意最準確:那顆交付的內容就是 0.1.0。
 #
 # 不要在這裡維護一份 plugin 清單——清單會過時,而過時的清單比沒有清單更糟(會讓人以為已經
 # 涵蓋全部)。要知道目前有哪些 component,看 release-please-config.json 的 `packages`。

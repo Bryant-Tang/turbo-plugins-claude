@@ -57,7 +57,9 @@ $workRoot  = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($testsDir, 
 $repoPath  = [System.IO.Path]::Combine($workRoot, 'repo')
 $wcPath    = [System.IO.Path]::Combine($workRoot, 'wc')
 
-# ─── 25 條中文字典 — keep in sync with plugins/turbo-plugin-git-svn/tests/docs/phase1-scripts-schema.md ──
+# ─── 25 條中文字典 ──────────────────────────────────────────────────────────
+# (原本這裡寫著 "keep in sync with tests/docs/phase1-scripts-schema.md" — 那份文件連同整個
+#  人工測試層已退役,檔案不存在,所以那條同步指示是做不到的。這份字典現在自己就是來源。)
 #
 # 5 路徑 / 5 檔名 / 5 commit msg / 5 source 註解 / 5 source string literal
 # r5 / r10 / r15 各 pull 1 條 commit msg (見下方 $Revisions table)
@@ -124,7 +126,7 @@ $zhDict = @{
 # r20 svn copy trunk@HEAD branches/test-1   (provides remote-test-1 source)
 #
 # 中文 commit msgs at r5/r10/r15 pulled from $zhDict.commit_messages[0/1/2].
-# 這個 mapping 由 plugins/turbo-plugin-git-svn/tests/docs/phase1-scripts-schema.md 開頭 inline 表參照。
+# (mapping 原本由已退役的 tests/docs/phase1-scripts-schema.md 參照,那份文件已不存在。)
 
 $Revisions = @(
     @{ N=1;  Op='mkdirs';   Msg='r1: initial trunk + branches + tags'                       }

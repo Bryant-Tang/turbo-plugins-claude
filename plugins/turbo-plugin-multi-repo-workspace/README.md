@@ -37,7 +37,11 @@ proj-root/            ← 本身不是 git repo；session 開在這裡
 `turbo-plugin-git-svn`。子專案的 git↔SVN setup 一律委派給它的 `tp-setup`（SVN URL、git 身分、匯入粒度、base
 骨架、編碼偵測全由那支負責），本 plugin 不自行複製那套互動。
 
-安裝本 plugin 時 Claude Code 會自動解析並安裝相依。
+另外相依 **`turbo-plugin-feedback`**：它只有一個 skill `/tp-report-issue`，用途是把你遇到的 turbo-plugin
+bug 或沉默失敗整理成 issue 送出，含**送進 public repo 前的消毒規則**。這條相依不帶版本約束，理由見
+`turbo-plugin-feedback/README.md`。
+
+安裝本 plugin 時 Claude Code 會自動解析並安裝這兩個相依。
 
 ## 安裝
 

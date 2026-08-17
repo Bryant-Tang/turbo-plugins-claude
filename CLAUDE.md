@@ -233,5 +233,13 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
 2. 在 `marketplace.json` 的 `plugins` 陣列加一筆 `{ name, description, source: "./plugins/<dir>" }`。
 3. **註冊進 release-please**：`release-please-config.json` 的 `packages` 加一筆（`component` + `extra-files` 指向該 plugin 的 `.claude-plugin/plugin.json`），`.release-please-manifest.json` 加 `"plugins/<dir>": "0.1.0"`。
 4. repo 根 README.md 安裝章節同步更新（新增該 plugin 的搜尋 / 安裝步驟）。
+5. **merge 之後補一個 `<component>--v0.1.0` 基準 tag**（打在引進該 plugin 的那顆 commit 上）：
+   ```
+   git tag "<component>--v0.1.0" <引進該 plugin 的 commit>
+   git push origin "<component>--v0.1.0"
+   ```
+   **漏了這步的後果是靜默的**：那個 tag 不只是「忽略之前的歷史」，它還是 release-please 找「從哪裡開始算 commit」的**起點錨**。沒有起點就找不到任何 commit，該 plugin 會被判定成「沒有可發版的變更」，於是**永遠不會出現在 Release PR 裡**——不會報錯，只是那個 plugin 的版本永遠不動。2026-08-17 `turbo-plugin-feedback` 就這樣漏過一次。
+
+> **只動 `plugin.json` 的變更不會觸發發版。** 那個檔是 release-please 自己管理的 `extra-files` 目標，所以「只改了它」的 commit 不算可發版變更。想讓某個 plugin 因為 `plugin.json` 的內容變更（例如新增 `dependencies`）而發版、好讓**既有安裝**收得到，必須同時動一個非受管的檔（README 通常就夠）並用 `feat:` / `fix:` 開頭。2026-08-17 `turbo-plugin-code-comment` 加了 `dependencies` 卻沒升版，既有安裝因此拿不到那條相依。
 
 CI 不需要每加一個 plugin 就手寫 workflow——只要 `tests/` 遵循慣例佈局，`.github/workflows/tests.yml` 會自動探索並納入；release-please 也只看上述兩個設定檔。
