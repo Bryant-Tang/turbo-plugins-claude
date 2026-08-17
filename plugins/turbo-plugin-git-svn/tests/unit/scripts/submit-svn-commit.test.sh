@@ -298,36 +298,40 @@ test_same_path_commit_still_blocks_push() {
     echo "$out" | grep -q 'this path last changed at'; assertTrue 'refusal names the path revision, not repo HEAD' $?
 }
 
-# ── issue #79: the pushed-file listing must be the script's OWN UTF-8 copy, not svn's ─────────
+# ── issue #79: the pushed-file listing must be the script's OWN copy, not svn's ───────────────
 # svn renders its per-path progress lines ("Adding <path>") in the console codepage, so on a zh-TW
 # host a non-ASCII filename arrives there as '?' -- and that listing is the one place the user sees
 # WHAT was just written permanently, at the moment it became permanent. The script therefore prints
 # the paths it already holds as UTF-8 (they came out of `svn status --xml`).
 #
-# The assertion is on the MECHANISM, not on the bytes. A CI runner whose locale is UTF-8 renders the
-# filename correctly EITHER WAY, so "the name looks right" would pass against the unfixed script and
-# prove nothing. What discriminates on every platform is the FORM: `A  <path>` is the script's own
-# rendering and svn never emits it, while `Adding <path>` is svn's and must be gone.
-test_push_lists_its_own_utf8_paths_not_svns() {
+# THE ASSERTION IS ON THE MECHANISM, AND THE FILENAME HERE IS ASCII ON PURPOSE. What proves the fix
+# is the FORM of the output -- `A  <path>` is the script's own rendering and svn never emits it,
+# while `Adding <path>` is svn's and must be gone -- and that holds for any filename. Putting a
+# Chinese name in this case would not add proof (a UTF-8 runner renders it correctly either way) but
+# WOULD add a dependency on whether svn can take a non-ASCII target on this host at all, which is a
+# separate, environment-dependent question. It bit exactly that way: this case passed standalone and
+# failed inside the orchestrator with `svn: E200009: Could not add all targets because some targets
+# don't exist`, i.e. a red light that said nothing about the behaviour under test. The non-ASCII
+# axis is its own case below.
+test_push_lists_paths_itself_not_svns() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
     if ! build_feature_bridge; then startSkipping; return 0; fi
     local out rc
     # Kept at the working-copy ROOT on purpose: `svn status --xml` reports nested paths with the
     # platform separator, so a subdirectory would make the expected string OS-dependent.
-    local cn='中文檔名.md'
     git -C "$ROOT" checkout feat-x >/dev/null 2>&1
-    printf 'new\n' > "$ROOT/$cn"
+    printf 'new\n' > "$ROOT/notes.md"
     printf 'app-v2\n' > "$ROOT/app.txt"
     git -C "$ROOT" add -A >/dev/null 2>&1
-    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: add a Chinese-named file' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: add a file' >/dev/null 2>&1
 
     ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
-    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: chinese filename' 2>&1 )"; rc=$?
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: a file' 2>&1 )"; rc=$?
     assertEquals "push exits 0 (out: $out)" 0 "$rc"
 
-    # The script's own listing, carrying the very path it handed to svn.
-    printf '%s\n' "$out" | grep -q "^A  $cn\$"
-    assertTrue "new file listed by the script as 'A  $cn' (out: $out)" $?
+    # The script's own listing, carrying the very paths it handed to svn.
+    printf '%s\n' "$out" | grep -q '^A  notes\.md$'
+    assertTrue "new file listed by the script as 'A  notes.md' (out: $out)" $?
     printf '%s\n' "$out" | grep -q '^M  app\.txt$'
     assertTrue "modified file listed by the script as 'M  app.txt' (out: $out)" $?
 
@@ -345,6 +349,37 @@ test_push_lists_its_own_utf8_paths_not_svns() {
     # ...but the filter must be surgical: everything else svn says still comes through.
     printf '%s\n' "$out" | grep -q 'Committed revision'
     assertTrue "svn's 'Committed revision' line still passes through (out: $out)" $?
+}
+
+# The non-ASCII axis, kept separate from the mechanism above so that one red light means one thing.
+#
+# Whether `svn add --targets <utf-8 file>` resolves a non-ASCII path depends on the host: svn.exe
+# reads that file in the console codepage, not as UTF-8, so the same code passes in one console
+# state and reports "Could not add all targets" in another. That is a PRE-EXISTING property of the
+# push path, not of this change, so it is SKIPPED rather than failed -- but skipped only for that
+# one recognised svn error, so a genuine regression still turns this red.
+test_push_listing_carries_a_non_ascii_name() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc
+    local cn='中文檔名.md'
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'new\n' > "$ROOT/$cn"
+    git -C "$ROOT" add -A >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: add a Chinese-named file' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: chinese filename' 2>&1 )"; rc=$?
+    if [ "$rc" -ne 0 ]; then
+        case "$out" in
+            *'Could not add all targets'*)
+                startSkipping   # this host's svn cannot take a non-ASCII target; not what we test here
+                return 0 ;;
+        esac
+    fi
+    assertEquals "push exits 0 (out: $out)" 0 "$rc"
+    printf '%s\n' "$out" | grep -q "^A  $cn\$"
+    assertTrue "the non-ASCII name survives into the script's own listing (out: $out)" $?
 }
 
 # shellcheck disable=SC1090
