@@ -100,7 +100,31 @@ session 就被釘在那一個專案上——「站在根目錄一次管全部」
 
 session 就站在那個鏡像目錄裡，於是 `git -C <專案>` 照樣打得到每一個專案，而所有編輯都落在各自的隔離
 worktree、**沒有任何東西動到主 checkout**。離開時一次收掉整組；有未提交變更的那個**會被留下來**
-（`git worktree remove` 不加 `--force`，所以這裡不可能弄丟你的修改）。
+（`git worktree remove` 不加 `--force`，所以這裡不可能弄丟你的修改）。移除時也會把它建立的分支一起
+收乾淨——但**只在該分支沒有自己的 commit**（或它的 tip 已經被別的 ref 涵蓋）時才刪，否則保留並說明
+原因。
+
+### 工作區根自己的檔案**不會**被複製進鏡像（issue #86）
+
+Claude Code 是**從 session 的工作目錄往上走**去找 `CLAUDE.md` 的，而鏡像位在
+`<工作區根>/.worktrees/<name>`，所以 `<工作區根>/CLAUDE.md` 是它的祖先目錄、**本來就會被載入**。
+複製一份進鏡像反而會讓同一段內容在 context 裡出現兩次；而只要有人改了副本，就變成**兩個版本同時載入**，
+Claude 會在互相矛盾的指示之間任意挑一個。
+
+代價要講明白:**背景隔離 session 改不了工作區根的檔案**（隔離守衛擋下 `Edit` / `Write`，而且它是純
+路徑判斷、不看那個檔有沒有進版控）。那類編輯請在**沒有被隔離的 session** 進行。
+
+> **也不要靠腳本繞過去。** 守衛只攔 `Edit` / `Write` / `NotebookEdit` 與命令的**工作目錄**，
+> 所以一支 shell script 目前確實寫得進去——但那是守衛的縫，不是官方通道，而 Claude Code 正在收緊
+> 這一塊（「command shape」那道檢查已經在擋無法靜態驗證的命令）。把行為建在那上面,補起來就會壞。
+
+### 工作區的形狀是「宣告」的，不是猜的
+
+hook 判斷「這是不是多專案工作區」是看 `<工作區根>/CLAUDE.md` 裡有沒有 `tp-multi-repo-workspace-setup`
+寫下的標記，**不是**看「根目錄是不是 git repo」。後者是原本的做法，而它的失效方式是靜默的：只要有人
+在工作區根 `git init`（正是 setup skill 一再警告、而且「事後沒有東西能還原」的那個誤操作），之後每一
+次隔離都只會拿到外層 repo 的一份 worktree、裡面一個專案都沒有，而且不會有任何錯誤。現在那種情況會照舊
+隔離外層 repo（猜另一邊可能動到錯的樹），但會**明確告訴你專案為什麼不在裡面**。
 
 > **⚠ 這組 hook 會接管你「所有」repo 的隔離工作副本建立，不只多專案工作區。**
 > Claude Code 的規則是「只要宣告了 `WorktreeCreate`，它就取代內建行為」——實測確認在普通 git repo 裡
@@ -108,7 +132,13 @@ worktree、**沒有任何東西動到主 checkout**。離開時一次收掉整�
 > 一樣開新分支。**不想要這個行為的話就不要裝這個 plugin**，因為 hook 是 plugin 層級的、沒辦法只對某些
 > 資料夾生效。
 >
-> **已知落差**：分支基準點固定採 Claude Code 的預設語意 `fresh`（從 `origin/<主分支>` 長；沒有 origin
+> **已知落差 ①:`.worktreeinclude` 會失效,對你的每一個 repo。** Claude Code 用它把 gitignored 的
+> 檔案（`.env` 之類）自動帶進每個新 worktree,但官方文件明講:「Because the hook replaces the default
+> git behavior, `.worktreeinclude` is not processed」。所以裝上這個 plugin 之後,原本靠它帶進去的檔案
+> **不會再出現在 worktree 裡**,而且沒有任何提示。目前的替代方式是進 worktree 之後自己複製;讓 hook
+> 自己實作 `.worktreeinclude` 已列入後續工作。
+>
+> **已知落差 ②**：分支基準點固定採 Claude Code 的預設語意 `fresh`（從 `origin/<主分支>` 長；沒有 origin
 > 時退回 HEAD），**不讀 `worktree.baseRef` 設定**。要正確讀它得在這裡解析並合併 Claude Code 的多層
 > settings，而在沒有保證存在的 JSON parser 的情況下那麼做，弄壞 hook 的機率高過幫上忙——hook 壞掉的
 > 後果是「開不了隔離 session」。把 `baseRef` 設成 `head` 的人，在這裡會拿到 `fresh` 的行為。

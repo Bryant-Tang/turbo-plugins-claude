@@ -59,6 +59,34 @@ oneTimeSetUp() {
     git -C "$WS/proj-1" checkout -q -b stray >/dev/null 2>&1
     echo local-only >> "$WS/proj-1/f.txt"
     git -C "$WS/proj-1" commit -q -am 'local-only commit' >/dev/null 2>&1
+    # The workspace root's own file, carrying the marker tp-multi-repo-workspace-setup writes.
+    # Both halves matter: the marker is what the hook now keys the workspace shape on, and the file
+    # itself is what an isolated session has to be able to edit (issue #86).
+    {
+        printf '<!-- turbo-plugin:begin multi-repo-workspace -->\n'
+        printf 'generated workspace guidance\n'
+        printf '<!-- turbo-plugin:end multi-repo-workspace -->\n'
+        printf "the user's own cross-project rule\n"
+    } > "$WS/CLAUDE.md"
+}
+
+# A workspace root that somebody ran `git init` in -- the exact accident the setup skill warns
+# about. Returns the path of a fresh one; the caller removes its parent.
+mk_root_repo_workspace() {
+    local tag="$1" with_marker="$2" ws
+    ws="$(mktemp -d -t "turbo-wt-$tag-XXXXXX")/ws"
+    mkdir -p "$ws"
+    mk_repo "$ws/proj-a" no-origin
+    git init -q -b main "$ws" >/dev/null 2>&1
+    git -C "$ws" config user.email 'test@turbo-plugin' >/dev/null 2>&1
+    git -C "$ws" config user.name 'turbo-plugin-test' >/dev/null 2>&1
+    echo root > "$ws/root.txt"
+    git -C "$ws" add -A >/dev/null 2>&1
+    git -C "$ws" -c commit.gpgsign=false commit -q -m init >/dev/null 2>&1
+    if [ "$with_marker" = with-marker ]; then
+        printf '<!-- turbo-plugin:begin multi-repo-workspace -->\nx\n<!-- turbo-plugin:end multi-repo-workspace -->\n' > "$ws/CLAUDE.md"
+    fi
+    printf '%s' "$ws"
 }
 
 oneTimeTearDown() {
@@ -276,6 +304,56 @@ test_remove_deletes_the_branch_in_an_ordinary_repo() {
     assertFalse 'ordinary-repo branch deleted' \
         "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-n >/dev/null"
     assertFalse 'ordinary-repo worktree removed' "[ -d '$out' ]"
+}
+
+# ── issue #86: the workspace root's own files stay OUT of the mirror ─────────
+# Claude Code loads CLAUDE.md by walking UP from the session's working directory, and the mirror is
+# <workspace>/.worktrees/<name>, so <workspace>/CLAUDE.md is an ancestor and loads on its own. A
+# copy in the mirror would put the same guidance in context twice, and an edit to the copy would
+# leave two versions loaded at once. Nothing from the workspace root belongs in there.
+test_workspace_root_files_are_not_copied_into_the_mirror() {
+    skip_without_git
+    local out
+    printf 'loose\n' > "$WS/NOTES.md"
+    out="$(payload_for "$WS" WorktreeCreate wt-o | bash "$CREATE" 2>/dev/null)"
+    assertFalse 'the root CLAUDE.md is NOT duplicated into the mirror' "[ -e '$out/CLAUDE.md' ]"
+    assertFalse 'no other root file is duplicated either' "[ -e '$out/NOTES.md' ]"
+    # The mirror holds projects and nothing else.
+    assertTrue 'the projects are still there' "[ -d '$out/proj-1' ] && [ -d '$out/proj-2' ]"
+    payload_for "$WS" WorktreeRemove wt-o | bash "$REMOVE" >/dev/null 2>&1
+    assertTrue 'the workspace file is untouched by removal' "[ -f '$WS/NOTES.md' ]"
+    rm -f "$WS/NOTES.md"
+}
+
+# ── issue #86: the workspace shape is DECLARED, not inferred ─────────────────
+# It used to be inferred from "the root is not a git repository", so one `git init` at the workspace
+# root silently disabled the whole mirror and isolated the outer repo alone. Nothing failed; the
+# feature just stopped existing.
+test_marker_wins_over_the_root_being_a_repo() {
+    skip_without_git
+    local ws out
+    ws="$(mk_root_repo_workspace marker with-marker)"
+    out="$(payload_for "$ws" WorktreeCreate wt-r | bash "$CREATE" 2>/dev/null)"
+    case "$out" in
+        */.worktrees/wt-r) assertTrue 'the mirror shape is still used' 0 ;;
+        *) fail "the marker did not win; got: $out" ;;
+    esac
+    assertTrue 'the project is in the mirror' "[ -d '$out/proj-a' ]"
+    rm -rf "$(dirname "$ws")" 2>/dev/null
+}
+
+# Without the marker we still do the ordinary thing -- guessing the other way could isolate the
+# wrong tree -- but the user has to be told why the projects are missing.
+test_root_repo_without_marker_says_why_the_projects_are_missing() {
+    skip_without_git
+    local ws err
+    ws="$(mk_root_repo_workspace nomarker no-marker)"
+    err="$(payload_for "$ws" WorktreeCreate wt-s | bash "$CREATE" 2>&1 >/dev/null)"
+    case "$err" in
+        *'holds git repositories directly inside it'*) assertTrue 'the accident is reported' 0 ;;
+        *) fail "no warning about the nested projects: $err" ;;
+    esac
+    rm -rf "$(dirname "$ws")" 2>/dev/null
 }
 
 # A name is pasted into a path and a branch name. It is a Claude Code slug today, but a separator

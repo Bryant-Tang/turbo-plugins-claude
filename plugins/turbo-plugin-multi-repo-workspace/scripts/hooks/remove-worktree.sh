@@ -129,9 +129,17 @@ if [[ ! -e "$TARGET/.git" ]]; then
   while IFS= read -r child; do
     [[ -n "$child" ]] || continue
     remove_one "$child" || leftovers=$(( leftovers + 1 ))
-  done < <(find "$TARGET" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
+  done < <(find "$TARGET" -mindepth 1 -maxdepth 1 -type d -not -name '.*' | LC_ALL=C sort)
+
   if (( leftovers == 0 )); then
-    rmdir "$TARGET" 2>/dev/null || log "mirror not empty, leaving alone: $TARGET"
+    # rmdir first, on purpose: it can only succeed on an empty directory, so it cannot take anything
+    # unexpected with it. `rm -rf` is the fallback for residue git left behind after reporting the
+    # worktree removed (see remove_one), not the normal path.
+    rmdir "$TARGET" 2>/dev/null || rm -rf "$TARGET" 2>/dev/null || true
+    if [[ -d "$TARGET" ]]; then
+      log "every worktree is gone but the mirror directory could not be deleted (in use?): $TARGET"
+    fi
+    rmdir "$(dirname "$TARGET")" 2>/dev/null || true
   else
     log "$leftovers worktree(s) kept; leaving the mirror in place: $TARGET"
   fi
