@@ -2,6 +2,31 @@
 
 本檔記錄 turbo-plugin-multi-repo-workspace 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.1.1...turbo-plugin-multi-repo-workspace--v0.2.0) (2026-08-17)
+
+
+### Added
+
+* **core:** linked worktree 繼承主 worktree 的機器層設定與 pack-content 核准 ([5a8ffc0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/5a8ffc01774e018bd58d5b8c04d63e176bc51007)), closes [#61](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/61)
+* **multi-repo-workspace:** WorktreeCreate / WorktreeRemove,讓隔離工作副本在工作區根可用 ([4ad397b](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/4ad397b92ed63af9032c28e0022c7964c7f7a7d3)), closes [#69](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/69)
+
+
+### Fixed
+
+* **core:** 設定檔的行內註解不再吃掉整個 section 或整個值 ([7b0a34e](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7b0a34e0cb84d88435c0d1f2da1e357c2b1ae253)), closes [#60](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/60)
+* **multi-repo-workspace:** 移除 hook 也要認得一般 repo 的 worktree,並擋掉會跳出目錄的名稱 ([4dac9b8](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/4dac9b81dc30fcee6606a65cb2586773e0ed9db9))
+
+
+### Changed
+
+* **core:** 主 worktree 直接短路,不為了繼承設定多 fork 一次 git ([7d98b3b](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7d98b3b0cabea5d3513e5968d81d6ba2644f9ea3))
+* **core:** 移除永遠不會生效的 bash 快取,並把成本寫清楚 ([50ccf70](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/50ccf70d07fb0e19dc8e7c19d8a9e728da44a9da))
+
+
+### Documentation
+
+* 其餘四個 plugin 的 README 也寫上 turbo-plugin-feedback 相依,並清掉指向已刪除文件的註解 ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
+
 ## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.1.0...turbo-plugin-multi-repo-workspace--v0.1.1) (2026-08-13)
 
 
