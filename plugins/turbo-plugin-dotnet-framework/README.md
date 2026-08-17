@@ -75,6 +75,10 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
 
 與 `turbo-plugin-git-svn`、`turbo-plugin-three-environment-db`、`turbo-plugin-code-comment` 三者正交、各自獨立安裝。只需要哪塊就裝哪塊。
 
+**相依 `turbo-plugin-feedback`**（安裝時自動一起裝上，不必自己裝）：它只有一個 skill `/tp-report-issue`，
+用途是把你遇到的 turbo-plugin bug 或沉默失敗整理成 issue 送出，含**送進 public repo 前的消毒規則**。
+相依宣告不帶版本約束，理由見 `turbo-plugin-feedback/README.md`。
+
 ## 測試
 
 自動化測試套件（慣例佈局，CI 自動探索，新增此 plugin 零改 workflow）：
