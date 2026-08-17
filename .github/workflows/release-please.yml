@@ -5,7 +5,7 @@
 # 不會把既有的 Release PR 分支 rebase 到新的 main(實測),所以每次發版都要重解同樣的衝突。
 #
 # 設定檔(repo 根,自動偵測):
-#   - release-please-config.json     四個 plugin 各自一個 component、版本寫進各自 plugin.json
+#   - release-please-config.json     每個 plugin 各自一個 component、版本寫進各自 plugin.json
 #   - .release-please-manifest.json  記錄每個 plugin 現在的版本(初始全 0.1.0)
 #
 # ── tag 名稱格式:`<plugin>--v<version>`(兩個減號)────────────────────────────
@@ -15,18 +15,21 @@
 # release-please-config.json 的 `tag-separator` 必須是 `--`,才跟官方 `claude plugin tag`
 # 產生的 tag 同名。
 #
-# ── 首次啟用(這條 branch merge 進 main 後做一次)──────────────────────────────
-# 初版 0.1.0 是手寫的;為了讓 release-please「忽略 0.1.0 之前的所有歷史」(含已拆掉的
-# 單體 turbo-plugin 幽靈 commit),merge 後在 merge commit 上替五個 component 各打一個
-# 0.1.0 tag,release-please 會以此為基準、只處理之後的 commit:
+# ── 基準 tag:只有「已有歷史」的 component 才需要(首次啟用已完成,不必重跑)──────
+# 打一個 0.1.0 基準 tag 的用途是讓 release-please「忽略該 component 在那之前的所有歷史」。
+# 當初拆分時需要它,是因為那幾個 plugin 的路徑底下有一堆單體時期的幽靈 commit。
 #
-#   M=$(git rev-parse origin/main)
-#   for p in turbo-plugin-code-comment turbo-plugin-dotnet-framework \
-#            turbo-plugin-git-svn turbo-plugin-three-environment-db \
-#            turbo-plugin-multi-repo-workspace; do
-#     git tag "$p--v0.1.0" "$M"
-#   done
+# **後來新增的 plugin 不需要補**:它的路徑是全新的,底下本來就沒有要忽略的歷史,而 manifest
+# 裡的版本號在 manifest 模式下就是權威來源。`turbo-plugin-feedback` 就沒有 0.1.0 tag,它的第一個
+# tag 會直接是發版當下算出來的版本。
+#
+# 真的需要補的時候(例如把一段既有歷史搬進新的 component 路徑):
+#
+#   git tag "<component>--v<基準版本>" "$(git rev-parse origin/main)"
 #   git push origin --tags
+#
+# 不要在這裡維護一份 plugin 清單——清單會過時,而過時的清單比沒有清單更糟(會讓人以為已經
+# 涵蓋全部)。要知道目前有哪些 component,看 release-please-config.json 的 `packages`。
 #
 # 之後每次 push 進 main,本 workflow 自動跑。
 
