@@ -317,4 +317,52 @@ Describe 'Submit-SvnCommit' {
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
+
+    Context 'issue #79: the pushed-file listing is the script''s own copy, not svn''s' {
+        # svn renders its per-path progress lines ("Adding <path>") in the console codepage, so a
+        # filename it cannot represent there arrives as '?' -- and that listing is the one place the
+        # user sees WHAT was just written permanently, at the moment it became permanent. The script
+        # therefore prints the paths it already holds.
+        #
+        # The assertion is on the MECHANISM, not the bytes: a host whose codepage happens to cover
+        # the filename renders it correctly EITHER WAY, so "the name looks right" would pass against
+        # the unfixed script. What discriminates is the FORM -- `A  <path>` is the script's own
+        # rendering and svn never emits it, while `Adding <path>` is svn's and must be gone.
+        It 'lists every committed path itself and stops echoing svn''s listing' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag 'utf8list'
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+                # Kept at the working-copy ROOT on purpose: `svn status` reports nested paths with
+                # the platform separator, so a subdirectory would make the expected string
+                # OS-dependent.
+                $cn = '中文檔名.md'
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, $cn)) -Value 'new' -NoNewline
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'app.txt')) -Value 'app-v2' -NoNewline
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '-A')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: add a Chinese-named file')
+
+                $b = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                if ($b.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'the prepare step did not succeed in this env'; return }
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'feat: chinese filename')
+                $s.ExitCode | Should -Be 0 -Because "the push must succeed; output was:`n$($s.Combined)"
+
+                # The script's own listing, carrying the very path it handed to svn.
+                # `\r?$`, not `$`: in .NET multiline mode `$` matches immediately before the `\n`,
+                # so a CRLF line leaves the `\r` unconsumed and an anchored match fails on output
+                # that is in fact correct.
+                $s.Combined | Should -Match ('(?m)^A  ' + [regex]::Escape($cn) + '\r?$')
+                $s.Combined | Should -Match '(?m)^M  app\.txt\r?$'
+                # svn's own per-path lines are the codepage-dependent ones; not echoed as well.
+                $s.Combined | Should -Not -Match '(?m)^(Adding|Deleting|Sending|Replacing)\s'
+                # `svn add` / `svn delete` list every path too, in the same codepage -- the SECOND
+                # mojibake source in the same push. They are silenced with --quiet. Their listing is
+                # `A` + many spaces; ours is `A` + exactly two, so the column width tells them apart.
+                $s.Combined | Should -Not -Match '(?m)^[AD]\s{3,}'
+                # ...but the filter must be surgical: everything else svn says still comes through.
+                $s.Combined | Should -Match 'Committed revision'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
 }

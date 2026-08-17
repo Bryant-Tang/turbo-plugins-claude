@@ -174,6 +174,11 @@ set +e
   TO_ADD=()
   TO_DEL=()
   MODIFIED_TO_COMMIT=()
+  # issue #79: our own copy of "what is being committed", as `<status>\t<UTF-8 path>` entries.
+  # It is collected from the SAME --xml passes that feed svn, so it is UTF-8 no matter what the
+  # console codepage is. See the print site after `svn commit` for why svn's own listing cannot be
+  # used for this.
+  COMMIT_DISPLAY=()
 
   # Capture via `svn status --xml` (UTF-8 paths) so non-ASCII filenames re-pass cleanly.
   # Capture-first (under `set +e`) so an svn failure aborts the push instead of silently looking
@@ -193,7 +198,8 @@ set +e
     case "$status" in
       '?') TO_ADD+=("$(svn_target "$filepath")") ;;
       '!') TO_DEL+=("$(svn_target "$filepath")") ;;
-      'M') MODIFIED_TO_COMMIT+=("$(svn_target "$filepath")") ;;
+      'M') MODIFIED_TO_COMMIT+=("$(svn_target "$filepath")")
+           COMMIT_DISPLAY+=("M	$filepath") ;;
     esac
   done <<< "$XML_PASS1"
 
@@ -204,12 +210,16 @@ set +e
   if [[ ${#TO_ADD[@]} -gt 0 ]]; then
     echo "SVN adding ${#TO_ADD[@]} new file(s)..."
     write_svn_targets_file "$TARGETS_ADD" "${TO_ADD[@]}" || exit 1
-    svn add --parents --targets "$TARGETS_ADD" || exit 1
+    # --quiet: svn echoes one "A <path>" line per file here, in the console codepage -- the same
+    # mojibake as the commit listing (issue #79). The count is already announced above and every
+    # path is listed as UTF-8 after the commit, so this output is redundant as well as unreadable.
+    # Errors still reach stderr.
+    svn add --quiet --parents --targets "$TARGETS_ADD" || exit 1
   fi
   if [[ ${#TO_DEL[@]} -gt 0 ]]; then
     echo "SVN deleting ${#TO_DEL[@]} removed file(s)..."
     write_svn_targets_file "$TARGETS_DEL" "${TO_DEL[@]}" || exit 1
-    svn delete --targets "$TARGETS_DEL" || exit 1
+    svn delete --quiet --targets "$TARGETS_DEL" || exit 1
   fi
 
   COMMIT_TARGETS=()
@@ -219,6 +229,7 @@ set +e
     [[ -z "$filepath" ]] && continue
     if [[ "$status" == 'A' || "$status" == 'D' ]]; then
       COMMIT_TARGETS+=("$(svn_target "$filepath")")
+      COMMIT_DISPLAY+=("$status	$filepath")
     fi
   done <<< "$XML_PASS2"
   if [[ ${#MODIFIED_TO_COMMIT[@]} -gt 0 ]]; then
@@ -251,7 +262,25 @@ set +e
   echo "Committing to SVN..."
   write_svn_targets_file "$TARGETS_COMMIT" "${COMMIT_TARGETS[@]}" || exit 1
   COMMIT_OUT="$(svn commit ${DEPTH_ARGS[@]+"${DEPTH_ARGS[@]}"} --file "$MSG_FILE" --encoding UTF-8 --targets "$TARGETS_COMMIT" ${DOT_TARGET[@]+"${DOT_TARGET[@]}"})" || exit 1
-  printf '%s\n' "$COMMIT_OUT"
+  # issue #79: print OUR OWN path list rather than svn's. svn renders its per-path progress lines in
+  # the console codepage, so on a zh-TW host a non-ASCII filename arrives as '?' -- and this listing
+  # is the one place the user sees WHAT was just written permanently, at the moment it became
+  # permanent. The same paths are already in hand as UTF-8 (they came out of `svn status --xml`),
+  # so print those and drop svn's mangled duplicates.
+  #
+  # ONLY the per-path action lines are dropped. Everything else svn says -- `Committed revision`,
+  # warnings, anything a future svn version adds -- still passes through untouched, so this cannot
+  # silently swallow a message we did not anticipate. Worst case (a localised svn whose verbs do not
+  # match) is that both listings show, which is redundant but not wrong.
+  #
+  # Status letters, not svn's verbs: `A` / `D` / `M` is the same vocabulary tp-svn-log --verbose
+  # already prints, so one format covers both directions.
+  if [[ ${#COMMIT_DISPLAY[@]} -gt 0 ]]; then
+    printf '%s\n' "${COMMIT_DISPLAY[@]}" | LC_ALL=C sort | while IFS=$'\t' read -r dstatus dpath; do
+      printf '%s  %s\n' "$dstatus" "$dpath"
+    done
+  fi
+  printf '%s\n' "$COMMIT_OUT" | grep -vE '^(Adding|Deleting|Sending|Replacing)( +\(bin\))?[[:space:]]' || true
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'
   # R14 marker for a TRUNK push: this push CREATED revision $NEW_REV, and the commit whose tree is

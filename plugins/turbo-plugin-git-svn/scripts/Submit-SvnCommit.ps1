@@ -172,6 +172,11 @@ try {
         $toAdd = @()
         $toDel = @()
         $modifiedToCommit = @()
+        # issue #79: our own record of "what is being committed". Collected from the SAME status
+        # passes that feed svn (already decoded to correct Unicode by the ANSI OutputEncoding scope
+        # above), so it does not depend on how svn renders its own progress output. See the print
+        # site after `svn commit`.
+        $commitDisplay = @()
 
         foreach ($line in $svnStatusLines) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
@@ -196,7 +201,10 @@ try {
             switch ($statusChar) {
                 '?' { $toAdd += (ConvertTo-SvnTarget -Path $filePath) }
                 '!' { $toDel += (ConvertTo-SvnTarget -Path $filePath) }
-                'M' { $modifiedToCommit += (ConvertTo-SvnTarget -Path $filePath) }
+                'M' {
+                    $modifiedToCommit += (ConvertTo-SvnTarget -Path $filePath)
+                    $commitDisplay += [pscustomobject]@{ Status = 'M'; Path = $filePath }
+                }
             }
         }
 
@@ -208,20 +216,28 @@ try {
         if ($toAdd.Count -gt 0) {
             Write-Output "SVN adding $($toAdd.Count) new file(s)..."
             Write-SvnTargetsFile -Path $targetsAdd -Targets $toAdd
-            & svn add --parents --targets $targetsAdd
+            # --quiet: svn echoes one "A <path>" line per file here, in the console codepage -- the
+            # same mojibake as the commit listing (issue #79). The count is already announced above
+            # and every path is listed after the commit, so this output is redundant as well as
+            # unreadable. Errors still reach stderr.
+            & svn add --quiet --parents --targets $targetsAdd
             if ($LASTEXITCODE -ne 0) { throw 'svn add failed' }
         }
         if ($toDel.Count -gt 0) {
             Write-Output "SVN deleting $($toDel.Count) removed file(s)..."
             Write-SvnTargetsFile -Path $targetsDel -Targets $toDel
-            & svn delete --targets $targetsDel
+            & svn delete --quiet --targets $targetsDel
             if ($LASTEXITCODE -ne 0) { throw 'svn delete failed' }
         }
 
         $commitTargets = @()
         foreach ($line in (& svn status)) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            if ($line -match '^([AD])\s+(.+)$') { $commitTargets += (ConvertTo-SvnTarget -Path $Matches[2].Trim()) }
+            if ($line -match '^([AD])\s+(.+)$') {
+                $scheduledPath = $Matches[2].Trim()
+                $commitTargets += (ConvertTo-SvnTarget -Path $scheduledPath)
+                $commitDisplay += [pscustomobject]@{ Status = $Matches[1]; Path = $scheduledPath }
+            }
         }
         $commitTargets += $modifiedToCommit
 
@@ -282,7 +298,55 @@ UNWIND (the commit was rejected and would be rejected again):
 "@)
                 throw 'svn commit failed'
             }
-            $commitLines | ForEach-Object { Write-Output $_ }
+            # issue #79: print OUR OWN path list rather than svn's. svn renders its per-path progress
+            # lines in the console codepage, so a filename it cannot represent there arrives as '?'
+            # -- and this listing is the one place the user sees WHAT was just written permanently,
+            # at the moment it became permanent. The same paths are already in hand as correct
+            # Unicode, so print those and drop svn's duplicates.
+            #
+            # ONLY the per-path action lines are dropped. Everything else svn says -- `Committed
+            # revision`, warnings, anything a future svn version adds -- still passes through, so
+            # this cannot silently swallow a message we did not anticipate. Worst case (a localised
+            # svn whose verbs do not match) is that both listings show: redundant, not wrong.
+            #
+            # Status letters, not svn's verbs: `A` / `D` / `M` is the same vocabulary that
+            # tp-svn-log --verbose already prints, and it keeps this output identical to the bash
+            # twin's.
+            # PRINTED AS UTF-8, not in the ANSI region this block sits inside. The region above
+            # exists so svn's argv round-trips; it also governs how THIS process encodes its own
+            # stdout, and every reader downstream (the agent harness, this plugin's tests) decodes
+            # that stdout as UTF-8. Writing a Chinese path while ANSI is in force therefore sends
+            # cp950 bytes to a UTF-8 reader -- mojibake, which is the very thing this change is
+            # fixing. The paths are COLLECTED inside the region (that is where they decode
+            # correctly) and only PRINTED outside it: the same two-region split Build-SvnCommit.ps1
+            # uses to keep git's UTF-8 subjects out of its own ANSI scope.
+            # [Console]::Out.WriteLine, NOT Write-Output, and the difference is load-bearing.
+            # PowerShell's own output pipeline CACHES the writer it creates on first use together
+            # with the encoding in force at that moment; assigning [Console]::OutputEncoding later
+            # does not retroactively change it, so a Write-Output here would still leave as ANSI.
+            # [Console]::Out is re-created by that assignment, so it honours the new encoding.
+            # Measured on PS 5.1 (zh-TW, ACP 950) with the same string down both paths:
+            #   Write-Output after the switch  -> a4 a4 a4 e5   (still cp950)
+            #   [Console]::Out.WriteLine       -> e4 b8 ad e6 96 87 (UTF-8)
+            # Ordering against the surrounding Write-Output lines is preserved (also measured).
+            $tpEncForPaths = [Console]::OutputEncoding
+            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+            try {
+                $commitDisplay | Sort-Object -Property Status, Path | ForEach-Object {
+                    # The extra parentheses are required, not stylistic: inside a METHOD call the
+                    # comma binds as an argument separator, so `WriteLine('{0} {1}' -f $a, $b)` is
+                    # parsed as `WriteLine(('{0} {1}' -f $a), $b)` and the format string is left
+                    # one argument short ("Index (zero based) must be ... less than the size of the
+                    # argument list").
+                    [Console]::Out.WriteLine(('{0}  {1}' -f $_.Status, $_.Path))
+                }
+                [Console]::Out.Flush()
+            } finally {
+                [Console]::OutputEncoding = $tpEncForPaths
+            }
+            $commitLines |
+                Where-Object { $_ -notmatch '^(Adding|Deleting|Sending|Replacing)( +\(bin\))?\s' } |
+                ForEach-Object { Write-Output $_ }
             $newRevLine = $commitLines | Where-Object { $_ -match 'Committed revision (\d+)\.' } | Select-Object -Last 1
             if ($newRevLine -and $newRevLine -match 'Committed revision (\d+)\.') {
                 $newRev = $Matches[1]
