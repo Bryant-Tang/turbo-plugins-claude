@@ -130,7 +130,7 @@ AskUserQuestion 本身、檔案讀取/probe **不列**。
 
 **骨架時機依 case 不同**:
 - **case (a)/(b)**:bridge bootstrap 由 `Initialize-GitSvnBridge` 腳本承接,腳本會把 SVN 內容 merge 進當前分支。
-  base 骨架(`.turbo-plugin/` / `config.toml` 殼 / `.gitignore` base / `TODO.md` / `CLAUDE.md` base)與 git-svn 設定一律
+  base 骨架(`.turbo-plugin/` / `config.toml` 殼 / `.gitignore` base / `CLAUDE.md` base)與 git-svn 設定一律
   **在腳本成功後**才疊上(KTD1「空 main 先行 + 骨架後置」)——**不要**在呼叫腳本前先建骨架。
 - **case (c)/(d)**:不跑 bootstrap,base 骨架在各自 case 段內依 base 段「Base 檔骨架」idempotent 建立(時機不變)。
 
@@ -256,7 +256,7 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      bridge worktree(`.turbo-plugin/worktrees/`)與其 `.svn/` 在 main 尚未被 ignore,`git add -A` 會誤把 `.svn`
      內容 stage 進 main。
    - 4a. **base 骨架**(見 base 段「Base 檔骨架」):建 `.turbo-plugin/`、複製 `config.toml` 殼、`.gitignore`
-     的 `base` 標記區塊、建 `TODO.md` 骨架、注入 `CLAUDE.md` base 區塊。**區塊的實際內容以 base 段第 3 項為準**,不要照抄
+     的 `base` 標記區塊、注入 `CLAUDE.md` base 區塊。**區塊的實際內容以 base 段第 3 項為準**,不要照抄
      這裡——寫兩份清單就會漂移,而漂移的那一份不會有人發現。
    - 4b. **git-svn `.gitignore` 區塊**(用 base 段「更新自己區塊」程序,只動 `git-svn` 標記區塊):
      ```
@@ -450,10 +450,12 @@ setup 之後、第一次 push 之前最該處理、也最容易被漏掉的一�
 - `.turbo-plugin/` 存在,內含 `config.toml`(含 `git-svn` 標記區塊內的 `[svn]`)。
 - `.gitignore` 含 `base` 與 `git-svn` 兩組標記區塊,內容分別與 base 段第 3 項、上面 4b 一致;
   **各只有一組**(重跑沒有長出第二組)。
-- `git check-ignore` 對 `*.example.local.*` 範本回非零(**不**被忽略),對真正的 `*.local.*` 回零(被忽略);
-  對 `TODO.md` 回零(被忽略)——除非它原本就已被 git 追蹤,那種情況不加 ignore 規則。
+- `git check-ignore` 對 `*.example.local.*` 範本回非零(**不**被忽略),對真正的 `*.local.*` 回零(被忽略)。
 - `CLAUDE.md` 含 `base` 標記區塊,且區塊開頭有「這中間由 turbo-plugin 產生、重跑會整段取代」那段自我說明。
-- `TODO.md` 存在(既有的不動);新建的那份內容為 base 段第 4 項的骨架。
+- **base 區塊裡沒有「這件事該寫在哪」那張表**——它屬於 `turbo-plugin-knowledge-placement`,由該 plugin
+  自己的標記區塊維護。這裡出現一份就是兩個來源,而其中一個永遠不會被更新。
+- 專案根若存在未被追蹤的 `TODO.md`,**使用者已被明確告知它不再被 base 區塊忽略**,以及可以怎麼處理
+  (自己在標記外加 ignore,或把內容搬進記憶並用 `/tp-export-handover` 交接)。
 - Case (a)/(b):`git branch -a` 含 `remote-svn/main`,`git worktree list` 含 `.turbo-plugin/worktrees/remote-svn-main`,
   該 worktree 內含 `.svn/`;**腳本後置的 base 骨架已 commit**,故主 worktree `git status --porcelain` 乾淨。
 - Case (a):`git rev-parse --abbrev-ref HEAD` = `main`;`git config user.name`/`user.email` 皆非空;

@@ -96,16 +96,24 @@ test_claude_worktrees_directory_is_ignored() {
     assertTrue 'a checkout under .claude/worktrees/ must be ignored' $?
 }
 
-test_root_todo_is_ignored() {
-    is_ignored 'TODO.md'
-    assertTrue 'the project-root TODO.md must be ignored (not versioned, but handed over)' $?
-}
-
-# The leading slash is load-bearing: an unanchored `TODO.md` would also hide docs/TODO.md and any
-# other TODO.md a project legitimately versions.
-test_todo_rule_is_root_anchored() {
+# The base block used to carry `/TODO.md`, because the "not versioned, but part of the handover"
+# slot lived in a project-root TODO.md. That slot is gone: it had no tool support at all (git
+# ignores the file, an isolated working copy carries it IN but never back OUT, and two copies that
+# each added a line cannot be merged by anything). Current-only knowledge now lives in agent
+# memory, and turbo-plugin-knowledge-placement's /tp-export-handover is what makes it survive a
+# handover.
+#
+# This is the assertion in the OPPOSITE direction, and it earns its place: nothing else would
+# notice the line being quietly reinstated. Re-adding it would silently start hiding a file that
+# some project legitimately versions, and would put this repo back to claiming a slot it no longer
+# implements.
+test_base_block_no_longer_claims_the_root_todo() {
+    if is_ignored 'TODO.md'; then
+        fail 'the base block still ignores a project-root TODO.md; that slot was deliberately removed'
+    fi
+    # Nested ones were never in scope and must stay out of scope.
     if is_ignored 'docs/TODO.md'; then
-        fail 'the TODO.md rule is not root-anchored; it hides nested TODO.md files too'
+        fail 'the base block hides nested TODO.md files, which it must never do'
     fi
 }
 
