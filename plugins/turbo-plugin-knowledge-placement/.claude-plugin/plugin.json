@@ -1,0 +1,13 @@
+{
+  "name": "turbo-plugin-knowledge-placement",
+  "description": "「這件事該寫在哪」的判準與交接機制(tp-knowledge-placement-setup / tp-export-handover):把規範、現況與待辦分派到 CLAUDE.md / docs/ / agent 記憶,並在交接時把記憶匯出成一份可讀的檔案。純 skill,無 script。",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": "https://github.com/Bryant-Tang/turbo-plugins-claude",
+  "author": {
+    "name": "Bryant Tang"
+  },
+  "dependencies": [
+    "turbo-plugin-feedback"
+  ]
+}

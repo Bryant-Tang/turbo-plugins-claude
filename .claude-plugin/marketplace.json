@@ -30,6 +30,11 @@
       "source": "./plugins/turbo-plugin-multi-repo-workspace"
     },
     {
+      "name": "turbo-plugin-knowledge-placement",
+      "description": "「這件事該寫在哪」的判準與交接機制（tp-knowledge-placement-setup / tp-export-handover）:把規範、現況與待辦分派到 CLAUDE.md / docs/ / agent 記憶，並在交接時把記憶匯出成一份可讀的檔案。純 skill，刻意不被任何 plugin 相依。",
+      "source": "./plugins/turbo-plugin-knowledge-placement"
+    },
+    {
       "name": "turbo-plugin-feedback",
       "description": "把 turbo-plugin 的 bug / 沉默失敗 / 功能缺口回報成 GitHub issue 的 skill（tp-report-issue），含 public repo 的消毒規則。純 skill；其它 turbo-plugin 都相依它，裝任何一個都會帶到。",
       "source": "./plugins/turbo-plugin-feedback"

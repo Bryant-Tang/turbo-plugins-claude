@@ -2,8 +2,8 @@
 
 Some Claude plugins that handle a .NET Framework Web + git↔SVN bridged dev process.
 
-turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝你需要的那塊：
-（第六個 `turbo-plugin-feedback` 是共用件，下面五個都相依它，會自動一起裝上。）
+turbo-plugins-claude 收納六個正交、各自獨立安裝的 plugin。只裝你需要的那塊：
+（第七個 `turbo-plugin-feedback` 是共用件，下面每一個都相依它，會自動一起裝上。）
 
 | Plugin | 用途 | 需要 setup? |
 |---|---|---|
@@ -12,6 +12,7 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
 | **`turbo-plugin-three-environment-db`** | 三環境 DB 輔助（`tp-db-management` skill + `tp-dbhub` MCP server） | 複製 `dbhub.example.local.toml` → `dbhub.local.toml` 填值 |
 | **`turbo-plugin-code-comment`** | C# / JS / TS 註解撰寫慣例（`tp-csharp-comment` / `tp-js-comment`） | 否（純 skill） |
 | **`turbo-plugin-multi-repo-workspace`** | 「一個資料夾底下並排放著多個獨立 git repo」的工作區設定（`tp-multi-repo-workspace-setup`） | 是（`/tp-multi-repo-workspace-setup`，每個工作區一次） |
+| **`turbo-plugin-knowledge-placement`** | 「這件事該寫在哪」的判準 + 把 agent 記憶匯出成交接文件（`tp-knowledge-placement-setup` / `tp-export-handover`） | 是（`/tp-knowledge-placement-setup`，每個專案一次） |
 | `turbo-plugin-feedback` | 把 turbo-plugin 的問題回報成 issue（`tp-report-issue`，含 public repo 消毒規則）。**不必自己裝**——上面每一個都相依它 | 否（純 skill） |
 
 ### 怎麼選
@@ -21,6 +22,7 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
 - 要用 DBHub 唯讀檢視三環境 DB + SQL 標準化 → 加裝 **`turbo-plugin-three-environment-db`**。
 - 只想要程式碼註解慣例（不碰 SVN / IIS / DB）→ 單裝 **`turbo-plugin-code-comment`** 即可，無需 setup。
 - session 開在「並排放著多個獨立 repo」的資料夾（`proj-root/proj-1` + `proj-root/proj-2` + …）→ 加裝 **`turbo-plugin-multi-repo-workspace`**；它相依 `turbo-plugin-git-svn`，安裝時會自動一起裝上。
+- 常搞不清楚「這條規範該寫進 `CLAUDE.md`、`docs/`、還是讓 agent 記著」，或者**換人接手時那些只有現在成立的事會整批消失** → 加裝 **`turbo-plugin-knowledge-placement`**。它**刻意不被任何 plugin 相依**：用了 SVN 橋接不代表就得接受這套文件方法。
 - **遇到 plugin 本身的問題** → 不必做任何事：每個 plugin 都相依 `turbo-plugin-feedback`，它的 `tp-report-issue` 會主動把問題整理成 issue（送出前會先讓你過目）。
 
 > `.turbo-plugin/` 設定目錄由各 plugin 共用。`turbo-plugin-git-svn` 的 `/tp-setup` 會建立它；只裝 dotnet plugin 時不必先做任何事——需要寫設定的一方會自己把目錄、檔案與自己的區塊建起來。
@@ -63,12 +65,15 @@ turbo-plugins-claude 收納五個正交、各自獨立安裝的 plugin。只裝�
         "turbo-plugin-dotnet-framework@turbo-plugins-claude": true,
         "turbo-plugin-three-environment-db@turbo-plugins-claude": true,
         "turbo-plugin-code-comment@turbo-plugins-claude": true,
-        "turbo-plugin-multi-repo-workspace@turbo-plugins-claude": true
+        "turbo-plugin-multi-repo-workspace@turbo-plugins-claude": true,
+        "turbo-plugin-knowledge-placement@turbo-plugins-claude": true
       }
       ```
       `turbo-plugin-feedback` **不用列**——上面每一個都相依它，安裝時會自動帶上並一起啟用。
+      `turbo-plugin-knowledge-placement` 則相反：**沒有任何 plugin 相依它**，要用就得自己列上去。
 3. 若裝了 `turbo-plugin-git-svn`，在專案目錄啟動 Claude session 後執行 `/tp-setup` 完成 bootstrap。
 4. 若裝了 `turbo-plugin-multi-repo-workspace`，在**並排放著多個專案的那個資料夾**啟動 session 後執行 `/tp-multi-repo-workspace-setup`；它會注入該資料夾的 `CLAUDE.md`，並可逐一帶你完成各子專案的 `/tp-setup`。
+5. 若裝了 `turbo-plugin-knowledge-placement`，在每個專案執行一次 `/tp-knowledge-placement-setup`，把判準寫進該專案的 `CLAUDE.md`。
 
 ## 更新
 
