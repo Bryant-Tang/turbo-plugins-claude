@@ -13,49 +13,57 @@ name: Script Tests
 #     PS orchestrator does NOT resolve bash on non-Windows, so .sh never double-runs.
 #   Framework missing (Pester 5 absent / vendored shUnit2 absent) = the job FAILs (R20);
 #   only Unix x Windows-only-tool cases self-SKIP.
-# `push` matters as much as `pull_request`, and its absence was not a small gap: with only the
-# pull_request trigger, a long-lived branch that has not opened a PR yet gets ZERO CI runs, so the
-# ubuntu half of the matrix and the repo-level verify-core-identical job never execute at all. That
-# is exactly what happened on feat/turbo-plugin -- hundreds of commits, not one CI run, and a
-# shared-copy invariant stayed broken the whole time because the only thing that checks it had
-# never been given a chance to run. Local per-plugin orchestrators cover Windows; only CI covers
-# Linux. Run on every push so the feedback arrives while the change is fresh, not at merge time.
+# TRIGGERS: `main` on push, everything else via its pull request. This is the ordinary shape, and
+# it is here because the two alternatives were built and measured and both failed (issue #90).
+#
+# The problem it solves: with `push` on every branch, a commit on a PR branch ran the whole matrix
+# TWICE -- once as a push, once as a pull_request. ~28 minutes each, so ~55 minutes of runner time
+# for one commit's worth of information.
+#
+# Why not collapse the two runs instead. Both attempts foundered on the same GitHub rule, that
+# EVERY check-run on a SHA counts, not just the newest:
+#   * a shared `concurrency` group (PR #93) does cancel one side, but the cancelled run leaves a
+#     FAILURE `tests-passed` on that SHA, and the PR is then permanently BLOCKED;
+#   * skipping the redundant push run's jobs (PR #94) leaves a SKIPPED `tests-passed` -- and a
+#     skipped required check counts as SATISFIED. Worse than blocking: a dependent job creates no
+#     check-run until it starts, so for the ~28 minutes the real matrix is running there is no
+#     pending `tests-passed` to hold the door, and the PR reads as mergeable WHILE UNTESTED.
+# There is no third way as long as this workflow contains a job named `tests-passed`: skipped or
+# cancelled, that name always produces a check-run, and both readings are wrong.
+#
+# WHAT THIS GIVES UP, and what replaces it. A branch with no pull request now gets no CI at all.
+# That gap is real -- feat/turbo-plugin once ran hundreds of commits with no run, and a shared-copy
+# invariant stayed broken because the only thing that checks it never executed. The replacement is
+# a convention, written down in CLAUDE.md: OPEN A DRAFT PR AS SOON AS YOU CREATE THE BRANCH. Draft
+# pull requests fire `pull_request` events normally (this workflow filters no `types`), so a draft
+# gets the full matrix from its first commit.
+#
+# The residual risk is bounded in a way the old gap was not: a branch has to have a PR to be
+# merged, so the worst case is late feedback rather than none. That was in fact the cost of the
+# feat/turbo-plugin incident too -- the invariant was caught when the PR opened, just far too late.
+#
+# This also deletes a workaround rather than adding one. `branches-ignore: release-please--**` used
+# to be needed because release-please creates its branch pointing at main's HEAD, so that first
+# push fired a run whose `github.sha` IS main's, and cancelling it left a FAILURE `tests-passed` on
+# main's own commit (measured on 12eb846: four `tests-passed` check-runs on one SHA). With push
+# limited to main, release-please's branch pushes do not trigger this workflow at all.
 on:
   push:
-    # release-please's own branches are excluded from the PUSH trigger only; their `pull_request`
-    # runs still happen, so the Release PR still gets tests-passed and branch protection is intact.
-    #
-    # What this removes: release-please creates a branch in two steps -- first pointing at main's
-    # HEAD, then pushing the release commit onto it. That first push fires a run whose `github.sha`
-    # IS main's HEAD, and the second push then cancels it via the concurrency group below. The
-    # cancelled run's `tests-passed` records a FAILURE, and GitHub aggregates every check-run for a
-    # SHA -- so main's own commit goes red even though its real push run passed.
-    #
-    # Measured on 12eb846 (the PR #54 merge): 4 tests-passed check-runs on that one SHA -- the real
-    # push-to-main run (success, 22m53s) plus three cancelled ones, exactly the three release-please
-    # branches that were newly CREATED that round. The pre-existing one (multi-repo-workspace) did
-    # not produce the artifact, because it was updated rather than created.
-    #
-    # This is worth fixing for the same reason the rest of this file is careful: a main branch whose
-    # commits are permanently red is a main branch where a genuine failure is invisible.
-    #
-    # Does this reopen the gap the comment above warns about ("a long-lived branch that has not
-    # opened a PR yet gets ZERO CI")? No. release-please opens the Release PR in the same run that
-    # creates the branch, so these branches always have one by construction -- they are the single
-    # branch family where the push trigger is guaranteed redundant. The exclusion is written as an
-    # exact prefix rather than something broad, so no human branch can accidentally fall into it.
-    branches-ignore:
-      - 'release-please--**'
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A push and its pull_request both trigger this workflow, and a branch under active development
-# gets many pushes in a row. Only the newest commit's result is interesting, so supersede the
-# older runs instead of paying for all of them. The default branch is excluded from cancellation
-# so a merge to main always gets a complete recorded result.
+# A branch under active development gets many pushes in a row, and only the newest commit's result
+# is interesting, so supersede the older runs instead of paying for all of them. The default branch
+# is excluded from cancellation so a merge to main always gets a complete recorded result.
+#
+# Grouping by `github.ref` is right for what is left after the trigger change above: a PR branch
+# now produces only pull_request runs, which all share `refs/pull/<n>/merge`, so a new commit
+# supersedes the previous one exactly as intended. It no longer has to reconcile two events.
 concurrency:
   group: script-tests-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -64,23 +72,10 @@ jobs:
   # ── discover ────────────────────────────────────────────────────────────────
   discover:
     runs-on: ubuntu-latest
-    # `pull-requests: read` is for the open-PR query in the `redundant` step. The workflow-level
-    # block grants only `contents: read`, and naming ANY permission sets every unnamed one to none,
-    # so without this the call would 404. It happens to succeed today because this repository is
-    # public (listing PRs is an unauthenticated read) -- which makes the omission a LATENT bug: the
-    # day the repo turns private, the call fails, the classifier fail-opens to `false`, and the
-    # step silently stops saving anything while every run still goes green.
-    #
-    # This has to live on the JOB. `permissions` is only valid at workflow or job level; on a step
-    # it is not "ignored", it makes GitHub reject the whole workflow file.
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
       count: ${{ steps.set.outputs.count }}
       affected: ${{ steps.affected.outputs.list }}
-      redundant: ${{ steps.redundant.outputs.value }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -208,63 +203,13 @@ jobs:
           echo "Affected plugin(s): ${touched}"
           echo "list=${touched}" >> "$GITHUB_OUTPUT"
 
-      # ── Is this push already covered by a pull_request run? ─────────────────
-      # Both triggers fire for a commit on a PR branch, so the same matrix ran twice: ~28 minutes
-      # each, measured on #88 and #92. The push trigger itself must stay -- without it a branch
-      # with no PR yet gets ZERO runs, which is how feat/turbo-plugin went hundreds of commits with
-      # a broken shared-copy invariant and nothing to notice. What gets removed is the DUPLICATE.
-      #
-      # NOT via `concurrency`. That was tried on PR #93 and reverted: putting both events in one
-      # group does collapse them, but the cancelled side leaves a FAILURE `tests-passed` on the
-      # SHA, and GitHub aggregates EVERY check-run for a SHA instead of taking the newest -- so the
-      # PR is permanently BLOCKED. This file's own header already recorded that property (PR #54 /
-      # 12eb846, four `tests-passed` on one SHA); the experiment only confirmed it.
-      #
-      # `|| true` and the empty default are load-bearing: a failed API call must NOT read as "no
-      # open PRs". The classifier treats anything non-numeric as "unknown" and answers `false`,
-      # i.e. run the tests. Skipping a run that was needed leaves NO check behind at all, which is
-      # the invisible direction; running one that was not needed only costs minutes.
-      - name: Is this push already covered by a pull request?
-        id: redundant
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # NOT interpolated into the `run:` script below. A branch name may legally contain
-          # backticks, `$(...)`, quotes -- and `${{ }}` is substituted as raw text BEFORE bash sees
-          # the script, so a branch named `` `id` `` would execute. Passing through the environment
-          # keeps it data. (github.event_name and github.repository are from fixed vocabularies,
-          # but they go through env too rather than leaving a reader to check which is which.)
-          REF_NAME: ${{ github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
-          REPO: ${{ github.repository }}
-          OWNER: ${{ github.repository_owner }}
-        shell: bash
-        run: |
-          set -uo pipefail
-          count=''
-          if [ "$EVENT_NAME" = 'push' ]; then
-            count="$(gh api "repos/${REPO}/pulls?state=open&head=${OWNER}:${REF_NAME}" \
-              --jq 'length' 2>/dev/null || true)"
-            echo "Open PRs for ${REF_NAME}: ${count:-<unknown>}"
-            # Make the degraded path VISIBLE. An unreadable count is safe (the classifier answers
-            # `false`, so the tests run) but it silently gives up the saving this step exists for,
-            # and a silent no-op is indistinguishable from a working one.
-            case "$count" in
-              ''|*[!0-9]*) echo "::warning::Could not read the open-PR count for ${REF_NAME}; running the full suite." ;;
-            esac
-          fi
-          # `env -u GH_TOKEN`, for the same reason as the classifier above: this is checked-out
-          # code and a pure function, so it has no business holding a token.
-          value="$(env -u GH_TOKEN bash tools/is-redundant-push.sh "$EVENT_NAME" "$count")"
-          echo "redundant=${value}"
-          echo "value=${value}" >> "$GITHUB_OUTPUT"
-
   # ── test-windows ────────────────────────────────────────────────────────────
   # Windows PowerShell 5.1 (powershell.exe) runs the ONE orchestrator, which covers
   # BOTH .ps1 (Pester 5) and .sh (vendored shUnit2 via git-bash). Pester 5 is installed
   # side-by-side with the WinPS-builtin 3.4; shUnit2 is vendored (no install).
   test-windows:
     needs: discover
-    if: ${{ needs.discover.outputs.count != '0' && needs.discover.outputs.redundant != 'true' }}
+    if: ${{ needs.discover.outputs.count != '0' }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -425,7 +370,7 @@ jobs:
   # cases RUN. Pester 5 is installed for pwsh; shUnit2 is vendored.
   test-ubuntu:
     needs: discover
-    if: ${{ needs.discover.outputs.count != '0' && needs.discover.outputs.redundant != 'true' }}
+    if: ${{ needs.discover.outputs.count != '0' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -542,11 +487,6 @@ jobs:
   # plugin discovery — always runs. This is the ONE workflow job that adding a plugin
   # may need to be aware of (R21 exception); the tool auto-discovers copies, so no edit
   # is needed per plugin.
-  # NOT gated on `redundant`, deliberately. This job and tools-tests finish in about a minute each,
-  # while the two matrix jobs take ~28; skipping those two is where all of the saving is. Gating
-  # these as well would buy a couple of minutes in exchange for a `needs: discover` edge that makes
-  # the cheap, always-relevant checks wait on the plugin discovery step. The redundant round is
-  # therefore not free -- it costs discover + these two -- and that is the accepted trade.
   verify-core-identical:
     runs-on: ubuntu-latest
     steps:
@@ -600,18 +540,7 @@ jobs:
   tests-passed:
     # Without always(), this job is SKIPPED when an upstream job fails -- so it would stop
     # reporting at exactly the moment it matters, and a skipped required check never turns red.
-    #
-    # The redundancy clause is the ONE case where being skipped is correct: the matrix did not run
-    # because the identical commit is being tested by its pull_request run, and THAT run's
-    # `tests-passed` is the gate. Letting this job run here instead would report failure -- the
-    # step below deliberately treats `skipped` upstreams as failure -- and block the PR.
-    #
-    # This deliberately relies on a skipped required check counting as satisfied. If that turns out
-    # to be wrong, the PR blocks immediately and visibly, which is why it is written this way round
-    # rather than short-circuiting to a green result: a `tests-passed` that reports SUCCESS without
-    # having tested anything is the failure mode this repo keeps getting bitten by, and it would be
-    # silent. Blocking is loud.
-    if: ${{ always() && needs.discover.outputs.redundant != 'true' }}
+    if: always()
     needs: [discover, verify-core-identical, tools-tests, test-ubuntu, test-windows]
     runs-on: ubuntu-latest
     steps:
