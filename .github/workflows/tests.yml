@@ -68,6 +68,7 @@ jobs:
       matrix: ${{ steps.set.outputs.matrix }}
       count: ${{ steps.set.outputs.count }}
       affected: ${{ steps.affected.outputs.list }}
+      redundant: ${{ steps.redundant.outputs.value }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -195,13 +196,49 @@ jobs:
           echo "Affected plugin(s): ${touched}"
           echo "list=${touched}" >> "$GITHUB_OUTPUT"
 
+      # ── Is this push already covered by a pull_request run? ─────────────────
+      # Both triggers fire for a commit on a PR branch, so the same matrix ran twice: ~28 minutes
+      # each, measured on #88 and #92. The push trigger itself must stay -- without it a branch
+      # with no PR yet gets ZERO runs, which is how feat/turbo-plugin went hundreds of commits with
+      # a broken shared-copy invariant and nothing to notice. What gets removed is the DUPLICATE.
+      #
+      # NOT via `concurrency`. That was tried on PR #93 and reverted: putting both events in one
+      # group does collapse them, but the cancelled side leaves a FAILURE `tests-passed` on the
+      # SHA, and GitHub aggregates EVERY check-run for a SHA instead of taking the newest -- so the
+      # PR is permanently BLOCKED. This file's own header already recorded that property (PR #54 /
+      # 12eb846, four `tests-passed` on one SHA); the experiment only confirmed it.
+      #
+      # `|| true` and the empty default are load-bearing: a failed API call must NOT read as "no
+      # open PRs". The classifier treats anything non-numeric as "unknown" and answers `false`,
+      # i.e. run the tests. Skipping a run that was needed leaves NO check behind at all, which is
+      # the invisible direction; running one that was not needed only costs minutes.
+      - name: Is this push already covered by a pull request?
+        id: redundant
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          count=''
+          if [ "${{ github.event_name }}" = 'push' ]; then
+            count="$(gh api \
+              "repos/${{ github.repository }}/pulls?state=open&head=${{ github.repository_owner }}:${{ github.ref_name }}" \
+              --jq 'length' 2>/dev/null || true)"
+            echo "Open PRs for ${{ github.ref_name }}: ${count:-<unknown>}"
+          fi
+          # `env -u GH_TOKEN`, for the same reason as the classifier above: this is checked-out
+          # code and a pure function, so it has no business holding a token.
+          value="$(env -u GH_TOKEN bash tools/is-redundant-push.sh "${{ github.event_name }}" "$count")"
+          echo "redundant=${value}"
+          echo "value=${value}" >> "$GITHUB_OUTPUT"
+
   # ── test-windows ────────────────────────────────────────────────────────────
   # Windows PowerShell 5.1 (powershell.exe) runs the ONE orchestrator, which covers
   # BOTH .ps1 (Pester 5) and .sh (vendored shUnit2 via git-bash). Pester 5 is installed
   # side-by-side with the WinPS-builtin 3.4; shUnit2 is vendored (no install).
   test-windows:
     needs: discover
-    if: ${{ needs.discover.outputs.count != '0' }}
+    if: ${{ needs.discover.outputs.count != '0' && needs.discover.outputs.redundant != 'true' }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -362,7 +399,7 @@ jobs:
   # cases RUN. Pester 5 is installed for pwsh; shUnit2 is vendored.
   test-ubuntu:
     needs: discover
-    if: ${{ needs.discover.outputs.count != '0' }}
+    if: ${{ needs.discover.outputs.count != '0' && needs.discover.outputs.redundant != 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -532,7 +569,18 @@ jobs:
   tests-passed:
     # Without always(), this job is SKIPPED when an upstream job fails -- so it would stop
     # reporting at exactly the moment it matters, and a skipped required check never turns red.
-    if: always()
+    #
+    # The redundancy clause is the ONE case where being skipped is correct: the matrix did not run
+    # because the identical commit is being tested by its pull_request run, and THAT run's
+    # `tests-passed` is the gate. Letting this job run here instead would report failure -- the
+    # step below deliberately treats `skipped` upstreams as failure -- and block the PR.
+    #
+    # This deliberately relies on a skipped required check counting as satisfied. If that turns out
+    # to be wrong, the PR blocks immediately and visibly, which is why it is written this way round
+    # rather than short-circuiting to a green result: a `tests-passed` that reports SUCCESS without
+    # having tested anything is the failure mode this repo keeps getting bitten by, and it would be
+    # silent. Blocking is loud.
+    if: ${{ always() && needs.discover.outputs.redundant != 'true' }}
     needs: [discover, verify-core-identical, tools-tests, test-ubuntu, test-windows]
     runs-on: ubuntu-latest
     steps:
