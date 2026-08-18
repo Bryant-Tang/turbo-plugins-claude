@@ -154,7 +154,9 @@ try {
             $ErrorActionPreference = $eaRevert
             throw
         } finally {
-            if (Test-Path -LiteralPath $msgFile) { Remove-Item -LiteralPath $msgFile -Force -ErrorAction SilentlyContinue }
+            # .NET, not Remove-Item: -LiteralPath mangles a temp path whose user-profile segment is
+            # an 8.3 short alias, and -ErrorAction cannot suppress it. See Submit-SvnCommit.ps1.
+            if (Test-Path -LiteralPath $msgFile) { try { [System.IO.File]::Delete($msgFile) } catch { } }
         }
 
         # post-commit resync + read the new revision (EAP-soften: svn update is a resync, its stderr

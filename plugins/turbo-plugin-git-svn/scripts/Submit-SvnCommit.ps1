@@ -380,7 +380,15 @@ UNWIND (the commit was rejected and would be rejected again):
         Pop-Location
         foreach ($tmp in @($msgFile, $targetsAdd, $targetsDel, $targetsCommit)) {
             if (-not [string]::IsNullOrWhiteSpace($tmp) -and (Test-Path -LiteralPath $tmp)) {
-                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                # .NET, not Remove-Item. -LiteralPath still applies PowerShell's own path
+                # resolution, and it answers "An object at the specified path C:\Users\XXXXXX~1 does
+                # not exist" for a file that plainly exists whenever the USER-PROFILE segment is an
+                # 8.3 short alias -- which is what GetTempPath() returns wherever TMP/TEMP hold the
+                # short form. It is an argument-transformation error, so -ErrorAction cannot
+                # suppress it: this line leaked every temp file it touched, silently.
+                # (Measured: only the profile segment triggers it; an 8.3 alias elsewhere in the
+                # path, or a plain `~` in a directory name, is fine.)
+                try { [System.IO.File]::Delete($tmp) } catch { }
             }
         }
     }
