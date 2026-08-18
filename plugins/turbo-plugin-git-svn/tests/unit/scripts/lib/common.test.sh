@@ -1213,6 +1213,39 @@ test_write_svn_targets_file_handles_many_paths() {
     rm -f "$out"
 }
 
+# The refusal. A path the ANSI codepage cannot represent (CJK on a CP1252 host, which is what the
+# CI Windows runner is) must fail HERE, naming the codepage -- not be written as question marks and
+# left for svn to report as "E200009 ... targets don't exist", which names neither the file nor the
+# cause. The behaviour has been in place since #35; it had no test, and the PowerShell twin was
+# silently substituting '?' until that was noticed.
+test_write_svn_targets_file_refuses_an_unrepresentable_path() {
+    local out unrep err rc cp
+    # An emoji, not a CJK name: CP950 CARRIES CJK, so a CJK name would make this case skip on the
+    # very machines most likely to run it by hand, and only ever execute on the CI runner. No
+    # legacy ANSI codepage can represent an astral character, so this exercises the refusal on
+    # every non-UTF-8 host.
+    unrep="$(printf 'Content/\xF0\x9F\x98\x80.txt')"
+    cp="$(_svn_ansi_codepage 2>/dev/null || true)"
+    # Nothing to refuse where every path is representable: off Windows, on a UTF-8 ACP, or when the
+    # codepage lookup itself failed (that path has its own, separate error).
+    if [ -z "$cp" ] || [ "$cp" = '65001' ]; then
+        startSkipping
+        return 0
+    fi
+    out="$(mktemp)"
+    err="$(write_svn_targets_file "$out" "$unrep" 2>&1)"; rc=$?
+    assertNotEquals 'writing an unrepresentable path fails' 0 "$rc"
+    case "$err" in
+        *'cannot represent'*) assertTrue 'the message says the codepage cannot represent it' 0 ;;
+        *) fail "expected a 'cannot represent' message, got: $err" ;;
+    esac
+    case "$err" in
+        *"CP$cp"*) assertTrue 'the message names the codepage' 0 ;;
+        *) fail "expected the message to name CP$cp, got: $err" ;;
+    esac
+    rm -f "$out"
+}
+
 # --- expand_unversioned_dir (issue #24) ---------------------------------------
 # svn status collapses an unversioned directory into a single '?' line; the commit step adds it
 # recursively. These cover the expansion that closes that gap in the confirmation list.

@@ -1279,12 +1279,19 @@ Describe 'Write-SvnTargetsFile (issue #35)' {
             Set-ItResult -Skipped -Because "ANSI codepage is $acp (UTF-8 host); nothing to distinguish"
             return
         }
+        # A CJK path is the case that actually differs between the two encodings.
+        # Built from code points (U+4E2D U+6587) rather than literal characters so this
+        # assertion does not itself depend on how the test file is encoded.
+        $cjk = "Content/$([char]0x4E2D)$([char]0x6587).txt@"
+        $ansiProbe = [System.Text.Encoding]::GetEncoding($acp)
+        if ($ansiProbe.GetString($ansiProbe.GetBytes($cjk)) -ne $cjk) {
+            # CP1252 and friends cannot represent CJK at all, so there is no "correct bytes" to
+            # compare against -- the function refuses instead, which is its own case below.
+            Set-ItResult -Skipped -Because "CP$acp cannot represent a CJK path; refusal is covered separately"
+            return
+        }
         $f = [System.IO.Path]::GetTempFileName()
         try {
-            # A CJK path is the case that actually differs between the two encodings.
-            # Built from code points (U+4E2D U+6587) rather than literal characters so this
-            # assertion does not itself depend on how the test file is encoded.
-            $cjk = "Content/$([char]0x4E2D)$([char]0x6587).txt@"
             Write-SvnTargetsFile -Path $f -Targets @($cjk)
 
             $ansi = [System.Text.Encoding]::GetEncoding($acp)
@@ -1292,6 +1299,42 @@ Describe 'Write-SvnTargetsFile (issue #35)' {
             $actual = [System.IO.File]::ReadAllBytes($f)
             # Byte-for-byte: reading it back as UTF-8 would silently "work" and prove nothing.
             [System.Convert]::ToBase64String($actual) | Should -Be ([System.Convert]::ToBase64String($expected))
+        } finally {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses a path its codepage cannot represent instead of writing question marks' {
+        # GetEncoding's DEFAULT encoder fallback substitutes '?' for every unmappable character, so
+        # a CJK filename on a CP1252 host was written as "??????.txt" and svn then reported
+        # "E200009: Could not add all targets ... don't exist" -- naming neither the file nor the
+        # cause, and pointing the reader at the push logic instead of at the codepage. The bash twin
+        # has always failed loudly here (iconv returns non-zero); this is the same behaviour.
+        # Observed on the CI Windows runner, whose ACP is 1252.
+        $onWindows = ($env:OS -eq 'Windows_NT') -or ([System.Environment]::OSVersion.Platform -eq 'Win32NT')
+        if (-not $onWindows) {
+            Set-ItResult -Skipped -Because 'no CP_ACP off Windows; svn reads the locale encoding there'
+            return
+        }
+        $acp = [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage
+        if ($acp -le 0 -or $acp -eq 65001) {
+            Set-ItResult -Skipped -Because "ANSI codepage is $acp (UTF-8 host); every path is representable"
+            return
+        }
+        # An emoji (U+1F600, as its surrogate pair), not a CJK name: CP950 CARRIES CJK, so a CJK
+        # name would make this case skip on the very machines most likely to run it by hand and
+        # only ever execute on the CI runner. No legacy ANSI codepage can represent an astral
+        # character, so this exercises the refusal on every non-UTF-8 host.
+        # Built from code points, like the case above it: an assertion about encoding must not
+        # itself depend on how this test file happens to be encoded.
+        $unrep = "Content/$([char]0xD83D)$([char]0xDE00).txt"
+        $f = [System.IO.Path]::GetTempFileName()
+        try {
+            { Write-SvnTargetsFile -Path $f -Targets @($unrep) } |
+                Should -Throw -ExpectedMessage '*cannot represent*'
+            # ...and it must not have left a half-written file of question marks behind either.
+            $bytes = [System.IO.File]::ReadAllBytes($f)
+            $bytes.Length | Should -Be 0
         } finally {
             Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
         }
