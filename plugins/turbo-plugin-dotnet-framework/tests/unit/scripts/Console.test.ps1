@@ -332,18 +332,55 @@ Describe 'Start-Console / Stop-Console (U11)' {
         # stdout pipe and then allowed to exit:
         #   Start-Process -NoNewWindow -> launcher exited, pipe NEVER reached EOF
         #   Win32_Process.Create       -> launcher exited, pipe reached EOF immediately
-        It 'does not launch with Start-Process' {
-            $script:startConsoleCode | Should -Not -Match 'Start-Process'
-            $script:startConsoleCode | Should -Not -Match '-NoNewWindow'
+        # The OUTER launch must not be Start-Process. The intermediary still uses it -- that is the
+        # whole design: the program inherits the intermediary's handles, and the intermediary
+        # inherited none of the harness's. So this asserts the boundary, not the absence of the
+        # cmdlet: the process this script creates is created by WMI.
+        It 'creates its child through WMI, not Start-Process' {
+            $script:startConsoleCode | Should -Match 'Invoke-CimMethod'
+            $script:startConsoleCode | Should -Match 'Win32_Process'
+            # ...and the thing WMI starts is this script again, not the program and not a shell.
+            $script:startConsoleCode | Should -Match 'LaunchSpec'
         }
         It 'launches with Win32_Process.Create and a new hidden console' {
             $script:startConsoleCode | Should -Match 'Win32_Process'
             $script:startConsoleCode | Should -Match 'CreateFlags'
             $script:startConsoleCode | Should -Match 'ShowWindow'
         }
-        It 'keeps stdout / stderr redirection through the cmd wrapper' {
-            $script:startConsoleCode | Should -Match '/s /c'
-            $script:startConsoleCode | Should -Match ([regex]::Escape('2>"{3}"'))
+        It 'keeps stdout / stderr redirection, via Start-Process in the intermediary' {
+            $script:startConsoleCode | Should -Match 'RedirectStandardOutput'
+            $script:startConsoleCode | Should -Match 'RedirectStandardError'
+        }
+
+        # THE ARGUMENTS MUST NOT REACH A SHELL. This is a security lock, not a style one.
+        #
+        # The first version of the #82 fix wrapped the launch in `cmd /s /c "<exe> <args> >out ..."`,
+        # which handed the user's -Arguments string to cmd. Measured on that build:
+        #   sent `a&b`            -> the program received NOTHING; cmd ran `b` as a second command
+        #   sent `%USERNAME%`     -> silently expanded, and split into two arguments
+        #   sent `"%USERNAME%"`   -> STILL expanded; double quotes do not protect `%`
+        #   sent `x & echo PWNED` -> PWNED executed
+        # -Arguments comes from the CLI or from .turbo-plugin/config.local.toml [run].arguments, so
+        # that is local command injection, and it was a regression: Start-Process -ArgumentList
+        # never involved a shell.
+        It 'does not let a shell interpret -Arguments' -Skip:(-not $script:CanRunConsoleCases) {
+            $sb = New-ConsoleSandbox -Tag 'arginject'
+            try {
+                $null = Add-FakeBuiltExe -SandboxDir $sb -Kind 'oneshot'
+                # The evidence is a SIDE EFFECT, not the text of the output: Start-Console echoes the
+                # requested arguments back ("Arguments: ..."), so searching stdout for a marker
+                # matches that echo and proves nothing.
+                #
+                # `mkdir`, not `echo > file`: the launcher appends its own redirects AFTER the
+                # arguments, so an injected `> canary` is overridden by the later `>"stdout.log"`
+                # and the canary never appears even when the injection DID run. Verified both ways
+                # -- against the rejected cmd-wrapper build this directory IS created, and against
+                # the current one it is not.
+                $canary = [System.IO.Path]::Combine($sb, 'INJECTED')
+                $null = Invoke-ConsoleScript -ScriptPath $script:StartScript -WorkDir $sb `
+                    -ScriptArgs @('-Arguments', ('no-such-pattern & mkdir "' + $canary + '"'))
+                [System.IO.Directory]::Exists($canary) | Should -BeFalse -Because 'no shell may interpret -Arguments'
+            } finally { Remove-ConsoleSandbox -Dir $sb }
         }
 
         # The exit code must not come from a process handle on this path: opening one right after
@@ -351,9 +388,15 @@ Describe 'Start-Console / Stop-Console (U11)' {
         # over 25 runs), and retrying cannot help because Create returns only once the process
         # exists. An unreadable code used to bind $null to the result template's [int] as 0, i.e. a
         # failed run reported as a success -- so it is captured to a file by cmd itself instead.
-        It 'captures the exit code to a file rather than from a process handle' {
-            $script:startConsoleCode | Should -Match ([regex]::Escape('%^ERRORLEVEL%'))
+        It 'captures the exit code and the PID as files, not from a process handle' {
+            $script:startConsoleCode | Should -Match 'codeFile'
+            $script:startConsoleCode | Should -Match 'pidFile'
             $script:startConsoleCode | Should -Not -Match '\$process\.ExitCode'
+        }
+        It 'never builds a shell command line' {
+            # cmd would re-parse everything spliced into it, including -Arguments.
+            $script:startConsoleCode | Should -Not -Match 'ComSpec'
+            $script:startConsoleCode | Should -Not -Match '/s /c'
         }
         It 'refuses to invent an exit code it could not read' {
             # Reporting 0 for an unreadable code is the silent failure this whole path prevents, so

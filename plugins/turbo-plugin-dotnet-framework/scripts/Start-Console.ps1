@@ -4,13 +4,54 @@
     [string]$WorkingDirectory = '',
     [string]$Configuration = '',
     [int]$Timeout = 0,
-    [string]$RepoRoot = ''
+    [string]$RepoRoot = '',
+    # Internal. Set only when this script re-enters itself as the launcher process described below;
+    # never passed by a user or by the SKILL.
+    [string]$LaunchSpec = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . ([System.IO.Path]::Combine($PSScriptRoot, 'lib', 'Common.ps1'))
+
+# ── internal launcher mode ───────────────────────────────────────────────────
+# Started by the main path below through Win32_Process.Create, and doing exactly one thing: being a
+# process the agent harness did NOT spawn. The console it starts inherits THIS process's handles,
+# and this process inherited none of the harness's, so a console that outlives the run cannot hold
+# the harness's output pipe open (issue #82). Measured: launcher exits, pipe reaches EOF.
+#
+# The spec arrives as a FILE, and that is the other half of the design. The user's -Arguments string
+# reaches Start-Process -ArgumentList untouched -- straight to CreateProcess, no shell anywhere --
+# which is what it did before this fix. Routing it through `cmd /s /c` instead was measured to be
+# actively wrong, not merely risky:
+#   sent `a&b`            -> the program received NOTHING; cmd ran `b` as a second command
+#   sent `%USERNAME%`     -> silently expanded, and split into two arguments
+#   sent `"%USERNAME%"`   -> STILL expanded; double quotes do not protect `%`
+#   sent `x & echo PWNED` -> PWNED executed
+# Escaping was rejected as the fix: `^` works outside quotes but is literal inside them, so getting
+# it right means parsing the user's own quoting state -- the kind of code whose bugs are silent.
+if (-not [string]::IsNullOrWhiteSpace($LaunchSpec)) {
+    $spec = Get-Content -LiteralPath $LaunchSpec -Raw | ConvertFrom-Json
+    $sp = @{
+        FilePath               = $spec.exe
+        WorkingDirectory       = $spec.workDir
+        NoNewWindow            = $true
+        PassThru               = $true
+        RedirectStandardOutput = $spec.stdout
+        RedirectStandardError  = $spec.stderr
+    }
+    if (-not [string]::IsNullOrWhiteSpace($spec.arguments)) { $sp['ArgumentList'] = $spec.arguments }
+    $child = Start-Process @sp
+    # Touch .Handle immediately. Without it a `Start-Process -PassThru` object reports ExitCode as
+    # $null after the process ends -- even after WaitForExit() -- because the process handle was
+    # never cached. Measured on PS 5.1.
+    $null = $child.Handle
+    [System.IO.File]::WriteAllText($spec.pidFile, [string]$child.Id)
+    $child.WaitForExit()
+    [System.IO.File]::WriteAllText($spec.codeFile, [string]$child.ExitCode)
+    exit 0
+}
 
 # Run a .NET Framework CONSOLE project's built executable -- the console half of "give the agent a
 # VS 2022". Visual Studio's Ctrl+F5 is the model: it runs the exe with the arguments and working
@@ -95,6 +136,8 @@ try {
     $tempStdout = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-console-$stamp.out.log")
     $tempStderr = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-console-$stamp.err.log")
     $tempExitCode = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-console-$stamp.code.txt")
+    $tempPidFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-console-$stamp.pid.txt")
+    $tempSpecFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-console-$stamp.spec.json")
 
     Write-Output "Running $exePath"
     if (-not [string]::IsNullOrWhiteSpace($runArgs)) { Write-Output "  Arguments:         $runArgs" }
@@ -114,30 +157,41 @@ try {
     # Win32_Process.Create builds the process from the WMI service, so it inherits nothing of ours.
     #
     # CREATE_NEW_CONSOLE (16) + SW_HIDE (0): a console program with no console of its own can die on
-    # startup, and the new one must not be visible. The cmd.exe wrapper is what keeps the
-    # stdout/stderr redirection (Win32_Process.Create cannot redirect); `cmd /s /c` takes the rest
-    # of the line verbatim after stripping the outer quotes, so the inner quoting survives.
-    $comspec = if ([string]::IsNullOrWhiteSpace($env:ComSpec)) { 'cmd.exe' } else { $env:ComSpec }
-    $argsPart = if ([string]::IsNullOrWhiteSpace($runArgs)) { '' } else { ' ' + $runArgs }
+    # startup, and the new one must not be visible.
+    #
+    # What gets launched is THIS SCRIPT AGAIN, in -LaunchSpec mode (see the top of the file), not
+    # the program and not a shell. That intermediary is what keeps the user's -Arguments away from
+    # any parser: it reads the spec from a file and hands the string straight to
+    # Start-Process -ArgumentList, exactly as this script always did. A `cmd /s /c` wrapper was
+    # tried first and is measurably unsafe -- `a&b` lost the second half to cmd, `%USERNAME%` was
+    # expanded even inside double quotes, and `x & echo PWNED` ran.
+    #
+    # The exit code and the program's PID come back as FILES, written by the intermediary. Reading
+    # them from a process object would not be reliable here: opening a handle right after
+    # Win32_Process.Create fails about 1 in 25 times when the program exits instantly (measured over
+    # 25 runs), and retrying cannot help because Create only returns once the process exists -- so a
+    # failure means it is already gone. A program that exits instantly is exactly the crashing one
+    # whose exit code matters most, and the old code turned an unreadable code into 0, i.e. a failed
+    # run reported as success.
+    $psHost = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    # NOT named $launchSpec: PowerShell variable names are case-insensitive, so that would BE the
+    # [string]$LaunchSpec parameter, and assigning an object to it silently coerces via ToString()
+    # -- the spec file then contains "@{exe=...; arguments=...}" instead of JSON, the intermediary
+    # fails to read a property, and the only symptom is a launch that never reports back.
+    $specObject = [pscustomobject]@{
+        exe       = $exePath
+        arguments = $runArgs
+        workDir   = $workDir
+        stdout    = $tempStdout
+        stderr    = $tempStderr
+        pidFile   = $tempPidFile
+        codeFile  = $tempExitCode
+    }
+    Write-Utf8NoBom -Path $tempSpecFile -Content (($specObject | ConvertTo-Json -Depth 3) + "`n")
 
-    # THE EXIT CODE COMES BACK AS A FILE, and that is not belt-and-braces.
-    #
-    # The old code read it from the Process object, and its own note explains why that matters: a
-    # $null ExitCode binds to the [int] of the result template as 0, so a FAILED run reports success
-    # and this script exits 0. On the WMI path the object itself is not guaranteed: opening a handle
-    # to the shell right after Create fails about 1 in 25 times when the program exits instantly
-    # (measured, 25 runs) -- and retrying cannot help, because Create only returns once the process
-    # exists, so a failure means it is already gone. A program that exits instantly is exactly the
-    # crashing one whose exit code matters most.
-    #
-    # `& call echo %^ERRORLEVEL%>"<file>"` is the way to capture it without delayed expansion:
-    # plain %ERRORLEVEL% inside `cmd /c "a & b"` expands when the LINE is parsed, i.e. before `a`
-    # has run, and `cmd /v:on` would fix that but makes `!` special everywhere -- which would break
-    # any path containing one. `call` re-parses its own line, so `%^ERRORLEVEL%` is read after the
-    # program finished. Verified against paths containing both a space and a `!`.
-    $innerCommandLine = '"{0}"{1} >"{2}" 2>"{3}" & call echo %^ERRORLEVEL%>"{4}"' -f `
-        $exePath, $argsPart, $tempStdout, $tempStderr, $tempExitCode
-    $spawnCommandLine = '{0} /s /c "{1}"' -f $comspec, $innerCommandLine
+    # Only paths WE built go on this command line, and CreateProcess (not a shell) parses it.
+    $spawnCommandLine = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" -LaunchSpec "{2}"' -f `
+        $psHost, $PSCommandPath, $tempSpecFile
 
     $startupClass = Get-CimClass -ClassName Win32_ProcessStartup
     $startupInfo = New-CimInstance -CimClass $startupClass -ClientOnly -Property @{
@@ -153,13 +207,13 @@ try {
         $rv = if ($null -eq $spawn) { 'null' } else { $spawn.ReturnValue }
         throw "無法啟動 console 程式:Win32_Process.Create 回傳 $rv。"
     }
-    $shellPid = [int]$spawn.ProcessId
+    $helperPid = [int]$spawn.ProcessId
 
     $cfgTimeout = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'run' -Key 'console_timeout_seconds' -CliValue $null -Default $null
     $timeoutSeconds = if ($Timeout -gt 0) { $Timeout } elseif ($null -ne $cfgTimeout) { [int]$cfgTimeout } else { 30 }
 
-    # The exit-code file appearing IS "the program finished" -- cmd writes it only after the program
-    # returned, so it is a signal that does not depend on holding a process handle.
+    # The exit-code file appearing IS "the program finished" -- the intermediary writes it only
+    # after WaitForExit returned, so it is a signal that does not depend on holding a process handle.
     $waitDeadline = (Get-Date).AddSeconds($timeoutSeconds)
     $exited = $false
     while ((Get-Date) -lt $waitDeadline) {
@@ -195,7 +249,7 @@ try {
         # .NET, not Remove-Item: -LiteralPath still mangles a `~`, which every temp path has on a
         # machine with an 8.3 user profile -- and these `catch { }` blocks would have swallowed that
         # failure silently, leaking a temp file per run. See Remove-PerLaunchTempFile in Common.ps1.
-        foreach ($f in @($tempStdout, $tempStderr, $tempExitCode)) {
+        foreach ($f in @($tempStdout, $tempStderr, $tempExitCode, $tempPidFile, $tempSpecFile)) {
             if (Test-Path -LiteralPath $f -PathType Leaf) { try { [System.IO.File]::Delete($f) } catch { } }
         }
         if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
@@ -217,17 +271,24 @@ try {
     # Still running past the timeout: a long-lived console. Record just enough for Stop-Console to
     # be SURE it is stopping the same process -- a PID alone is reused by the OS, so the start time
     # is recorded with it and both must match.
-    # The PID to record is the PROGRAM's, not the cmd.exe wrapper's: Stop-Console stops what the
-    # user started, and the wrapper exits by itself once the program does. It is resolvable here
-    # precisely because this branch means the program is still alive.
-    $exeLeaf = [System.IO.Path]::GetFileName($exePath)
-    $child = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$shellPid AND Name='$exeLeaf'" -ErrorAction SilentlyContinue)
-    if ($child.Count -eq 0) {
-        throw "console 程式在 ${timeoutSeconds}s 後仍未結束,但找不到它的行程($exeLeaf,shell PID $shellPid)。"
+    # The PID to record is the PROGRAM's, not the intermediary's: Stop-Console stops what the user
+    # started, and the intermediary exits by itself once the program does. The intermediary wrote it
+    # to a file as soon as it had it, so it is read rather than searched for -- no WMI query, and
+    # nothing to get wrong when an assembly name contains a quote or matches another process.
+    $rawPid = ''
+    for ($i = 0; $i -lt 40; $i++) {
+        if ([System.IO.File]::Exists($tempPidFile)) {
+            try { $rawPid = [System.IO.File]::ReadAllText($tempPidFile) } catch { $rawPid = '' }
+            if ($rawPid -match '^\s*\d+\s*$') { break }
+        }
+        Start-Sleep -Milliseconds 50
     }
-    $process = Get-Process -Id $child[0].ProcessId -ErrorAction SilentlyContinue
+    if ($rawPid -notmatch '^\s*(\d+)\s*$') {
+        throw "console 程式在 ${timeoutSeconds}s 後仍未結束,但讀不回它的行程 ID(檔案:$tempPidFile)。"
+    }
+    $process = Get-Process -Id ([int]$Matches[1]) -ErrorAction SilentlyContinue
     if ($null -eq $process) {
-        throw "console 程式在 ${timeoutSeconds}s 後仍未結束,但無法開啟它的行程(PID $($child[0].ProcessId))。"
+        throw "console 程式在 ${timeoutSeconds}s 後仍未結束,但無法開啟它的行程(PID $($Matches[1]))。"
     }
 
     $tpDir = [System.IO.Path]::Combine($repoRoot, '.turbo-plugin')
@@ -239,14 +300,16 @@ try {
         project   = $projectFile
         stdout    = $tempStdout
         stderr    = $tempStderr
-        # Written by the cmd wrapper when the program eventually ends. Recorded so Stop-Console can
-        # clean it up with the other two instead of leaving one temp file behind per stopped run.
+        # Written by the intermediary when the program eventually ends. Recorded so Stop-Console can
+        # clean them up with the other two instead of leaving temp files behind per stopped run.
         exitCode  = $tempExitCode
-        # The wrapper's own PID. Stop-Console stops the PROGRAM, and only after that does the
-        # wrapper write the exit-code file and exit -- so deleting that file without waiting for the
-        # wrapper races the write and loses (the same shape as the Stop-Process teardown race
-        # already handled there). Recording it makes that wait possible.
-        shellPid  = $shellPid
+        pidFile   = $tempPidFile
+        spec      = $tempSpecFile
+        # The intermediary's own PID. Stop-Console stops the PROGRAM, and only after that does the
+        # intermediary write the exit-code file and exit -- so deleting that file without waiting
+        # for it races the write and loses (the same shape as the Stop-Process teardown race already
+        # handled there). Recording it makes that wait possible.
+        helperPid = $helperPid
     }
     Write-Utf8NoBom -Path $stateFile -Content (($state | ConvertTo-Json -Depth 3) + "`n")
 
