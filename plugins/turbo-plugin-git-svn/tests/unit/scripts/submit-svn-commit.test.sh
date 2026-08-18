@@ -371,5 +371,47 @@ test_push_lists_paths_itself_not_svns() {
 # for the capture/re-pass round trip, Test-EncodingSupport for diagnosing a host, and
 # Common.test.ps1 / common.test.sh for the targets-file encoding and its refusal.
 
+# ── issue #79 follow-up: the listing's ORDER must be byte-wise, identical to the .ps1 twin ────────
+# The two implementations sort in different places: this one pipes its `<status>\t<path>` lines
+# through `LC_ALL=C sort` (byte order), while the .ps1 sorts the already-formatted display lines.
+# `Sort-Object` there would be CULTURE-aware, so the same push would list the same files in a
+# different order on the two platforms -- a silent divergence, because each side on its own looks
+# perfectly sorted. `LC_ALL=C` is likewise load-bearing here: a bare `sort` follows the ambient
+# locale and would drift the same way, in the opposite direction.
+#
+# THE FILENAMES ARE CHOSEN SO THE TWO ORDERS SHARE NO POSITION. Byte order is B, C, _z, a
+# ('B'=0x42 < 'C'=0x43 < '_'=0x5F < 'a'=0x61); culture order is _z, a, B, C. A regression to a
+# locale-sensitive sort therefore cannot coincidentally pass. All four are ADDED on purpose: the
+# status character is compared first, so a set with differing statuses would never reach the path
+# comparison at all -- which is exactly why the case above (one A, one M) could not catch this.
+# No two names differ only by case, so the set survives a case-insensitive filesystem.
+#
+# The expected sequence below is written as the same literal in the .ps1 twin
+# (Submit-SvnCommit.test.ps1, 'lists several added paths in LC_ALL=C order'). That duplication IS
+# the cross-platform assertion: the two suites cannot drift apart without one of them going red.
+test_push_listing_order_is_byte_wise() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc order
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    # Kept at the working-copy ROOT, as above: a nested path would bring the platform separator
+    # into the expected strings.
+    for n in a.txt C.txt _z.txt B.txt; do printf 'x\n' > "$ROOT/$n"; done
+    git -C "$ROOT" add -A >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: four files' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: four files' 2>&1 )"; rc=$?
+    assertEquals "push exits 0 (out: $out)" 0 "$rc"
+
+    # `tr -d '\r'` first: svn.exe on Windows can emit CRLF, and a trailing CR would defeat the
+    # anchored `$` in the pattern below -- silently yielding an EMPTY sequence, which would then
+    # differ from the expectation for a reason that has nothing to do with ordering.
+    order="$( printf '%s\n' "$out" | tr -d '\r' \
+        | grep -E '^A  (B\.txt|C\.txt|_z\.txt|a\.txt)$' | tr '\n' '|' )"
+    assertEquals "the listing must be in byte order (out: $out)" \
+        'A  B.txt|A  C.txt|A  _z.txt|A  a.txt|' "$order"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

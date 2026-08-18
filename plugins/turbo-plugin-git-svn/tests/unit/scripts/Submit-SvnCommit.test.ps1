@@ -379,4 +379,50 @@ Describe 'Submit-SvnCommit' {
         # trip, Test-EncodingSupport for diagnosing a host, and Common.test.ps1 for the targets-file
         # encoding and its refusal.
     }
+
+    # issue #79 follow-up: the listing's ORDER must be byte-wise, identical to the bash twin.
+    # The two implementations sort in different places: bash pipes its `<status>\t<path>` lines
+    # through `LC_ALL=C sort` (byte order), while PowerShell sorts the already-formatted display
+    # lines. `Sort-Object` there would be CULTURE-aware, so the same push would list the same files
+    # in a different order on the two platforms -- a silent divergence, because each side on its own
+    # looks perfectly sorted.
+    #
+    # THE FILENAMES ARE CHOSEN SO THE TWO ORDERS SHARE NO POSITION. Byte order is B, C, _z, a
+    # ('B'=0x42 < 'C'=0x43 < '_'=0x5F < 'a'=0x61); culture order is _z, a, B, C. A regression to
+    # `Sort-Object` therefore cannot coincidentally pass. All four are ADDED on purpose: the status
+    # character is compared first, so a set with differing statuses would never reach the path
+    # comparison at all -- which is exactly why the case above (one A, one M) could not catch this.
+    # No two names differ only by case, so the set survives a case-insensitive filesystem.
+    #
+    # The expected sequence below is written as the same literal in the bash twin
+    # (submit-svn-commit.test.sh, test_push_listing_order_is_byte_wise). That duplication IS the
+    # cross-platform assertion: the two suites cannot drift apart without one of them going red.
+    Context 'issue #79 follow-up: the listing is ordered by bytes, not by culture' {
+        It 'lists several added paths in LC_ALL=C order' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag 'sortord'
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                # Kept at the working-copy ROOT, as above: a nested path would bring the platform
+                # separator into the expected strings.
+                foreach ($n in @('a.txt', 'C.txt', '_z.txt', 'B.txt')) {
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, $n)) -Value 'x' -NoNewline
+                }
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '-A')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: four files')
+
+                $b = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                if ($b.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'the prepare step did not succeed in this env'; return }
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'feat: four files')
+                $s.ExitCode | Should -Be 0 -Because "the push must succeed; output was:`n$($s.Combined)"
+
+                # -cmatch, not -match: the whole point is a case-SENSITIVE ordering, and the default
+                # -match would happily accept 'A  b.txt' as a member of this set.
+                $order = (($s.Combined -split "`r?`n") |
+                    Where-Object { $_ -cmatch '^A  (B\.txt|C\.txt|_z\.txt|a\.txt)$' }) -join '|'
+                $order | Should -Be 'A  B.txt|A  C.txt|A  _z.txt|A  a.txt' -Because "the listing must be in byte order; output was:`n$($s.Combined)"
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
 }
