@@ -94,7 +94,17 @@ try {
     # this sibling has the identical shape and was missed by that fix.
     Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
 
-    foreach ($k in @('stdout', 'stderr')) {
+    # The intermediary that launched the program outlives it by a moment: it writes the exit-code
+    # file only after the program returned, so deleting that file the instant the program dies races
+    # the write and can leave the file behind (re-created after the delete). Waiting for it closes
+    # that window -- the same reasoning as the line above, one level out.
+    if ($state.PSObject.Properties.Name -contains 'helperPid') {
+        $hp = 0
+        [int]::TryParse([string]$state.helperPid, [ref]$hp) | Out-Null
+        if ($hp -gt 0) { Wait-Process -Id $hp -Timeout 10 -ErrorAction SilentlyContinue }
+    }
+
+    foreach ($k in @('stdout', 'stderr', 'exitCode', 'pidFile', 'spec')) {
         if ($state.PSObject.Properties.Name -contains $k) {
             $f = [string]$state.$k
             if (-not [string]::IsNullOrWhiteSpace($f) -and (Test-Path -LiteralPath $f -PathType Leaf)) {

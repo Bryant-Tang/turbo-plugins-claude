@@ -125,7 +125,9 @@ try {
             $svnReason = ((Get-Content -LiteralPath $tmpErr -Raw -ErrorAction SilentlyContinue) | Out-String).Trim()
         }
     } finally {
-        if (Test-Path -LiteralPath $tmpErr) { Remove-Item -LiteralPath $tmpErr -Force -ErrorAction SilentlyContinue }
+        # .NET, not Remove-Item: -LiteralPath mangles a temp path whose user-profile segment is an
+        # 8.3 short alias, and -ErrorAction cannot suppress it. See Submit-SvnCommit.ps1's cleanup.
+        if (Test-Path -LiteralPath $tmpErr) { try { [System.IO.File]::Delete($tmpErr) } catch { } }
     }
     if (-not $svnInfoOk) {
         throw "remote-svn-main exists at $remotemainPath but is not a valid SVN working copy (svn info failed). Reason: $svnReason. Re-run git-svn /tp-setup to repair the main bridge."

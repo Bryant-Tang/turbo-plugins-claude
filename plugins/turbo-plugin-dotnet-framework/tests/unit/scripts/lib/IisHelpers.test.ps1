@@ -329,4 +329,37 @@ Describe 'Remove-PerLaunchTempFile (Common.ps1, reached via IisHelpers dot-sourc
         It 'case9: 帶著失敗原因' { $script:r9.Error | Should -Not -BeNullOrEmpty }
         It 'case9: 檔案還在' { (Test-Path -LiteralPath $script:f9) | Should -BeTrue }
     }
+
+    # 這個形狀曾經讓整個 helper 失效:暫存路徑的「使用者設定檔」那一段是 8.3 短別名
+    # (C:\Users\MELWU~1\AppData\Local\Temp\...)。只要環境的 TMP / TEMP 是短形式,
+    # GetTempPath() 就會回這種路徑。
+    #
+    # Remove-Item -LiteralPath 仍然會套用 PowerShell 自己的路徑解析,對一個明明存在的檔案回
+    #   An object at the specified path C:\Users\MELWU~1 does not exist
+    # 而且那是 argument-transformation 例外,-ErrorAction 抑制不了 —— 包在 catch { } 的呼叫端
+    # 因此是靜默洩漏,這支 helper 則是耗完整個重試迴圈才回報一句自相矛盾的訊息。
+    #
+    # 實測過的邊界:**只有設定檔那一段**會觸發。路徑其它位置的 8.3 別名(例如
+    # C:\Users\Mel Wu\AppData\Local\Temp\TPLONG~1\f.txt)完全正常,單純含 `~` 的目錄名也正常。
+    # 所以這個案例刻意用機器自己的短路徑,而不是自己合成一個含 `~` 的路徑 —— 合成的那種
+    # 不會重現,測了等於沒測。
+    Context 'Case 10: 8.3 短檔名的設定檔路徑 → 仍然刪得掉' {
+        It 'case10: 刪得掉,而且回報已移除' {
+            $shortTemp = $env:TEMP
+            if ([string]::IsNullOrWhiteSpace($shortTemp) -or $shortTemp -notmatch '~') {
+                Set-ItResult -Skipped -Because 'this host has no 8.3 short form for the profile path'
+                return
+            }
+            $f10 = [System.IO.Path]::Combine($shortTemp, 'turbo-plugin-iis-short83.out.log')
+            [System.IO.File]::WriteAllText($f10, 'x')
+            try {
+                $r10 = Remove-PerLaunchTempFile -Path $f10
+                $r10.Removed | Should -BeTrue -Because "the file at $f10 must be removable"
+                $r10.Error | Should -BeNullOrEmpty
+                [System.IO.File]::Exists($f10) | Should -BeFalse
+            } finally {
+                if ([System.IO.File]::Exists($f10)) { [System.IO.File]::Delete($f10) }
+            }
+        }
+    }
 }

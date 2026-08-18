@@ -317,4 +317,112 @@ Describe 'Submit-SvnCommit' {
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
+
+    Context 'issue #79: the pushed-file listing is the script''s own copy, not svn''s' {
+        # svn renders its per-path progress lines ("Adding <path>") in the console codepage, so a
+        # filename it cannot represent there arrives as '?' -- and that listing is the one place the
+        # user sees WHAT was just written permanently, at the moment it became permanent. The script
+        # therefore prints the paths it already holds.
+        #
+        # The assertion is on the MECHANISM, not the bytes: a host whose codepage happens to cover
+        # the filename renders it correctly EITHER WAY, so "the name looks right" would pass against
+        # the unfixed script. What discriminates is the FORM -- `A  <path>` is the script's own
+        # rendering and svn never emits it, while `Adding <path>` is svn's and must be gone.
+        # THE FILENAME HERE IS ASCII ON PURPOSE, so this case runs on every host. What proves the
+        # fix is the FORM of the output, which holds for any filename; a CJK name would add no proof
+        # (a host whose codepage covers it renders it correctly either way) but WOULD make the case
+        # depend on whether this host can carry that name to svn at all. The non-ASCII axis is its
+        # own case below.
+        It 'lists every committed path itself and stops echoing svn''s listing' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag 'ownlist'
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+                # Kept at the working-copy ROOT on purpose: `svn status` reports nested paths with
+                # the platform separator, so a subdirectory would make the expected string
+                # OS-dependent.
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'notes.md')) -Value 'new' -NoNewline
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'app.txt')) -Value 'app-v2' -NoNewline
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '-A')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: add a file')
+
+                $b = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                if ($b.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'the prepare step did not succeed in this env'; return }
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'feat: a file')
+                $s.ExitCode | Should -Be 0 -Because "the push must succeed; output was:`n$($s.Combined)"
+
+                # The script's own listing, carrying the very paths it handed to svn.
+                # `\r?$`, not `$`: in .NET multiline mode `$` matches immediately before the `\n`,
+                # so a CRLF line leaves the `\r` unconsumed and an anchored match fails on output
+                # that is in fact correct.
+                $s.Combined | Should -Match '(?m)^A  notes\.md\r?$'
+                $s.Combined | Should -Match '(?m)^M  app\.txt\r?$'
+                # svn's own per-path lines are the codepage-dependent ones; not echoed as well.
+                $s.Combined | Should -Not -Match '(?m)^(Adding|Deleting|Sending|Replacing)\s'
+                # `svn add` / `svn delete` list every path too, in the same codepage -- the SECOND
+                # mojibake source in the same push. They are silenced with --quiet. Their listing is
+                # `A` + many spaces; ours is `A` + exactly two, so the column width tells them apart.
+                $s.Combined | Should -Not -Match '(?m)^[AD]\s{3,}'
+                # ...but the filter must be surgical: everything else svn says still comes through.
+                $s.Combined | Should -Match 'Committed revision'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # NO end-to-end non-ASCII push case lives here, deliberately. One was written and removed:
+        # it proved nothing the case above does not already prove -- what makes the #79 fix correct
+        # is the FORM of the output, which holds for any filename -- while making the result depend
+        # on the host's ANSI codepage (a CJK name is unrepresentable on the CP1252 CI runner, where
+        # the script correctly refuses) and on the parent's CONSOLE codepage. A case whose red
+        # lights are dominated by the environment teaches the reader to ignore it. The encoding axis
+        # has coverage built for it: Svn-StatusXml-Roundtrip.test.ps1 for the capture/re-pass round
+        # trip, Test-EncodingSupport for diagnosing a host, and Common.test.ps1 for the targets-file
+        # encoding and its refusal.
+    }
+
+    # issue #79 follow-up: the listing's ORDER must be byte-wise, identical to the bash twin.
+    # The two implementations sort in different places: bash pipes its `<status>\t<path>` lines
+    # through `LC_ALL=C sort` (byte order), while PowerShell sorts the already-formatted display
+    # lines. `Sort-Object` there would be CULTURE-aware, so the same push would list the same files
+    # in a different order on the two platforms -- a silent divergence, because each side on its own
+    # looks perfectly sorted.
+    #
+    # THE FILENAMES ARE CHOSEN SO THE TWO ORDERS SHARE NO POSITION. Byte order is B, C, _z, a
+    # ('B'=0x42 < 'C'=0x43 < '_'=0x5F < 'a'=0x61); culture order is _z, a, B, C. A regression to
+    # `Sort-Object` therefore cannot coincidentally pass. All four are ADDED on purpose: the status
+    # character is compared first, so a set with differing statuses would never reach the path
+    # comparison at all -- which is exactly why the case above (one A, one M) could not catch this.
+    # No two names differ only by case, so the set survives a case-insensitive filesystem.
+    #
+    # The expected sequence below is written as the same literal in the bash twin
+    # (submit-svn-commit.test.sh, test_push_listing_order_is_byte_wise). That duplication IS the
+    # cross-platform assertion: the two suites cannot drift apart without one of them going red.
+    Context 'issue #79 follow-up: the listing is ordered by bytes, not by culture' {
+        It 'lists several added paths in LC_ALL=C order' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag 'sortord'
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                # Kept at the working-copy ROOT, as above: a nested path would bring the platform
+                # separator into the expected strings.
+                foreach ($n in @('a.txt', 'C.txt', '_z.txt', 'B.txt')) {
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, $n)) -Value 'x' -NoNewline
+                }
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '-A')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: four files')
+
+                $b = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                if ($b.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'the prepare step did not succeed in this env'; return }
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'feat: four files')
+                $s.ExitCode | Should -Be 0 -Because "the push must succeed; output was:`n$($s.Combined)"
+
+                # -cmatch, not -match: the whole point is a case-SENSITIVE ordering, and the default
+                # -match would happily accept 'A  b.txt' as a member of this set.
+                $order = (($s.Combined -split "`r?`n") |
+                    Where-Object { $_ -cmatch '^A  (B\.txt|C\.txt|_z\.txt|a\.txt)$' }) -join '|'
+                $order | Should -Be 'A  B.txt|A  C.txt|A  _z.txt|A  a.txt' -Because "the listing must be in byte order; output was:`n$($s.Combined)"
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
 }

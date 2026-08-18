@@ -469,7 +469,19 @@ function Remove-PerLaunchTempFile {
             return [pscustomobject]@{ Removed = $true; Error = $null }
         }
         try {
-            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            # [System.IO.File]::Delete, NOT Remove-Item -- and this is a bug fix, not a preference.
+            #
+            # PowerShell still runs its own path resolution under -LiteralPath, and that resolution
+            # mangles a `~`. Every temp path contains one on a machine whose user profile has an 8.3
+            # short name (C:\Users\MELWU~1\AppData\Local\Temp is what GetTempPath() returns there),
+            # so the call throws
+            #   An object at the specified path C:\Users\MELWU~1 does not exist
+            # while the file plainly does. It is an argument-transformation error, so -ErrorAction
+            # cannot suppress it either: callers that wrapped it in `catch { }` leaked the file
+            # silently, and this retry loop burned its full delay before reporting a message that
+            # contradicts itself. The .NET call takes the string exactly as given.
+            # Test-Path is NOT affected (measured) and stays as the existence check.
+            [System.IO.File]::Delete($Path)
             return [pscustomobject]@{ Removed = $true; Error = $null }
         } catch {
             $lastError = $_.Exception.Message

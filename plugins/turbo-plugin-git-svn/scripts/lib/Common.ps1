@@ -735,7 +735,30 @@ function Write-SvnTargetsFile {
 
     $content = ''
     if (@($Targets).Count -gt 0) { $content = (@($Targets) -join "`n") + "`n" }
-    [System.IO.File]::WriteAllText($Path, $content, $enc)
+
+    # FAIL when the codepage cannot represent a path, instead of writing what it can.
+    #
+    # GetEncoding's default encoder fallback SUBSTITUTES '?' for every unmappable character, so a
+    # CJK filename on a CP1252 host was silently written as "??????.md". svn then reported
+    # "E200009: Could not add all targets ... don't exist" -- a message that names neither the file
+    # nor the reason, and sends the reader looking for a bug in the push logic. The bash twin has
+    # always failed loudly here (iconv returns non-zero and the script says which codepage and
+    # why); this is the same behaviour, so the two sides now fail the same way for the same reason.
+    # Observed on the CI Windows runner, whose ACP is 1252.
+    $encStrict = $enc
+    if (-not ($enc -is [System.Text.UTF8Encoding])) {
+        $encStrict = [System.Text.Encoding]::GetEncoding(
+            $enc.CodePage,
+            [System.Text.EncoderFallback]::ExceptionFallback,
+            [System.Text.DecoderFallback]::ReplacementFallback)
+    }
+    try {
+        $bytes = $encStrict.GetBytes($content)
+    } catch [System.Text.EncoderFallbackException] {
+        throw ("a path in this commit uses characters your system codepage (CP{0}) cannot represent, " +
+               "so it cannot be passed to svn on this host. See the encoding notes in /tp-setup.") -f $enc.CodePage
+    }
+    [System.IO.File]::WriteAllBytes($Path, $bytes)
 }
 
 # Return the URL that -BaseUrl (pegged at -PegRev) had at -Rev, or '' when svn cannot answer, so a

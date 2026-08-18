@@ -64,18 +64,63 @@ fi
 [[ -n "$TARGET" ]] || { log "nothing identifiable to remove"; exit 0; }
 [[ -d "$TARGET" ]] || { log "already gone: $TARGET"; exit 0; }
 
+# create-worktree.sh opens ONE BRANCH PER PROJECT (`worktree add -b <name>`), so removal has to take
+# them back down as well. Without this, every isolated session leaves a branch behind in every
+# project -- eight projects means eight per session -- all named after a session slug that nobody
+# can attribute after the fact, until `git branch` is unreadable (issue #87).
+#
+# Never a bare force-delete: that is precisely what turns "a leftover branch" into "lost commits".
+# The safe delete goes first. If git refuses, the branch is force-deleted ONLY once another ref is
+# shown to contain the same tip (so deleting it cannot lose anything); otherwise it is kept, with a
+# line saying why. Leaving a branch behind is a tidiness problem; deleting the wrong one is not.
+delete_branch() {
+  local repo="$1" branch="$2" tip others
+  [[ -n "$branch" ]] || return 0
+  git -C "$repo" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1 || return 0
+
+  if git -C "$repo" branch --quiet --delete "$branch" 2>/dev/null; then
+    return 0
+  fi
+
+  # `git branch --delete` only counts "merged into HEAD or into its upstream". A worktree branched
+  # from origin/<default> while the main checkout sits on some other branch is refused by that test
+  # even though it carries no commits of its own -- so ask the question that actually matters:
+  # is this exact tip already reachable from some other ref?
+  tip="$(git -C "$repo" rev-parse --verify --quiet "refs/heads/$branch" 2>/dev/null || true)"
+  if [[ -n "$tip" ]]; then
+    others="$(git -C "$repo" for-each-ref --contains "$tip" --format='%(refname)' refs/heads refs/remotes 2>/dev/null |
+                grep -v -x "refs/heads/$branch" | head -n 1)"
+    if [[ -n "$others" ]] && git -C "$repo" branch --quiet --delete --force "$branch" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  log "branch '$branch' carries commits of its own; keeping it in $repo"
+  return 0
+}
+
 remove_one() {
-  local wt="$1" owner
+  local wt="$1" owner repo
   owner="$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   if [[ -z "$owner" ]]; then
     log "not a git worktree, leaving alone: $wt"
     return 1
   fi
-  if git -C "$(dirname "$owner")" worktree remove "$wt" 2>/dev/null; then
-    return 0
+  repo="$(dirname "$owner")"
+  if ! git -C "$repo" worktree remove "$wt" 2>/dev/null; then
+    log "refused to remove (uncommitted changes?), leaving alone: $wt"
+    return 1
   fi
-  log "refused to remove (uncommitted changes?), leaving alone: $wt"
-  return 1
+  # `git worktree remove` clears the registration and reports SUCCESS even when it could not delete
+  # every file underneath (on Windows an open handle is the usual reason). Left at that, the
+  # directory stays forever while `git worktree list` insists it is gone -- which is exactly the
+  # half-removed state issue #87 describes. git has already declared this tree expendable, so
+  # finish the job it reported as done rather than leave the two views disagreeing.
+  if [[ -d "$wt" ]]; then
+    rm -rf "$wt" 2>/dev/null || log "unregistered, but the directory could not be deleted: $wt"
+  fi
+  delete_branch "$repo" "$NAME"
+  return 0
 }
 
 # The mirror case: TARGET holds one worktree per project.
@@ -84,9 +129,17 @@ if [[ ! -e "$TARGET/.git" ]]; then
   while IFS= read -r child; do
     [[ -n "$child" ]] || continue
     remove_one "$child" || leftovers=$(( leftovers + 1 ))
-  done < <(find "$TARGET" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
+  done < <(find "$TARGET" -mindepth 1 -maxdepth 1 -type d -not -name '.*' | LC_ALL=C sort)
+
   if (( leftovers == 0 )); then
-    rmdir "$TARGET" 2>/dev/null || log "mirror not empty, leaving alone: $TARGET"
+    # rmdir first, on purpose: it can only succeed on an empty directory, so it cannot take anything
+    # unexpected with it. `rm -rf` is the fallback for residue git left behind after reporting the
+    # worktree removed (see remove_one), not the normal path.
+    rmdir "$TARGET" 2>/dev/null || rm -rf "$TARGET" 2>/dev/null || true
+    if [[ -d "$TARGET" ]]; then
+      log "every worktree is gone but the mirror directory could not be deleted (in use?): $TARGET"
+    fi
+    rmdir "$(dirname "$TARGET")" 2>/dev/null || true
   else
     log "$leftovers worktree(s) kept; leaving the mirror in place: $TARGET"
   fi
@@ -94,5 +147,11 @@ if [[ ! -e "$TARGET/.git" ]]; then
 fi
 
 # The ordinary-repo case: TARGET is itself the worktree.
+#
+# No `rmdir` of the container here, deliberately -- the mirror case above does clean up its own
+# `.worktrees/`, and the difference is ownership, not an oversight. `<repo>/.claude/worktrees/` is
+# Claude Code's own directory: its built-in worktree support creates and expects it, and users are
+# told to add it to .gitignore. `<workspace>/.worktrees/` is ours, created by the create hook, so
+# ours to remove when the last one leaves.
 remove_one "$TARGET" || true
 exit 0

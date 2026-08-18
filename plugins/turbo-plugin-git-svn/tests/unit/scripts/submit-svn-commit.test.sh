@@ -298,5 +298,120 @@ test_same_path_commit_still_blocks_push() {
     echo "$out" | grep -q 'this path last changed at'; assertTrue 'refusal names the path revision, not repo HEAD' $?
 }
 
+# ── issue #79: the pushed-file listing must be the script's OWN copy, not svn's ───────────────
+# svn renders its per-path progress lines ("Adding <path>") in the console codepage, so on a zh-TW
+# host a non-ASCII filename arrives there as '?' -- and that listing is the one place the user sees
+# WHAT was just written permanently, at the moment it became permanent. The script therefore prints
+# the paths it already holds as UTF-8 (they came out of `svn status --xml`).
+#
+# THE ASSERTION IS ON THE MECHANISM, AND THE FILENAME HERE IS ASCII ON PURPOSE. What proves the fix
+# is the FORM of the output -- `A  <path>` is the script's own rendering and svn never emits it,
+# while `Adding <path>` is svn's and must be gone -- and that holds for any filename. Putting a
+# Chinese name in this case would not add proof (a UTF-8 runner renders it correctly either way) but
+# WOULD add a dependency on whether svn can take a non-ASCII target on this host at all, which is a
+# separate, environment-dependent question. It bit exactly that way: this case passed standalone and
+# failed inside the orchestrator with `svn: E200009: Could not add all targets because some targets
+# don't exist`, i.e. a red light that said nothing about the behaviour under test. The non-ASCII
+# axis is its own case below.
+test_push_lists_paths_itself_not_svns() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc
+    # Kept at the working-copy ROOT on purpose: `svn status --xml` reports nested paths with the
+    # platform separator, so a subdirectory would make the expected string OS-dependent.
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'new\n' > "$ROOT/notes.md"
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add -A >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: add a file' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: a file' 2>&1 )"; rc=$?
+    assertEquals "push exits 0 (out: $out)" 0 "$rc"
+
+    # The script's own listing, carrying the very paths it handed to svn.
+    printf '%s\n' "$out" | grep -q '^A  notes\.md$'
+    assertTrue "new file listed by the script as 'A  notes.md' (out: $out)" $?
+    printf '%s\n' "$out" | grep -q '^M  app\.txt$'
+    assertTrue "modified file listed by the script as 'M  app.txt' (out: $out)" $?
+
+    # svn's own per-path lines are the codepage-dependent ones; they must not be echoed as well.
+    if printf '%s\n' "$out" | grep -qE '^(Adding|Deleting|Sending|Replacing)[[:space:]]'; then
+        fail "svn's own path listing is still being echoed alongside ours: $out"
+    fi
+    # `svn add` / `svn delete` list every path too, in the same codepage, and that was the SECOND
+    # mojibake source in the same push (found while mutation-testing this case). They are silenced
+    # with --quiet. Their listing is `A` + many spaces; ours is `A` + exactly two, so the column
+    # width is what tells the two apart.
+    if printf '%s\n' "$out" | grep -qE '^[AD][[:space:]]{3,}'; then
+        fail "svn add/delete are still echoing their own path listing: $out"
+    fi
+    # ...but the filter must be surgical: everything else svn says still comes through.
+    printf '%s\n' "$out" | grep -q 'Committed revision'
+    assertTrue "svn's 'Committed revision' line still passes through (out: $out)" $?
+}
+
+# NO end-to-end non-ASCII push case lives here, deliberately.
+#
+# One was written and removed. It proved nothing this file does not already prove -- what makes the
+# #79 fix correct is the FORM of the output, and the ASCII case above asserts exactly that, with a
+# mutation check behind it -- while making the result depend on TWO separate environmental
+# properties, each of which turned it red for reasons unrelated to the behaviour under test:
+#
+#   1. the system ANSI codepage. The targets file is re-encoded to CP_ACP, so a CJK name is
+#      unrepresentable on the CP1252 CI runner and the script correctly refuses.
+#   2. the CONSOLE codepage of the parent process. tests/Invoke-ScriptTests.ps1 sets
+#      [Console]::OutputEncoding to UTF-8, so svn.exe reads a CP950-encoded targets file as UTF-8
+#      and reports "targets don't exist" -- passing standalone, failing under the orchestrator, on
+#      the same machine with the same code.
+#
+# Each one was survivable with another skip condition, and that is the trap: a case whose red
+# lights are dominated by the environment teaches the reader to ignore it. The non-ASCII axis has
+# dedicated coverage that is built for it -- svn-status-xml-roundtrip.test.sh (and its .ps1 twin)
+# for the capture/re-pass round trip, Test-EncodingSupport for diagnosing a host, and
+# Common.test.ps1 / common.test.sh for the targets-file encoding and its refusal.
+
+# ── issue #79 follow-up: the listing's ORDER must be byte-wise, identical to the .ps1 twin ────────
+# The two implementations sort in different places: this one pipes its `<status>\t<path>` lines
+# through `LC_ALL=C sort` (byte order), while the .ps1 sorts the already-formatted display lines.
+# `Sort-Object` there would be CULTURE-aware, so the same push would list the same files in a
+# different order on the two platforms -- a silent divergence, because each side on its own looks
+# perfectly sorted. `LC_ALL=C` is likewise load-bearing here: a bare `sort` follows the ambient
+# locale and would drift the same way, in the opposite direction.
+#
+# THE FILENAMES ARE CHOSEN SO THE TWO ORDERS SHARE NO POSITION. Byte order is B, C, _z, a
+# ('B'=0x42 < 'C'=0x43 < '_'=0x5F < 'a'=0x61); culture order is _z, a, B, C. A regression to a
+# locale-sensitive sort therefore cannot coincidentally pass. All four are ADDED on purpose: the
+# status character is compared first, so a set with differing statuses would never reach the path
+# comparison at all -- which is exactly why the case above (one A, one M) could not catch this.
+# No two names differ only by case, so the set survives a case-insensitive filesystem.
+#
+# The expected sequence below is written as the same literal in the .ps1 twin
+# (Submit-SvnCommit.test.ps1, 'lists several added paths in LC_ALL=C order'). That duplication IS
+# the cross-platform assertion: the two suites cannot drift apart without one of them going red.
+test_push_listing_order_is_byte_wise() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc order
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    # Kept at the working-copy ROOT, as above: a nested path would bring the platform separator
+    # into the expected strings.
+    for n in a.txt C.txt _z.txt B.txt; do printf 'x\n' > "$ROOT/$n"; done
+    git -C "$ROOT" add -A >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: four files' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: four files' 2>&1 )"; rc=$?
+    assertEquals "push exits 0 (out: $out)" 0 "$rc"
+
+    # `tr -d '\r'` first: svn.exe on Windows can emit CRLF, and a trailing CR would defeat the
+    # anchored `$` in the pattern below -- silently yielding an EMPTY sequence, which would then
+    # differ from the expectation for a reason that has nothing to do with ordering.
+    order="$( printf '%s\n' "$out" | tr -d '\r' \
+        | grep -E '^A  (B\.txt|C\.txt|_z\.txt|a\.txt)$' | tr '\n' '|' )"
+    assertEquals "the listing must be in byte order (out: $out)" \
+        'A  B.txt|A  C.txt|A  _z.txt|A  a.txt|' "$order"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"
