@@ -56,8 +56,28 @@ permissions:
 # gets many pushes in a row. Only the newest commit's result is interesting, so supersede the
 # older runs instead of paying for all of them. The default branch is excluded from cancellation
 # so a merge to main always gets a complete recorded result.
+#
+# THE KEY IS THE BRANCH NAME, and it has to be, because two different collapses are wanted at once:
+#
+#   1. the SAME commit's push run and pull_request run (identical work, ~28 minutes each -- every
+#      commit on a PR branch was being tested twice, measured on #88 and #92);
+#   2. an OLDER commit's run once a newer commit lands on the same branch.
+#
+# `github.ref` -- what this used to be -- only gets (2). A push carries `refs/heads/<branch>` while
+# its pull_request carries `refs/pull/<n>/merge`, so the two events never shared a group and both
+# always ran. Keying on the head SHA would get (1) and LOSE (2): a new commit would open a fresh
+# group, leaving the superseded run with nothing to cancel it. The branch name is the one key both
+# events agree on AND that stays constant across commits, so it gets both.
+#
+# `head.ref` first because for a pull_request event `ref_name` is `<n>/merge`; for a push event
+# `head.ref` is empty and `ref_name` is the branch. Both sides therefore resolve to the branch name.
+#
+# One consequence to know: whichever of the two events starts second cancels the first, so the
+# surviving run may be either the push one or the pull_request one. That is fine for branch
+# protection, which matches `tests-passed` BY NAME and takes the most recent result for the commit
+# -- and the survivor always finishes after the one it cancelled.
 concurrency:
-  group: script-tests-${{ github.ref }}
+  group: script-tests-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
