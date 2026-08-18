@@ -351,36 +351,25 @@ test_push_lists_paths_itself_not_svns() {
     assertTrue "svn's 'Committed revision' line still passes through (out: $out)" $?
 }
 
-# The non-ASCII axis, kept separate from the mechanism above so that one red light means one thing.
+# NO end-to-end non-ASCII push case lives here, deliberately.
 #
-# Whether `svn add --targets <utf-8 file>` resolves a non-ASCII path depends on the host: svn.exe
-# reads that file in the console codepage, not as UTF-8, so the same code passes in one console
-# state and reports "Could not add all targets" in another. That is a PRE-EXISTING property of the
-# push path, not of this change, so it is SKIPPED rather than failed -- but skipped only for that
-# one recognised svn error, so a genuine regression still turns this red.
-test_push_listing_carries_a_non_ascii_name() {
-    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
-    if ! build_feature_bridge; then startSkipping; return 0; fi
-    local out rc
-    local cn='中文檔名.md'
-    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
-    printf 'new\n' > "$ROOT/$cn"
-    git -C "$ROOT" add -A >/dev/null 2>&1
-    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: add a Chinese-named file' >/dev/null 2>&1
-
-    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
-    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: chinese filename' 2>&1 )"; rc=$?
-    if [ "$rc" -ne 0 ]; then
-        case "$out" in
-            *'Could not add all targets'*)
-                startSkipping   # this host's svn cannot take a non-ASCII target; not what we test here
-                return 0 ;;
-        esac
-    fi
-    assertEquals "push exits 0 (out: $out)" 0 "$rc"
-    printf '%s\n' "$out" | grep -q "^A  $cn\$"
-    assertTrue "the non-ASCII name survives into the script's own listing (out: $out)" $?
-}
+# One was written and removed. It proved nothing this file does not already prove -- what makes the
+# #79 fix correct is the FORM of the output, and the ASCII case above asserts exactly that, with a
+# mutation check behind it -- while making the result depend on TWO separate environmental
+# properties, each of which turned it red for reasons unrelated to the behaviour under test:
+#
+#   1. the system ANSI codepage. The targets file is re-encoded to CP_ACP, so a CJK name is
+#      unrepresentable on the CP1252 CI runner and the script correctly refuses.
+#   2. the CONSOLE codepage of the parent process. tests/Invoke-ScriptTests.ps1 sets
+#      [Console]::OutputEncoding to UTF-8, so svn.exe reads a CP950-encoded targets file as UTF-8
+#      and reports "targets don't exist" -- passing standalone, failing under the orchestrator, on
+#      the same machine with the same code.
+#
+# Each one was survivable with another skip condition, and that is the trap: a case whose red
+# lights are dominated by the environment teaches the reader to ignore it. The non-ASCII axis has
+# dedicated coverage that is built for it -- svn-status-xml-roundtrip.test.sh (and its .ps1 twin)
+# for the capture/re-pass round trip, Test-EncodingSupport for diagnosing a host, and
+# Common.test.ps1 / common.test.sh for the targets-file encoding and its refusal.
 
 # shellcheck disable=SC1090
 . "$SHUNIT2"
