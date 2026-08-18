@@ -147,5 +147,11 @@ if [[ ! -e "$TARGET/.git" ]]; then
 fi
 
 # The ordinary-repo case: TARGET is itself the worktree.
+#
+# No `rmdir` of the container here, deliberately -- the mirror case above does clean up its own
+# `.worktrees/`, and the difference is ownership, not an oversight. `<repo>/.claude/worktrees/` is
+# Claude Code's own directory: its built-in worktree support creates and expects it, and users are
+# told to add it to .gitignore. `<workspace>/.worktrees/` is ours, created by the create hook, so
+# ours to remove when the last one leaves.
 remove_one "$TARGET" || true
 exit 0

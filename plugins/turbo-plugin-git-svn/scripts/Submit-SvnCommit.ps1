@@ -332,13 +332,18 @@ UNWIND (the commit was rejected and would be rejected again):
             $tpEncForPaths = [Console]::OutputEncoding
             [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
             try {
-                $commitDisplay | Sort-Object -Property Status, Path | ForEach-Object {
-                    # The extra parentheses are required, not stylistic: inside a METHOD call the
-                    # comma binds as an argument separator, so `WriteLine('{0} {1}' -f $a, $b)` is
-                    # parsed as `WriteLine(('{0} {1}' -f $a), $b)` and the format string is left
-                    # one argument short ("Index (zero based) must be ... less than the size of the
-                    # argument list").
-                    [Console]::Out.WriteLine(('{0}  {1}' -f $_.Status, $_.Path))
+                # ORDINAL sort, to match the bash twin's `LC_ALL=C sort` line for line.
+                #
+                # Sort-Object compares with the CURRENT CULTURE, so on a zh-TW host it orders by
+                # language rules while the bash side orders by bytes. With one added and one
+                # modified file nothing shows, which is exactly why it slipped through; with several
+                # files, or names that differ only in case or in non-ASCII characters, the two
+                # platforms print the same set in a different order -- and this listing is
+                # documented as being identical on both.
+                $displayLines = [string[]]@($commitDisplay | ForEach-Object { '{0}  {1}' -f $_.Status, $_.Path })
+                [Array]::Sort($displayLines, [System.StringComparer]::Ordinal)
+                foreach ($line in $displayLines) {
+                    [Console]::Out.WriteLine($line)
                 }
                 [Console]::Out.Flush()
             } finally {
