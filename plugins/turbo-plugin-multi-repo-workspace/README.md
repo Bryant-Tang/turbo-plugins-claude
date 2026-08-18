@@ -132,16 +132,40 @@ hook 判斷「這是不是多專案工作區」是看 `<工作區根>/CLAUDE.md`
 > 一樣開新分支。**不想要這個行為的話就不要裝這個 plugin**，因為 hook 是 plugin 層級的、沒辦法只對某些
 > 資料夾生效。
 >
-> **已知落差 ①:`.worktreeinclude` 會失效,對你的每一個 repo。** Claude Code 用它把 gitignored 的
-> 檔案（`.env` 之類）自動帶進每個新 worktree,但官方文件明講:「Because the hook replaces the default
-> git behavior, `.worktreeinclude` is not processed」。所以裝上這個 plugin 之後,原本靠它帶進去的檔案
-> **不會再出現在 worktree 裡**,而且沒有任何提示。目前的替代方式是進 worktree 之後自己複製;讓 hook
-> 自己實作 `.worktreeinclude` 已列入後續工作。
->
-> **已知落差 ②**：分支基準點固定採 Claude Code 的預設語意 `fresh`（從 `origin/<主分支>` 長；沒有 origin
+> **已知落差**：分支基準點固定採 Claude Code 的預設語意 `fresh`（從 `origin/<主分支>` 長；沒有 origin
 > 時退回 HEAD），**不讀 `worktree.baseRef` 設定**。要正確讀它得在這裡解析並合併 Claude Code 的多層
 > settings，而在沒有保證存在的 JSON parser 的情況下那麼做，弄壞 hook 的機率高過幫上忙——hook 壞掉的
 > 後果是「開不了隔離 session」。把 `baseRef` 設成 `head` 的人，在這裡會拿到 `fresh` 的行為。
+
+### `.worktreeinclude` 由這個 plugin 自己實作
+
+官方文件明講：**「Because the hook replaces the default git behavior, `.worktreeinclude` is not
+processed」**。也就是說，光是宣告 `WorktreeCreate`，就會把這個功能對**你的每一個 repo** 關掉，而且
+沒有任何提示。所以這個 plugin **自己實作了它**——不是留一個洞再警告你。
+
+語意刻意採**官方那一套**：`<專案根>/.worktreeinclude` 用 `.gitignore` 語法，一個檔案要被複製進新的
+工作副本，必須**同時滿足**兩個條件——被 pattern 命中，**而且**確實被 git 忽略。第二個條件才是重點：
+git 追蹤的檔案本來就會隨 worktree 一起出現，再複製一次等於用來源工作副本的版本**蓋掉**簽出的內容。
+
+判斷是交給 git 自己算的，不是我們寫的 pattern matcher：
+
+```
+git ls-files --others --ignored --exclude-from=<spec>   # 被 pattern 命中的未追蹤檔（目錄會展開成檔案）
+  | git check-ignore -z --stdin                          # …再篩掉 git 其實沒有忽略的那些
+```
+
+適用範圍是**每一個**專案：多專案工作區裡每個子專案各讀自己的那份，一般 repo 那條路徑也照走（那正是
+內建功能原本在做的事）。
+
+三件要知道的事：
+
+- **只帶進去，不搬回。** 從工作副本離開時，這些檔案不會被複製回去。所以放進 `.worktreeinclude` 的東西
+  必須是**可以重新產生**的（機器設定、憑證、快取），而不是你會在裡面編輯、且編輯結果需要保留的內容。
+- **已經存在的工作副本不會被重新複製。** 同名 session 再次進入時，那些檔案正是沒有任何東西在追蹤的
+  檔案，蓋掉等於銷毀上一輪留下的狀態。
+- **匹配數量上限 2000 個檔案**，超過就**一個都不複製**並在 stderr 說明原因。會匹配到那種量級幾乎都是
+  pattern 寫錯（`*`、或整個相依目錄），而安靜地花好幾分鐘複製會讓「開 session」這件事本身卡住。真的
+  需要更多的話設環境變數 `TP_WORKTREE_INCLUDE_MAX`（非數字的值會被忽略、退回預設）。
 
 ## 測試
 

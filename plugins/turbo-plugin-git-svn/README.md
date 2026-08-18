@@ -24,9 +24,10 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
   `svn: invalid option: --show-item` 是什麼意思。
   > Windows 上請裝 SlikSVN 或 TortoiseSVN(勾 command line tools)。**chocolatey 的 `svn` 套件不行**:
   > 那是 win32svn,2015 年最後發佈、停在 1.8.15。
-- `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml`(+ `CLAUDE.md` base 區塊 + `.gitignore` base 區塊 + `TODO.md` 骨架);machine-specific 偏好寫進 gitignored `config.local.toml`。
+- `tp-setup` 會建立 `.turbo-plugin/` 並寫入 `config.toml`(+ `CLAUDE.md` base 區塊 + `.gitignore` base 區塊);machine-specific 偏好寫進 gitignored `config.local.toml`。
   - **注入的區塊用 `# >>> turbo-plugin:<concern> >>>` / `<!-- turbo-plugin:begin ... -->` 標記包夾,重跑 setup 會把標記之間的內容整段換掉。** 不要往裡面加自己的東西(區塊開頭也會這樣寫給你看);要加規範就寫在標記外面。
-  - `TODO.md` 是「只有現在成立、但接手的人需要知道」那一格的落點:**不進版控,但屬於交接內容**。判準表由 setup 一併注入專案的 `CLAUDE.md`。
+  - **`CLAUDE.md` base 區塊只留「不得提交僅限本機之物」這條硬規則。** 「這件事該寫在哪」的判準與 `TODO.md` 骨架已經移出去,由獨立的 [`turbo-plugin-knowledge-placement`](../turbo-plugin-knowledge-placement/README.md) 維護自己的標記區塊——這裡只留**結構**,不留**主張**:用了 git↔SVN 橋接不代表就得接受某一套文件方法。要那套判準就自己裝那個 plugin(沒有任何 plugin 相依它)。
+  - **既有專案重跑 setup 會有一個有後果的變化**:base ignore 區塊不再含 `/TODO.md`,所以原本被忽略的 `TODO.md` 從此會出現在 `git status` 裡。`tp-setup` 偵測到這種情況會明講,並讓你選擇「自己在標記外加一行 ignore」或「把內容搬進記憶、交接時用 `/tp-export-handover` 匯出」。**它不會替你決定,也不會默默把那一行留著。**
 - case (a)(新建)/(b)(接管現有 git+SVN)的 git↔SVN bridge bootstrap 由固定腳本 `Initialize-GitSvnBridge`(`.ps1` / `.sh`)承接(空 main 先行 → orphan bridge + `svn checkout` → 固定 `svn:ignore=.git` → `git merge --allow-unrelated-histories` 進當前分支),agent 只留收 SVN URL / 收 git 身分 / 確認;base 骨架在腳本成功後才疊上。
 
 ## 安裝

@@ -53,6 +53,12 @@
       "extra-files": [
         { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
       ]
+    },
+    "plugins/turbo-plugin-knowledge-placement": {
+      "component": "turbo-plugin-knowledge-placement",
+      "extra-files": [
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+      ]
     }
   }
 }

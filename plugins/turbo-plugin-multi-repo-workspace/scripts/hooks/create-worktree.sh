@@ -95,18 +95,104 @@ pick_base_ref() {
   printf 'HEAD'
 }
 
+# ── .worktreeinclude ─────────────────────────────────────────────────────────
+# Claude Code copies the files a repo lists in `<repo>/.worktreeinclude` into every new worktree --
+# but only while IT is the one creating the worktree: "Because the hook replaces the default git
+# behavior, .worktreeinclude is not processed". Declaring this hook therefore switches that feature
+# off for every repository the user owns, silently. So we implement it here instead of leaving the
+# hole; this plugin OWNS the behaviour now, and the README says so rather than warning about a gap.
+#
+# SEMANTICS ARE THE OFFICIAL ONES, on purpose: .gitignore syntax, and a file is copied only when it
+# is BOTH matched by the patterns AND actually ignored by git. The second half is what makes this
+# safe to run unconditionally -- anything git tracks already arrives with the worktree, so copying
+# it on top would overwrite the checked-out content with the source worktree's version.
+#
+# Verified against git 2.49: `ls-files --others --ignored --exclude-from=<spec>` yields the matched
+# untracked files (expanding a directory pattern to its files, and never descending into ignored
+# directories the spec does not mention), and piping those through `check-ignore -z --stdin` drops
+# the ones git does not ignore. That pipeline IS the "matched AND ignored" rule, computed by git
+# rather than by a pattern matcher of our own.
+#
+# ONE WAY ONLY. Nothing is ever carried back out of a worktree: see the README section on why the
+# files that belong here must be regenerable rather than edited in place.
+# Overridable because "narrow your patterns" is not an answer for someone whose include set really
+# is that large; without an escape hatch the guard would be a wall. Documented in the README.
+MAX_INCLUDE_FILES="${TP_WORKTREE_INCLUDE_MAX:-2000}"
+case "$MAX_INCLUDE_FILES" in
+  ''|*[!0-9]*) MAX_INCLUDE_FILES=2000 ;;
+esac
+
+copy_worktree_includes() {
+  local repo="$1" dest="$2" spec="$1/.worktreeinclude"
+  [[ -f "$spec" ]] || return 0
+
+  # Start from the SPEC, not from every ignored file: `--exclude-standard` would enumerate all of
+  # node_modules on its way to finding three .env files, on every session start.
+  local -a cand=()
+  while IFS= read -r -d '' f; do
+    [[ -n "$f" ]] && cand+=("$f")
+  done < <(git -C "$repo" ls-files --others --ignored --exclude-from="$spec" -z 2>/dev/null)
+  (( ${#cand[@]} > 0 )) || return 0
+
+  # A spec that matches this much is a pattern accident (`*`, or a whole dependency directory), and
+  # quietly spending minutes on a bulk copy would stall session creation itself. Refuse loudly and
+  # say what to do -- the one failure mode this hook must never have is "takes forever".
+  if (( ${#cand[@]} > MAX_INCLUDE_FILES )); then
+    log ".worktreeinclude in '$repo' matches ${#cand[@]} files (limit $MAX_INCLUDE_FILES); copied none."
+    log "That many matches almost always means a pattern like '*' or a dependency directory."
+    log "Narrow the patterns -- creating a worktree must not stall on a bulk copy."
+    return 0
+  fi
+
+  local -a picked=()
+  while IFS= read -r -d '' f; do
+    [[ -n "$f" ]] && picked+=("$f")
+  done < <(printf '%s\0' "${cand[@]}" | git -C "$repo" check-ignore -z --stdin 2>/dev/null)
+  (( ${#picked[@]} > 0 )) || return 0
+
+  local copied=0 f src dst
+  for f in "${picked[@]}"; do
+    src="$repo/$f"
+    dst="$dest/$f"
+    # Only regular files, and `! -L` is NOT redundant: every bash file test except -h/-L FOLLOWS
+    # symlinks, so `-f` is TRUE for a symlink whose target is a regular file -- anywhere on the
+    # filesystem. `cp` without -P dereferences too, so the pair would copy the TARGET'S CONTENT
+    # into the new worktree. An ignored symlink that some setup script dropped in the repo and a
+    # pattern happens to match (say, one pointing at ~/.ssh/id_rsa) would be silently materialised
+    # as a plaintext copy. Skipping is the conservative reading: a symlink's meaning depends on
+    # where it resolves from, and this copy does not get to make that call for the user.
+    if [[ -L "$src" ]]; then
+      log "skipping the symlink $f -- .worktreeinclude copies regular files only"
+      continue
+    fi
+    [[ -f "$src" ]] || continue
+    mkdir -p "$(dirname "$dst")" 2>/dev/null || { log "could not create a directory for $f in $dest"; continue; }
+    if ! cp -p "$src" "$dst" 2>/dev/null && ! cp "$src" "$dst" 2>/dev/null; then
+      log "could not copy $f into $dest"
+      continue
+    fi
+    copied=$(( copied + 1 ))
+  done
+  (( copied > 0 )) && log "copied $copied .worktreeinclude file(s) into $dest"
+  return 0
+}
+
 # Add one worktree. Never fatal on its own: a single unco-operative project must not cost the user
 # the whole isolated session, and the absence of that directory is a LOUD failure later (the agent
 # gets file-not-found) rather than a silent write to the main checkout.
 add_worktree() {
   local repo="$1" dest="$2" branch="$3" base
+  # NOTE: an already-present worktree does NOT get its includes re-copied. Those files are exactly
+  # the ones nothing tracks, so overwriting them would destroy whatever the earlier session left.
   [[ -e "$dest" ]] && { log "already present, leaving alone: $dest"; return 0; }
   base="$(pick_base_ref "$repo")"
   if git -C "$repo" worktree add --quiet -b "$branch" "$dest" "$base" 2>/dev/null; then
+    copy_worktree_includes "$repo" "$dest"
     return 0
   fi
   # A branch of that name may already exist (a re-entered session); attach to it rather than fail.
   if git -C "$repo" worktree add --quiet "$dest" "$branch" 2>/dev/null; then
+    copy_worktree_includes "$repo" "$dest"
     return 0
   fi
   log "could not create a worktree for '$repo' (base '$base') — that project will be absent"

@@ -366,5 +366,157 @@ test_implausible_name_is_refused_rather_than_escaping_the_directory() {
     assertFalse 'nothing was created outside the workspace' "[ -d '$(dirname "$WS")/escaped' ]"
 }
 
+# ── .worktreeinclude, implemented by this hook ───────────────────────────────
+# Declaring a WorktreeCreate hook turns Claude Code's own .worktreeinclude handling OFF for every
+# repository the user owns ("Because the hook replaces the default git behavior, .worktreeinclude
+# is not processed"), so this plugin implements it. These cases pin the OFFICIAL semantics, whose
+# discriminating half is the second one: a file must be matched by the patterns AND ignored by git.
+#
+# Set up in its own workspace rather than in $WS: the shared fixture is reused by many cases, and
+# leaving .worktreeinclude files in it would change what every later case copies.
+mk_include_workspace() {
+    local ws
+    ws="$(mktemp -d -t turbo-wt-inc-XXXXXX)/ws"
+    mkdir -p "$ws"
+    mk_repo "$ws/proj-a" no-origin
+    printf '<!-- turbo-plugin:begin multi-repo-workspace -->\nx\n<!-- turbo-plugin:end multi-repo-workspace -->\n' > "$ws/CLAUDE.md"
+
+    local p="$ws/proj-a"
+    mkdir -p "$p/cfg" "$p/node_modules/pkg"
+    printf 'SECRET\n'  > "$p/.env"
+    printf 'MACHINE\n' > "$p/cfg/machine.json"
+    printf 'dep\n'     > "$p/node_modules/pkg/index.js"
+    printf 'IGNORED\n' > "$p/other.local"
+    # Matched by .worktreeinclude but NOT gitignored. A "copy whatever the patterns match"
+    # implementation would carry this one in; the official rule says it must stay out, because git
+    # already brings tracked/plain files along and a copy would overwrite them.
+    printf 'PLAIN\n'   > "$p/matched-not-ignored.txt"
+    {
+        printf '.env\n'
+        printf 'cfg/\n'
+        printf 'node_modules/\n'
+        printf '*.local\n'
+    } > "$p/.gitignore"
+    {
+        printf '.env\n'
+        printf 'cfg/\n'
+        printf 'matched-not-ignored.txt\n'
+    } > "$p/.worktreeinclude"
+    git -C "$p" add .gitignore >/dev/null 2>&1
+    git -C "$p" -c commit.gpgsign=false commit -q -m 'chore: ignores' >/dev/null 2>&1
+    printf '%s' "$ws"
+}
+
+test_worktreeinclude_copies_matched_and_ignored_files() {
+    skip_without_git
+    local ws out
+    ws="$(mk_include_workspace)"
+    out="$(payload_for "$ws" WorktreeCreate wt-inc | bash "$CREATE" 2>/dev/null)"
+    assertTrue 'a listed, gitignored file is carried in' "[ -f '$out/proj-a/.env' ]"
+    assertEquals 'its CONTENT comes across, not just the name' 'SECRET' "$(cat "$out/proj-a/.env" 2>/dev/null)"
+    # A directory pattern must arrive expanded, with its relative path rebuilt under the worktree.
+    assertTrue 'a listed ignored directory is carried in, path preserved' "[ -f '$out/proj-a/cfg/machine.json' ]"
+    rm -rf "$(dirname "$ws")"
+}
+
+test_worktreeinclude_skips_files_it_does_not_match_or_git_does_not_ignore() {
+    skip_without_git
+    local ws out
+    ws="$(mk_include_workspace)"
+    out="$(payload_for "$ws" WorktreeCreate wt-inc2 | bash "$CREATE" 2>/dev/null)"
+    # THE case that separates the official rule from "copy what the patterns match".
+    assertFalse 'matched but NOT gitignored stays out' "[ -e '$out/proj-a/matched-not-ignored.txt' ]"
+    # Ignored, but nobody asked for it.
+    assertFalse 'gitignored but unlisted stays out' "[ -e '$out/proj-a/other.local' ]"
+    # The pattern set never mentions node_modules, so the hook must not have walked into it either.
+    assertFalse 'an unlisted dependency directory stays out' "[ -e '$out/proj-a/node_modules' ]"
+    rm -rf "$(dirname "$ws")"
+}
+
+# The ordinary-repo branch is the one that fires for EVERY repository the plugin's owner opens, so
+# the feature has to work there too -- that is where the built-in used to do it.
+test_worktreeinclude_applies_to_an_ordinary_repo_too() {
+    skip_without_git
+    local root out
+    root="$(mktemp -d -t turbo-wt-inc1-XXXXXX)/r"
+    mk_repo "$root" no-origin
+    printf 'SECRET\n' > "$root/.env"
+    printf '.env\n' > "$root/.gitignore"
+    printf '.env\n' > "$root/.worktreeinclude"
+    git -C "$root" add .gitignore >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -q -m 'chore: ignore' >/dev/null 2>&1
+    out="$(payload_for "$root" WorktreeCreate wt-inc3 | bash "$CREATE" 2>/dev/null)"
+    assertTrue 'the ordinary-repo path honours .worktreeinclude' "[ -f '$out/.env' ]"
+    rm -rf "$(dirname "$root")"
+}
+
+# A spec that matches an unreasonable number of files is a pattern accident, and a bulk copy would
+# stall session creation itself. The guard must copy NOTHING and say so -- and it must say so on
+# stderr, because stdout carries the path and any extra line there breaks the hook contract.
+test_worktreeinclude_refuses_an_implausibly_large_match_set() {
+    skip_without_git
+    local ws out err
+    ws="$(mk_include_workspace)"
+    err="$(mktemp -t turbo-wt-inc-err-XXXXXX)"
+    # The override belongs on the SCRIPT's side of the pipe; putting it in front of payload_for
+    # would set it for the payload generator and leave the hook running with the default.
+    out="$(payload_for "$ws" WorktreeCreate wt-inc4 | TP_WORKTREE_INCLUDE_MAX=1 bash "$CREATE" 2>"$err")"
+    # Guard against the test passing for the wrong reason: the run itself must still succeed.
+    assertTrue 'the worktree is still created' "[ -d '$out/proj-a' ]"
+    assertFalse 'nothing is copied when the guard trips' "[ -e '$out/proj-a/.env' ]"
+    # 3 candidates: .env, cfg/machine.json and matched-not-ignored.txt. The guard counts what the
+    # PATTERNS matched, before the gitignore filter -- it exists to avoid the work, so it has to
+    # decide before doing any.
+    # `rc` is captured BEFORE building the message. Writing `assertTrue "...$(cat "$err")" $?`
+    # instead makes the assertion unfailable: the command substitution in the message runs first,
+    # so `$?` carries `cat`'s status (always 0) rather than grep's. Found by mutation-testing this
+    # very case -- it stayed green with the whole feature stubbed out.
+    local rc=0
+    grep -q 'matches 3 files (limit 1)' "$err" || rc=$?
+    assertEquals "the refusal names the counts (stderr: $(cat "$err"))" 0 "$rc"
+    rm -f "$err"
+    rm -rf "$(dirname "$ws")"
+}
+
+# A symlink matched by the spec must NOT be followed. Every bash file test except -h/-L follows
+# symlinks, and `cp` without -P follows too, so the obvious `[[ -f ]]` guard would let a symlink
+# through and copy its TARGET'S CONTENT into the worktree -- including a target outside the repo.
+#
+# SKIPPED where symlinks cannot be created (Windows without Developer Mode, which is where this was
+# written -- so this case never ran locally and is covered by the ubuntu CI leg). The skip is on
+# the ACTUAL capability, not on the OS name: a Windows host with Developer Mode on runs it fine.
+test_worktreeinclude_does_not_follow_a_symlink_out_of_the_repo() {
+    skip_without_git
+    local ws p outside out
+    ws="$(mk_include_workspace)"
+    p="$ws/proj-a"
+    outside="$(dirname "$ws")/outside"
+    mkdir -p "$outside"
+    printf 'TOP-SECRET\n' > "$outside/secret.txt"
+    if ! ln -s "$outside/secret.txt" "$p/linked.secret" 2>/dev/null || [ ! -L "$p/linked.secret" ]; then
+        rm -rf "$(dirname "$ws")"
+        startSkipping
+        # Register one assertion WHILE skipping, so the run reports a skip instead of a silent
+        # pass. Returning straight after startSkipping executes zero assertions, and a test that
+        # asserts nothing looks exactly like a test that passed.
+        assertTrue 'symlinks cannot be created on this host; case not exercised here' "${SHUNIT_TRUE}"
+        return 0
+    fi
+    # Ignored AND listed, so it reaches the copy loop; only the symlink guard can stop it.
+    printf '*.secret\n' >> "$p/.gitignore"
+    printf '*.secret\n' >> "$p/.worktreeinclude"
+    git -C "$p" add .gitignore >/dev/null 2>&1
+    git -C "$p" -c commit.gpgsign=false commit -q -m 'chore: ignore secrets' >/dev/null 2>&1
+
+    out="$(payload_for "$ws" WorktreeCreate wt-inc5 | bash "$CREATE" 2>/dev/null)"
+    # Guard against passing for the wrong reason: the run must still have done its job.
+    assertTrue 'the ordinary include still came across' "[ -f '$out/proj-a/.env' ]"
+    assertFalse 'the symlink is not materialised in the worktree' "[ -e '$out/proj-a/linked.secret' ]"
+    if [ -f "$out/proj-a/linked.secret" ] && grep -q 'TOP-SECRET' "$out/proj-a/linked.secret" 2>/dev/null; then
+        fail 'the symlink was FOLLOWED: the target file contents were copied into the worktree'
+    fi
+    rm -rf "$(dirname "$ws")"
+}
+
 # shellcheck source=/dev/null
 . "$SHUNIT2"

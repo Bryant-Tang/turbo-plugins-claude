@@ -42,7 +42,7 @@ db 的動作都是 repo-only,無「動到外部」副作用。
 ### Phase 2 — base 骨架 + db concern
 
 先依 base 段建立 concern-neutral 共用檔骨架(`.turbo-plugin/` 目錄、`.gitignore` 的 `base` 標記區塊、
-`TODO.md` 骨架、`CLAUDE.md` base;**db 跳過 config.toml**)。**`.gitignore` / `CLAUDE.md` 這兩個標記區塊
+`CLAUDE.md` base;**db 跳過 config.toml**)。**`.gitignore` / `CLAUDE.md` 這兩個標記區塊
 要調和(找到就取代),不是「已存在就跳過」**——見 base 段開頭那兩種 idempotent 語意。再做 db concern:
 
 #### Case (b) init-from-existing / Case (c) 主 worktree 補設定
@@ -107,8 +107,8 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 
 - `.turbo-plugin/` 存在;db 未在 `config.toml` 寫入任何內容(亦不涉及 `conventions.md`——該機制已退役)。
 - `.turbo-plugin/dbhub.example.local.toml` 存在(進 git);`dbhub.local.toml` **未**被自動建立(只提示)。
-- `.gitignore` 含 `base` 標記區塊(只有一組);`CLAUDE.md` 的 `base` 區塊開頭有「重跑會整段取代」的自我說明;
-  `TODO.md` 存在(既有的不動)。
+- `.gitignore` 含 `base` 標記區塊(只有一組);`CLAUDE.md` 的 `base` 區塊開頭有「重跑會整段取代」的自我說明。
+- 專案根若存在未被追蹤的 `TODO.md`,**使用者已被明確告知它不再被 base 區塊忽略**(見 base 段第 3 項)。
 - Case (a)(無 `.git/`):setup fail-loud 停止,**未** `git init`、**未**建任何檔。
 - Case (b)/(c):跑兩次結果同跑一次(idempotent)。
 - Case (d):只處理 `dbhub.local.toml`,未動 git-versioned shared file。
