@@ -64,6 +64,18 @@ jobs:
   # ── discover ────────────────────────────────────────────────────────────────
   discover:
     runs-on: ubuntu-latest
+    # `pull-requests: read` is for the open-PR query in the `redundant` step. The workflow-level
+    # block grants only `contents: read`, and naming ANY permission sets every unnamed one to none,
+    # so without this the call would 404. It happens to succeed today because this repository is
+    # public (listing PRs is an unauthenticated read) -- which makes the omission a LATENT bug: the
+    # day the repo turns private, the call fails, the classifier fail-opens to `false`, and the
+    # step silently stops saving anything while every run still goes green.
+    #
+    # This has to live on the JOB. `permissions` is only valid at workflow or job level; on a step
+    # it is not "ignored", it makes GitHub reject the whole workflow file.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
       count: ${{ steps.set.outputs.count }}
@@ -216,19 +228,33 @@ jobs:
         id: redundant
         env:
           GH_TOKEN: ${{ github.token }}
+          # NOT interpolated into the `run:` script below. A branch name may legally contain
+          # backticks, `$(...)`, quotes -- and `${{ }}` is substituted as raw text BEFORE bash sees
+          # the script, so a branch named `` `id` `` would execute. Passing through the environment
+          # keeps it data. (github.event_name and github.repository are from fixed vocabularies,
+          # but they go through env too rather than leaving a reader to check which is which.)
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
         shell: bash
         run: |
           set -uo pipefail
           count=''
-          if [ "${{ github.event_name }}" = 'push' ]; then
-            count="$(gh api \
-              "repos/${{ github.repository }}/pulls?state=open&head=${{ github.repository_owner }}:${{ github.ref_name }}" \
+          if [ "$EVENT_NAME" = 'push' ]; then
+            count="$(gh api "repos/${REPO}/pulls?state=open&head=${OWNER}:${REF_NAME}" \
               --jq 'length' 2>/dev/null || true)"
-            echo "Open PRs for ${{ github.ref_name }}: ${count:-<unknown>}"
+            echo "Open PRs for ${REF_NAME}: ${count:-<unknown>}"
+            # Make the degraded path VISIBLE. An unreadable count is safe (the classifier answers
+            # `false`, so the tests run) but it silently gives up the saving this step exists for,
+            # and a silent no-op is indistinguishable from a working one.
+            case "$count" in
+              ''|*[!0-9]*) echo "::warning::Could not read the open-PR count for ${REF_NAME}; running the full suite." ;;
+            esac
           fi
           # `env -u GH_TOKEN`, for the same reason as the classifier above: this is checked-out
           # code and a pure function, so it has no business holding a token.
-          value="$(env -u GH_TOKEN bash tools/is-redundant-push.sh "${{ github.event_name }}" "$count")"
+          value="$(env -u GH_TOKEN bash tools/is-redundant-push.sh "$EVENT_NAME" "$count")"
           echo "redundant=${value}"
           echo "value=${value}" >> "$GITHUB_OUTPUT"
 
@@ -516,6 +542,11 @@ jobs:
   # plugin discovery — always runs. This is the ONE workflow job that adding a plugin
   # may need to be aware of (R21 exception); the tool auto-discovers copies, so no edit
   # is needed per plugin.
+  # NOT gated on `redundant`, deliberately. This job and tools-tests finish in about a minute each,
+  # while the two matrix jobs take ~28; skipping those two is where all of the saving is. Gating
+  # these as well would buy a couple of minutes in exchange for a `needs: discover` edge that makes
+  # the cheap, always-relevant checks wait on the plugin discovery step. The redundant round is
+  # therefore not free -- it costs discover + these two -- and that is the accepted trade.
   verify-core-identical:
     runs-on: ubuntu-latest
     steps:

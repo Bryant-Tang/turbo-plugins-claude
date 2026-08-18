@@ -38,6 +38,16 @@ test_push_without_an_open_pr_runs() {
     assertEquals 'false' "$(ask push 0)"
 }
 
+# `jq 'length'` never emits a padded number, but this is a reusable pure function and the obvious
+# implementation -- `(( COUNT > 0 ))` -- reads a leading zero as OCTAL and raises "value too great
+# for base" on `008` instead of answering. It happened to fail open, which is the kind of accident
+# that stops being an accident only once someone writes a case for it.
+test_leading_zeros_are_counted_not_parsed_as_octal() {
+    assertEquals 'a padded positive count is still positive' 'true' "$(ask push 008)"
+    assertEquals 'exit 0, no arithmetic error' 0 "$RC"
+    assertEquals 'a padded zero is still zero' 'false' "$(ask push 000)"
+}
+
 # A pull_request run is the one being deferred TO; suppressing it would leave nothing at all.
 test_pull_request_is_never_redundant() {
     assertEquals 'false' "$(ask pull_request 1)"

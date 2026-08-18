@@ -49,9 +49,13 @@ if [[ ! "$COUNT" =~ ^[0-9]+$ ]]; then
   exit 0
 fi
 
-if (( COUNT > 0 )); then
-  printf 'true\n'
-else
+# All zeros means zero; any other digit string is positive. Deliberately NOT `(( COUNT > 0 ))`:
+# bash arithmetic reads a leading zero as octal, so `008` raises "value too great for base" instead
+# of answering. That still failed OPEN (the error goes to stderr and this prints `false`), but a
+# reusable pure function should not lean on its own crash landing the right way up.
+if [[ "$COUNT" =~ ^0+$ ]]; then
   printf 'false\n'
+else
+  printf 'true\n'
 fi
 exit 0
