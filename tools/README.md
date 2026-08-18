@@ -5,6 +5,7 @@
 | 腳本 | 做什麼 | 誰在用 |
 | --- | --- | --- |
 | `affected-plugins.sh` | 依變更檔案清單判斷「哪些 plugin 的測試套件要跑」 | `.github/workflows/tests.yml` 的 `discover` job |
+| `plugin-requires-tool.sh` | 讀 `plugins/<name>/tests/required-tools`,答「這個 plugin 需不需要某個外部工具」 | `tests.yml` 的 `Install Subversion` 步驟(兩個平台) |
 | `verify-core-identical.{ps1,sh}` | 跨 plugin 逐位元組一致性 + marketplace 可安裝性 | `verify-core-identical` job；本機手動 |
 | `lint-ps-compat.{ps1,sh}` | PS 5.1 相容性 lint | 各 plugin orchestrator 的 pre-flight |
 | `verify-approved-verbs.ps1` | PowerShell approved verb 檢查 | 本機手動 |
