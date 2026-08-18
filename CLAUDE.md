@@ -223,6 +223,18 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
 
 **`tools/` 的 repo 層級腳本同樣要測**，佈局沿用 plugin 的 `tests/`（`tools/tests/invoke-script-tests.sh` + `unit/*.test.sh` + vendored `lib/shunit2`），由 `tests.yml` 的 `tools-tests` job 執行。細節與幾條刻意的決定（為何不做 `.ps1` 孿生、為何探索到零個測試檔要 FAIL）寫在 `tools/README.md`。
 
+**需要外部工具的 plugin 要自己宣告**:在 `plugins/<name>/tests/required-tools` 一行一個工具名
+(`#` 註解與空行忽略)。**沒有這個檔就是「不需要任何外部工具」**——目前只有 `turbo-plugin-git-svn`
+有一份(內容是 `svn`)。CI 依它決定要不要跑安裝步驟(`tools/plugin-requires-tool.sh`)。
+
+為什麼不是在 workflow 裡寫 `if matrix.plugin == ...`:那會破壞「加一個 plugin、零改 workflow」這個
+性質,而且**新 plugin 的作者沒有理由去打開那個檔**。宣告放在它需要的測試旁邊才會被維護。
+
+沒宣告的代價是**靜默的**:工具缺席時相關測試會自我 SKIP,而 SKIP 在這裡算綠——套件會回報成功,
+實際上什麼都沒測。所以 `tools/tests/unit/plugin-requires-tool.test.sh` 有一條**repo 層級**的檢查:
+只要某個 plugin 的測試檔真的用到 svn,它就必須宣告,否則測試紅。2026-08-18 一個沒人用到的相依
+(六個 plugin 都在裝 svn,只有一個用得到)讓 apt 卡住整個 job 49 分鐘,那是這條規則的由來。
+
 **新增任何 CI job 都要加進 `tests-passed` 的 `needs`**：branch protection 只指向 `tests-passed` 這一個 check，沒被它 `needs` 到的 job 失敗**不會擋 merge**——一個沒人依賴的測試就是一個可以無聲停跑的測試。
 
 **判斷邏輯不要留在 workflow 的 `run:` 區塊裡**：那種程式碼只能靠 push 才驗得到，而它壞掉的方向通常不是紅燈，是「某些測試根本沒跑、畫面卻全綠」。抽成 `tools/` 底下的腳本、讓 workflow **呼叫**它（不是複製一份），再補測試。已經這樣處理的：`tools/affected-plugins.sh`。

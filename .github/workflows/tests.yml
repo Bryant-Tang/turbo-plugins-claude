@@ -234,15 +234,27 @@ jobs:
               echo 'run=false' >> "$GITHUB_OUTPUT" ;;
           esac
 
+      # Does THIS plugin need svn at all? The gate above answers "was it touched", which is a
+      # different question -- and answering only that made every plugin pay for an install it does
+      # not use. See tools/plugin-requires-tool.sh for why the answer lives in the plugin.
+      - name: Does this plugin need Subversion?
+        id: needs
+        shell: bash
+        run: echo "svn=$(bash tools/plugin-requires-tool.sh '${{ matrix.plugin }}' svn)" >> "$GITHUB_OUTPUT"
+
       # `sliksvn`, NOT the `svn` package. Chocolatey's `svn` is win32svn, last published in 2015 and
       # pinned at Subversion 1.8.15 -- which predates `svn info --show-item` (added in 1.9). These
       # scripts use --show-item in a dozen places, so with that package the suite runs and fails 40
       # cases with "invalid option: --show-item", which looks like a product bug and is not one.
       # sliksvn tracks the 1.14 LTS line, the same one TortoiseSVN ships.
       - name: Install Subversion
-        if: steps.gate.outputs.run != 'false'
+        if: steps.gate.outputs.run != 'false' && steps.needs.outputs.svn == 'true'
         shell: pwsh
         run: choco install sliksvn --no-progress -y
+        # Both together, on purpose: continue-on-error alone still lets a wedged package manager
+        # hold the job to the 6-hour default. The timeout turns "stuck" into "absent", and
+        # continue-on-error turns "absent" into SKIPped svn tests instead of a dead job.
+        timeout-minutes: 10
         continue-on-error: true
 
       # choco updates the machine PATH, but a step's environment is captured when the step starts,
@@ -258,17 +270,19 @@ jobs:
       # registry and let `Get-Command` answer. The hardcoded list survives only as a fallback for a
       # provider that does not touch PATH at all.
       - name: Put Subversion on PATH for later steps
-        if: steps.gate.outputs.run != 'false'
+        if: steps.gate.outputs.run != 'false' && steps.needs.outputs.svn == 'true'
         shell: pwsh
         run: |
-          # For git-svn, a missing or too-old svn is not a degraded run, it is no run at all: the
-          # whole plugin is a git<->SVN bridge. Fail loudly there rather than shipping a green job
-          # that tested nothing. The other plugins never touch svn, so for them it stays a warning.
-          $svnIsRequired = '${{ matrix.plugin }}'.EndsWith('turbo-plugin-git-svn')
+          # This step now runs ONLY for a plugin that declared svn, so a missing or too-old svn is
+          # never a degraded run here -- it is no run at all, and the cases would self-SKIP into a
+          # green job that tested nothing. Fail loudly.
+          #
+          # The plugin name used to be hardcoded here (`EndsWith('turbo-plugin-git-svn')`), which
+          # is the same maintenance trap the declaration file exists to remove: a second plugin
+          # needing svn would have been silently downgraded to a warning.
           function Complain([string]$message) {
-            if ($svnIsRequired) { Write-Host "::error::$message"; exit 1 }
-            Write-Host "::warning::$message svn-dependent cases will SKIP on this run."
-            exit 0
+            Write-Host "::error::$message"
+            exit 1
           }
 
           $env:Path = @(
@@ -378,11 +392,35 @@ jobs:
               echo 'run=false' >> "$GITHUB_OUTPUT" ;;
           esac
 
+      # Same question, same answer source as the windows leg: the plugin says whether it needs svn.
+      - name: Does this plugin need Subversion?
+        id: needs
+        run: echo "svn=$(bash tools/plugin-requires-tool.sh '${{ matrix.plugin }}' svn)" >> "$GITHUB_OUTPUT"
+
+      # This step is where 2026-08-18 went wrong: apt wedged on the runner and the job sat there
+      # for 49 minutes with every later step pending, while the SAME commit's other run passed.
+      # It had neither a timeout nor continue-on-error, so nothing bounded it -- the windows twin
+      # had continue-on-error and this one had never been brought in line. Both are needed:
+      # continue-on-error alone would still have let it run to the 6-hour default.
       - name: Install Subversion
-        if: steps.gate.outputs.run != 'false'
+        if: steps.gate.outputs.run != 'false' && steps.needs.outputs.svn == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y subversion
+        timeout-minutes: 10
+        continue-on-error: true
+
+      # A plugin that DECLARED svn and then did not get it would run its suite as green SKIPs --
+      # tested nothing, said success. The install above is allowed to fail; this is where that
+      # failure has to become visible instead.
+      - name: Verify Subversion is usable
+        if: steps.gate.outputs.run != 'false' && steps.needs.outputs.svn == 'true'
+        run: |
+          if ! command -v svn >/dev/null 2>&1; then
+            echo "::error::${{ matrix.plugin }} declares svn but it is not installed; its svn-dependent cases would all SKIP."
+            exit 1
+          fi
+          svn --version --quiet
 
       - name: Configure git identity (defensive)
         if: steps.gate.outputs.run != 'false'

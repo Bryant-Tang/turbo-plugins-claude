@@ -1,0 +1,10 @@
+# External tools this plugin's test suite needs on a CI runner.
+# One name per line; `#` comments and blank lines are ignored.
+# Read by tools/plugin-requires-tool.sh, which gates the install steps in
+# .github/workflows/tests.yml. A plugin with NO such file needs nothing.
+#
+# svn (and svnadmin, which ships with it): most of this suite builds a real local SVN repository
+# with `svnadmin create` and drives it through the scripts under test. Without svn those cases
+# self-SKIP -- and a SKIP counts as green here, so a missing install would look like a passing
+# suite that tested nothing.
+svn
