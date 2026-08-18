@@ -270,7 +270,9 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
     foreach ($stale in @($tempApphost, $tempStdout, $tempStderr)) {
         if (Test-Path -LiteralPath $stale -PathType Leaf) {
             try {
-                Remove-Item -LiteralPath $stale -Force -ErrorAction Stop
+                # .NET, not Remove-Item: -LiteralPath still mangles a `~`, which every temp path has
+                # on a machine with an 8.3 user profile. See Remove-PerLaunchTempFile in Common.ps1.
+                [System.IO.File]::Delete($stale)
             } catch {
                 Write-Output "Note: failed to remove stale temp file '$stale': $($_.Exception.Message)"
             }
@@ -369,7 +371,10 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
         # orphans. Only this branch cleans up: once a process exists it is READING/WRITING them.
         foreach ($f in @($tempApphost, $tempStdout, $tempStderr)) {
             if (Test-Path -LiteralPath $f -PathType Leaf) {
-                try { Remove-Item -LiteralPath $f -Force -ErrorAction Stop } catch { }
+                # .NET, not Remove-Item: -LiteralPath still mangles a `~`, which every temp path has
+                # on a machine with an 8.3 user profile -- and this `catch { }` would have swallowed
+                # that failure silently. See Remove-PerLaunchTempFile in Common.ps1.
+                try { [System.IO.File]::Delete($f) } catch { }
             }
         }
         throw

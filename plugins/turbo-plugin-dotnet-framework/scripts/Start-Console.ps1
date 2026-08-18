@@ -192,11 +192,14 @@ try {
         # turns out to be unreadable we still owe the user what the program said.
         if (-not [string]::IsNullOrWhiteSpace($stdoutText)) { Write-Output $stdoutText.TrimEnd() }
         if (-not [string]::IsNullOrWhiteSpace($stderrText)) { [Console]::Error.WriteLine($stderrText.TrimEnd()) }
+        # .NET, not Remove-Item: -LiteralPath still mangles a `~`, which every temp path has on a
+        # machine with an 8.3 user profile -- and these `catch { }` blocks would have swallowed that
+        # failure silently, leaking a temp file per run. See Remove-PerLaunchTempFile in Common.ps1.
         foreach ($f in @($tempStdout, $tempStderr, $tempExitCode)) {
-            if (Test-Path -LiteralPath $f -PathType Leaf) { try { Remove-Item -LiteralPath $f -Force -ErrorAction Stop } catch { } }
+            if (Test-Path -LiteralPath $f -PathType Leaf) { try { [System.IO.File]::Delete($f) } catch { } }
         }
         if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
-            try { Remove-Item -LiteralPath $stateFile -Force -ErrorAction Stop } catch { }
+            try { [System.IO.File]::Delete($stateFile) } catch { }
         }
         # Fail loudly rather than substituting a number. Reporting 0 for a run whose code could not
         # be read is the exact silent failure this whole path is built to prevent.

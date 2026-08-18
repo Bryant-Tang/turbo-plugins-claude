@@ -57,7 +57,9 @@ function Save-ApplicationhostConfigAtomically {
         Move-Item -LiteralPath $tempPath -Destination $ConfigPath -Force
     } catch {
         if (Test-Path -LiteralPath $tempPath) {
-            Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+            # .NET, not Remove-Item: -LiteralPath still mangles a `~`, which every temp path has on
+            # a machine with an 8.3 user profile. See Remove-PerLaunchTempFile in Common.ps1.
+            try { [System.IO.File]::Delete($tempPath) } catch { }
         }
         throw
     }
