@@ -39,6 +39,26 @@ merge 掉其中一個，其餘全部立刻變成衝突——而且 release-pleas
 
 **所以**：① 不要手改 `plugin.json` 的 `version`、也不要手寫發版 CHANGELOG 區段（那兩處由 release-please 的 Release PR 維護）。② 想發版就把變更寫成清楚的 `feat:` / `fix:` commit。③ release-please 把「自上次發版以來的所有 commit」累積成一個 Release PR——等同「一批變更發一版」，不是每個 commit 發一版。④ major 仍須使用者明確同意才用 `!` / `BREAKING CHANGE`。
 
+**一顆 commit 不要同時動到多個 plugin 目錄（會在別人的 CHANGELOG 裡長出讀不懂的條目）**：
+release-please 是**依路徑**判斷一顆 commit 影響哪些 package,而 bullet 文字用的是**commit 標題**。
+所以一顆同時動到 `plugins/A/` 與 `plugins/B/` 的 commit,會**原封不動**出現在 A 和 B 兩份 CHANGELOG 裡。
+兩種壞法都發生過:
+
+- **掛了 scope**:`fix(git-svn): …` 順手改了 `plugins/turbo-plugin-multi-repo-workspace/` 的一段註解
+  (`3fb675d`),於是 multi-repo-workspace 的 CHANGELOG 出現一條標著 `git-svn` 的條目。
+- **拿掉 scope 也救不了**:標題本身仍然只描述其中一個 plugin。`bc65c57` 原本一顆 commit 同時改了
+  git-svn / three-environment-db / multi-repo-workspace,標題寫「把判準與 `TODO.md` 移出 `tp-setup`」
+  ——而 **multi-repo-workspace 根本沒有 `tp-setup`**,那條 bullet 對讀它 CHANGELOG 的人毫無意義。
+
+**規則**:一顆 commit 的變更**只落在一個 plugin 目錄**(`tools/`、repo 根的設定與文件不屬於任何
+package,可以跟著任一顆走)。跨多個 plugin 的一件事,**拆成多顆、各自 scope 到正確的 plugin**。
+拆的成本只有幾分鐘,而且**只有在 merge 之前拆得動**;merge 之後那條 bullet 就永久留在別人的
+CHANGELOG 裡,手動去編輯只會讓 CHANGELOG 跟 commit 對不起來。
+
+> **例外只有一種**:同一份**逐位元組相同的共用資產**(`scripts/lib/Core.{ps1,sh}`、
+> `skills/tp-setup/assets/*`)必須同批同步,拆開反而會讓 `verify-core-identical` 在中間那顆 commit
+> 紅掉。那種 commit 的標題要寫成對**每一個**被動到的 plugin 都成立的說法,不要掛單一 scope。
+
 **PR 標題不要用 `fix:` / `feat:` 前綴（會污染 CHANGELOG）**：決定 CHANGELOG 內容的是**分支上每一顆
 commit 的標題**，不是 PR 標題。PR 標題只是給人看的，但如果它以 `fix:` / `feat:` 開頭，merge 之後會多出
 一條假的 CHANGELOG 條目。
