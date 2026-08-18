@@ -478,5 +478,45 @@ test_worktreeinclude_refuses_an_implausibly_large_match_set() {
     rm -rf "$(dirname "$ws")"
 }
 
+# A symlink matched by the spec must NOT be followed. Every bash file test except -h/-L follows
+# symlinks, and `cp` without -P follows too, so the obvious `[[ -f ]]` guard would let a symlink
+# through and copy its TARGET'S CONTENT into the worktree -- including a target outside the repo.
+#
+# SKIPPED where symlinks cannot be created (Windows without Developer Mode, which is where this was
+# written -- so this case never ran locally and is covered by the ubuntu CI leg). The skip is on
+# the ACTUAL capability, not on the OS name: a Windows host with Developer Mode on runs it fine.
+test_worktreeinclude_does_not_follow_a_symlink_out_of_the_repo() {
+    skip_without_git
+    local ws p outside out
+    ws="$(mk_include_workspace)"
+    p="$ws/proj-a"
+    outside="$(dirname "$ws")/outside"
+    mkdir -p "$outside"
+    printf 'TOP-SECRET\n' > "$outside/secret.txt"
+    if ! ln -s "$outside/secret.txt" "$p/linked.secret" 2>/dev/null || [ ! -L "$p/linked.secret" ]; then
+        rm -rf "$(dirname "$ws")"
+        startSkipping
+        # Register one assertion WHILE skipping, so the run reports a skip instead of a silent
+        # pass. Returning straight after startSkipping executes zero assertions, and a test that
+        # asserts nothing looks exactly like a test that passed.
+        assertTrue 'symlinks cannot be created on this host; case not exercised here' "${SHUNIT_TRUE}"
+        return 0
+    fi
+    # Ignored AND listed, so it reaches the copy loop; only the symlink guard can stop it.
+    printf '*.secret\n' >> "$p/.gitignore"
+    printf '*.secret\n' >> "$p/.worktreeinclude"
+    git -C "$p" add .gitignore >/dev/null 2>&1
+    git -C "$p" -c commit.gpgsign=false commit -q -m 'chore: ignore secrets' >/dev/null 2>&1
+
+    out="$(payload_for "$ws" WorktreeCreate wt-inc5 | bash "$CREATE" 2>/dev/null)"
+    # Guard against passing for the wrong reason: the run must still have done its job.
+    assertTrue 'the ordinary include still came across' "[ -f '$out/proj-a/.env' ]"
+    assertFalse 'the symlink is not materialised in the worktree' "[ -e '$out/proj-a/linked.secret' ]"
+    if [ -f "$out/proj-a/linked.secret" ] && grep -q 'TOP-SECRET' "$out/proj-a/linked.secret" 2>/dev/null; then
+        fail 'the symlink was FOLLOWED: the target file contents were copied into the worktree'
+    fi
+    rm -rf "$(dirname "$ws")"
+}
+
 # shellcheck source=/dev/null
 . "$SHUNIT2"

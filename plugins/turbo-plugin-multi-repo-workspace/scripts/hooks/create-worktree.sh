@@ -154,8 +154,17 @@ copy_worktree_includes() {
   for f in "${picked[@]}"; do
     src="$repo/$f"
     dst="$dest/$f"
-    # Only regular files. A directory pattern already arrived expanded above, and following a
-    # symlink out of the repo is not something a worktree copy should do on the user's behalf.
+    # Only regular files, and `! -L` is NOT redundant: every bash file test except -h/-L FOLLOWS
+    # symlinks, so `-f` is TRUE for a symlink whose target is a regular file -- anywhere on the
+    # filesystem. `cp` without -P dereferences too, so the pair would copy the TARGET'S CONTENT
+    # into the new worktree. An ignored symlink that some setup script dropped in the repo and a
+    # pattern happens to match (say, one pointing at ~/.ssh/id_rsa) would be silently materialised
+    # as a plaintext copy. Skipping is the conservative reading: a symlink's meaning depends on
+    # where it resolves from, and this copy does not get to make that call for the user.
+    if [[ -L "$src" ]]; then
+      log "skipping the symlink $f -- .worktreeinclude copies regular files only"
+      continue
+    fi
     [[ -f "$src" ]] || continue
     mkdir -p "$(dirname "$dst")" 2>/dev/null || { log "could not create a directory for $f in $dest"; continue; }
     if ! cp -p "$src" "$dst" 2>/dev/null && ! cp "$src" "$dst" 2>/dev/null; then
