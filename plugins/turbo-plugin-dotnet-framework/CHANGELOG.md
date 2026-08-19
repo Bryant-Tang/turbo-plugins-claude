@@ -2,6 +2,16 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.2.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.2.0...turbo-plugin-dotnet-framework--v0.2.1) (2026-08-19)
+
+
+### Fixed
+
+* **dotnet:** console 的啟動參數不再經過 shell ([af862ed](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/af862ed86a4d2193fa632c209e93c04b04907fd2)), closes [#82](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/82)
+* **dotnet:** IIS Express 改用 WMI 啟動,不再繼承呼叫端的 pipe ([4037726](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/40377262f8ebbcdb58ee945bcbac257062ab1d99)), closes [#82](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/82)
+* **dotnet:** 暫存檔清理改用 .NET 刪除,8.3 短路徑不再靜默洩漏 ([39d6662](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/39d66621bbdc4dc16927f219c00503b668beca23))
+* **dotnet:** 長駐 console 也改用 WMI 啟動,並把離開碼落檔取回 ([1e22f4d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/1e22f4d628414e6234fa5489079dcfe9748ee685)), closes [#82](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/82)
+
 ## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.1.3...turbo-plugin-dotnet-framework--v0.2.0) (2026-08-17)
 
 

@@ -2,6 +2,22 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.2.0...turbo-plugin-git-svn--v0.3.0) (2026-08-19)
+
+
+### Added
+
+* 把「這件事該寫在哪」與 TODO.md 移出 tp-setup ([1ecfa13](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/1ecfa13292dea7733e743d4c014144af3c93c07b))
+
+
+### Fixed
+
+* **git-svn:** push 清單的排序改用 ordinal,兌現「兩平台逐行相同」 ([3fb675d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3fb675d633b0e0132c20a01d27e34b79ffa5bf2c))
+* **git-svn:** push 的檔案清單改由腳本自己印,不再透傳 svn 的亂碼輸出 ([25aee20](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/25aee20fdae5a4b9098ea2281e8de6e24cb09fcd)), closes [#79](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/79)
+* **git-svn:** tp-svn-log 的 description 講明它是編碼安全的 ([0e20a87](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0e20a87345c2128f59e7c8f15502d6c4f7e2fa09)), closes [#80](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/80)
+* **git-svn:** 字碼頁表示不了的路徑改為明確失敗,不再靜默寫成問號 ([8c0523c](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/8c0523cd117dc2070a6d81c7da92ec004f905216))
+* **git-svn:** 暫存檔清理改用 .NET 刪除,8.3 短路徑不再靜默洩漏 ([738a0b0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/738a0b042c1bcb1ec34e9e85ce99242fdb6bf646))
+
 ## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.1.2...turbo-plugin-git-svn--v0.2.0) (2026-08-17)
 
 

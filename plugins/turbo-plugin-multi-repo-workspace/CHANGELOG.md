@@ -2,6 +2,21 @@
 
 本檔記錄 turbo-plugin-multi-repo-workspace 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.2.0...turbo-plugin-multi-repo-workspace--v0.3.0) (2026-08-19)
+
+
+### Added
+
+* **multi-repo-workspace:** hook 自己實作 .worktreeinclude ([632a80f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/632a80fe42a5a1a932532e31732a5ed534d2ed8b))
+* **multi-repo-workspace:** 工作區形狀改用標記宣告,並修正專案偵測 ([5f42beb](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/5f42beb761f586fd4319a4310eced79a2b43d229)), closes [#86](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/86)
+* **multi-repo-workspace:** 工作區根只留指路,跨專案規範改放專門的子專案 ([7ba9e61](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7ba9e619690b6ec0e10864a6a2f5e4b56dfafebe))
+
+
+### Fixed
+
+* remove-worktree 補上註解,說明一般 repo 的容器目錄為何刻意不清理 _(文字經修正;原始標題以 SHA 為準)_ ([3fb675d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3fb675d633b0e0132c20a01d27e34b79ffa5bf2c))
+* **multi-repo-workspace:** .worktreeinclude 不再跟隨 symlink ([d84c092](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d84c0928a812a19cb3bb8bb57f62e201814c5327))
+
 ## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.1.1...turbo-plugin-multi-repo-workspace--v0.2.0) (2026-08-17)
 
 
