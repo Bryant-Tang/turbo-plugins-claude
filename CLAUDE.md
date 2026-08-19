@@ -291,7 +291,14 @@ check,而兩種讀法都是錯的。
    git tag "<component>--v0.1.0" <引進該 plugin 的 commit>
    git push origin "<component>--v0.1.0"
    ```
-   **漏了這步的後果是靜默的**：那個 tag 不只是「忽略之前的歷史」，它還是 release-please 找「從哪裡開始算 commit」的**起點錨**。沒有起點就找不到任何 commit，該 plugin 會被判定成「沒有可發版的變更」，於是**永遠不會出現在 Release PR 裡**——不會報錯，只是那個 plugin 的版本永遠不動。2026-08-17 `turbo-plugin-feedback` 就這樣漏過一次。
+   **漏了這步的後果是靜默的,而且不可預測。** 那個 tag 不只是「忽略之前的歷史」,它是 release-please 找「從哪裡開始算 commit」的**起點錨**。沒有它,已經觀測到**兩種相反的錯誤結果**:
+
+   - **該 plugin 完全不出現在 Release PR 裡**,版本永遠不動——`turbo-plugin-feedback`,2026-08-17。
+   - **該 plugin 被無故升版**:release-please 把「新增這個 plugin」那顆 `feat` 也算成一筆可發版變更,於是 0.1.0 跳 0.2.0,而 CHANGELOG 只有一條 bullet 就是**建立它的那顆 commit**——描述的正是 0.1.0 本來就是的內容。`turbo-plugin-knowledge-placement`,2026-08-18。
+
+   **兩個案例的設定完全相同**(都以 `feat(<scope>):` 引進、都在同一顆 commit 裡完成 config + manifest 註冊、都沒有基準 tag),結果卻相反。真正的區別因子查過但沒查出來——**不要再花時間挖**:兩種結果都是錯的,而且都由同一個動作預防。
+
+   **打 tag 的時機也是硬的**:Release PR 是被「main 有新 commit」觸發重新生成的,所以 tag 必須在**下一次重新生成之前**就位。事後補 tag 不會回頭重算,得再等下一顆 main commit。已經升錯版的話,補上 tag 再讓 main 前進一顆即可修正(2026-08-19 實測有效:knowledge-placement 從 0.2.0 回到 0.1.0 並整個退出 Release PR)。
 6. **手動補一個 0.1.0 的 GitHub Release**（內容用該 plugin `CHANGELOG.md` 的 `## [0.1.0]` 段落）：
    ```
    gh release create "<component>--v0.1.0" --title "<component>: v0.1.0" \
