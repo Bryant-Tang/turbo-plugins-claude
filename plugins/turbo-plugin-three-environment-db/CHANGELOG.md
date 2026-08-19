@@ -31,7 +31,7 @@
 ### Documentation
 
 * **setup:** 把 TODO.md 的追蹤判斷提到寫 ignore 區塊之前,並釐清舊區塊清理範圍 ([7f340d9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7f340d9649652dfb9a10c6a20acb5af1cd14c8ad))
-* 其餘四個 plugin 的 README 也寫上 turbo-plugin-feedback 相依,並清掉指向已刪除文件的註解 ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
+* README 寫上 turbo-plugin-feedback 相依 _(文字經修正;原始標題以 SHA 為準)_ ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
 
 ## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.1.0...turbo-plugin-three-environment-db--v0.1.1) (2026-08-13)
 
@@ -39,7 +39,7 @@
 ### Fixed
 
 * **core:** config 改用 UTF-8 讀取,非 ASCII 註解不再讓後面整段設定消失 ([c65b4a5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/c65b4a50807b71fe8f0cf0c4e1a310d856473fd1))
-* **git-svn:** tp-setup 注入的 base ignore 加上 .claude/worktrees/ ([bfc3264](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/bfc32649ba0fac901a4a63b656a181bd0c779688))
+* tp-setup 注入的 base ignore 加上 .claude/worktrees/ _(文字經修正;原始標題以 SHA 為準)_ ([bfc3264](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/bfc32649ba0fac901a4a63b656a181bd0c779688))
 
 ## [Unreleased]
 
