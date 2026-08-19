@@ -24,7 +24,7 @@
 ### Documentation
 
 * **setup:** 把 TODO.md 的追蹤判斷提到寫 ignore 區塊之前,並釐清舊區塊清理範圍 ([7f340d9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7f340d9649652dfb9a10c6a20acb5af1cd14c8ad))
-* README 寫上 turbo-plugin-feedback 相依,並清掉指向已刪除文件的註解 _(文字經修正;原始標題以 SHA 為準)_ ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
+* README 寫上 turbo-plugin-feedback 相依 _(文字經修正;原始標題以 SHA 為準)_ ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
 
 ## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.1.0...turbo-plugin-three-environment-db--v0.1.1) (2026-08-13)
 
