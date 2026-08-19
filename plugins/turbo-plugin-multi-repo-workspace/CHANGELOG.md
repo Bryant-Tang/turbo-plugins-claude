@@ -14,7 +14,7 @@
 
 ### Fixed
 
-* **git-svn:** push 清單的排序改用 ordinal,兌現「兩平台逐行相同」 ([3fb675d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3fb675d633b0e0132c20a01d27e34b79ffa5bf2c))
+* remove-worktree 補上註解,說明一般 repo 的容器目錄為何刻意不清理 _(文字經修正;原始標題以 SHA 為準)_ ([3fb675d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3fb675d633b0e0132c20a01d27e34b79ffa5bf2c))
 * **multi-repo-workspace:** .worktreeinclude 不再跟隨 symlink ([d84c092](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d84c0928a812a19cb3bb8bb57f62e201814c5327))
 
 ## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.1.1...turbo-plugin-multi-repo-workspace--v0.2.0) (2026-08-17)
