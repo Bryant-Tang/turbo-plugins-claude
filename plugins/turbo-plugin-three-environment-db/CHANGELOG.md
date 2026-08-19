@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.2.0...turbo-plugin-three-environment-db--v0.3.0) (2026-08-19)
+
+
+### Added
+
+* 把「這件事該寫在哪」與 TODO.md 移出 tp-setup ([1ecfa13](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/1ecfa13292dea7733e743d4c014144af3c93c07b))
+
 ## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.1.1...turbo-plugin-three-environment-db--v0.2.0) (2026-08-17)
 
 
