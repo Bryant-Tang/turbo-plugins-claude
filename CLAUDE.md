@@ -235,6 +235,27 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
 只要某個 plugin 的測試檔真的用到 svn,它就必須宣告,否則測試紅。2026-08-18 一個沒人用到的相依
 (六個 plugin 都在裝 svn,只有一個用得到)讓 apt 卡住整個 job 49 分鐘,那是這條規則的由來。
 
+**開分支就立刻開一個 draft PR**(這條是 CI 覆蓋率的**唯一**防線,不是禮貌問題)。
+
+`tests.yml` 的 `push` 只掛 `main`,其餘一律靠 `pull_request` 觸發 —— 所以**一條沒有 PR 的分支等於完全
+沒有 CI**。draft PR 會正常觸發 `pull_request`(`opened` / `synchronize`,這個 workflow 沒有 `types:`
+過濾),所以開了 draft 就從第一顆 commit 起有完整矩陣。
+
+為什麼要這樣設計:原本 `push` 掛在每一條分支上,於是 PR 分支的每顆 commit 都被完整測**兩遍**(各約
+28 分鐘)。想把兩個 run 收成一個的兩種做法都實測失敗,而且死因相同 —— **GitHub 把同一顆 SHA 上的每一筆
+同名 check 都算進去,不是只看最新的**:
+
+- 共用 `concurrency` 組(PR #93):被取消的一方留下 **FAILURE** 的 `tests-passed` → PR 永久被擋。
+- 跳過冗餘 run 的 job(PR #94):留下 **SKIPPED** 的 `tests-passed`,而**被跳過的必要 check 算通過**。
+  比擋住更糟 —— 相依的 job 在開始前不產生 check,所以真正的矩陣在跑的那 28 分鐘裡沒有任何 pending
+  擋著,**PR 在還沒測完時就顯示可以 merge**。
+
+只要 workflow 裡有一個叫 `tests-passed` 的 job,這條路就是死的:被跳過或被取消,那個名字都會產生一筆
+check,而兩種讀法都是錯的。
+
+代價是「沒有 PR 的分支沒有 CI」。這個風險有界:**要 merge 就一定要開 PR**,所以最壞情況是回饋來得晚,
+不是永遠不測。`feat/turbo-plugin` 那次事故(數百顆 commit 零 CI)的實際代價也正是**晚**。
+
 **新增任何 CI job 都要加進 `tests-passed` 的 `needs`**：branch protection 只指向 `tests-passed` 這一個 check，沒被它 `needs` 到的 job 失敗**不會擋 merge**——一個沒人依賴的測試就是一個可以無聲停跑的測試。
 
 **判斷邏輯不要留在 workflow 的 `run:` 區塊裡**：那種程式碼只能靠 push 才驗得到，而它壞掉的方向通常不是紅燈，是「某些測試根本沒跑、畫面卻全綠」。抽成 `tools/` 底下的腳本、讓 workflow **呼叫**它（不是複製一份），再補測試。已經這樣處理的：`tools/affected-plugins.sh`。

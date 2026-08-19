@@ -13,49 +13,57 @@ name: Script Tests
 #     PS orchestrator does NOT resolve bash on non-Windows, so .sh never double-runs.
 #   Framework missing (Pester 5 absent / vendored shUnit2 absent) = the job FAILs (R20);
 #   only Unix x Windows-only-tool cases self-SKIP.
-# `push` matters as much as `pull_request`, and its absence was not a small gap: with only the
-# pull_request trigger, a long-lived branch that has not opened a PR yet gets ZERO CI runs, so the
-# ubuntu half of the matrix and the repo-level verify-core-identical job never execute at all. That
-# is exactly what happened on feat/turbo-plugin -- hundreds of commits, not one CI run, and a
-# shared-copy invariant stayed broken the whole time because the only thing that checks it had
-# never been given a chance to run. Local per-plugin orchestrators cover Windows; only CI covers
-# Linux. Run on every push so the feedback arrives while the change is fresh, not at merge time.
+# TRIGGERS: `main` on push, everything else via its pull request. This is the ordinary shape, and
+# it is here because the two alternatives were built and measured and both failed (issue #90).
+#
+# The problem it solves: with `push` on every branch, a commit on a PR branch ran the whole matrix
+# TWICE -- once as a push, once as a pull_request. ~28 minutes each, so ~55 minutes of runner time
+# for one commit's worth of information.
+#
+# Why not collapse the two runs instead. Both attempts foundered on the same GitHub rule, that
+# EVERY check-run on a SHA counts, not just the newest:
+#   * a shared `concurrency` group (PR #93) does cancel one side, but the cancelled run leaves a
+#     FAILURE `tests-passed` on that SHA, and the PR is then permanently BLOCKED;
+#   * skipping the redundant push run's jobs (PR #94) leaves a SKIPPED `tests-passed` -- and a
+#     skipped required check counts as SATISFIED. Worse than blocking: a dependent job creates no
+#     check-run until it starts, so for the ~28 minutes the real matrix is running there is no
+#     pending `tests-passed` to hold the door, and the PR reads as mergeable WHILE UNTESTED.
+# There is no third way as long as this workflow contains a job named `tests-passed`: skipped or
+# cancelled, that name always produces a check-run, and both readings are wrong.
+#
+# WHAT THIS GIVES UP, and what replaces it. A branch with no pull request now gets no CI at all.
+# That gap is real -- feat/turbo-plugin once ran hundreds of commits with no run, and a shared-copy
+# invariant stayed broken because the only thing that checks it never executed. The replacement is
+# a convention, written down in CLAUDE.md: OPEN A DRAFT PR AS SOON AS YOU CREATE THE BRANCH. Draft
+# pull requests fire `pull_request` events normally (this workflow filters no `types`), so a draft
+# gets the full matrix from its first commit.
+#
+# The residual risk is bounded in a way the old gap was not: a branch has to have a PR to be
+# merged, so the worst case is late feedback rather than none. That was in fact the cost of the
+# feat/turbo-plugin incident too -- the invariant was caught when the PR opened, just far too late.
+#
+# This also deletes a workaround rather than adding one. `branches-ignore: release-please--**` used
+# to be needed because release-please creates its branch pointing at main's HEAD, so that first
+# push fired a run whose `github.sha` IS main's, and cancelling it left a FAILURE `tests-passed` on
+# main's own commit (measured on 12eb846: four `tests-passed` check-runs on one SHA). With push
+# limited to main, release-please's branch pushes do not trigger this workflow at all.
 on:
   push:
-    # release-please's own branches are excluded from the PUSH trigger only; their `pull_request`
-    # runs still happen, so the Release PR still gets tests-passed and branch protection is intact.
-    #
-    # What this removes: release-please creates a branch in two steps -- first pointing at main's
-    # HEAD, then pushing the release commit onto it. That first push fires a run whose `github.sha`
-    # IS main's HEAD, and the second push then cancels it via the concurrency group below. The
-    # cancelled run's `tests-passed` records a FAILURE, and GitHub aggregates every check-run for a
-    # SHA -- so main's own commit goes red even though its real push run passed.
-    #
-    # Measured on 12eb846 (the PR #54 merge): 4 tests-passed check-runs on that one SHA -- the real
-    # push-to-main run (success, 22m53s) plus three cancelled ones, exactly the three release-please
-    # branches that were newly CREATED that round. The pre-existing one (multi-repo-workspace) did
-    # not produce the artifact, because it was updated rather than created.
-    #
-    # This is worth fixing for the same reason the rest of this file is careful: a main branch whose
-    # commits are permanently red is a main branch where a genuine failure is invisible.
-    #
-    # Does this reopen the gap the comment above warns about ("a long-lived branch that has not
-    # opened a PR yet gets ZERO CI")? No. release-please opens the Release PR in the same run that
-    # creates the branch, so these branches always have one by construction -- they are the single
-    # branch family where the push trigger is guaranteed redundant. The exclusion is written as an
-    # exact prefix rather than something broad, so no human branch can accidentally fall into it.
-    branches-ignore:
-      - 'release-please--**'
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A push and its pull_request both trigger this workflow, and a branch under active development
-# gets many pushes in a row. Only the newest commit's result is interesting, so supersede the
-# older runs instead of paying for all of them. The default branch is excluded from cancellation
-# so a merge to main always gets a complete recorded result.
+# A branch under active development gets many pushes in a row, and only the newest commit's result
+# is interesting, so supersede the older runs instead of paying for all of them. The default branch
+# is excluded from cancellation so a merge to main always gets a complete recorded result.
+#
+# Grouping by `github.ref` is right for what is left after the trigger change above: a PR branch
+# now produces only pull_request runs, which all share `refs/pull/<n>/merge`, so a new commit
+# supersedes the previous one exactly as intended. It no longer has to reconcile two events.
 concurrency:
   group: script-tests-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
