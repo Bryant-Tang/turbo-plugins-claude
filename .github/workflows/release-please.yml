@@ -68,12 +68,24 @@ jobs:
       # `allowed_bots` 閘要另外開——見 pr-review-comprehensive.yml 的對應註解。
       - name: Mint a GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
-      - uses: googleapis/release-please-action@v4
+      # v5's only breaking change is the runtime moving to node24 (upstream release notes), which
+      # GitHub-hosted runners already provide; it also carries release-please core 17.3.0 -> 17.6.0.
+      #
+      # WHAT HAS TO BE RE-CHECKED ON THE FIRST RELEASE PR AFTER THIS BUMP. None of it can be
+      # verified here, and every one of these fails SILENTLY rather than red:
+      #   * tag names are still `<plugin>--v<version>` (two hyphens). A single hyphen makes Claude
+      #     Code's version-constraint lookup match nothing, which DISABLES dependants outright.
+      #   * still ONE Release PR for all plugins (`separate-pull-requests: false`), not one each.
+      #   * `bump-minor-pre-major` still makes every `feat:` a minor.
+      #   * `changelog-sections` still hides chore / test / ci / build.
+      #   * baseline-tag behaviour unchanged (a component with no `<name>--v0.1.0` anchor has been
+      #     observed both to never release AND to be spuriously bumped -- both silent).
+      - uses: googleapis/release-please-action@v5
         with:
           # config-file / manifest-file 預設就是 release-please-config.json
           # 與 .release-please-manifest.json,放在 repo 根即自動採用。
