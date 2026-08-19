@@ -1,0 +1,50 @@
+# Dependabot: keep the GitHub Actions this repo pins from going quietly stale.
+#
+# WHY THIS AND NOT A CRON WORKFLOW. Every version in .github/workflows/ was, until now, only ever
+# checked when somebody happened to look -- and the one time anybody did, release-please was a
+# major behind by four months and actions/checkout was pinned at TWO different majors in the same
+# repo. GitHub already ships this check; writing our own would be rebuilding something that exists
+# and is better maintained. (dbhub-version-check.yml is hand-rolled because npm packages named
+# inside a JS string are not a dependency ecosystem Dependabot can see -- that is not this.)
+#
+# ── The three settings below are load-bearing for THIS repo ──────────────────
+#
+# commit-message.prefix: "ci"
+#   The prefix decides two things at once here. First, release-please reads commit titles, and
+#   `ci` is in `changelog-sections` as hidden -- so a version bump neither triggers a release nor
+#   appears in any plugin's CHANGELOG. Second, GitHub puts the PR TITLE into the merge commit's
+#   body, and release-please parses that too; a `fix:`-prefixed Dependabot PR would therefore
+#   write a bogus entry into EVERY plugin's changelog that the merge happened to touch. `chore`
+#   would also be safe; `fix` or `feat` would not. Do not remove this to "let Dependabot use its
+#   default" -- the default carries no prefix, and an unprefixed title is only safe by accident.
+#
+# groups
+#   One PR per outdated action would mean one full CI matrix per action -- and a change under
+#   .github/ makes tools/affected-plugins.sh answer ALL, so each is the ~28-minute run. Grouping
+#   turns a month's bumps into a single PR and a single run.
+#
+# schedule.interval: "monthly"
+#   Matches dbhub-version-check.yml, which already reports on the 1st. Action releases do not
+#   arrive faster than that, and weekly noise is how a bot gets muted.
+#
+# ── Dependabot PRs and the two required checks ───────────────────────────────
+#
+# `tests-passed` works normally: tests.yml runs on `pull_request`, needs no secrets, and a
+# read-only token is enough for its compare call.
+#
+# `review-with-tracking` CANNOT work: a Dependabot run reads the Dependabot secret store, not the
+# Actions one, so the OAuth token would be empty. pr-review-comprehensive.yml therefore skips the
+# review STEP for `dependabot[bot]` while the job still reports success -- see the comment there
+# for why it must be the step and not the job.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

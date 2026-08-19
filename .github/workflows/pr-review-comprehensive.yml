@@ -16,9 +16,31 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
+
+      # ── Dependabot PRs get no Claude review, on purpose ──────────────────────
+      #
+      # Not a preference -- it cannot work. A `pull_request` run opened by Dependabot reads from
+      # the DEPENDABOT secret store, not the Actions one, so `secrets.CLAUDE_CODE_OAUTH_TOKEN`
+      # below resolves to an empty string. Adding `dependabot` to `allowed_bots` would get past
+      # the action's bot gate and then fail for want of a token.
+      #
+      # Why a STEP-level skip and not a job-level `if`. `review-with-tracking` is one of the two
+      # required checks. A job that does not run produces no check-run at all, and the PR then
+      # waits forever on a check that will never report. The job therefore always runs and always
+      # reports success; only the review step is skipped. This is the same shape as the affected
+      # gate in tests.yml, and for the same reason.
+      #
+      # What still covers these PRs: `tests-passed`. tests.yml runs on `pull_request` like any
+      # other PR, needs no secrets, and its read-only token is enough for the compare call. So an
+      # action bump is gated on the full test matrix -- which is the evidence that actually
+      # matters for a one-line version change.
+      - name: Note why the review is skipped
+        if: github.actor == 'dependabot[bot]'
+        run: |
+          echo "::notice::Dependabot PR -- the review step is skipped (its runs cannot read the Actions secret store). tests-passed still gates this PR."
 
       # 這一步要的是 `app-slug`,不是 token。
       #
@@ -40,13 +62,15 @@ jobs:
       # release-please 在用的那一個身分。
       - name: Resolve the release bot's identity
         id: release-app
+        if: github.actor != 'dependabot[bot]'
         continue-on-error: true
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: PR Review with Progress Tracking
+        if: github.actor != 'dependabot[bot]'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
