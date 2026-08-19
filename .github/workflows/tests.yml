@@ -117,6 +117,14 @@ jobs:
       # `tests-passed` deliberately treats as failure. Instead every leg still runs and reports
       # success -- the untouched ones just exit early inside the job.
       #
+      # The answer can also be `NONE`: every changed path is on the classifier's inert list (root
+      # prose, release-please state, a plugin's release-managed CHANGELOG.md / plugin.json), so no
+      # plugin suite can be affected and every leg exits early. That is what makes a Release PR --
+      # a diff containing no code at all -- stop costing a full matrix run. It is a distinct word
+      # rather than empty output because empty already means "the classifier did not run", which
+      # must keep failing open to ALL; see tools/affected-plugins.sh for the full argument, and
+      # note that verify-core-identical and tools-tests have no `needs: discover` and run anyway.
+      #
       # FAILURE MODE IS "RUN EVERYTHING". Emitting ALL is the answer whenever anything is unclear:
       # the compare API failed, this is a first push with no base, or a changed file lives outside
       # plugins/ (tools/, .github/, root config -- any of which can affect every plugin). Getting
@@ -200,7 +208,11 @@ jobs:
             exit 0
           fi
 
-          echo "Affected plugin(s): ${touched}"
+          if [ "$touched" = 'NONE' ]; then
+            echo 'Affected plugin(s): none -- every changed path is non-behavioural (reasons above).'
+          else
+            echo "Affected plugin(s): ${touched}"
+          fi
           echo "list=${touched}" >> "$GITHUB_OUTPUT"
 
   # ── test-windows ────────────────────────────────────────────────────────────
@@ -232,6 +244,15 @@ jobs:
           affected='${{ needs.discover.outputs.affected }}'
           if [ "$affected" = 'ALL' ] || [ -z "$affected" ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # NONE would fall through the membership test below to the same answer, but only by
+          # accident -- and "correct for a reason nobody wrote down" is how a later edit breaks it.
+          # It is also the one answer that skips EVERY leg, so it deserves to say so in the log
+          # rather than appear as N identical "untouched" notices.
+          if [ "$affected" = 'NONE' ]; then
+            echo "::notice::this change is entirely non-behavioural (see the classifier's reasons in the discover job); no plugin suite can be affected."
+            echo 'run=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           case " $affected " in
@@ -390,6 +411,15 @@ jobs:
           affected='${{ needs.discover.outputs.affected }}'
           if [ "$affected" = 'ALL' ] || [ -z "$affected" ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # NONE would fall through the membership test below to the same answer, but only by
+          # accident -- and "correct for a reason nobody wrote down" is how a later edit breaks it.
+          # It is also the one answer that skips EVERY leg, so it deserves to say so in the log
+          # rather than appear as N identical "untouched" notices.
+          if [ "$affected" = 'NONE' ]; then
+            echo "::notice::this change is entirely non-behavioural (see the classifier's reasons in the discover job); no plugin suite can be affected."
+            echo 'run=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           case " $affected " in

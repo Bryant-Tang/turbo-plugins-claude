@@ -50,6 +50,29 @@ CI 由 `tests.yml` 的 **`tools-tests`** job 跑，而該 job **在 `tests-passe
   想知道「為什麼這次全部都跑了」，去 CI log 的 `Compute affected plugins` 那個 step 找那一行。
   反過來，答案是真子集時完全不出聲：每次都印會訓練人忽略它。
 
+### `NONE` 與惰性清單
+
+`affected-plugins.sh` 的答案有三種:`ALL`、`NONE`、真子集。`NONE` 意思是「這次變更**全部**落在惰性
+清單上,沒有任何 plugin 套件會被影響」——目前的惰性清單是 repo 根的 `CLAUDE.md` / `README.md` /
+`LICENSE`、`.release-please-manifest.json`,以及各 plugin 由 release-please 維護的 `CHANGELOG.md`
+與 `.claude-plugin/plugin.json`。這是為了 Release PR:它的 diff 恰好就是那三種形狀、一行程式碼都
+沒有,卻曾經連續三次各付掉 26 / 27 / 26 分鐘。
+
+三件事讓這個「唯一會縮到零」的答案不至於變成安靜的綠燈:
+
+1. **`NONE` 是一個字,不是空輸出。** 空輸出對呼叫端來說已經是「腳本沒跑起來」,而那必須 fail-open
+   成 `ALL`。兩者若共用同一種表示法,「壞掉」跟「真的沒影響」就分不出來,而其中一邊的安全解讀正好是
+   另一邊的錯誤解讀。
+2. **要有正面證據。** 至少要有一個路徑被看到**且**被判為惰性;沒有路徑、或路徑一個都歸不了屬,仍然
+   是 `ALL`。而任何一個會擴大的路徑都直接壓過惰性路徑(擴大是立即 exit)。
+3. **`verify-core-identical` 與 `tools-tests` 沒有 `needs: discover`**,不管答案是什麼都會跑。所以
+   `NONE` 從來不等於「這顆 commit 沒被測」。
+
+惰性清單成立的前提是一句關於**這個 repo** 的斷言:沒有任何測試會去讀那些檔案。腳本自己驗證不了這件
+事,所以 `affected-plugins.test.sh` 有一條 repo 層級檢查 `test_no_test_reads_an_inert_file`——哪天
+有人加了一支「檢查 `CLAUDE.md` 慣例」的 lint,它會紅,而該筆惰性項目就必須拿掉。**沒有那道守門就不
+要加惰性項目。**
+
 ### 還沒被測到的
 
 `verify-core-identical.sh`、`lint-ps-compat.ps1`、`verify-approved-verbs.ps1` 目前都沒有測試。

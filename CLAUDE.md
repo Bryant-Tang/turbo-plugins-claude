@@ -260,6 +260,13 @@ check,而兩種讀法都是錯的。
 
 **判斷邏輯不要留在 workflow 的 `run:` 區塊裡**：那種程式碼只能靠 push 才驗得到，而它壞掉的方向通常不是紅燈，是「某些測試根本沒跑、畫面卻全綠」。抽成 `tools/` 底下的腳本、讓 workflow **呼叫**它（不是複製一份），再補測試。已經這樣處理的：`tools/affected-plugins.sh`。
 
+**要讓某類檔案「不觸發測試」,先加守門再加例外**：`affected-plugins.sh` 有一份**惰性清單**(repo 根的
+純散文、release-please 的狀態與產出),整批命中時答 `NONE`、一個 plugin 套件都不跑。那是唯一會縮到零
+的答案,而它成立的前提是一句關於 repo 的斷言——**沒有任何測試會讀那些檔案**。腳本自己驗不了這件事,
+所以配了一條 repo 層級檢查 `test_no_test_reads_an_inert_file`:哪天有人加了「檢查 `CLAUDE.md` 慣例」
+之類的 lint,它會紅,該筆惰性項目就必須拿掉。**沒有那道守門就不要加惰性項目**——少測是靜默的,加例外
+的人不會是踩到的人。清單內容與判準寫在 `tools/README.md`。
+
 共通原則：
 
 - **Path-free**：所有測試（含 fixture、sandbox）一律不得寫死機器專屬絕對路徑；工作根用 repo 相對的 gitignored sandbox。
