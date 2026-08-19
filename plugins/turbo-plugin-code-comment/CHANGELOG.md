@@ -12,7 +12,7 @@
 
 ### Documentation
 
-* README 寫上 turbo-plugin-feedback 相依,並清掉指向已刪除文件的註解 _(文字經修正;原始標題以 SHA 為準)_ ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
+* 清掉 README 裡指向已退役測試文件的說明 _(文字經修正;原始標題以 SHA 為準)_ ([d9a3728](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9a3728be8e0270c9170039bcc7b774489ae0e8a))
 
 ## [Unreleased]
 
