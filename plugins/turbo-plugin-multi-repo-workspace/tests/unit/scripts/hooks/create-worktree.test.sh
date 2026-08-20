@@ -89,8 +89,24 @@ mk_root_repo_workspace() {
     printf '%s' "$ws"
 }
 
+# A repository that belongs to NO workspace, for the cases about the ordinary-repo branch.
+#
+# Those cases used to borrow $WS/proj-2, which was indistinguishable from a lone repo until issue
+# #106: a project sitting inside a marked workspace now redirects to the workspace mirror, so
+# proj-2 stopped being an example of the thing they mean to test. Their intent was always "a
+# repository that is not part of a workspace" -- this makes the fixture say that.
+LONE=''
+lone_repo() {
+    if [ -z "$LONE" ]; then
+        LONE="$(mktemp -d -t turbo-wt-lone-XXXXXX)/solo"
+        mk_repo "$LONE" no-origin
+    fi
+    printf '%s' "$LONE"
+}
+
 oneTimeTearDown() {
     [ -n "$WS" ] && rm -rf "$(dirname "$WS")" 2>/dev/null
+    [ -n "$LONE" ] && rm -rf "$(dirname "$LONE")" 2>/dev/null
     return 0
 }
 
@@ -181,15 +197,128 @@ test_recreating_the_same_name_is_idempotent() {
 
 test_ordinary_repo_gets_the_builtin_layout() {
     skip_without_git
-    local out
-    out="$(payload_for "$WS/proj-2" WorktreeCreate wt-g | bash "$CREATE" 2>/dev/null)"
+    local out solo
+    solo="$(lone_repo)"
+    out="$(payload_for "$solo" WorktreeCreate wt-g | bash "$CREATE" 2>/dev/null)"
     case "$out" in
-        */proj-2/.claude/worktrees/wt-g) assertTrue 'path matches the built-in convention' 0 ;;
+        */solo/.claude/worktrees/wt-g) assertTrue 'path matches the built-in convention' 0 ;;
         *) fail "unexpected worktree path: $out" ;;
     esac
     assertEquals 'is a worktree of that repo' "$out" \
         "$(git -C "$out" rev-parse --show-toplevel 2>/dev/null)"
     assertEquals 'on its own branch' 'wt-g' "$(git -C "$out" branch --show-current 2>/dev/null)"
+}
+
+# ── issue #106: entering from inside a sub-project ───────────────────────────
+#
+# The reported failure was silent and total: `cd` into a project first -- the natural move when you
+# read code before deciding what to change -- and the hook, standing in an ordinary repository,
+# faithfully isolated THAT PROJECT ALONE. Nothing errored, everything worked, and the session
+# simply could not reach the other projects any more. That only shows up when the second project is
+# needed, with changes already in the wrong tree.
+#
+# The issue assumed the hook was never called here, which would have meant a PreToolUse hook on
+# EnterWorktree -- resting on the unverified premise that built-in tool names can be matched at all.
+# It was called; it just took the ordinary branch. These cases pin that it no longer does.
+#
+# The pair that must NOT change is as important as the redirect itself: a repository outside any
+# workspace (test_ordinary_repo_gets_the_builtin_layout, via lone_repo) and a project inside an
+# EXISTING mirror both have to keep the built-in behaviour, or this fix would break isolation for
+# every repo the plugin is installed alongside.
+
+test_subproject_redirects_to_the_workspace_mirror() {
+    skip_without_git
+    local out
+    out="$(payload_for "$WS/proj-1" WorktreeCreate wt-sp | bash "$CREATE" 2>/dev/null)"
+    case "$out" in
+        */ws/.worktrees/wt-sp) assertTrue 'redirected to the workspace mirror' 0 ;;
+        *) fail "expected the workspace mirror, got: $out" ;;
+    esac
+    # Every project, not just the one we happened to be standing in -- that is the whole point.
+    assertTrue 'proj-1 is in the mirror' "[ -d '$out/proj-1' ]"
+    assertTrue 'proj-2 is in the mirror' "[ -d '$out/proj-2' ]"
+}
+
+test_subproject_redirect_says_why_on_stderr() {
+    skip_without_git
+    local err
+    err="$(payload_for "$WS/proj-2" WorktreeCreate wt-sp2 2>/dev/null | bash "$CREATE" 2>&1 >/dev/null)"
+    case "$err" in
+        *"multi-repo workspace"*) ;;
+        *) fail "the redirect must explain itself; stderr was: $err" ;;
+    esac
+    # Silently doing something other than what was asked is its own trap, so the way to ask for the
+    # original behaviour has to be in the message, not only in the README.
+    case "$err" in
+        *TP_WORKTREE_SCOPE=project*) ;;
+        *) fail "stderr should name the escape hatch; got: $err" ;;
+    esac
+}
+
+test_deep_directory_inside_a_subproject_also_redirects() {
+    skip_without_git
+    local out
+    mkdir -p "$WS/proj-2/nested/deeper"
+    out="$(payload_for "$WS/proj-2/nested/deeper" WorktreeCreate wt-sp3 | bash "$CREATE" 2>/dev/null)"
+    case "$out" in
+        */ws/.worktrees/wt-sp3) assertTrue 'a deep cwd resolves to the project, then the workspace' 0 ;;
+        *) fail "expected the workspace mirror, got: $out" ;;
+    esac
+}
+
+test_scope_project_keeps_the_single_repo_behaviour() {
+    skip_without_git
+    local out
+    out="$(payload_for "$WS/proj-2" WorktreeCreate wt-sp4 | TP_WORKTREE_SCOPE=project bash "$CREATE" 2>/dev/null)"
+    case "$out" in
+        */proj-2/.claude/worktrees/wt-sp4) assertTrue 'the escape hatch opts out of the redirect' 0 ;;
+        *) fail "TP_WORKTREE_SCOPE=project should isolate the repo alone, got: $out" ;;
+    esac
+}
+
+test_scope_workspace_is_the_default_spelled_out() {
+    skip_without_git
+    local out
+    out="$(payload_for "$WS/proj-1" WorktreeCreate wt-sp9 | TP_WORKTREE_SCOPE=workspace bash "$CREATE" 2>/dev/null)"
+    case "$out" in
+        */ws/.worktrees/wt-sp9) assertTrue 'an explicit workspace scope redirects like the default' 0 ;;
+        *) fail "TP_WORKTREE_SCOPE=workspace should redirect, got: $out" ;;
+    esac
+    # Not a decorative case. Mutation testing found this gap: rewriting the guard as
+    # `[[ -z "$WORKTREE_SCOPE" ]]` leaves every other case green, because the typo path is already
+    # normalised to empty by the `case` above -- only an explicitly-set VALID value tells the two
+    # apart. Without this, "someone wrote the default out loud" silently stopped being protected.
+}
+
+test_unrecognised_scope_falls_back_to_the_safe_answer() {
+    skip_without_git
+    local out err
+    err="$(payload_for "$WS/proj-1" WorktreeCreate wt-sp5 | TP_WORKTREE_SCOPE=projekt bash "$CREATE" 2>&1 >/dev/null)"
+    out="$(payload_for "$WS/proj-1" WorktreeCreate wt-sp6 | TP_WORKTREE_SCOPE=projekt bash "$CREATE" 2>/dev/null)"
+    # A typo must not silently select the unprotected behaviour -- that would be the original bug
+    # reachable by misspelling.
+    case "$out" in
+        */ws/.worktrees/wt-sp6) assertTrue 'a typo still redirects' 0 ;;
+        *) fail "an unrecognised scope must not opt out; got: $out" ;;
+    esac
+    case "$err" in
+        *unrecognised*) ;;
+        *) fail "an unrecognised scope should say so; stderr was: $err" ;;
+    esac
+}
+
+test_project_inside_an_existing_mirror_is_not_expanded_again() {
+    skip_without_git
+    local mirror out
+    mirror="$(payload_for "$WS" WorktreeCreate wt-sp7 | bash "$CREATE" 2>/dev/null)"
+    assertTrue 'precondition: the mirror has proj-1' "[ -d '$mirror/proj-1' ]"
+    # A mirror carries no marker, so entering from inside one is an ordinary repository again.
+    # Without this the redirect would recurse a workspace out of its own worktree.
+    out="$(payload_for "$mirror/proj-1" WorktreeCreate wt-sp8 | bash "$CREATE" 2>/dev/null)"
+    case "$out" in
+        */wt-sp7/proj-1/.claude/worktrees/wt-sp8) assertTrue 'stays inside the mirrored project' 0 ;;
+        *) fail "a project inside a mirror must not re-expand; got: $out" ;;
+    esac
 }
 
 test_plain_folder_fails_loudly() {
@@ -232,14 +361,15 @@ test_remove_keeps_a_worktree_with_uncommitted_work() {
 # everywhere, not only in workspaces.
 test_remove_finds_an_ordinary_repo_worktree_without_a_path_field() {
     skip_without_git
-    local out
-    out="$(payload_for "$WS/proj-2" WorktreeCreate wt-k | bash "$CREATE" 2>/dev/null)"
+    local out solo
+    solo="$(lone_repo)"
+    out="$(payload_for "$solo" WorktreeCreate wt-k | bash "$CREATE" 2>/dev/null)"
     assertTrue 'precondition: the worktree exists' "[ -d '$out' ]"
     # Deliberately only cwd + name, no path field.
-    payload_for "$WS/proj-2" WorktreeRemove wt-k | bash "$REMOVE" >/dev/null 2>&1
+    payload_for "$solo" WorktreeRemove wt-k | bash "$REMOVE" >/dev/null 2>&1
     assertFalse 'ordinary-repo worktree removed' "[ -d '$out' ]"
-    if git -C "$WS/proj-2" worktree list 2>/dev/null | grep -q 'wt-k'; then
-        fail 'proj-2 still registers the removed worktree'
+    if git -C "$solo" worktree list 2>/dev/null | grep -q 'wt-k'; then
+        fail 'the repo still registers the removed worktree'
     fi
 }
 
@@ -297,12 +427,13 @@ test_remove_keeps_a_branch_that_carries_its_own_commits() {
 # has to clean one up as well.
 test_remove_deletes_the_branch_in_an_ordinary_repo() {
     skip_without_git
-    local out
-    out="$(payload_for "$WS/proj-2" WorktreeCreate wt-n | bash "$CREATE" 2>/dev/null)"
-    assertTrue 'precondition: the branch exists' "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-n >/dev/null"
-    payload_for "$WS/proj-2" WorktreeRemove wt-n | bash "$REMOVE" >/dev/null 2>&1
+    local out solo
+    solo="$(lone_repo)"
+    out="$(payload_for "$solo" WorktreeCreate wt-n | bash "$CREATE" 2>/dev/null)"
+    assertTrue 'precondition: the branch exists' "git -C '$solo' rev-parse --verify --quiet refs/heads/wt-n >/dev/null"
+    payload_for "$solo" WorktreeRemove wt-n | bash "$REMOVE" >/dev/null 2>&1
     assertFalse 'ordinary-repo branch deleted' \
-        "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-n >/dev/null"
+        "git -C '$solo' rev-parse --verify --quiet refs/heads/wt-n >/dev/null"
     assertFalse 'ordinary-repo worktree removed' "[ -d '$out' ]"
 }
 

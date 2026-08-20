@@ -239,6 +239,62 @@ list_projects() {
   done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -not -name '.*' | LC_ALL=C sort)
 }
 
+# ── cwd inside a sub-project of a multi-repo workspace ───────────────────────
+#
+# THE FAILURE THIS REMOVES (issue #106, reported from real use). `cd` into a sub-project -- the
+# natural move when you read code before deciding what to change -- and EnterWorktree is now
+# standing in an ordinary git repository. The branch below then faithfully reproduces the built-in
+# and isolates THAT PROJECT ALONE. Nothing errors. Edits, builds and commits all work. The only
+# difference is that the session can no longer touch the other projects, and that surfaces when the
+# second project is needed -- by which point there are uncommitted changes in the wrong tree.
+#
+# THE HOOK DOES RUN HERE, which is the whole reason this fix can live in this file. #106 assumed
+# the hook was never called and proposed a PreToolUse hook on EnterWorktree instead -- an approach
+# resting on an unverified premise (that built-in tool names can be matched at all). Reproduced in
+# a sandbox: a payload with cwd=<ws>/proj-1 returns <ws>/proj-1/.claude/worktrees/<name> and prints
+# ZERO lines of stderr. The hook was firing and silently doing the ordinary thing.
+#
+# WHY REDIRECT RATHER THAN REFUSE. The choice cannot be made at the moment it is forced: nobody
+# knows yet whether a second project will be needed. And the two mistakes are not the same size --
+# isolating the whole workspace costs some extra worktrees, while isolating one project costs a
+# dead end that is only discovered with work already in hand. So the safe answer is taken
+# automatically, loudly, with a documented way to ask for the other one.
+WORKTREE_SCOPE="${TP_WORKTREE_SCOPE:-}"
+case "$WORKTREE_SCOPE" in
+  ''|workspace|project) ;;
+  # A typo must not quietly select the unprotected behaviour, so anything unrecognised falls back
+  # to the safe reading -- and says so, because a silently ignored setting is its own trap.
+  *)
+    log "unrecognised TP_WORKTREE_SCOPE='$WORKTREE_SCOPE' (expected 'workspace' or 'project'); using 'workspace'"
+    WORKTREE_SCOPE=''
+    ;;
+esac
+
+if [[ "$WORKTREE_SCOPE" != 'project' ]] \
+   && ! has_workspace_marker "$WORKSPACE" \
+   && git -C "$WORKSPACE" rev-parse --git-dir >/dev/null 2>&1; then
+  # Ask git for the repository root rather than using the payload's cwd directly: the session may
+  # be several directories deep inside the project, and only the root's PARENT can be the workspace.
+  project_top="$(git -C "$WORKSPACE" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "$project_top" ]]; then
+    workspace_candidate="$(dirname "$project_top")"
+    # Both paths come from git here, so they share a spelling; the marker test is a file test
+    # rather than a string comparison either way -- comparing git's `C:/Users/...` against the
+    # payload's spelling is the mistake documented further down in this file.
+    #
+    # This is also what keeps an EXISTING mirror from being re-expanded: <ws>/.worktrees/<name>/p1
+    # is a git repository whose parent is <ws>/.worktrees/<name>, and that directory carries no
+    # marker, so entering a worktree from inside one behaves normally.
+    if [[ "$workspace_candidate" != "$project_top" ]] && has_workspace_marker "$workspace_candidate"; then
+      log "'$project_top' is a project inside the multi-repo workspace '$workspace_candidate'."
+      log "Isolating the WHOLE workspace instead: a worktree of this project alone would pin the"
+      log "session to it, and nothing reports that until another project is needed."
+      log "Set TP_WORKTREE_SCOPE=project to isolate just this repository."
+      WORKSPACE="$workspace_candidate"
+    fi
+  fi
+fi
+
 # ── ordinary git repository ──────────────────────────────────────────────────
 # Reproduce the built-in: one worktree under <repo>/.claude/worktrees/<name>, on a new branch.
 if ! has_workspace_marker "$WORKSPACE" && git -C "$WORKSPACE" rev-parse --git-dir >/dev/null 2>&1; then
