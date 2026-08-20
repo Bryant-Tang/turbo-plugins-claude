@@ -348,6 +348,26 @@ test_plain_folder_fails_loudly() {
     assertNotEquals 'nothing to isolate must fail creation, not return a bogus path' 0 "$rc"
 }
 
+# ── the two hooks must agree on what a workspace IS ─────────────────────────
+#
+# `has_workspace_marker` is defined separately in both scripts. That duplication is deliberate --
+# CLAUDE.md keeps these hooks as self-contained single files, and a shared lib would be a third
+# thing to load before a session can start -- but it creates one specific way to break silently:
+# change the marker in one script and create decides "workspace" while remove decides "ordinary
+# repo". Creation would build the mirror and removal would look for it in the wrong place, leaving
+# the worktrees and one branch per project behind while reporting success.
+#
+# Comparing the extracted function bodies rather than just grepping for the marker string: the trap
+# is any divergence in the test, not only in the literal (a changed filename, an added condition).
+test_both_hooks_define_the_workspace_marker_test_identically() {
+    local a b
+    a="$(sed -n '/^has_workspace_marker()/,/^}/p' "$PLUGIN_ROOT/scripts/hooks/create-worktree.sh")"
+    b="$(sed -n '/^has_workspace_marker()/,/^}/p' "$PLUGIN_ROOT/scripts/hooks/remove-worktree.sh")"
+    assertNotNull 'create-worktree.sh should define has_workspace_marker' "$a"
+    assertNotNull 'remove-worktree.sh should define has_workspace_marker' "$b"
+    assertEquals 'the two hooks must decide "is this a workspace" the same way' "$a" "$b"
+}
+
 # ── removal ──────────────────────────────────────────────────────────────────
 
 test_remove_takes_the_whole_mirror_down() {
