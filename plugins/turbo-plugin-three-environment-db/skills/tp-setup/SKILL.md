@@ -67,8 +67,16 @@ plugin 知道那是正確落點,卻不讓你在那裡跑 setup。
 「無 git 時只跑 dbhub 段」。進 case 前依 base 段 Phase summary 規則報告 + `AskUserQuestion`
 (執行 / 改 case / 取消);db 的動作都是 repo-only,無「動到外部」副作用。
 
-case (a) 的 summary 要**明講會跳過什麼**:`CLAUDE.md` 的 `base` 區塊不寫、`tp-db-management` 不可用。
-使用者要能在按下執行之前就知道自己拿到的是哪一半。
+**case (a) 的白話由本段自己供給,不要照搬 base 的說法。** base 那一列刻意只描述情境
+(「這個資料夾還沒有版本控制」),因為各 concern 在 (a) 的動作是分岔的——git-svn 會建立版控,db 不會。
+照搬會讓使用者在按下執行**之前**先被告知一件不會發生的事,而那正是 Phase summary 要防的。
+
+db 在 case (a) 的白話用這句:
+
+> 「這個資料夾還沒有版本控制——將部署 dbhub 設定,但**不會**建立版控,也**不會**處理需要 git 的部分」
+
+並接著明講會跳過什麼:`CLAUDE.md` 的 `base` 區塊不寫、`tp-db-management` 不可用。使用者要能在按下執行
+之前就知道自己拿到的是哪一半。
 
 ### Phase 2 — base 骨架 + db concern
 
@@ -161,8 +169,11 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 - `.gitignore` 含 `base` 標記區塊(只有一組);`CLAUDE.md` 的 `base` 區塊開頭有「重跑會整段取代」的自我說明。
 - 專案根若存在未被追蹤的 `TODO.md`,**使用者已被明確告知它不再被 base 區塊忽略**(見 base 段第 3 項)。
 - Case (a)(無 `.git/`):`.turbo-plugin/`、`.gitignore` 的 `base` 區塊、`dbhub.example.local.toml` 都已建立;
-  **未** `git init`;**未**寫 `CLAUDE.md` 的 `base` 區塊;**未**自動建 `dbhub.local.toml`;
-  完成報告已明講 `tp-db-management` 不可用、範本傳不出去。
+  **未** `git init`;**未**寫 `CLAUDE.md` 的 `base` 區塊;**未**自動建 `dbhub.local.toml`。
+- Case (a) 的 Phase summary **沒有**說「將建立版控」(那是 git-svn 的說法,對 db 是假的)。
+- Case (a) 的完成報告**四項都在**——跳過 `CLAUDE.md` base、`tp-db-management` 不可用、範本只是格式參考、
+  `.gitignore` 是惰性的。**逐項對照**,不要只確認前兩項:這四句的作用是同一件事(不讓使用者以為拿到的
+  是完整設定),少任何一句都會留下一個誤會。
 - Case (b)/(c):跑兩次結果同跑一次(idempotent)。
 - Case (d):只處理 `dbhub.local.toml`,未動 git-versioned shared file。
 
