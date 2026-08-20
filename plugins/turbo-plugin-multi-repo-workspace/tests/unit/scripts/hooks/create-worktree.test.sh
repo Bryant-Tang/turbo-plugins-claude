@@ -321,6 +321,24 @@ test_project_inside_an_existing_mirror_is_not_expanded_again() {
     esac
 }
 
+test_remove_finds_the_mirror_from_the_subproject_that_created_it() {
+    skip_without_git
+    local out
+    out="$(payload_for "$WS/proj-1" WorktreeCreate wt-sp10 | bash "$CREATE" 2>/dev/null)"
+    assertTrue 'precondition: the redirect produced a mirror' "[ -d '$out/proj-2' ]"
+    # No path field, and cwd is still the SUB-PROJECT -- the shape create was called with. The
+    # redirect is create-only unless removal can retrace it: the review of PR #108 found that
+    # remove reconstructed only <repo>/.claude/worktrees/<name> and <cwd>/.worktrees/<name>,
+    # neither of which exists after a redirect, so the mirror and one branch per project stayed
+    # behind forever while the hook reported "nothing identifiable to remove".
+    payload_for "$WS/proj-1" WorktreeRemove wt-sp10 | bash "$REMOVE" >/dev/null 2>&1
+    assertFalse 'the mirror is gone' "[ -d '$out' ]"
+    assertFalse 'proj-1 branch cleaned up' \
+        "git -C '$WS/proj-1' rev-parse --verify --quiet refs/heads/wt-sp10 >/dev/null"
+    assertFalse 'proj-2 branch cleaned up' \
+        "git -C '$WS/proj-2' rev-parse --verify --quiet refs/heads/wt-sp10 >/dev/null"
+}
+
 test_plain_folder_fails_loudly() {
     skip_without_git
     local dir rc=0

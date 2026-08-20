@@ -45,10 +45,29 @@ for key in worktreePath worktree_path path; do
   [[ -n "$TARGET" ]] && break
 done
 
-# No path field: reconstruct. BOTH shapes create-worktree.sh can produce have to be considered --
-# the mirror in a workspace AND the ordinary-repo worktree. Only checking the mirror would leave
-# every ordinary-repo worktree behind forever, and the ordinary repo is the COMMON case, because
-# this hook replaces the built-in everywhere and not just in workspaces.
+# No path field: reconstruct. EVERY shape create-worktree.sh can produce has to be considered.
+# Missing one does not fail loudly -- it ends at "nothing identifiable to remove" below, and the
+# worktree plus one branch per project stay behind forever.
+#
+#   1. <cwd>/.worktrees/<name>              cwd is the workspace root
+#   2. <repo-root>/.claude/worktrees/<name> ordinary repo -- the COMMON case, since this hook
+#                                           replaces the built-in everywhere, not just in workspaces
+#   3. <workspace-root>/.worktrees/<name>   cwd is a SUB-PROJECT of a workspace: create-worktree.sh
+#                                           redirects that to the workspace mirror (issue #106), so
+#                                           the same cwd that produced the mirror must be able to
+#                                           find it again. Without this the redirect would be
+#                                           create-only, and every session opened from inside a
+#                                           project would leak its mirror and its branches.
+#
+# Shapes 2 and 3 cannot both exist for one name: the redirect decides which one create made, and
+# TP_WORKTREE_SCOPE only moves that decision. Checking 2 first keeps the escape hatch's result
+# preferred when someone has used both spellings with the same slug.
+has_workspace_marker() {
+  local f="$1/CLAUDE.md"
+  [[ -f "$f" ]] || return 1
+  grep -q 'turbo-plugin:begin multi-repo-workspace' "$f" 2>/dev/null
+}
+
 if [[ -z "$TARGET" && -n "$NAME" ]]; then
   base="$(to_unix_path "$(json_str cwd)")"
   if [[ -n "$base" ]]; then
@@ -56,7 +75,14 @@ if [[ -z "$TARGET" && -n "$NAME" ]]; then
       TARGET="$base/.worktrees/$NAME"
     else
       top="$(git -C "$base" rev-parse --show-toplevel 2>/dev/null || true)"
-      [[ -n "$top" && -d "$top/.claude/worktrees/$NAME" ]] && TARGET="$top/.claude/worktrees/$NAME"
+      if [[ -n "$top" && -d "$top/.claude/worktrees/$NAME" ]]; then
+        TARGET="$top/.claude/worktrees/$NAME"
+      elif [[ -n "$top" ]]; then
+        ws="$(dirname "$top")"
+        if [[ "$ws" != "$top" ]] && has_workspace_marker "$ws" && [[ -d "$ws/.worktrees/$NAME" ]]; then
+          TARGET="$ws/.worktrees/$NAME"
+        fi
+      fi
     fi
   fi
 fi
