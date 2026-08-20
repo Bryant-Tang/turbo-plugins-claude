@@ -80,9 +80,12 @@ db 在 case (a) 的白話用這句:
 
 ### Phase 2 — base 骨架 + db concern
 
-先依 base 段建立 concern-neutral 共用檔骨架(`.turbo-plugin/` 目錄、`.gitignore` 的 `base` 標記區塊、
-`CLAUDE.md` base;**db 跳過 config.toml**)。**`.gitignore` / `CLAUDE.md` 這兩個標記區塊
+先依 base 段建立 concern-neutral 共用檔骨架:`.turbo-plugin/` 目錄、`.gitignore` 的 `base` 標記區塊、
+`CLAUDE.md` base;**db 跳過 config.toml**。**`.gitignore` / `CLAUDE.md` 這兩個標記區塊
 要調和(找到就取代),不是「已存在就跳過」**——見 base 段開頭那兩種 idempotent 語意。再做 db concern:
+
+> **case (a) 對這份骨架有例外:不寫 `CLAUDE.md` 的 `base` 區塊**(那段講的是版控,在沒有版控的地方
+> 沒有對象)。逐項清單見下方 case (a) 小節。
 
 #### Case (a) 非 git repo（只做 dbhub 段）
 
