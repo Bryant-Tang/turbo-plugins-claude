@@ -24,12 +24,16 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 ### 無 git 時只跑 dbhub 段,不整個停下
 
-**兩段的 git 需求不同,不要綁在一起**:
+**三段對 git 的需求不同,不要綁在一起**:
 
-| 段 | 需要 git 嗎 | 內容 |
+| 段 | 沒有 git 時還跑嗎 | 內容 |
 | --- | --- | --- |
-| **dbhub 段** | **不需要** | `.turbo-plugin/` 目錄、`dbhub.example.local.toml` 範本、提示填 `dbhub.local.toml`、node probe |
-| **需要 git 的段** | 需要 work tree | `.gitignore` / `CLAUDE.md` 的 `base` 標記區塊調和;以及 `tp-db-management`(它以當前 branch 名標準化 SQL 落點 `.turbo-plugin/sql/<env>-db/<branch>/`) |
+| **dbhub 段** | **跑** | `.turbo-plugin/` 目錄、`dbhub.example.local.toml` 範本、提示填 `dbhub.local.toml`、node probe |
+| **`.gitignore` 的 `base` 區塊** | **也跑** | 名字裡有 git,但寫它**不需要** git ——它只是一個檔案。理由見下方「理由不是 git」 |
+| **需要 git 的段** | **跳過** | `CLAUDE.md` 的 `base` 區塊調和;以及 `tp-db-management`(它以當前 branch 名標準化 SQL 落點 `.turbo-plugin/sql/<env>-db/<branch>/`) |
+
+> `.gitignore` 單獨列一行不是分類潔癖:它是三者裡**唯一**「名字看起來需要 git、實際上不需要」的,
+> 併進任何一列都會讓只讀表格的人得出相反的結論。
 
 dbhub 本身——一份連線設定加一個 MCP server——**跟版控沒有任何關係**:它不讀 branch、不寫 repo,
 產出(`dbhub.local.toml`)依規定本來就是 gitignored 的。需要 git 的是 `tp-db-management`。
@@ -41,7 +45,8 @@ plugin 知道那是正確落點,卻不讓你在那裡跑 setup。
 所以 case (a)(無 `.git/`)的行為是:
 
 - **跑 dbhub 段**,一切照常。
-- **跳過需要 git 的段**,並在完成報告說明跳過了什麼、以及 `tp-db-management` 在這裡不可用。
+- **`.gitignore` 的 `base` 區塊照樣寫**(理由見下)。
+- **跳過 `CLAUDE.md` 的 `base` 區塊**,並在完成報告說明,以及 `tp-db-management` 在這裡不可用。
 - **仍然不 `git init`** — 建 git repo / SVN bridge 屬 `turbo-plugin-git-svn`,這條沒變。
 
 > **例外:目錄不存在或不可寫** → 仍然 fail-loud 停止。「不是 repo」不是錯誤,「寫不進去」才是。
