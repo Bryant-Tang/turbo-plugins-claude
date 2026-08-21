@@ -22,18 +22,26 @@ BeforeAll {
     $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'hooks', 'Invoke-SessionStart.ps1')
     $script:SandboxRoot = [System.IO.Path]::Combine($pluginRoot, 'tests', '.sandbox', 'sandboxes')
 
+    # Keep sandbox names SHORT, and do not lengthen them casually.
+    #
+    # `git worktree add` writes an admin file at `<main>\.git\worktrees\<peer-name>\HEAD`, and on
+    # Windows that whole path must fit in MAX_PATH (260). The peer name is derived from the main
+    # one, so every character here is spent twice. The previous naming
+    # (`db-test-<purpose>-<12 hex>` plus a `.peer-<8 hex>` suffix) fitted for three of the four
+    # peer Contexts and overflowed on the fourth -- and because `git worktree add` is silenced,
+    # that Context ran against an ordinary directory instead of a worktree.
     function New-Sandbox {
         param([string]$Purpose)
-        $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-        $dir = [System.IO.Path]::Combine($script:SandboxRoot, "db-test-$Purpose-$guid")
+        $guid = [Guid]::NewGuid().ToString('N').Substring(0, 6)
+        $dir = [System.IO.Path]::Combine($script:SandboxRoot, "db-$Purpose-$guid")
         $null = New-Item -ItemType Directory -Path $dir -Force
         return $dir
     }
     function New-NonGitSandbox {
         param([string]$Purpose)
-        $guid = [Guid]::NewGuid().ToString('N').Substring(0, 12)
+        $guid = [Guid]::NewGuid().ToString('N').Substring(0, 6)
         $dir = [System.IO.Path]::GetFullPath(
-            [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "db-test-$Purpose-$guid"))
+            [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "db-$Purpose-$guid"))
         $null = New-Item -ItemType Directory -Path $dir -Force
         return $dir
     }
@@ -82,11 +90,23 @@ BeforeAll {
         } finally { Pop-Location }
         $peer = [System.IO.Path]::Combine(
             [System.IO.Path]::GetDirectoryName($main),
-            [System.IO.Path]::GetFileName($main) + '.peer-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+            [System.IO.Path]::GetFileName($main) + '-p')
         Push-Location -LiteralPath $main
         try { Invoke-GitSilent worktree add $peer peer-branch } finally { Pop-Location }
         return @{ Main = $main; Peer = $peer }
     }
+    # Every peer-worktree Context must assert this before anything else.
+    #
+    # `git worktree add` in New-MainAndPeer is silenced, so when it fails the caller still gets a
+    # path -- and the next New-Item creates that path as an ORDINARY directory. The hook then runs
+    # inside whatever repository contains the sandbox, and its answer depends on whether THAT
+    # checkout is a main or a linked worktree. Both outcomes are wrong and neither looks wrong.
+    # Observed 2026-08-21 in the bash twin: four peer tests reported green for that reason.
+    function Test-IsLinkedWorktree {
+        param([string]$Peer)
+        return (Test-Path -LiteralPath ([System.IO.Path]::Combine($Peer, '.git')))
+    }
+
     function Remove-MainAndPeer {
         param([hashtable]$Pair)
         if ($null -eq $Pair) { return }
@@ -138,7 +158,7 @@ Describe 'db Invoke-SessionStart' {
 
     Context 'Case 2: db in use + Pattern B missing dbhub.local.toml warns' {
         BeforeAll {
-            $script:p2 = New-MainAndPeer 'hook-ss-warn'
+            $script:p2 = New-MainAndPeer 'warn'
             $peerMarkerDir = [System.IO.Path]::Combine($script:p2.Peer, '.turbo-plugin')
             $null = New-Item -ItemType Directory -Path $peerMarkerDir -Force
             [System.IO.File]::WriteAllText(
@@ -149,6 +169,7 @@ Describe 'db Invoke-SessionStart' {
         }
         AfterAll { Remove-MainAndPeer $script:p2 }
 
+        It 'fixture: the peer really is a linked worktree' { Test-IsLinkedWorktree $script:p2.Peer | Should -BeTrue }
         It 'Pattern B exits 0' { $script:r2.Exit | Should -Be 0 }
         It 'stdout 含 systemMessage 欄' { $script:r2.Stdout | Should -Match '"systemMessage"' }
         It '警告訊息提到 dbhub.local.toml' { $script:r2.Stdout | Should -Match 'dbhub\.local\.toml' }
@@ -176,7 +197,7 @@ Describe 'db Invoke-SessionStart' {
 
     Context 'Case 4: db not in use gate no-op' {
         BeforeAll {
-            $script:p4 = New-MainAndPeer 'hook-ss-gate'
+            $script:p4 = New-MainAndPeer 'gate'
             # marker dir exists but NO example template at all (db not set up), no dbhub.local.toml
             $peerMarkerDir = [System.IO.Path]::Combine($script:p4.Peer, '.turbo-plugin')
             $null = New-Item -ItemType Directory -Path $peerMarkerDir -Force
@@ -184,6 +205,7 @@ Describe 'db Invoke-SessionStart' {
         }
         AfterAll { Remove-MainAndPeer $script:p4 }
 
+        It 'fixture: the peer really is a linked worktree' { Test-IsLinkedWorktree $script:p4.Peer | Should -BeTrue }
         It 'gate exits 0' { $script:r4.Exit | Should -Be 0 }
         It 'stdout is empty JSON object (db not in use)' { $script:r4.Stdout | Should -Match '^\{\s*\}\s*$' }
     }
@@ -201,7 +223,7 @@ Describe 'db Invoke-SessionStart' {
     # can produce sits behind that gate, so `{}` and a warning cleanly separate the two outcomes.
     Context 'Case 5: pre-rename template name still gates (cwd)' {
         BeforeAll {
-            $script:p5 = New-MainAndPeer 'hook-ss-legacy'
+            $script:p5 = New-MainAndPeer 'lgc'
             $peerMarkerDir = [System.IO.Path]::Combine($script:p5.Peer, '.turbo-plugin')
             $null = New-Item -ItemType Directory -Path $peerMarkerDir -Force
             [System.IO.File]::WriteAllText(
@@ -212,13 +234,14 @@ Describe 'db Invoke-SessionStart' {
         }
         AfterAll { Remove-MainAndPeer $script:p5 }
 
+        It 'fixture: the peer really is a linked worktree' { Test-IsLinkedWorktree $script:p5.Peer | Should -BeTrue }
         It 'legacy name exits 0' { $script:r5.Exit | Should -Be 0 }
         It '舊檔名一樣觸發警示' { $script:r5.Stdout | Should -Match '"systemMessage"' }
     }
 
     Context 'Case 6: pre-rename template name still gates (one level down)' {
         BeforeAll {
-            $script:p6 = New-MainAndPeer 'hook-ss-legacy-down'
+            $script:p6 = New-MainAndPeer 'lgcd'
             $subMarkerDir = [System.IO.Path]::Combine($script:p6.Peer, 'sub', '.turbo-plugin')
             $null = New-Item -ItemType Directory -Path $subMarkerDir -Force
             [System.IO.File]::WriteAllText(
@@ -229,6 +252,7 @@ Describe 'db Invoke-SessionStart' {
         }
         AfterAll { Remove-MainAndPeer $script:p6 }
 
+        It 'fixture: the peer really is a linked worktree' { Test-IsLinkedWorktree $script:p6.Peer | Should -BeTrue }
         It 'legacy name one level down exits 0' { $script:r6.Exit | Should -Be 0 }
         It '舊檔名在下一層也 gate 得到' { $script:r6.Stdout | Should -Match '"systemMessage"' }
     }

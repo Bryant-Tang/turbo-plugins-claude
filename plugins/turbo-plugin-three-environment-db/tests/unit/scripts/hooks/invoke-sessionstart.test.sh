@@ -20,10 +20,17 @@ PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
 SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/hooks/invoke-sessionstart.sh"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
+# Keep sandbox names SHORT, and do not lengthen them casually.
+#
+# `git worktree add` writes an admin file at `<main>/.git/worktrees/<peer-basename>/HEAD`, and on
+# Windows that whole path must fit in MAX_PATH (260). The old naming
+# (`db-test-hook-<tag>-<19-digit nanosecond stamp>`, twice over, since the peer basename is derived
+# from the main one) pushed it over on a checkout that was itself a few directories deep, and
+# `git worktree add` failed with `error: couldn't set 'HEAD'`. Uniqueness comes from the caller's
+# tag plus the shell PID, which is plenty here and costs ~24 characters less per name.
 mk_sandbox() {
-    local tag="$1" stamp
-    stamp="$(date +%s%N 2>/dev/null || date +%s)"
-    local dir="$PLUGIN_ROOT/tests/.sandbox/sandboxes/db-test-hook-${tag}-${stamp}"
+    local tag="$1"
+    local dir="$PLUGIN_ROOT/tests/.sandbox/sandboxes/db-$$-${tag}"
     mkdir -p "$dir"
     echo "$dir"
 }
@@ -37,11 +44,10 @@ rm_sandbox() {
 # tests/.sandbox/ lives INSIDE this repo, so a sandbox there would inherit the outer repo.
 # Use OS temp (outside the repo) for that case only.
 mk_nongit_sandbox() {
-    local tag="$1" stamp
-    stamp="$(date +%s%N 2>/dev/null || date +%s)"
+    local tag="$1"
     local base="${TMPDIR:-/tmp}"
     [ -d "$base" ] || base="/tmp"
-    local dir="$base/db-test-hook-${tag}-${stamp}"
+    local dir="$base/db-$$-${tag}"
     mkdir -p "$dir"
     echo "$dir"
 }
@@ -60,9 +66,24 @@ mk_main_and_peer() {
         git -c commit.gpgsign=false commit -q -m init >/dev/null 2>&1
         git branch peer-branch >/dev/null 2>&1
     )
-    sb_peer="${sb_main}.peer-$$"
+    sb_peer="${sb_main}-p"
     (cd "$sb_main" && git worktree add "$sb_peer" peer-branch >/dev/null 2>&1)
     echo "${sb_main}|${sb_peer}"
+}
+
+# Every peer-worktree test MUST call this first.
+#
+# `git worktree add` above is silenced, so when it fails the caller still gets a path -- and the
+# very next `mkdir -p "$sb_peer/..."` creates that path as an ORDINARY directory. The hook then
+# runs inside whatever repository happens to contain the sandbox, and the answer it gives depends
+# on whether THAT checkout is a main or a linked worktree. Both outcomes are wrong, and neither
+# looks wrong: on 2026-08-21 all four peer tests reported green on a machine whose checkout was a
+# linked worktree, while CI (a main worktree) failed one of them -- the real cause being a sandbox
+# path long enough to push git's admin file past Windows MAX_PATH.
+assert_peer_is_linked_worktree() {
+    local peer="$1"
+    [ -e "$peer/.git" ]
+    assertTrue "fixture: '$peer' is not a linked worktree -- git worktree add failed silently" $?
 }
 cleanup_main_and_peer() {
     local sb_main="$1" sb_peer="$2"
@@ -123,7 +144,8 @@ test_multiproject_root_without_db_is_silent() {
 # Case 2: db in use + Pattern B + 缺 dbhub.local.toml → 警示
 test_db_in_use_pattern_b_warns() {
     local pair sb_main sb_peer out e
-    pair="$(mk_main_and_peer 'ss-warn')"; sb_main="${pair%%|*}"; sb_peer="${pair##*|}"
+    pair="$(mk_main_and_peer 'warn')"; sb_main="${pair%%|*}"; sb_peer="${pair##*|}"
+    assert_peer_is_linked_worktree "$sb_peer"
     mkdir -p "$sb_peer/.turbo-plugin"
     echo "# example" > "$sb_peer/.turbo-plugin/dbhub.example.toml"
     out="$(cd "$sb_peer" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e=$?
@@ -143,12 +165,16 @@ test_db_in_use_pattern_b_warns() {
 # scan are separate lookups.
 test_legacy_marker_name_still_gates_at_cwd() {
     local pair sb_main sb_peer out e
-    pair="$(mk_main_and_peer 'ss-legacy')"; sb_main="${pair%%|*}"; sb_peer="${pair##*|}"
+    pair="$(mk_main_and_peer 'lgc')"; sb_main="${pair%%|*}"; sb_peer="${pair##*|}"
+    assert_peer_is_linked_worktree "$sb_peer"
     mkdir -p "$sb_peer/.turbo-plugin"
     echo "# example" > "$sb_peer/.turbo-plugin/dbhub.example.local.toml"
     out="$(cd "$sb_peer" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e=$?
     assertEquals 'case7: exit 0' 0 "$e"
-    echo "$out" | grep -Eq 'systemMessage'; assertTrue 'case7: 舊檔名一樣觸發警示' $?
+    echo "$out" | grep -Eq 'systemMessage'
+    # `$out` is interpolated from a variable, never a command substitution: `$(...)` inside an
+    # assert message runs first and overwrites `$?`, leaving an assertion that can never fail.
+    assertTrue "case7: 舊檔名一樣觸發警示 [out=$out]" $?
     cleanup_main_and_peer "$sb_main" "$sb_peer"
 }
 
@@ -161,12 +187,14 @@ test_legacy_marker_name_still_gates_at_cwd() {
 # it through.
 test_legacy_marker_name_still_gates_one_level_down() {
     local pair sb_main sb_peer out e
-    pair="$(mk_main_and_peer 'ss-legacy-down')"; sb_main="${pair%%|*}"; sb_peer="${pair##*|}"
+    pair="$(mk_main_and_peer 'lgcd')"; sb_main="${pair%%|*}"; sb_peer="${pair##*|}"
+    assert_peer_is_linked_worktree "$sb_peer"
     mkdir -p "$sb_peer/sub/.turbo-plugin"
     echo "# example" > "$sb_peer/sub/.turbo-plugin/dbhub.example.local.toml"
     out="$(cd "$sb_peer" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e=$?
     assertEquals 'case8: exit 0' 0 "$e"
-    echo "$out" | grep -Eq 'systemMessage'; assertTrue 'case8: 舊檔名在下一層也 gate 得到' $?
+    echo "$out" | grep -Eq 'systemMessage'
+    assertTrue "case8: 舊檔名在下一層也 gate 得到 [out=$out]" $?
     cleanup_main_and_peer "$sb_main" "$sb_peer"
 }
 
@@ -192,7 +220,8 @@ test_no_marker_silent() {
 # Case 4: db NOT in use (no dbhub.example.local.toml) + Pattern B → {} (gate no-op)
 test_db_not_in_use_gate_noop() {
     local pair sb_main sb_peer out e
-    pair="$(mk_main_and_peer 'ss-gate')"; sb_main="${pair%%|*}"; sb_peer="${pair##*|}"
+    pair="$(mk_main_and_peer 'gate')"; sb_main="${pair%%|*}"; sb_peer="${pair##*|}"
+    assert_peer_is_linked_worktree "$sb_peer"
     mkdir -p "$sb_peer/.turbo-plugin"
     # marker dir exists but NO dbhub.example.local.toml (db not set up) and no dbhub.local.toml
     out="$(cd "$sb_peer" && bash "$SCRIPT_UNDER_TEST" 2>/dev/null)"; e=$?
