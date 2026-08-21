@@ -64,6 +64,13 @@ test_no_config_stops_cleanly() {
     assertEquals 'exit 0 so the MCP server is not reported as crashed' 0 "$rc"
     echo "$out" | grep -q 'no database config found'; assertTrue 'says nothing was found' $?
     echo "$out" | grep -q 'npx'; assertFalse 'does not emit a run command' $?
+    # Both template names, because this branch is reachable for projects on either one: the
+    # template is present, only the filled-in config is missing. Naming just the current one sends
+    # anyone set up before the rename looking for a file that is not in their directory.
+    echo "$out" | grep -qF 'dbhub.example.toml'
+    assertTrue 'names the current template' $?
+    echo "$out" | grep -qF 'dbhub.example.local.toml'
+    assertTrue 'also names the pre-rename template' $?
     [ -e "$WS/.turbo-plugin" ]; assertFalse 'created nothing (the #13 regression)' $?
 }
 

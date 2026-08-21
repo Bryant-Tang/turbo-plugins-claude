@@ -89,6 +89,11 @@ Describe 'start-dbhub' {
             $r.Exit | Should -Be 0 -Because 'a non-zero exit is reported to the user as a crashed MCP server'
             $r.Combined | Should -Match 'no database config found'
             $r.Stdout | Should -Not -Match 'npx'
+            # Both template names, because this branch is reachable for projects on either one:
+            # the template is present, only the filled-in config is missing. Naming just the
+            # current one sends anyone set up before the rename looking for a file they do not have.
+            $r.Combined | Should -BeLike '*dbhub.example.toml*'
+            $r.Combined | Should -BeLike '*dbhub.example.local.toml*'
             # The #13 regression: nothing was mounted, so nothing was created.
             (Test-Path -LiteralPath ([System.IO.Path]::Combine($ws, '.turbo-plugin'))) | Should -BeFalse
         } finally { Remove-Workspace -Dir $ws }
