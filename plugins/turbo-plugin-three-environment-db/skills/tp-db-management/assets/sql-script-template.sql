@@ -8,9 +8,9 @@
 是否需要回滾: <是 | 否>
 SQL Server 版本需求: 2012+（本模板使用 THROW 語法）
 對應環境檔案:
-- .turbo-plugin/sql/local-db/<branch>/<file-name>.sql
-- .turbo-plugin/sql/test-db/<branch>/<file-name>.sql
-- .turbo-plugin/sql/main-db/<branch>/<file-name>.sql
+- .turbo-plugin/sql/local-db/<slug>/<file-name>.sql
+- .turbo-plugin/sql/test-db/<slug>/<file-name>.sql
+- .turbo-plugin/sql/main-db/<slug>/<file-name>.sql
 備註:
 1. <補充執行前提、影響範圍、需先停用排程等事項>
 2. <若為 local-only 驗證腳本，請註明測完後如何回滾>
