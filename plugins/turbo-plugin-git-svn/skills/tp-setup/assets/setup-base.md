@@ -107,10 +107,13 @@ SKILL 文件裡,而打開 `CLAUDE.md` 的人看到的只有一對 HTML 註解—
      追蹤檔;以及任何一次 `git add -A` 都可能把整包工作副本塞進版控——**在 SVN 那側是永久的**。
      以**目錄**形式忽略也順帶保證底下的東西不會被後面的 `!` 規則重新納入(git 不允許重新納入被排除
      目錄底下的檔案),這正是這裡要的。
-   - **那條 `!` 放行是必要的,不是裝飾**:`*.example.local.*` 是刻意要進版控的**範本**(例如
-     `dbhub.example.local.toml`),讓同事看得到該填哪些欄位。少了它,前一條規則會把範本一起擋掉,
-     於是「附一份範本給同事」這件事永遠不會成立——而真正含密碼的 `dbhub.local.toml` 仍然被擋住,
-     因為它不含 `.example.`。改動這三行時務必兩邊都驗:範本**不**被忽略、真檔**被**忽略。
+   - **那條 `!` 放行留著是為了既有專案,不是為了現在的範本**:db 的範本現在叫 `dbhub.example.toml`,
+     名字裡沒有 `.local.`,上一條規則本來就碰不到它。放行行服務的是**改名之前**設定好的專案——
+     它們的範本叫 `dbhub.example.local.toml`,若還沒 commit,少了這行就會被上一條規則擋掉,於是
+     「附一份範本給同事」這件事永遠不會成立。(已經 commit 的那些不受影響:ignore 規則管不到已追蹤
+     的檔案。)真正含密碼的 `dbhub.local.toml` 兩種情況都仍然被擋住,因為它不含 `.example.`。
+     **這行要等到不再有專案用舊檔名才拿得掉**,那是很久以後的事。改動這幾行時務必兩邊都驗:
+     範本**不**被忽略、真檔**被**忽略。
    - git bridge 的 ignore 規則(`.turbo-plugin/worktrees/`、`.svn/`)不在 base:由 git-svn 的 concern 段
      寫進它自己的 `git-svn` 標記區塊,調和方式與這裡相同。
    - **專案自己的建置產物沒有寫死清單**:由 agent 依
@@ -138,7 +141,8 @@ SKILL 文件裡,而打開 `CLAUDE.md` 的人看到的只有一對 HTML 註解—
   `.svn/` ignore** → **git-svn** concern。
 - **`[iis]/[build]/[publish]/[frontend]/[run]` 設定 / `applicationhost.config` / MSBuild / IIS Express 路徑**
   → **dotnet** plugin,但它**沒有 setup 指令**:這些全部由要用到它們的那支 skill 在當下自己建。
-- **`dbhub.example.local.toml` / `dbhub.local.toml` / `.mcp.json`(tp-dbhub)** → **db** concern。
+- **`dbhub.example.toml`(改名前設定的專案是 `dbhub.example.local.toml`)/ `dbhub.local.toml` /
+  `.mcp.json`(tp-dbhub)** → **db** concern。
 
 ## Case 偵測（供各 plugin concern 段使用,固定優先序）
 
