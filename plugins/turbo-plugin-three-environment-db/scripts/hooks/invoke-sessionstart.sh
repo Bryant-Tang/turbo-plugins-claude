@@ -3,7 +3,8 @@
 # On Windows / Git Bash: delegate to the native PowerShell implementation.
 # On other platforms: run the slim native bash version.
 #
-# Behavior: warn only when db is in use (this project has .turbo-plugin/dbhub.example.local.toml)
+# Behavior: warn only when db is in use (this project has .turbo-plugin/dbhub.example.toml, or the
+# pre-rename .turbo-plugin/dbhub.example.local.toml)
 # AND we are in a peer worktree AND .turbo-plugin/dbhub.local.toml is missing — i.e. the tp-dbhub
 # MCP server would fail to start. Otherwise emit `{}` silently. Never blocks the session.
 # Concern-neutral no-op when the db marker is absent (KTD9): a project that does not use db
@@ -52,7 +53,18 @@ emit_json() {
 
 CWD="$(pwd)"
 MARKER_DIR="${CWD}/.turbo-plugin"
-MARKER_REL='.turbo-plugin/dbhub.example.local.toml'
+
+# The db marker has TWO accepted names, and both have to stay. `dbhub.example.toml` is what
+# tp-setup deploys now; `dbhub.example.local.toml` is what every project set up before the rename
+# already has committed. Recognising only the new name would make this hook conclude those projects
+# do not use a database and go silent -- which is exactly the failure shape the gate below exists to
+# prevent, and the user would get no signal that anything changed. Drop the old name only once no
+# project is still on it.
+db_marker_in() {
+  if [[ -f "${1}/.turbo-plugin/dbhub.example.toml" ]]; then return 0; fi
+  if [[ -f "${1}/.turbo-plugin/dbhub.example.local.toml" ]]; then return 0; fi
+  return 1
+}
 
 # db concern gate (KTD9): only act when db is actually in use. Otherwise a silent no-op.
 #
@@ -64,12 +76,12 @@ MARKER_REL='.turbo-plugin/dbhub.example.local.toml'
 # support was built for: observed 2026-08-03, a session with no node on PATH said nothing at all
 # and the user had to ask why the MCP server was red.
 db_in_use=false
-if [[ -f "${CWD}/${MARKER_REL}" ]]; then
+if db_marker_in "$CWD"; then
   db_in_use=true
 else
   for _d in "$CWD"/*/; do
     [[ -d "$_d" ]] || continue
-    if [[ -f "${_d}${MARKER_REL}" ]]; then db_in_use=true; break; fi
+    if db_marker_in "${_d%/}"; then db_in_use=true; break; fi
   done
 fi
 

@@ -142,7 +142,11 @@ if (isFile(rootConfig)) {
         say(`  looked for: ${rootConfig}`);
         say(`  and in each project directly under: ${sessionRoot}`);
         say('Run /tp-setup in the project that has a database, then copy');
-        say(`  .turbo-plugin/dbhub.example.local.toml -> ${CONFIG_REL} and fill it in.`);
+        say(`  .turbo-plugin/dbhub.example.toml -> ${CONFIG_REL} and fill it in.`);
+        // Projects set up before the template was renamed still carry the old name, and this
+        // branch is reachable for them: the template is there, only the filled-in config is
+        // missing. Naming just the new file would tell them to copy something that is not there.
+        say('  (set up before the rename? the template is dbhub.example.local.toml -- same thing)');
         process.exit(0);
     } else {
         // (c)

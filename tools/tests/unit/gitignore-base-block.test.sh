@@ -14,7 +14,7 @@
 #     `git add -A`, which on the SVN side is permanent.
 #
 # So the block is extracted from the asset VERBATIM and its real behaviour is asserted with
-# `git check-ignore`. The asset itself says "改動這三行時務必兩邊都驗" -- this is that check,
+# `git check-ignore`. The asset itself says "改動這幾行時務必兩邊都驗" -- this is that check,
 # mechanised.
 #
 # Both shared copies (git-svn, three-environment-db) are byte-identical by
@@ -39,6 +39,7 @@ oneTimeSetUp() {
         "$SETUP_BASE" | sed 's/^   //' > "$SANDBOX/.gitignore"
 
     mkdir -p "$SANDBOX/.turbo-plugin" "$SANDBOX/docs" "$SANDBOX/.claude/worktrees/wt"
+    : > "$SANDBOX/.turbo-plugin/dbhub.example.toml"
     : > "$SANDBOX/.turbo-plugin/dbhub.example.local.toml"
     : > "$SANDBOX/.turbo-plugin/dbhub.local.toml"
     : > "$SANDBOX/TODO.md"
@@ -69,9 +70,21 @@ test_block_was_actually_extracted() {
     assertTrue 'end marker present in the extracted block' $?
 }
 
-# The escape hatch. Without it the template that shows colleagues which fields to fill is silently
-# never committed, and "ship an example alongside the real thing" stops working.
-test_example_template_is_not_ignored() {
+# The template tp-setup deploys today. Nothing in the block matches it -- that is the point of the
+# rename -- but "no rule happens to match" is not a property anyone is maintaining, so assert it.
+# A future rule broad enough to swallow this file would silently reintroduce exactly the failure
+# the escape hatch below was added for.
+test_current_example_template_is_not_ignored() {
+    if is_ignored '.turbo-plugin/dbhub.example.toml'; then
+        fail 'the dbhub.example.toml template is ignored; colleagues would never receive it'
+    fi
+}
+
+# The escape hatch, still load-bearing for projects set up BEFORE the rename: their template is
+# named `dbhub.example.local.toml` and `.turbo-plugin/**/*.local.*` would swallow it. Without the
+# escape the template that shows colleagues which fields to fill is silently never committed, and
+# "ship an example alongside the real thing" stops working.
+test_pre_rename_example_template_is_not_ignored() {
     if is_ignored '.turbo-plugin/dbhub.example.local.toml'; then
         fail 'the *.example.local.* template is ignored; colleagues would never receive it'
     fi

@@ -1,6 +1,6 @@
 ---
 name: tp-setup
-description: 'Set up turbo-plugin-three-environment-db (dbhub / three database environments): shared base files, then the `dbhub.example.local.toml` template and a prompt to fill `dbhub.local.toml`. Run on explicit request; **do NOT auto-trigger**. Outside a git work tree it completes normally, skipping only one verification step; it never runs `git init`.'
+description: 'Set up turbo-plugin-three-environment-db (dbhub / three database environments): shared base files, then the `dbhub.example.toml` template and a prompt to fill `dbhub.local.toml`. Run on explicit request; **do NOT auto-trigger**. Outside a git work tree it completes normally, skipping only one verification step; it never runs `git init`.'
 argument-hint: ''
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
@@ -14,7 +14,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 1. **共用 base 段**(concern-neutral):pre-check + case 偵測 + 建 `.turbo-plugin/` 與共用檔骨架。見
    `${CLAUDE_PLUGIN_ROOT}/skills/tp-setup/assets/setup-base.md`,**先讀並執行該檔**。
-2. **db concern 段**(本檔):`dbhub.example.local.toml` 範本(進 git)、提示使用者複製填 `dbhub.local.toml`
+2. **db concern 段**(本檔):`dbhub.example.toml` 範本(進 git)、提示使用者複製填 `dbhub.local.toml`
    (gitignored,含 credentials)。`tp-db-management` **不**寫進 `conventions.md`,改靠 skill 自身 description 讓 agent 主動觸發。
 
 > 本 plugin **不**處理 git↔SVN bridge(屬 `turbo-plugin-git-svn`)、IIS apphost(屬
@@ -24,27 +24,32 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 ### 無 git 時照樣完成 setup,不整個停下
 
-**setup 寫的東西沒有一樣需要 git。** 需要 git 的是**另一支 skill 的一半功能**:
+**setup 寫的東西沒有一樣需要 git,`tp-db-management` 兩半也都不需要。** 整支流程裡只有一個步驟會問
+到 git:
 
 | 誰 | 需要 git 嗎 | 為什麼 |
 | --- | --- | --- |
-| **setup 寫的全部檔案** | **不需要** | `.turbo-plugin/`、`.gitignore` 的 `base` 區塊、`CLAUDE.md` 的 `base` 區塊、`dbhub.example.local.toml`、node probe —— 全都只是寫檔案 |
+| **setup 寫的全部檔案** | **不需要** | `.turbo-plugin/`、`.gitignore` 的 `base` 區塊、`CLAUDE.md` 的 `base` 區塊、`dbhub.example.toml`、node probe —— 全都只是寫檔案 |
 | `tp-db-management` 的**唯讀查詢** | **不需要** | 它只需要 dbhub MCP server,而那正是 setup 設定好的東西 |
-| `tp-db-management` 的 **SQL 產出** | **需要** | 落點是 `.turbo-plugin/sql/<env>-db/<branch>/`,用**當前 branch 名**當分組鍵 |
+| `tp-db-management` 的 **SQL 產出** | **不需要** | 落點是 `.turbo-plugin/sql/<env>-db/<slug>/`;有 git 時 `<slug>` 直接用當前 branch 名,**沒有 git 就問使用者**要用哪個 |
+| 範本部署後的 `git check-ignore` | **需要** | 這是唯一一項,沒有 git 就跳過 |
 
 dbhub 本身——一份連線設定加一個 MCP server——**跟版控沒有任何關係**:它不讀 branch、不寫 repo,
 產出(`dbhub.local.toml`)依規定本來就是 gitignored 的。
 
-原本整個 setup 因為 `tp-db-management` 需要 git 就一起擋掉,而**多專案工作區正是最需要根那份設定的
-形狀**——`start-dbhub.js` 的設定解析第一條就是為它設計的(規則 c 找到多份時,要靠根那份指明用哪個)。
-plugin 知道那是正確落點,卻不讓你在那裡跑 setup。**而被擋掉的那些動作,沒有一個真的需要 git。**
+**這條規則的由來**:整個 setup 原本一看到不是 repo 就停,理由是「`tp-db-management` 需要 git」——
+當時 SQL 落點確實只拿得到 branch 名(現在沒有 git 就問使用者,所以連那個理由都不成立了)。而
+**多專案工作區正是最需要根那份設定的形狀**——`start-dbhub.js` 的設定解析第一條就是為它設計的
+(規則 c 找到多份時,要靠根那份指明用哪個)。plugin 知道那是正確落點,卻不讓你在那裡跑 setup。
+**而被擋掉的那些動作,沒有一個真的需要 git。**
 
 所以 case (a)(無 `.git/`)的行為是:
 
 - **setup 該寫的全部照寫**,`.gitignore` 與 `CLAUDE.md` 的 `base` 區塊都不例外(理由見下)。
 - **唯一跳過的是一項驗證**:範本部署後的 `git check-ignore`(沒有 git 可問)。
 - **仍然不 `git init`** — 建 git repo / SVN bridge 屬 `turbo-plugin-git-svn`,這條沒變。
-- 完成報告要說明 `tp-db-management` 在這裡**只有唯讀查詢那半可用**。
+- 完成報告要說明 `tp-db-management` 在這裡**完全可用**,只是產出 SQL 時會**問你分組名**,
+  不像在 repo 裡直接拿 branch 名。那是差異,不是限制。
 
 > **例外:目錄不存在或不可寫** → 仍然 fail-loud 停止。「不是 repo」不是錯誤,「寫不進去」才是。
 
@@ -85,8 +90,9 @@ db 在 case (a) 的白話用這句:
 
 > 「這個資料夾還沒有版本控制——將部署 dbhub 設定,但**不會**為它建立版控」
 
-並接著明講唯一的限制:`tp-db-management` 在這裡**只有唯讀查詢那半可用**,產出 SQL 那半不能用。
-使用者要能在按下執行之前就知道自己拿到的是什麼。
+**到此為止,不要再加限制的預告。** 這裡曾經接了一句「`tp-db-management` 只有唯讀查詢那半可用」——
+那句話現在是假的:SQL 落點的分組名沒有 git 就問使用者,所以兩半都能用。Phase summary 的職責是
+不讓使用者在按下執行之前相信一件假的事,多講一個不存在的限制跟少講一個真的限制一樣糟。
 
 ### Phase 2 — base 骨架 + db concern
 
@@ -108,24 +114,39 @@ db 在 case (a) 的白話用這句:
    `.gitignore` 才有的形狀):已經有一個(例如 git-svn 的 setup 先跑過)就**取代它的內容**,
    絕不要再加第二個。至於 `multi-repo-workspace` / `knowledge-placement` 那些是**不同的標記名**,
    各自獨立、互不相干,一律不要動。
-3. **`.turbo-plugin/dbhub.example.local.toml`** — 照 case (b)/(c) 的規則部署,但**不要**跑
-   `git check-ignore` 那項驗證(沒有 git 可問)。同時要講清楚它在這裡的角色**變了**:
-   在 repo 裡它是「進 git、給同事看的範本」,在這裡它**傳不到任何人手上**,只是給你自己看的格式參考。
+3. **`.turbo-plugin/` 的 dbhub 範本** — 照 case (b)/(c) 那三選一的規則處理(含「只有舊檔名時什麼都
+   不動」),但**不要**跑 `git check-ignore` 那項驗證(沒有 git 可問)。同時要講清楚它在這裡的角色
+   **變了**:在 repo 裡它是「進 git、給同事看的範本」,在這裡它**傳不到任何人手上**,只是給你自己
+   看的格式參考。
 4. **`.turbo-plugin/dbhub.local.toml`** — 一樣**永不自動建立**,只提示複製後填。
 5. **node probe** — 照跑,規則與下方相同。
 
 #### Case (b) init-from-existing / Case (c) 主 worktree 補設定
 
-1. **`.turbo-plugin/dbhub.example.local.toml`**(db **owns**)— 不存在則複製
-   `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/dbhub.example.local.toml`(此檔進 git,是給同事看的範本);
-   **已存在則不覆寫**。部署完**確認它真的沒有被 ignore**(`git check-ignore` 應回非零):base 的
-   `.turbo-plugin/**/*.local.*` 會連範本一起擋掉,靠 base 骨架裡那條 `!*.example.local.*` 放行。
-   舊版 `.gitignore` 缺那一行的情況,base 段的標記調和已經會補上(issue #65 之前不會,所以這裡才要
-   自己驗一次);**驗出來仍然被 ignore 就停下回報**,不要默默放過——範本被擋掉的話它永遠傳不到同事手上。
+1. **`.turbo-plugin/` 的 dbhub 範本**(db **owns**)— 依現況三選一:
+   - **兩個檔名都不存在** → 複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/dbhub.example.toml`
+     (此檔進 git,是給同事看的範本)。
+   - **`dbhub.example.toml` 已存在** → **不覆寫**。
+   - **只有改名前的 `dbhub.example.local.toml`** → **什麼都不動**,只在 Phase 4 講一句
+     (見本項下方「舊範本檔名」那三條)。
+
+   部署 / 確認之後,對**實際存在的那個檔名**跑一次 `git check-ignore`,**確認它真的沒有被 ignore**
+   (應回非零)。**驗出來仍然被 ignore 就停下回報**,不要默默放過——範本被擋掉的話它永遠傳不到
+   同事手上(issue #65)。
+   > 新檔名不含 `.local.`,base 的 `.turbo-plugin/**/*.local.*` **碰不到它**,所以這項驗證在新專案
+   > 上幾乎一定會過。留著它是因為它同時擋著另一半:**專案自己寫的** ignore 規則,而那個失敗一樣
+   > 是靜默的。舊檔名則仍然要靠 base 骨架裡那條 `!*.example.local.*` 放行才不會被擋掉。
+
+   **舊範本檔名:不改名,也不補一份新的。**
+   - **不要**自己 `git mv`。版控裡的檔案改名是一次 commit,那是使用者的決定,不是 setup 的。
+   - **也不要**再部署一份新檔名的範本。兩份內容相同、只有名字不同的範本擺在同一個資料夾裡,
+     「我該複製哪一份」沒有答案——那正是這次改名要消滅的那類困惑。
+   - **在完成報告講一句就好**:範本已改名成 `dbhub.example.toml`,舊檔名**仍然完全可用**
+     (SessionStart hook 兩個名字都認),想跟上就自己 `git mv`。
 2. **`.turbo-plugin/dbhub.local.toml`** — **永不自動建立**(避免使用者誤以為已 ready)。不存在則提醒:
-   「dbhub 需要你自填 credentials:`cp .turbo-plugin/dbhub.example.local.toml .turbo-plugin/dbhub.local.toml`
-   後編輯填入連線資訊」(`.gitignore` base 已排除 `*.local.*`,**真正含密碼的這一份不會進 git**;
-   只有 `*.example.local.*` 範本被放行)。
+   「dbhub 需要你自填 credentials:`cp .turbo-plugin/dbhub.example.toml .turbo-plugin/dbhub.local.toml`
+   後編輯填入連線資訊」(`.gitignore` base 已排除 `*.local.*`,**真正含密碼的這一份不會進 git**)。
+   專案若還在用舊範本檔名,`cp` 的來源就換成那一個。
 3. **node probe**(僅提示,不阻塞):`node --version`。失敗 → Phase 4 記「dbhub MCP server 需要 Node.js;
    未偵測到,裝好後重開 session」。
    **這一項不能省。** `tp-dbhub` 的啟動器是 node 腳本(`.mcp.json` 的 `command` 是被**直接 spawn**
@@ -148,12 +169,14 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
    - 「從主 worktree 複製過來(`cp <main>/.turbo-plugin/dbhub.local.toml ./.turbo-plugin/`)」
    - 「互動輸入新 credentials」
    - 「跳過(不用 dbhub MCP server)」
-2. **不**碰任何 git-versioned shared file(`dbhub.example.local.toml` 等由主 worktree 管理)。
+2. **不**碰任何 git-versioned shared file(`dbhub.example.toml` 等由主 worktree 管理)。
 
 ### Phase 4 — 完成報告
 
 - **偵測結果**:case + 子流程。
-- **寫入位置**:base 骨架 + db 項目(`dbhub.example.local.toml`)各標「新建 / 已存在 / 補設定」。
+- **寫入位置**:base 骨架 + db 項目(`dbhub.example.toml`)各標「新建 / 已存在 / 補設定」。
+- **專案若還在用改名前的 `dbhub.example.local.toml`**:講明範本已改名、舊名仍可用、要不要 `git mv`
+  由使用者決定。
 - **使用者仍須手動處理**:
   - `dbhub.local.toml` credentials(複製 example 後填)。
   - node 未偵測到時的安裝提示。
@@ -161,11 +184,11 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 - **下一步**:「填好 `.turbo-plugin/dbhub.local.toml`、確認裝了 Node.js 之後**重開 session**,
   `tp-dbhub` 才會連上,接著可 `/tp-db-management`」。
 - **case (a) 額外要報**(缺一項都會讓使用者誤判自己拿到了什麼):
-  - **`tp-db-management` 只有一半可用**:**唯讀查詢照常**(它只需要 dbhub MCP server,而那已經設定好了);
-    **產出 SQL 那半不能用**,因為落點 `.turbo-plugin/sql/<env>-db/<branch>/` 要拿當前 branch 名當分組鍵。
-    要產 SQL 請在**某個子專案裡**跑那支 skill。
-    **不要簡化成「`tp-db-management` 不可用」** —— 那會讓使用者放棄一個其實可用的功能。
-  - **`dbhub.example.local.toml` 在這裡只是格式參考**,不會傳給任何人。
+  - **`tp-db-management` 完全可用**:**唯讀查詢照常**(它只需要 dbhub MCP server,而那已經設定好了);
+    **產出 SQL 也照常**,只是落點 `.turbo-plugin/sql/<env>-db/<slug>/` 的 `<slug>` 會**問你**要用哪個
+    (列出既有資料夾讓你選),而不是像在 repo 裡直接拿當前 branch 名。
+    **不要講成「不可用」或「只有一半可用」** —— 兩種說法都會讓使用者放棄一個其實可用的功能。
+  - **`dbhub.example.toml` 在這裡只是格式參考**,不會傳給任何人。
   - `.gitignore` 與 `CLAUDE.md` 的 `base` 區塊已寫入。前者在沒有 git 時是惰性的,存在是為了
     「哪天有人在這裡 `git init`」,**不是**暗示你該這麼做。
 
@@ -173,10 +196,10 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 
 - **先跑共用 base 段、再做 db concern** — base 只建 concern-neutral 共用檔;dbhub 相關屬 db。
 - **db 不碰 config.toml** — base 段對 db 跳過 config.toml 那一項。
-- **無 `.git/` 時照跑,不整個停下** — setup 寫的東西沒有一樣需要 git;需要 git 的是
-  `tp-db-management` 產出 SQL 那半(拿 branch 名當分組鍵),而它的唯讀查詢那半照常可用。
-  仍然**不自行 `git init`**(建 git repo 屬 `turbo-plugin-git-svn`),`.gitignore` 與 `CLAUDE.md`
-  的 `base` 區塊**都照寫**。
+- **無 `.git/` 時照跑,不整個停下** — setup 寫的東西沒有一樣需要 git,`tp-db-management` 兩半也都
+  不需要(SQL 落點的 `<slug>` 沒有 git 就問使用者)。整支流程唯一要問 git 的是範本部署後那項
+  `git check-ignore`,沒有 git 就跳過。仍然**不自行 `git init`**(建 git repo 屬
+  `turbo-plugin-git-svn`),`.gitignore` 與 `CLAUDE.md` 的 `base` 區塊**都照寫**。
 - **`dbhub.local.toml` 永不自動建立** — 只 prompt 使用者複製 example 後手動編輯(避免誤以為已 ready)。
 - **db 不寫 `config.toml` 的任何標記區塊** — base 段建立的共用檔維持原樣,db 只管自己的 dbhub 檔(db-management 靠 skill description 觸發;`conventions.md` 機制已退役)。
 - **Case (b)/(c) idempotent**;**Case (d)** 只處理 per-peer `dbhub.local.toml`,不碰 git-versioned shared file。
@@ -186,28 +209,34 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 ## Completion Checks
 
 - `.turbo-plugin/` 存在;db 未在 `config.toml` 寫入任何內容(亦不涉及 `conventions.md`——該機制已退役)。
-- `.turbo-plugin/dbhub.example.local.toml` 存在(進 git);`dbhub.local.toml` **未**被自動建立(只提示)。
+- `.turbo-plugin/` 底下有一個 dbhub 範本(新專案是 `dbhub.example.toml`;改名前設定的專案維持
+  `dbhub.example.local.toml`,**不會**被改名、也**不會**多出第二份);`dbhub.local.toml` **未**被自動
+  建立(只提示)。
 - `.gitignore` 含 `base` 標記區塊(只有一組);`CLAUDE.md` 的 `base` 區塊開頭有「重跑會整段取代」的自我說明。
 - 專案根若存在未被追蹤的 `TODO.md`,**使用者已被明確告知它不再被 base 區塊忽略**(見 base 段第 3 項)。
-- Case (a)(無 `.git/`):`.turbo-plugin/`、`.gitignore` **與 `CLAUDE.md`** 的 `base` 區塊、
-  `dbhub.example.local.toml` 都已建立;**未** `git init`;**未**自動建 `dbhub.local.toml`。
+- Case (a)(無 `.git/`):`.turbo-plugin/`、`.gitignore` **與 `CLAUDE.md`** 的 `base` 區塊都已建立,
+  dbhub 範本也已就位(原本什麼都沒有就是新的 `dbhub.example.toml`;原本只有舊檔名就維持舊的);
+  **未** `git init`;**未**自動建 `dbhub.local.toml`。
 - Case (a) 的 Phase summary **沒有**說「將建立版控」(那是 git-svn 的說法,對 db 是假的)。
-- Case (a) 的完成報告**三項都在**——`tp-db-management` **只有一半**可用(唯讀查詢照常、產出 SQL 不行)、
-  範本只是格式參考、兩個 `base` 區塊已寫入且 `.gitignore` 目前是惰性的。**逐項對照**:這三句的作用是
-  同一件事(不讓使用者誤判自己拿到了什麼),少任何一句都會留下一個誤會。
-- Case (a) 的報告**沒有**把 `tp-db-management` 講成「不可用」——那會讓使用者放棄一個其實可用的功能。
+- Case (a) 的完成報告**三項都在**——`tp-db-management` **完全可用**(唯讀查詢照常、產出 SQL 也照常,
+  只是 `<slug>` 改用問的)、範本只是格式參考、兩個 `base` 區塊已寫入且 `.gitignore` 目前是惰性的。
+  **逐項對照**:這三句的作用是同一件事(不讓使用者誤判自己拿到了什麼),少任何一句都會留下一個誤會。
+- Case (a) 的報告**沒有**把 `tp-db-management` 講成「不可用」**或「只有一半可用」**——它兩半都能用,
+  講小了會讓使用者放棄一個其實可用的功能。
 - Case (b)/(c):跑兩次結果同跑一次(idempotent)。
 - Case (d):只處理 `dbhub.local.toml`,未動 git-versioned shared file。
 
 ## Test Scenarios
 
 - **無 git 照樣完成 setup**:在無 `.git/` 的空目錄跑 `/tp-setup`,確認建了 `.turbo-plugin/`、
-  `.gitignore` **與 `CLAUDE.md`** 的 `base` 區塊、`dbhub.example.local.toml`,而**未** `git init`、
+  `.gitignore` **與 `CLAUDE.md`** 的 `base` 區塊、`dbhub.example.toml`,而**未** `git init`、
   **未**自動建 `dbhub.local.toml`。
-- **非 repo 的完成報告不會讓人誤會**:同上情境,確認報告講的是「`tp-db-management` **只有唯讀查詢
-  那半可用**」而**不是**「不可用」,並且有講「範本在這裡傳不出去」。前者講錯會讓使用者放棄一個可用的
-  功能,後者漏掉會讓他以為範本已經交給同事了。
-- **dbhub.local.toml 不自動建**:乾淨 sandbox 跑 case (c),確認只建 `dbhub.example.local.toml`、提示複製,但**未**自動建 `dbhub.local.toml`。
+- **非 repo 的完成報告不會讓人誤會**:同上情境,確認報告講的是「`tp-db-management` **完全可用**,
+  只是產出 SQL 時會問你分組名」,而**不是**「不可用」或「只有一半可用」;並且有講「範本在這裡傳不
+  出去」。前者講小了會讓使用者放棄一個可用的功能,後者漏掉會讓他以為範本已經交給同事了。
+- **dbhub.local.toml 不自動建**:乾淨 sandbox 跑 case (c),確認只建 `dbhub.example.toml`、提示複製,但**未**自動建 `dbhub.local.toml`。
+- **舊範本檔名不被動到**:sandbox 裡只放一個 `dbhub.example.local.toml` 再跑 case (c),確認 setup
+  **沒有**改名、**沒有**多部署一份 `dbhub.example.toml`,而完成報告有講「已改名、舊名仍可用」。
 - **db 只管 dbhub 檔**:跑 db setup 後,只建 / 提示 dbhub 檔,未寫入 `config.toml`(`conventions.md` 機制已退役,不涉及)。
 
 ## Tool Preference

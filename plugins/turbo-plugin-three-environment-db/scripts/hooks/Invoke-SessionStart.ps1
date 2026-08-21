@@ -28,10 +28,24 @@ function Emit-Notice {
     }
 }
 
+# The db marker has TWO accepted names, and both have to stay. `dbhub.example.toml` is what
+# tp-setup deploys now; `dbhub.example.local.toml` is what every project set up before the rename
+# already has committed. Recognising only the new name would make this hook conclude those projects
+# do not use a database and go silent -- exactly the failure shape the gate below exists to prevent,
+# and the user would get no signal that anything changed. Drop the old name only once no project is
+# still on it.
+function Test-DbMarkerIn {
+    param([string]$Dir)
+    foreach ($name in @('dbhub.example.toml', 'dbhub.example.local.toml')) {
+        $marker = [System.IO.Path]::Combine($Dir, '.turbo-plugin', $name)
+        if (Test-Path -LiteralPath $marker -PathType Leaf) { return $true }
+    }
+    return $false
+}
+
 try {
     $cwd = (Get-Location).Path
     $markerDir = Join-Path $cwd '.turbo-plugin'
-    $markerRel = '.turbo-plugin\dbhub.example.local.toml'
 
     # db concern gate (KTD9): only act when db is actually in use. Otherwise a silent no-op.
     #
@@ -42,10 +56,10 @@ try {
     # never a repo. Between them the hook could not fire in exactly the shape the db plugin's
     # multi-project support was built for: observed 2026-08-03, a session with no node on PATH said
     # nothing at all and the user had to ask why the MCP server was red.
-    $dbInUse = Test-Path -LiteralPath (Join-Path $cwd $markerRel) -PathType Leaf
+    $dbInUse = Test-DbMarkerIn $cwd
     if (-not $dbInUse) {
         foreach ($dir in @(Get-ChildItem -LiteralPath $cwd -Directory -ErrorAction SilentlyContinue)) {
-            if (Test-Path -LiteralPath (Join-Path $dir.FullName $markerRel) -PathType Leaf) {
+            if (Test-DbMarkerIn $dir.FullName) {
                 $dbInUse = $true
                 break
             }
