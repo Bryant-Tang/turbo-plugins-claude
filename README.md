@@ -9,7 +9,7 @@ turbo-plugins-claude 收納六個正交、各自獨立安裝的 plugin。只裝�
 |---|---|---|
 | **`turbo-plugin-git-svn`** | git↔SVN bridge + 設定入口（setup / pull / push / svn-log / reset / merge / suggest-ignore / commit-msg） | 是（`/tp-setup`） |
 | **`turbo-plugin-dotnet-framework`** | .NET Framework Web 本機開發（build / run / stop / publish / cleanup-orphan-iis，IIS Express + MSBuild） | 否（設定用到才建，可自我修復） |
-| **`turbo-plugin-three-environment-db`** | 三環境 DB 輔助（`tp-db-management` skill + `tp-dbhub` MCP server） | 複製 `dbhub.example.local.toml` → `dbhub.local.toml` 填值 |
+| **`turbo-plugin-three-environment-db`** | 三環境 DB 輔助（`tp-db-management` skill + `tp-dbhub` MCP server） | 複製 `dbhub.example.toml` → `dbhub.local.toml` 填值 |
 | **`turbo-plugin-code-comment`** | C# / JS / TS 註解撰寫慣例（`tp-csharp-comment` / `tp-js-comment`） | 否（純 skill） |
 | **`turbo-plugin-multi-repo-workspace`** | 「一個資料夾底下並排放著多個獨立 git repo」的工作區設定（`tp-multi-repo-workspace-setup`） | 是（`/tp-multi-repo-workspace-setup`，每個工作區一次） |
 | **`turbo-plugin-knowledge-placement`** | 「這件事該寫在哪」的判準 + 把 agent 記憶匯出成交接文件（`tp-knowledge-placement-setup` / `tp-export-handover`） | 是（`/tp-knowledge-placement-setup`，每個專案一次） |

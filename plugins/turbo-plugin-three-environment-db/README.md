@@ -4,7 +4,7 @@
 
 ## 內容
 
-- **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.local.toml` 範本、提示複製填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時**照樣完成**（見下方）。`tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發（`conventions.md` 機制已退役）。
+- **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.toml` 範本、提示複製填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時**照樣完成**（見下方）。`tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發（`conventions.md` 機制已退役）。
 - **`tp-db-management`** skill — DB 相關開發雜務（SQL 腳本撰寫等），附 `assets/sql-script-template.sql`。
   產出的 SQL 落在 `.turbo-plugin/sql/<env>-db/<slug>/`，`<slug>` **有 git 就是當前 branch 名**（行為與
   先前相同、不會問你）；**沒有 git 才問**，而且是列出既有資料夾讓你選，不是給一個空白輸入框——
@@ -53,7 +53,13 @@
 
 ## 設定
 
-1. 跑 `/tp-setup`：自動部署 `.turbo-plugin/dbhub.example.local.toml`（committed 範本）並提示你複製成 `.turbo-plugin/dbhub.local.toml`（gitignored）填入實際連線字串（credentials **永不**自動建立）。
+1. 跑 `/tp-setup`：自動部署 `.turbo-plugin/dbhub.example.toml`（committed 範本）並提示你複製成 `.turbo-plugin/dbhub.local.toml`（gitignored）填入實際連線字串（credentials **永不**自動建立）。
+
+> **範本原本叫 `dbhub.example.local.toml`。** 那個名字違反了「進版控的範本不用 `.local.` 命名」
+> 這條規約，也害它被 `.turbo-plugin/**/*.local.*` 擋住、得靠一條 `!*.example.local.*` 放行才活得下來。
+> **既有專案不必動**：SessionStart hook 兩個檔名都認，舊名照常運作；`tp-setup` 也**不會**自作主張
+> 改名或多塞一份新檔名的範本（那只會讓「該複製哪一份」變成一個沒有答案的問題）。想跟上就自己
+> `git mv .turbo-plugin/dbhub.example.local.toml .turbo-plugin/dbhub.example.toml`。
 2. 填好之後**重開 session**，`tp-dbhub` 才會連上。
 
 > `.turbo-plugin/` 為四個 turbo-plugin 共用的專案根設定目錄；本 plugin 的 `tp-setup` 先跑共用 base 段建立 concern-neutral 共用檔（用標記區塊),再只寫自己的 db 相關檔,不覆蓋其它 plugin 的區塊。**無 git repo 時照樣完成 setup**:它寫的東西**沒有一樣需要 git**。dbhub 本身跟版控沒有關係(不讀 branch、
