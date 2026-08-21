@@ -103,8 +103,11 @@ db 在 case (a) 的白話用這句:
 
 1. **`.turbo-plugin/`** — 建立(整檔層級 idempotent,存在就跳過)。
 2. **`.gitignore` 與 `CLAUDE.md` 的 `base` 標記區塊** — **照樣調和**,理由見上方「理由是同一個」。
-   `CLAUDE.md` 不存在就建立,與 case (b)/(c) 相同;工作區根的 `CLAUDE.md` 若已由別的 plugin 維護,
-   追加自己的 `base` 區塊即可(標記名不同,不會互相覆蓋)。
+   `CLAUDE.md` 不存在就建立,與 case (b)/(c) 相同。
+   **`CLAUDE.md` 的 `base` 是 tp-setup 家族共用的單一區塊**(不是各 concern 各一個 —— 那是
+   `.gitignore` 才有的形狀):已經有一個(例如 git-svn 的 setup 先跑過)就**取代它的內容**,
+   絕不要再加第二個。至於 `multi-repo-workspace` / `knowledge-placement` 那些是**不同的標記名**,
+   各自獨立、互不相干,一律不要動。
 3. **`.turbo-plugin/dbhub.example.local.toml`** — 照 case (b)/(c) 的規則部署,但**不要**跑
    `git check-ignore` 那項驗證(沒有 git 可問)。同時要講清楚它在這裡的角色**變了**:
    在 repo 裡它是「進 git、給同事看的範本」,在這裡它**傳不到任何人手上**,只是給你自己看的格式參考。
