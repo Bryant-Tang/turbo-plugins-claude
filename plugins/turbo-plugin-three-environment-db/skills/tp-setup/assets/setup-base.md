@@ -143,7 +143,7 @@ SKILL 文件裡,而打開 `CLAUDE.md` 的人看到的只有一對 HTML 註解—
 ## Case 偵測（供各 plugin concern 段使用,固定優先序）
 
 ```
-if not exist .git:                → case (a) 新建（只有 git-svn 會 git init;dotnet/db 見各自 fail-loud 規則）
+if not exist .git:                → case (a) 沒有版本控制（各 concern 的動作分岔,見各自 concern 段）
 elif not Test-IsMainWorktree:     → case (d) peer-mode
 elif not exist .turbo-plugin:     → case (b) init-from-existing
 else:                             → case (c) 補設定
@@ -153,9 +153,16 @@ else:                             → case (c) 補設定
   `AskUserQuestion` 讓使用者「照偵測到的情境執行 / 改用其他情境 / 取消」。**對使用者一律用白話描述情境,
   不要把「case (a)/(b)/(c)/(d)」這類內部代號丟給使用者**(使用者不知道那是什麼);各情境的白話說法
   (concern-neutral,各 plugin concern 段可再補自己 concern 的具體動作):
-  - 偵測 (a) → 「這看起來是全新的專案資料夾(還沒有版本控制)——將為它建立版控並完成首次設定」
+  - 偵測 (a) → 「這個資料夾還沒有版本控制」——**動作那半由 concern 段自己接上**,見下方
   - 偵測 (b) → 「這是既有的 git 專案、但還沒被 turbo-plugin 設定過——將接管並補上設定」
   - 偵測 (c) → 「這個專案先前已設定過——將補齊 / 更新本機設定」
   - 偵測 (d) → 「這是附屬的工作目錄(peer worktree)——只確認設定已就緒」
+
+  **(a) 只描述情境、其它三個都含動作,這個不對稱是刻意的。** 各 concern 在 (a) 的行為是**分岔**的:
+  git-svn 會建立版控並接上 SVN;db 不建版控,只做不需要 git 的那一半。所以 (a) 這一列若寫死任何動作,
+  就會有 concern 在使用者按下執行**之前**先被告知一件不會發生的事——而那正是 Phase summary 存在的目的
+  (讓人在動手前知道自己拿到的是什麼)。**concern 段必須自己補上 (a) 的動作說明**,不要照搬別的 concern
+  的說法。(b)/(c)/(d) 沒有這個問題,各 concern 在那三種情境的動作是同一種形狀。
+
   選項標籤與「即將執行」描述都用上述白話(「偵測 (X)」只是給 agent 對照、不要照唸代號)。**只列「會動到外部」**
   的 unconditional 動作(如 `svn checkout` 從伺服器抓內容);純 repo-only 的本地檔寫入 / git 本地 op 不列。
