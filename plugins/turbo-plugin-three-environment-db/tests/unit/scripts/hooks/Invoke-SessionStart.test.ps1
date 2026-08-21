@@ -4,17 +4,18 @@
 # Behavior: advisory dbhub-branch-only hook (always exit 0, never blocks the session):
 #   pre-check (1) — 非 git work tree → silent emit `{}`
 #   pre-check (2) — 在 git submodule → silent emit `{}`
-#   concern gate — 無 .turbo-plugin/dbhub.example.local.toml(專案未用 db) → silent `{}`
+#   concern gate — 無 .turbo-plugin/dbhub.example.toml(專案未用 db) → silent `{}`
 #   dbhub branch — db 在用 + peer worktree + 缺 dbhub.local.toml → advisory(Pattern B 警告)
 #   其餘(main worktree、dbhub.local.toml 存在、無 marker) → silent `{}`
 # db hook 不發 marker-missing 的 /tp-setup 提示(那屬 turbo-plugin-git-svn)。
 #
 # Cases:
 #   1. non-git cwd → silent exit 0 + `{}`
-#   2. db in use + Pattern B(peer + dbhub.example.local.toml + 無 dbhub.local.toml)
+#   2. db in use + Pattern B(peer + dbhub.example.toml + 無 dbhub.local.toml)
 #      → exit 0 + stdout 含 systemMessage 含 dbhub.local.toml
 #   3. no marker(main worktree) → exit 0 + `{}`(db 不做 setup 提示)
-#   4. db NOT in use(peer + 無 dbhub.example.local.toml) → exit 0 + `{}`(gate no-op)
+#   4. db NOT in use(peer + 無任何 example 範本) → exit 0 + `{}`(gate no-op)
+#   5/6. 改名前的舊範本名(dbhub.example.local.toml)一樣要 gate 得到 —— cwd 與下一層各一個。
 
 BeforeAll {
     $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..', '..'))
@@ -141,7 +142,7 @@ Describe 'db Invoke-SessionStart' {
             $peerMarkerDir = [System.IO.Path]::Combine($script:p2.Peer, '.turbo-plugin')
             $null = New-Item -ItemType Directory -Path $peerMarkerDir -Force
             [System.IO.File]::WriteAllText(
-                [System.IO.Path]::Combine($peerMarkerDir, 'dbhub.example.local.toml'),
+                [System.IO.Path]::Combine($peerMarkerDir, 'dbhub.example.toml'),
                 "# example`n",
                 (New-Object System.Text.UTF8Encoding($false)))
             $script:r2 = Invoke-Hook -WorkDir $script:p2.Peer
@@ -176,7 +177,7 @@ Describe 'db Invoke-SessionStart' {
     Context 'Case 4: db not in use gate no-op' {
         BeforeAll {
             $script:p4 = New-MainAndPeer 'hook-ss-gate'
-            # marker dir exists but NO dbhub.example.local.toml (db not set up), no dbhub.local.toml
+            # marker dir exists but NO example template at all (db not set up), no dbhub.local.toml
             $peerMarkerDir = [System.IO.Path]::Combine($script:p4.Peer, '.turbo-plugin')
             $null = New-Item -ItemType Directory -Path $peerMarkerDir -Force
             $script:r4 = Invoke-Hook -WorkDir $script:p4.Peer
@@ -185,5 +186,50 @@ Describe 'db Invoke-SessionStart' {
 
         It 'gate exits 0' { $script:r4.Exit | Should -Be 0 }
         It 'stdout is empty JSON object (db not in use)' { $script:r4.Stdout | Should -Match '^\{\s*\}\s*$' }
+    }
+
+    # Cases 5 + 6: the PRE-RENAME template name must keep gating.
+    #
+    # `dbhub.example.local.toml` is what every project set up before the rename has committed.
+    # If the gate stopped recognising it, those projects would silently stop being warned -- the
+    # hook would decide they do not use a database at all. Nothing would look broken, which is why
+    # this is tested rather than trusted: the only symptom is the absence of a message the user
+    # never knew to expect. Both lookups are covered because the cwd check and the one-level-down
+    # scan are separate call sites.
+    #
+    # Emitting a systemMessage at all is what proves the gate let it through: every note the hook
+    # can produce sits behind that gate, so `{}` and a warning cleanly separate the two outcomes.
+    Context 'Case 5: pre-rename template name still gates (cwd)' {
+        BeforeAll {
+            $script:p5 = New-MainAndPeer 'hook-ss-legacy'
+            $peerMarkerDir = [System.IO.Path]::Combine($script:p5.Peer, '.turbo-plugin')
+            $null = New-Item -ItemType Directory -Path $peerMarkerDir -Force
+            [System.IO.File]::WriteAllText(
+                [System.IO.Path]::Combine($peerMarkerDir, 'dbhub.example.local.toml'),
+                "# example`n",
+                (New-Object System.Text.UTF8Encoding($false)))
+            $script:r5 = Invoke-Hook -WorkDir $script:p5.Peer
+        }
+        AfterAll { Remove-MainAndPeer $script:p5 }
+
+        It 'legacy name exits 0' { $script:r5.Exit | Should -Be 0 }
+        It '舊檔名一樣觸發警示' { $script:r5.Stdout | Should -Match '"systemMessage"' }
+    }
+
+    Context 'Case 6: pre-rename template name still gates (one level down)' {
+        BeforeAll {
+            $script:p6 = New-MainAndPeer 'hook-ss-legacy-down'
+            $subMarkerDir = [System.IO.Path]::Combine($script:p6.Peer, 'sub', '.turbo-plugin')
+            $null = New-Item -ItemType Directory -Path $subMarkerDir -Force
+            [System.IO.File]::WriteAllText(
+                [System.IO.Path]::Combine($subMarkerDir, 'dbhub.example.local.toml'),
+                "# example`n",
+                (New-Object System.Text.UTF8Encoding($false)))
+            $script:r6 = Invoke-Hook -WorkDir $script:p6.Peer
+        }
+        AfterAll { Remove-MainAndPeer $script:p6 }
+
+        It 'legacy name one level down exits 0' { $script:r6.Exit | Should -Be 0 }
+        It '舊檔名在下一層也 gate 得到' { $script:r6.Stdout | Should -Match '"systemMessage"' }
     }
 }

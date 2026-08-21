@@ -142,7 +142,7 @@ if (isFile(rootConfig)) {
         say(`  looked for: ${rootConfig}`);
         say(`  and in each project directly under: ${sessionRoot}`);
         say('Run /tp-setup in the project that has a database, then copy');
-        say(`  .turbo-plugin/dbhub.example.local.toml -> ${CONFIG_REL} and fill it in.`);
+        say(`  .turbo-plugin/dbhub.example.toml -> ${CONFIG_REL} and fill it in.`);
         process.exit(0);
     } else {
         // (c)
