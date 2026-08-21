@@ -63,9 +63,10 @@
 2. 填好之後**重開 session**，`tp-dbhub` 才會連上。
 
 > `.turbo-plugin/` 為四個 turbo-plugin 共用的專案根設定目錄；本 plugin 的 `tp-setup` 先跑共用 base 段建立 concern-neutral 共用檔（用標記區塊),再只寫自己的 db 相關檔,不覆蓋其它 plugin 的區塊。**無 git repo 時照樣完成 setup**:它寫的東西**沒有一樣需要 git**。dbhub 本身跟版控沒有關係(不讀 branch、
-不寫 repo,產出本來就 gitignored);唯一需要 git 的是 `tp-db-management` **產出 SQL 那半**(落點
-`.turbo-plugin/sql/<env>-db/<branch>/` 拿當前 branch 名當分組鍵),而它的**唯讀查詢那半照常可用**——
-那只需要 dbhub MCP server,正是 setup 設定好的東西。
+不寫 repo,產出本來就 gitignored),而 `tp-db-management` 在這裡**兩半都能用**——唯讀查詢只需要 dbhub
+MCP server(正是 setup 設定好的東西),產出 SQL 也照常,只是落點
+`.turbo-plugin/sql/<env>-db/<slug>/` 的 `<slug>` 會**問你**要用哪個,而不是像在 repo 裡直接拿當前
+branch 名。
 
 所以在非 repo 目錄——**多專案工作區的根正是這種形狀,而且正是最需要那份設定的地方**——setup 照常部署
 範本、寫 `.gitignore` 與 `CLAUDE.md` 的 `base` 區塊、提示填 `dbhub.local.toml`、跑 node probe。
