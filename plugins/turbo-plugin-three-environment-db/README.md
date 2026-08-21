@@ -6,6 +6,9 @@
 
 - **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.local.toml` 範本、提示複製填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時**照樣完成**（見下方）。`tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發（`conventions.md` 機制已退役）。
 - **`tp-db-management`** skill — DB 相關開發雜務（SQL 腳本撰寫等），附 `assets/sql-script-template.sql`。
+  產出的 SQL 落在 `.turbo-plugin/sql/<env>-db/<slug>/`，`<slug>` **有 git 就是當前 branch 名**（行為與
+  先前相同、不會問你）；**沒有 git 才問**，而且是列出既有資料夾讓你選，不是給一個空白輸入框——
+  手打會讓同一件事散進兩個名字相近的資料夾，而沒有任何東西會提醒。
 - **`tp-dbhub`** MCP server（`.mcp.json`）— 經 [DBHub](https://github.com/bytebase/dbhub) 連 SQL Server，讓 agent 能查詢資料庫。
   設定檔的位置由 `scripts/start-dbhub.js` 解析：**工作區根**的 `.turbo-plugin/dbhub.local.toml` 優先；沒有的話往下掃**直屬子資料夾**，剛好一個就用它；
   好幾個就停下來把它們列出來，請你在工作區根放一份指明要用哪個。找不到時**乾淨結束並說明原因**（exit 0，不會讓 MCP server 看起來像掛掉）。
