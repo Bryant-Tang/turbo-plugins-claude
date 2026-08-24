@@ -605,6 +605,18 @@ jobs:
         timeout-minutes: 10
         continue-on-error: true
 
+      # Defensive, exactly like the identical step in test-ubuntu and test-windows -- and NOT
+      # because a suite needs it today: every fixture that commits sets its own local
+      # user.email/user.name, which is why this job was green before this step existed. It is here
+      # for symmetry. This job runs EVERY suite rather than one matrix leg's, so a future test that
+      # leans on a global identity would fail here first, and it would fail with a message about
+      # git rather than about inert files -- the most confusing possible place to learn about it.
+      - name: Configure git identity (defensive)
+        shell: bash
+        run: |
+          git config --global user.email "ci@turbo-plugin"
+          git config --global user.name "turbo-plugin-ci"
+
       - name: Garble the inert files and run every suite
         shell: bash
         run: bash tools/verify-inert-files.sh
