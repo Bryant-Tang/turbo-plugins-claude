@@ -24,6 +24,25 @@ REPO_ROOT="$(cd -- "$TOOLS_DIR/.." && pwd)"
 SHUNIT2="$TOOLS_DIR/tests/lib/shunit2"
 SCRIPT_UNDER_TEST="$TOOLS_DIR/verify-inert-files.sh"
 
+LIST_OUT=''
+INERT_FILES=''
+
+# Derive ONCE for the whole file. The derivation spawns the classifier per tracked file, which is
+# ~1s on a Linux runner but slow enough on Windows that doing it in every case turned this
+# seven-second suite into a ten-minute one -- and "seven seconds locally" is the property the grep
+# guard is documented as providing. The cases below reuse this answer through TP_INERT_FILES;
+# the two that are ABOUT the derivation assert against this real output.
+oneTimeSetUp() {
+    LIST_OUT="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    INERT_FILES="$(printf '%s\n' "$LIST_OUT" \
+        | awk '/^inert files:/{f=1;next} /^suites:/{f=0} f{sub(/^  /,""); print}')"
+}
+
+# Run the experiment against the already-derived list.
+run_experiment() {
+    TP_INERT_FILES="$INERT_FILES" TP_INERT_SUITES="$1" bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+}
+
 # These cases drive the experiment, and the experiment runs the tools suite -- which contains this
 # file. Left alone, the whole set re-enters itself: the inner run finds the tree already garbled
 # and refuses, so half of these fail; worse, a version that did NOT refuse would restore the files
@@ -59,7 +78,7 @@ test_refuses_to_re_enter_itself() {
 
 test_list_derives_the_inert_set_from_the_classifier() {
     local out manifest changelog
-    out="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    out="$LIST_OUT"
     manifest="$(printf '%s\n' "$out" | grep -c '^  \.release-please-manifest\.json$')" || manifest=0
     changelog="$(printf '%s\n' "$out" | grep -c '^  plugins/.*/CHANGELOG\.md$')" || changelog=0
     assertEquals 'release-please state is inert' 1 "$manifest"
@@ -71,7 +90,7 @@ test_list_derives_the_inert_set_from_the_classifier() {
 # every suite would fail -- loud. A derivation that answered "a bit too much" is the quiet one.
 test_list_excludes_files_that_are_not_inert() {
     local out readme tools_script
-    out="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    out="$LIST_OUT"
     readme="$(printf '%s\n' "$out" | grep -c '^  plugins/[^/]*/README\.md$')" || readme=0
     tools_script="$(printf '%s\n' "$out" | grep -c '^  tools/')" || tools_script=0
     assertEquals "a plugin's README is its spec, never inert" 0 "$readme"
@@ -82,7 +101,7 @@ test_list_excludes_files_that_are_not_inert() {
 
 test_every_plugin_suite_is_included() {
     local out listed on_disk
-    out="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    out="$LIST_OUT"
     listed="$(printf '%s\n' "$out" | grep -c 'plugins/.*/tests/invoke-script-tests\.sh')" || listed=0
     on_disk="$(find "$REPO_ROOT/plugins" -maxdepth 3 -name invoke-script-tests.sh 2>/dev/null | wc -l)"
     on_disk="$(printf '%s' "$on_disk" | tr -d ' ')"
@@ -92,7 +111,7 @@ test_every_plugin_suite_is_included() {
 
 test_the_tools_suite_is_included_too() {
     local out tools
-    out="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    out="$LIST_OUT"
     tools="$(printf '%s\n' "$out" | grep -c 'bash tools/tests/invoke-script-tests\.sh')" || tools=0
     assertEquals 'tools/ has its own suite and it reads repo-root files the most' 1 "$tools"
 }
@@ -101,14 +120,14 @@ test_the_tools_suite_is_included_too() {
 
 test_a_passing_suite_passes_the_experiment() {
     local rc
-    TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    run_experiment 'true'
     rc=$?
     assertEquals 'nothing objected to the garbage, so the inert list holds' 0 "$rc"
 }
 
 test_a_failing_suite_fails_the_experiment() {
     local rc
-    TP_INERT_SUITES='false' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    run_experiment 'false'
     rc=$?
     assertNotEquals 'a suite that failed under garbage must fail the experiment' 0 "$rc"
 }
@@ -118,22 +137,21 @@ test_a_failing_suite_fails_the_experiment() {
 # The stub suite here fails unless the marker is actually sitting in the file at that moment.
 test_the_files_really_hold_garbage_while_the_suites_run() {
     local rc
-    TP_INERT_SUITES='grep -q "replaced by tools/verify-inert-files.sh" CLAUDE.md' \
-        bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    run_experiment 'grep -q "replaced by tools/verify-inert-files.sh" CLAUDE.md'
     rc=$?
     assertEquals 'an inert file held the marker while the suite ran' 0 "$rc"
 }
 
 test_the_files_are_restored_afterwards() {
     local dirty
-    TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    run_experiment 'true'
     dirty="$(cd "$REPO_ROOT" && git status --porcelain -- CLAUDE.md README.md .release-please-manifest.json 2>/dev/null)"
     assertEquals 'the working tree is exactly as it was' '' "$dirty"
 }
 
 test_restores_even_when_a_suite_fails() {
     local dirty
-    TP_INERT_SUITES='false' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    run_experiment 'false'
     dirty="$(cd "$REPO_ROOT" && git status --porcelain -- CLAUDE.md 2>/dev/null)"
     assertEquals 'a red experiment still leaves the checkout clean' '' "$dirty"
 }
@@ -145,7 +163,7 @@ test_restores_even_when_a_suite_fails() {
 test_refuses_to_run_when_an_inert_file_is_dirty() {
     local rc out
     printf '\nlocal edit that must survive\n' >> "$REPO_ROOT/CLAUDE.md"
-    out="$(TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" 2>&1)"
+    out="$(TP_INERT_FILES="$INERT_FILES" TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" 2>&1)"
     rc=$?
     # Restore BEFORE asserting: a failed assertion must not leave the checkout modified.
     (cd "$REPO_ROOT" && git checkout -- CLAUDE.md 2>/dev/null)
@@ -159,6 +177,12 @@ test_refuses_to_run_when_an_inert_file_is_dirty() {
 # A classifier that answers NONE for nothing derives an empty list. Treating that as "nothing to
 # check, all good" would retire this experiment without anyone noticing -- the exact shape of
 # silent-green this repo keeps getting bitten by.
+#
+# This is the one case that cannot reuse the shared derivation: the branch it exercises only exists
+# INSIDE the derivation loop. It therefore pays the full per-file spawn cost (about a second on a
+# Linux runner, closer to a minute on Windows) and is the reason this suite is minutes rather than
+# seconds locally on Windows. Worth it -- the alternative is the experiment being able to retire
+# itself in silence.
 test_an_empty_inert_list_is_an_error_not_a_pass() {
     local rc stub
     stub="$(mktemp)"
@@ -168,6 +192,16 @@ test_an_empty_inert_list_is_an_error_not_a_pass() {
     rc=$?
     rm -f "$stub"
     assertNotEquals 'deriving nothing is a failure, not a quiet success' 0 "$rc"
+}
+
+# The sibling of the case above, and the reason it is not redundant: a list of blank lines gets
+# past the "derived nothing" check and then garbles nothing, so every suite runs against pristine
+# files and passes. That is the experiment reporting success for having done no work.
+test_garbling_nothing_is_an_error_not_a_pass() {
+    local rc
+    TP_INERT_FILES='   ' TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    rc=$?
+    assertNotEquals 'garbling zero files must fail rather than report success' 0 "$rc"
 }
 
 test_unexpected_argument_is_a_usage_error() {

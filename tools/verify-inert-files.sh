@@ -48,6 +48,14 @@ note() { printf '%s\n' "verify-inert-files: $*" >&2; }
 
 # --- the inert set, derived rather than declared -------------------------------------------------
 list_inert() {
+    # `TP_INERT_FILES` is a tests-only shortcut, like TP_INERT_SUITES. The derivation below spawns
+    # the classifier once per tracked file -- cheap on a Linux runner (~1s for 329 files), but on
+    # Windows process creation is slow enough that ten derivations turned the seven-second tools
+    # suite into ten minutes. The suite derives once and reuses the answer; nothing in CI sets this.
+    if [ -n "${TP_INERT_FILES:-}" ]; then
+        printf '%s\n' "$TP_INERT_FILES"
+        return 0
+    fi
     local f ans
     while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -98,6 +106,13 @@ if [ "$#" -gt 0 ]; then
 fi
 
 INERT="$(list_inert)"
+
+# Drop whitespace-only lines before anything treats them as paths. A line of spaces is not blank to
+# `[ -n ]`, so it reaches the garble loop as a filename and `> "$f"` CREATES a file called "   " in
+# the repo root -- observed while testing this. Filtering here also means the emptiness check below
+# sees "nothing usable" rather than "one unusable thing".
+INERT="$(printf '%s\n' "$INERT" | grep -E '[^[:space:]]')" || INERT=''
+
 if [ -z "$INERT" ]; then
     # Deriving nothing means the classifier changed shape or could not be run. Treating that as
     # "nothing to check, all good" would retire this experiment without anyone noticing.
@@ -127,6 +142,14 @@ while IFS= read -r f; do
     printf '%s\n' "$GARBLE_TEXT" > "$f"
     count=$(( count + 1 ))
 done <<< "$INERT"
+if [ "$count" -eq 0 ]; then
+    # Separate from the empty-list check above, and not redundant with it: a list of nothing but
+    # blank lines survives that one and lands here having garbled nothing at all. The suites would
+    # then run against pristine files and pass, which is the experiment reporting success for
+    # having done nothing -- the precise failure it exists to make impossible.
+    note '::error::garbled 0 files; the derived list contained no usable paths'
+    exit 1
+fi
 note "replaced the contents of $count inert file(s); running the suites"
 
 # Resolve the suite list BEFORE clearing the override: the `done <<< "$(...)"` form would expand
@@ -137,7 +160,7 @@ SUITES="$(list_suites)"
 export TP_INERT_RUNNING=1
 # Not inherited by the suites: a nested `--list` would otherwise echo this override instead of the
 # real globbed list, which is exactly what one of those suites asserts about.
-unset TP_INERT_SUITES
+unset TP_INERT_SUITES TP_INERT_FILES
 
 rc=0
 while IFS= read -r cmd; do
