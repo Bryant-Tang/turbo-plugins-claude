@@ -139,17 +139,17 @@ trap restore EXIT INT TERM
 count=0
 while IFS= read -r f; do
     [ -n "$f" ] || continue
-    printf '%s\n' "$GARBLE_TEXT" > "$f"
+    # A write that fails must NOT be counted and must not be survivable. Unchecked, bash printed
+    # its own error to stderr and this script carried on to announce "replaced the contents of 1
+    # inert file(s)" and then "the inert list holds" -- exit 0, having garbled nothing. That is the
+    # experiment reporting success for doing no work, which is the one outcome it exists to make
+    # impossible. Reproduced by pointing it at a directory.
+    if ! printf '%s\n' "$GARBLE_TEXT" > "$f" 2>/dev/null; then
+        note "::error::could not replace the contents of '$f'; refusing to run a hollow experiment"
+        exit 1
+    fi
     count=$(( count + 1 ))
 done <<< "$INERT"
-if [ "$count" -eq 0 ]; then
-    # Separate from the empty-list check above, and not redundant with it: a list of nothing but
-    # blank lines survives that one and lands here having garbled nothing at all. The suites would
-    # then run against pristine files and pass, which is the experiment reporting success for
-    # having done nothing -- the precise failure it exists to make impossible.
-    note '::error::garbled 0 files; the derived list contained no usable paths'
-    exit 1
-fi
 note "replaced the contents of $count inert file(s); running the suites"
 
 # Resolve the suite list BEFORE clearing the override: the `done <<< "$(...)"` form would expand

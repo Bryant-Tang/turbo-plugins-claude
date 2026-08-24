@@ -194,14 +194,37 @@ test_an_empty_inert_list_is_an_error_not_a_pass() {
     assertNotEquals 'deriving nothing is a failure, not a quiet success' 0 "$rc"
 }
 
-# The sibling of the case above, and the reason it is not redundant: a list of blank lines gets
-# past the "derived nothing" check and then garbles nothing, so every suite runs against pristine
-# files and passes. That is the experiment reporting success for having done no work.
-test_garbling_nothing_is_an_error_not_a_pass() {
+# A line of spaces is not blank to `[ -n ]`, so before the filter was added it was treated as a
+# path and `> "$f"` CREATED a file called "   " in the repo root. Observed, not hypothesised.
+# The filter turns such a list into an empty one, which the guard above then catches.
+test_a_whitespace_only_list_is_an_error_not_a_pass() {
     local rc
     TP_INERT_FILES='   ' TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
     rc=$?
-    assertNotEquals 'garbling zero files must fail rather than report success' 0 "$rc"
+    assertNotEquals 'a list of nothing but spaces must fail, not garble a file named "   "' 0 "$rc"
+    [ -e "$REPO_ROOT/   " ]
+    assertFalse 'and must not have created a file whose name is whitespace' $?
+}
+
+# THE silent one, and it was reachable. With the write unchecked, bash printed its own "Is a
+# directory" to stderr while this script went on to announce "replaced the contents of 1 inert
+# file(s)" and then "the inert list holds", exiting 0 -- a green experiment that garbled nothing.
+# A directory is the portable way to make a write fail; chmod is not, on Windows. It has to be a
+# directory OUTSIDE the repository, though: an in-repo path would be caught by the dirty check
+# first whenever the developer happens to have edits there -- which, while working on this very
+# file, is always. git reports an outside path as not-in-repository, so the dirty check sees
+# nothing and the write is what fails.
+test_a_write_that_fails_stops_the_experiment() {
+    local rc out dir
+    dir="$(mktemp -d 2>/dev/null || mktemp -d -t inertwrite)"
+    out="$(TP_INERT_FILES="$dir" TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" 2>&1)"
+    rc=$?
+    rmdir "$dir" 2>/dev/null
+    assertNotEquals 'a hollow experiment must not report success' 0 "$rc"
+    case "$out" in
+        *'could not replace the contents'*) : ;;
+        *) fail "expected the failed write to be named, got: $out" ;;
+    esac
 }
 
 test_unexpected_argument_is_a_usage_error() {
