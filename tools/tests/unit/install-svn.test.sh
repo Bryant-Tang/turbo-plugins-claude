@@ -83,6 +83,31 @@ run_it() {
 
 # `grep -c` prints 0 AND exits 1 when there is no match, so the obvious `grep -c ... || echo 0`
 # emits TWO lines and every count comparison against it fails with "expected 0 but was 0\n0".
+# Run WITHOUT a platform argument, so the script has to work the platform out from `uname -s`.
+#
+# That branch is the one CI actually takes -- both legs call `bash tools/install-svn.sh` with no
+# arguments -- so leaving it to be exercised for the first time on a real runner would be exactly
+# the "green run proves nothing" shape this suite exists to avoid. The rest of the file passes the
+# platform explicitly because that is simpler; this pair covers what that simplification skips.
+#
+# The two cases verify each other: on a Windows machine the real `uname -s` already says MINGW64,
+# so only the Linux case can distinguish a working shim from an ignored one -- and on Linux it is
+# the other way round. Whichever machine runs this, one of them is proof the shim took effect.
+run_it_autodetect() {
+    local uname_says="$1"
+    printf '#!/usr/bin/env bash\necho %s\n' "$uname_says" > "$SHIM/uname"
+    chmod +x "$SHIM/uname"
+    PATH="$SHIM:$PATH" \
+    SVN_TEST_LOG="$LOG" \
+    SVN_TEST_FAIL_FIRST=0 \
+    SVN_INSTALL_ATTEMPTS=1 \
+    SVN_INSTALL_BACKOFF=0 \
+        bash "$SCRIPT_UNDER_TEST" 2>>"$LOG.err"
+    local rc=$?
+    rm -f "$SHIM/uname"
+    return $rc
+}
+
 count_in_log() {
     local n
     n="$(grep -c "$1" "$LOG" 2>/dev/null)" || n=0
@@ -165,6 +190,26 @@ test_linux_never_calls_choco() {
     run_it linux 0
     chocos="$(count_in_log '^choco ')"
     assertEquals 'linux does not reach for choco' 0 "$chocos"
+}
+
+test_autodetects_windows_from_uname() {
+    local rc chocos apts
+    run_it_autodetect 'MINGW64_NT-10.0-26200'; rc=$?
+    chocos="$(count_in_log '^choco ')"
+    apts="$(count_in_log '^apt-get ')"
+    assertEquals 'auto-detected windows exits 0' 0 "$rc"
+    assertEquals 'a MINGW uname routes to choco' 1 "$chocos"
+    assertEquals 'and not to apt' 0 "$apts"
+}
+
+test_autodetects_linux_from_uname() {
+    local rc updates chocos
+    run_it_autodetect 'Linux'; rc=$?
+    updates="$(count_in_log 'update$')"
+    chocos="$(count_in_log '^choco ')"
+    assertEquals 'auto-detected linux exits 0' 0 "$rc"
+    assertEquals 'a Linux uname routes to apt' 1 "$updates"
+    assertEquals 'and not to choco' 0 "$chocos"
 }
 
 test_unknown_platform_is_rejected() {
