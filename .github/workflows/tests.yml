@@ -276,13 +276,24 @@ jobs:
       # scripts use --show-item in a dozen places, so with that package the suite runs and fails 40
       # cases with "invalid option: --show-item", which looks like a product bug and is not one.
       # sliksvn tracks the 1.14 LTS line, the same one TortoiseSVN ships.
+      #
+      # The install itself, and the retrying around it, live in `tools/install-svn.sh` -- both legs
+      # call that one file. It is not inlined here because a retry loop that quietly retries zero
+      # times behaves exactly like one that works on every run where the network is fine, and the
+      # only signal on the runs where it is not is a human noticing. The script's tests pin the
+      # retry count for that reason.
+      #
+      # This leg has failed for real: 2026-08-21, the choco community feed answered
+      # `503 (Service Unavailable)` and `Chocolatey installed 0/0 packages`. Unlike the apt hang on
+      # the ubuntu twin that failure was FAST, so retrying is the entire fix here.
       - name: Install Subversion
         if: steps.gate.outputs.run != 'false' && steps.needs.outputs.svn == 'true'
-        shell: pwsh
-        run: choco install sliksvn --no-progress -y
+        shell: bash
+        run: bash tools/install-svn.sh
         # Both together, on purpose: continue-on-error alone still lets a wedged package manager
         # hold the job to the 6-hour default. The timeout turns "stuck" into "absent", and
         # continue-on-error turns "absent" into SKIPped svn tests instead of a dead job.
+        # Retrying does not replace either one -- it only removes the manual rerun in the common case.
         timeout-minutes: 10
         continue-on-error: true
 
@@ -440,11 +451,16 @@ jobs:
       # It had neither a timeout nor continue-on-error, so nothing bounded it -- the windows twin
       # had continue-on-error and this one had never been brought in line. Both are needed:
       # continue-on-error alone would still have let it run to the 6-hour default.
+      #
+      # The retry that keeps this from costing a manual rerun every time lives in
+      # `tools/install-svn.sh`, shared with the windows leg. The part that matters for THIS leg is
+      # that a retry loop alone would have been useless: apt hangs rather than returning, so the
+      # loop never reaches its second iteration. The script passes `Acquire::*::Timeout`, which is
+      # what turns the hang into a quick failure that can then be retried.
       - name: Install Subversion
         if: steps.gate.outputs.run != 'false' && steps.needs.outputs.svn == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y subversion
+        shell: bash
+        run: bash tools/install-svn.sh
         timeout-minutes: 10
         continue-on-error: true
 
