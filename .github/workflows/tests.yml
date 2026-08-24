@@ -566,6 +566,49 @@ jobs:
         shell: bash
         run: bash tools/tests/invoke-script-tests.sh
 
+  # ── inert-files-are-inert ───────────────────────────────────────────────────
+  # The experiment behind `affected-plugins.sh` being allowed to answer NONE. That answer rests on
+  # a claim about this repository -- nothing depends on the CONTENT of the inert files -- and until
+  # now the only thing behind that claim was a grep over test source, which guesses how people
+  # write reads. This replaces the code inspection with the experiment itself: garble the contents,
+  # run the suites, see whether anything notices. See tools/verify-inert-files.sh.
+  #
+  # No `needs: discover` and no affected-plugins gate, deliberately. The claim is about the repo,
+  # not about this diff -- and a Release-PR-shaped diff, the exact case NONE exists to make cheap,
+  # is precisely when this still has to run.
+  #
+  # ubuntu only. The issue behind this measured the alternative: the windows git-svn leg alone is
+  # 28 minutes, against about two for the whole ubuntu half. Every `.sh` suite already runs here,
+  # so the windows half would multiply the cost of the workflow for a small gain.
+  #
+  # THE HONEST RESIDUAL GAP: cases that self-SKIP on ubuntu (no .NET, no IIS) never execute, and
+  # code that never runs cannot read anything. A read that happens only inside a Windows-only case
+  # stays invisible. That gap is much smaller than grep's and points the same way -- "did not
+  # look", rather than "looked and got it wrong". Nothing can close it completely: the tests are
+  # arbitrary programs.
+  inert-files-are-inert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # Best-effort, and deliberately NOT followed by the fail-loud verify the matrix legs use.
+      # Without svn the git-svn suite self-SKIPs its svn cases, which narrows what this experiment
+      # covers but does not make its answer wrong -- and `test-ubuntu (plugins/turbo-plugin-git-svn)`
+      # already turns a missing svn into a red job on this same commit. One loud guard is enough;
+      # a second one here would only add another way for infrastructure to fail this check.
+      - name: Install Subversion (best effort — degrades coverage, never fails this job)
+        shell: bash
+        run: bash tools/install-svn.sh
+        timeout-minutes: 10
+        continue-on-error: true
+
+      - name: Garble the inert files and run every suite
+        shell: bash
+        run: bash tools/verify-inert-files.sh
+
   # ── tests-passed ────────────────────────────────────────────────────────────
   # The ONE check branch protection should point at. Its whole purpose is to have a name that never
   # changes.
@@ -587,7 +630,7 @@ jobs:
     # Without always(), this job is SKIPPED when an upstream job fails -- so it would stop
     # reporting at exactly the moment it matters, and a skipped required check never turns red.
     if: always()
-    needs: [discover, verify-core-identical, tools-tests, test-ubuntu, test-windows]
+    needs: [discover, verify-core-identical, tools-tests, inert-files-are-inert, test-ubuntu, test-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every test job succeeded
@@ -596,19 +639,21 @@ jobs:
           DISCOVER: ${{ needs.discover.result }}
           CORE: ${{ needs.verify-core-identical.result }}
           TOOLS: ${{ needs.tools-tests.result }}
+          INERT: ${{ needs.inert-files-are-inert.result }}
           UBUNTU: ${{ needs.test-ubuntu.result }}
           WINDOWS: ${{ needs.test-windows.result }}
         run: |
           echo "discover:              $DISCOVER"
           echo "verify-core-identical: $CORE"
           echo "tools-tests:           $TOOLS"
+          echo "inert-files-are-inert: $INERT"
           echo "test-ubuntu:           $UBUNTU"
           echo "test-windows:          $WINDOWS"
           # `skipped` and `cancelled` fail here too, on purpose: a test job that did not run is not
           # evidence that anything passed. This repo has already been bitten by "quiet enough to
           # look green" more than once.
           failed=0
-          for r in "$DISCOVER" "$CORE" "$TOOLS" "$UBUNTU" "$WINDOWS"; do
+          for r in "$DISCOVER" "$CORE" "$TOOLS" "$INERT" "$UBUNTU" "$WINDOWS"; do
             if [ "$r" != "success" ]; then failed=1; fi
           done
           if [ "$failed" -ne 0 ]; then

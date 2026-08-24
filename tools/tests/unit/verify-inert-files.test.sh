@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# verify-inert-files.test.sh (shUnit2)
+#
+# Under test: tools/verify-inert-files.sh, the experiment that stands behind `affected-plugins.sh`
+# answering NONE.
+#
+# The experiment's own failure mode is the one worth guarding: a version that forgets to garble
+# anything, or that never notices a failing suite, passes every plausible smoke check and reports
+# success forever -- while the claim it is supposed to be testing goes unexamined. So the assertions
+# below are about the MECHANISM, not about today's answer:
+#
+#   * the inert list is DERIVED from the classifier, not written down twice
+#   * the suite list is GLOBBED, so a new plugin cannot fall out of the experiment silently
+#   * the files really do hold garbage while the suites run
+#   * a failing suite really does fail the experiment
+#   * the files are restored afterwards
+#
+# The suites themselves are stubbed out via TP_INERT_SUITES: running eight real suites here would
+# turn a unit test into a CI job, and what these cases check is the harness around them.
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TOOLS_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd -- "$TOOLS_DIR/.." && pwd)"
+SHUNIT2="$TOOLS_DIR/tests/lib/shunit2"
+SCRIPT_UNDER_TEST="$TOOLS_DIR/verify-inert-files.sh"
+
+# These cases drive the experiment, and the experiment runs the tools suite -- which contains this
+# file. Left alone, the whole set re-enters itself: the inner run finds the tree already garbled
+# and refuses, so half of these fail; worse, a version that did NOT refuse would restore the files
+# mid-experiment and leave the outer run silently testing nothing.
+#
+# So when the harness is what is running us, skip. shUnit2 counts skips as green, which is right
+# here: what these cases check is the harness, and the harness is demonstrably running.
+setUp() {
+    if [ -n "${TP_INERT_RUNNING:-}" ]; then
+        startSkipping
+    fi
+}
+
+test_script_exists() {
+    [ -f "$SCRIPT_UNDER_TEST" ]
+    assertTrue 'tools/verify-inert-files.sh exists' $?
+}
+
+# The refusal itself, asserted rather than assumed. (Like everything here it is skipped when we
+# ARE the nested run; a standalone `bash tools/tests/invoke-script-tests.sh` is where it counts.)
+test_refuses_to_re_enter_itself() {
+    local rc out
+    out="$(TP_INERT_RUNNING=1 TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" 2>&1)"
+    rc=$?
+    assertEquals 'a nested run exits 2 instead of un-garbling the outer one' 2 "$rc"
+    case "$out" in
+        *'refusing to run inside another'*) : ;;
+        *) fail "expected the refusal to say why, got: $out" ;;
+    esac
+}
+
+# --- the inert list is derived, not declared -----------------------------------------------------
+
+test_list_derives_the_inert_set_from_the_classifier() {
+    local out manifest changelog
+    out="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    manifest="$(printf '%s\n' "$out" | grep -c '^  \.release-please-manifest\.json$')" || manifest=0
+    changelog="$(printf '%s\n' "$out" | grep -c '^  plugins/.*/CHANGELOG\.md$')" || changelog=0
+    assertEquals 'release-please state is inert' 1 "$manifest"
+    assertTrue 'every plugin CHANGELOG is inert' "[ $changelog -ge 1 ]"
+}
+
+# The other direction, and the one that would matter if the derivation broke: things that are NOT
+# inert must not appear. A derivation that answered "everything" would garble the whole repo and
+# every suite would fail -- loud. A derivation that answered "a bit too much" is the quiet one.
+test_list_excludes_files_that_are_not_inert() {
+    local out readme tools_script
+    out="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    readme="$(printf '%s\n' "$out" | grep -c '^  plugins/[^/]*/README\.md$')" || readme=0
+    tools_script="$(printf '%s\n' "$out" | grep -c '^  tools/')" || tools_script=0
+    assertEquals "a plugin's README is its spec, never inert" 0 "$readme"
+    assertEquals 'nothing under tools/ is inert' 0 "$tools_script"
+}
+
+# --- the suite list is globbed, not declared -----------------------------------------------------
+
+test_every_plugin_suite_is_included() {
+    local out listed on_disk
+    out="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    listed="$(printf '%s\n' "$out" | grep -c 'plugins/.*/tests/invoke-script-tests\.sh')" || listed=0
+    on_disk="$(find "$REPO_ROOT/plugins" -maxdepth 3 -name invoke-script-tests.sh 2>/dev/null | wc -l)"
+    on_disk="$(printf '%s' "$on_disk" | tr -d ' ')"
+    assertEquals 'the experiment runs EVERY plugin suite that exists on disk' "$on_disk" "$listed"
+    assertTrue 'and there is more than one of them, so the count means something' "[ $on_disk -gt 1 ]"
+}
+
+test_the_tools_suite_is_included_too() {
+    local out tools
+    out="$(bash "$SCRIPT_UNDER_TEST" --list 2>/dev/null)"
+    tools="$(printf '%s\n' "$out" | grep -c 'bash tools/tests/invoke-script-tests\.sh')" || tools=0
+    assertEquals 'tools/ has its own suite and it reads repo-root files the most' 1 "$tools"
+}
+
+# --- the experiment itself -----------------------------------------------------------------------
+
+test_a_passing_suite_passes_the_experiment() {
+    local rc
+    TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    rc=$?
+    assertEquals 'nothing objected to the garbage, so the inert list holds' 0 "$rc"
+}
+
+test_a_failing_suite_fails_the_experiment() {
+    local rc
+    TP_INERT_SUITES='false' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    rc=$?
+    assertNotEquals 'a suite that failed under garbage must fail the experiment' 0 "$rc"
+}
+
+# THE test. Everything above still passes if the script never writes a single byte -- and a version
+# that quietly skipped the garbling would report success forever while checking nothing at all.
+# The stub suite here fails unless the marker is actually sitting in the file at that moment.
+test_the_files_really_hold_garbage_while_the_suites_run() {
+    local rc
+    TP_INERT_SUITES='grep -q "replaced by tools/verify-inert-files.sh" CLAUDE.md' \
+        bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    rc=$?
+    assertEquals 'an inert file held the marker while the suite ran' 0 "$rc"
+}
+
+test_the_files_are_restored_afterwards() {
+    local dirty
+    TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    dirty="$(cd "$REPO_ROOT" && git status --porcelain -- CLAUDE.md README.md .release-please-manifest.json 2>/dev/null)"
+    assertEquals 'the working tree is exactly as it was' '' "$dirty"
+}
+
+test_restores_even_when_a_suite_fails() {
+    local dirty
+    TP_INERT_SUITES='false' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    dirty="$(cd "$REPO_ROOT" && git status --porcelain -- CLAUDE.md 2>/dev/null)"
+    assertEquals 'a red experiment still leaves the checkout clean' '' "$dirty"
+}
+
+# --- the guards ----------------------------------------------------------------------------------
+
+# Restoring is `git checkout --`, which discards working-tree changes. Running this on a machine
+# with an uncommitted CLAUDE.md edit would destroy it, silently, as a side effect of a check.
+test_refuses_to_run_when_an_inert_file_is_dirty() {
+    local rc out
+    printf '\nlocal edit that must survive\n' >> "$REPO_ROOT/CLAUDE.md"
+    out="$(TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" 2>&1)"
+    rc=$?
+    # Restore BEFORE asserting: a failed assertion must not leave the checkout modified.
+    (cd "$REPO_ROOT" && git checkout -- CLAUDE.md 2>/dev/null)
+    assertEquals 'refuses rather than clobbering uncommitted work' 2 "$rc"
+    case "$out" in
+        *'uncommitted changes'*) : ;;
+        *) fail "expected the refusal to say why, got: $out" ;;
+    esac
+}
+
+# A classifier that answers NONE for nothing derives an empty list. Treating that as "nothing to
+# check, all good" would retire this experiment without anyone noticing -- the exact shape of
+# silent-green this repo keeps getting bitten by.
+test_an_empty_inert_list_is_an_error_not_a_pass() {
+    local rc stub
+    stub="$(mktemp)"
+    printf '#!/usr/bin/env bash\ncat >/dev/null\necho ALL\n' > "$stub"
+    chmod +x "$stub"
+    TP_INERT_CLASSIFIER="$stub" TP_INERT_SUITES='true' bash "$SCRIPT_UNDER_TEST" >/dev/null 2>&1
+    rc=$?
+    rm -f "$stub"
+    assertNotEquals 'deriving nothing is a failure, not a quiet success' 0 "$rc"
+}
+
+test_unexpected_argument_is_a_usage_error() {
+    local rc
+    bash "$SCRIPT_UNDER_TEST" --nope >/dev/null 2>&1
+    rc=$?
+    assertEquals 'an unrecognised flag exits 2' 2 "$rc"
+}
+
+# shellcheck source=/dev/null
+. "$SHUNIT2"
