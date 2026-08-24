@@ -399,20 +399,37 @@ test_unexpected_argument_is_a_usage_error() {
 #
 # EXCLUSIONS: the vendored shunit2, gitignored sandboxes and fixture trees are not statements about
 # what any suite needs. Comment lines are excluded for the same reason as in
-# plugin-requires-tool.test.sh -- a mention is not a dependency. And this file excludes ITSELF: the
-# script under test is a pure text function that never opens a file, so the inert paths appearing
-# throughout the cases above are inputs, not reads.
+# plugin-requires-tool.test.sh -- a mention is not a dependency. Two test files are excluded by
+# name; the reasoning is at the exclusion itself.
+#
+# THIS IS THE HEURISTIC HALF of the inert list's protection, and it is the cheap one -- seven
+# seconds locally. It is guessing how people write reads, and it has known blind spots (a path
+# computed on one line and opened on the next; nothing outside plugins/*/tests and tools/tests).
+# The evidence half is the `inert-files-are-inert` CI job, which does not read code at all: it
+# replaces the contents with garbage and looks for anything that notices. Keep both -- this one
+# answers fast, that one actually settles the question.
 test_no_test_reads_an_inert_file() {
     # Mirror of INERT in tools/affected-plugins.sh. If a name is added there, add it here.
     local names='(CLAUDE\.md|CHANGELOG\.md|plugin\.json|LICENSE|README\.md)'
     # Markers for a path that leaves the test's own directory.
     local escapes='\.\.|repo_?root|plugin_?(root|dir)|plugins/'
-    local self="$SCRIPT_DIR/affected-plugins.test.sh"
     local f hits found='' scanned=0
 
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        [ "$f" = "$self" ] && continue
+        # Two files are excluded, for the same reason: in both, an inert path is the SUBJECT, not
+        # something opened for what is inside it.
+        #   * this file -- the script under test is a pure text function that never touches the
+        #     filesystem, so the inert paths throughout the cases above are inputs.
+        #   * verify-inert-files.test.sh -- it drives the experiment that GARBLES those very files,
+        #     so naming them is unavoidable. What it actually depends on is `git status` and the
+        #     garble marker, never the repository's real content: editing CLAUDE.md cannot change
+        #     any of its outcomes, which is exactly the property this guard is protecting.
+        case "$f" in
+            "$SCRIPT_DIR/affected-plugins.test.sh"|"$SCRIPT_DIR/verify-inert-files.test.sh")
+                continue
+                ;;
+        esac
         scanned=$((scanned + 1))
         hits="$(grep -nE "$names" "$f" 2>/dev/null \
             | grep -vE '^[0-9]+:[[:space:]]*#' \

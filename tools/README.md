@@ -7,6 +7,7 @@
 | `affected-plugins.sh` | 依變更檔案清單判斷「哪些 plugin 的測試套件要跑」 | `.github/workflows/tests.yml` 的 `discover` job |
 | `plugin-requires-tool.sh` | 讀 `plugins/<name>/tests/required-tools`,答「這個 plugin 需不需要某個外部工具」 | `tests.yml` 的 `Install Subversion` 步驟(兩個平台) |
 | `install-svn.sh` | 裝 Subversion,並依平台用對的重試形狀(apt 要先有逾時才重試得動,choco 直接重試) | `tests.yml` 的 `Install Subversion` 步驟(兩個平台) |
+| `verify-inert-files.sh` | 把惰性檔案的**內容**換成垃圾再跑全部套件,用實驗證明「沒有東西讀它們」 | `tests.yml` 的 `inert-files-are-inert` job |
 | `verify-core-identical.{ps1,sh}` | 跨 plugin 逐位元組一致性 + marketplace 可安裝性 | `verify-core-identical` job；本機手動 |
 | `lint-ps-compat.{ps1,sh}` | PS 5.1 相容性 lint | 各 plugin orchestrator 的 pre-flight |
 | `verify-approved-verbs.ps1` | PowerShell approved verb 檢查 | 本機手動 |
@@ -69,10 +70,27 @@ CI 由 `tests.yml` 的 **`tools-tests`** job 跑，而該 job **在 `tests-passe
 3. **`verify-core-identical` 與 `tools-tests` 沒有 `needs: discover`**,不管答案是什麼都會跑。所以
    `NONE` 從來不等於「這顆 commit 沒被測」。
 
-惰性清單成立的前提是一句關於**這個 repo** 的斷言:沒有任何測試會去讀那些檔案。腳本自己驗證不了這件
-事,所以 `affected-plugins.test.sh` 有一條 repo 層級檢查 `test_no_test_reads_an_inert_file`——哪天
-有人加了一支「檢查 `CLAUDE.md` 慣例」的 lint,它會紅,而該筆惰性項目就必須拿掉。**沒有那道守門就不
-要加惰性項目。**
+惰性清單成立的前提是一句關於**這個 repo** 的斷言:沒有任何東西會去讀那些檔案的**內容**。腳本自己
+驗證不了這件事,所以有**兩道**守門,角色不同,兩道都要留:
+
+| | 是什麼 | 成本 | 弱點 |
+| --- | --- | --- | --- |
+| `test_no_test_reads_an_inert_file`(在 `affected-plugins.test.sh`) | grep 測試**原始碼**,找「同一行既提到惰性檔名、又像是離開自己目錄」 | 本機七秒 | 在**猜人怎麼寫**。算路徑與開檔分兩行就抓不到;掃描範圍也只有 `plugins/*/tests/` 與 `tools/tests/` |
+| `inert-files-are-inert` job(跑 `verify-inert-files.sh`) | 不讀程式碼:把那些檔案的**內容**換成垃圾,跑全部套件,看有沒有東西出聲 | CI 約數分鐘 | 只跑 ubuntu。在那裡自我 SKIP 的案例(缺 .NET / IIS)根本沒執行,就沒機會讀到 |
+
+前者是快速訊號,後者才是**證據**——它不問任何人宣告了什麼,直接看有沒有差,所以不管那個讀取是用什麼
+語言、什麼寫法。**加惰性項目之前先確認這兩道都還在。**
+
+`verify-inert-files.sh` 有兩個刻意的設計,改它的時候不要拆掉:
+
+- **惰性清單是推導的,不是寫死的。** 它把每個追蹤檔逐一丟進 `affected-plugins.sh`,答 `NONE` 的就是
+  惰性檔。抄第二份清單的話,漂開的方向是無聲的:有人新增惰性項目、實驗卻沒涵蓋到它,而那看起來就
+  像通過。
+- **套件清單是 glob 出來的**(`plugins/*/tests/invoke-script-tests.sh`),理由和 `tests.yml` 的矩陣
+  一樣:加一個 plugin 不必改任何設定,也就不會有 plugin 悄悄掉出這個實驗。
+
+它在跑之前會**拒絕**動一個有未提交修改的惰性檔案——還原用的是 `git checkout --`,那會直接丟掉你本機
+的編輯。
 
 ### 還沒被測到的
 
