@@ -7,7 +7,7 @@ turbo-plugins-claude 收納六個正交、各自獨立安裝的 plugin。只裝�
 
 | Plugin | 用途 | 需要 setup? |
 |---|---|---|
-| **`turbo-plugin-git-svn`** | git↔SVN bridge + 設定入口（setup / pull / push / svn-log / reset / merge / suggest-ignore / commit-msg） | 是（`/tp-setup`） |
+| **`turbo-plugin-git-svn`** | git↔SVN bridge + 設定入口（setup / pull / push / checkout-svn-branch / svn-log / merge / request-merge / suggest-ignore / commit-msg） | 是（`/tp-setup`） |
 | **`turbo-plugin-dotnet-framework`** | .NET Framework Web 本機開發（build / run / stop / publish / cleanup-orphan-iis，IIS Express + MSBuild） | 否（設定用到才建，可自我修復） |
 | **`turbo-plugin-three-environment-db`** | 三環境 DB 輔助（`tp-db-management` skill + `tp-dbhub` MCP server） | 複製 `dbhub.example.toml` → `dbhub.local.toml` 填值 |
 | **`turbo-plugin-code-comment`** | C# / JS / TS 註解撰寫慣例（`tp-csharp-comment` / `tp-js-comment`） | 否（純 skill） |

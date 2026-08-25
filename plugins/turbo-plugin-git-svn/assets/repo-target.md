@@ -1,7 +1,8 @@
 # 這個指令要對哪個 repo 動手 —— 判準（給 agent 用）
 
 > 這份檔案被 `tp-setup`、`tp-push-to-svn`、`tp-pull-from-svn`、`tp-checkout-svn-branch`、
-> `tp-merge-main-into-branches`、`tp-suggest-ignore`、`tp-svn-log` 共用。**只有這一份**，改就改這裡。
+> `tp-merge-main-into-branches`、`tp-request-merge`、`tp-suggest-ignore`、`tp-svn-log` 共用。
+> **只有這一份**，改就改這裡。
 
 ## 預設：不傳，由當前目錄決定
 
@@ -31,8 +32,8 @@ repo，再定位到它的主 worktree。這是絕大多數情況的正確行為�
 
 ## 會寫入的指令：動手前先把目標講出來
 
-`tp-setup`、`tp-push-to-svn`、`tp-pull-from-svn`、`tp-suggest-ignore` 的「從 SVN 移除」本來就有確認
-步驟。在那個確認裡加一行，用絕對路徑：
+`tp-setup`、`tp-push-to-svn`、`tp-pull-from-svn`、`tp-request-merge`、`tp-suggest-ignore` 的
+「從 SVN 移除」本來就有確認步驟。在那個確認裡加一行，用絕對路徑：
 
 ```
 要動的專案：<解析出來的絕對路徑>
