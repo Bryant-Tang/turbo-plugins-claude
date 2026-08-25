@@ -73,8 +73,9 @@ jobs:
       # whole release path with it. Changing it now costs nothing and removes that trap.
       #
       # The two are DIFFERENT values, not two spellings of one: App ID is numeric, Client ID looks
-      # like `Iv23...`. `RELEASE_APP_ID` is therefore not reusable here and stays behind until it
-      # is confirmed unused. `RELEASE_APP_PRIVATE_KEY` is unchanged.
+      # like `Iv23...`. `RELEASE_APP_ID` was therefore not reusable here; it was verified unused
+      # and deleted on 2026-08-25, so the App's secrets are now `RELEASE_APP_CLIENT_ID` and
+      # `RELEASE_APP_PRIVATE_KEY` only. `RELEASE_APP_PRIVATE_KEY` itself is unchanged throughout.
       - name: Mint a GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
