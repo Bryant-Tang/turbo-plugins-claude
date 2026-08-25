@@ -46,6 +46,32 @@ function Write-ErrorToken {
     Write-Output "${PREFIX}ERROR reason=$r"
 }
 
+# Read a git command's stdout with $LASTEXITCODE actually reachable.
+#
+# PS 5.1 + EAP=Stop turns ANY stderr from a native command whose output is CAPTURED into a
+# terminating NativeCommandError, and `2>$null` does not prevent it. git writes warnings to
+# stderr while still exiting 0 -- `detected dubious ownership` whenever the repo is owned by a
+# different user, which is the normal state in CI images and agent containers, i.e. exactly
+# where this skill is meant to run. Without this helper every read below would throw and the
+# script would answer ERROR about a perfectly healthy repository, while request-merge.sh --
+# which simply discards stderr -- answers normally. Dropping EAP to Continue for the duration
+# of the call is what makes the exit code reachable instead of pre-empted by a throw.
+#
+# Returns .Text (stdout) and .Code (exit code). stderr is discarded on purpose: folding it into
+# .Text is the OTHER half of this bug -- a warning would make `status --porcelain` non-empty and
+# a clean tree would read as dirty.
+function Read-Git {
+    param([string]$Cwd, [string[]]$GitArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $text = (& git -C $Cwd @GitArgs 2>$null | Out-String)
+        return [PSCustomObject]@{ Text = $text; Code = $LASTEXITCODE }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
 # NOTE on stderr handling (PS 5.1): git writes progress to stderr even on success, and on a
 # conflicted merge it writes "Automatic merge failed" there too. Under EAP=Stop, a native
 # command whose stderr PowerShell CAPTURES is wrapped as a terminating NativeCommandError -- so
@@ -104,13 +130,11 @@ try {
         }
     }
 
-    & git -C $mainWorktree rev-parse --verify --quiet "refs/heads/$Branch" 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    if ((Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--verify', '--quiet', "refs/heads/$Branch")).Code -ne 0) {
         Write-Output "${PREFIX}BRANCH_NOT_FOUND branch=$Branch"
         exit 0
     }
-    & git -C $mainWorktree rev-parse --verify --quiet "refs/heads/$Base" 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    if ((Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--verify', '--quiet', "refs/heads/$Base")).Code -ne 0) {
         Write-Output "${PREFIX}BASE_NOT_FOUND base=$Base"
         exit 0
     }
@@ -118,12 +142,12 @@ try {
     # Read the worktree list ONCE, with the failure checked. Letting a git failure fall through
     # would turn it into "no worktree has this branch", which reads exactly like the healthy
     # answer and would make the SOURCE_DIRTY guard below pass without looking at anything.
-    $wtRaw = (& git -C $mainWorktree worktree list --porcelain 2>$null | Out-String)
-    if ($LASTEXITCODE -ne 0) {
-        Write-ErrorToken "git worktree list failed (exit $LASTEXITCODE) in $mainWorktree"
+    $wt = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'list', '--porcelain')
+    if ($wt.Code -ne 0) {
+        Write-ErrorToken "git worktree list failed (exit $($wt.Code)) in $mainWorktree"
         exit 1
     }
-    $wtLines = @($wtRaw -split "`n" | ForEach-Object { $_.Trim() })
+    $wtLines = @($wt.Text -split "`n" | ForEach-Object { $_.Trim() })
 
     # Which worktree, if any, has a given branch checked out. Returns the normalized absolute
     # path, or ''. The path is normalized before it is ever compared: git reports Windows paths
@@ -149,22 +173,24 @@ try {
     # removal -- and nothing else in the sequence would have said so.
     $sourceWt = Get-WorktreeForBranch $Branch
     if ($sourceWt -ne '') {
-        $srcStatus = (& git -C $sourceWt status --porcelain 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0) {
-            Write-ErrorToken "git status --porcelain failed (exit $LASTEXITCODE) in $sourceWt"
+        $src = Read-Git -Cwd $sourceWt -GitArgs @('status', '--porcelain')
+        if ($src.Code -ne 0) {
+            Write-ErrorToken "git status --porcelain failed (exit $($src.Code)) in $sourceWt"
             exit 1
         }
+        $srcStatus = $src.Text.Trim()
         if (-not [string]::IsNullOrWhiteSpace($srcStatus)) {
             Write-Output "${PREFIX}SOURCE_DIRTY path=$sourceWt"
             exit 0
         }
     }
 
-    $mainStatus = (& git -C $mainWorktree status --porcelain 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        Write-ErrorToken "git status --porcelain failed (exit $LASTEXITCODE) in $mainWorktree"
+    $mn = Read-Git -Cwd $mainWorktree -GitArgs @('status', '--porcelain')
+    if ($mn.Code -ne 0) {
+        Write-ErrorToken "git status --porcelain failed (exit $($mn.Code)) in $mainWorktree"
         exit 1
     }
+    $mainStatus = $mn.Text.Trim()
     if (-not [string]::IsNullOrWhiteSpace($mainStatus)) {
         Write-Output "${PREFIX}MAIN_DIRTY path=$mainWorktree"
         exit 0
@@ -172,7 +198,7 @@ try {
 
     # A detached main worktree has no branch to come back to. Merging anyway would check out
     # $Base and leave it there, quietly moving the user off the commit they had parked on.
-    $originalBranch = (& git -C $mainWorktree symbolic-ref -q --short HEAD 2>$null | Out-String).Trim()
+    $originalBranch = (Read-Git -Cwd $mainWorktree -GitArgs @('symbolic-ref', '-q', '--short', 'HEAD')).Text.Trim()
     if ([string]::IsNullOrWhiteSpace($originalBranch)) {
         Write-Output "${PREFIX}MAIN_DETACHED path=$mainWorktree"
         exit 0
@@ -189,12 +215,12 @@ try {
 
     # ── The report ────────────────────────────────────────────────────────────────────
 
-    $counts = (& git -C $mainWorktree rev-list --left-right --count "$Base...$Branch" 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        Write-ErrorToken "git rev-list failed (exit $LASTEXITCODE) for $Base...$Branch"
+    $rl = Read-Git -Cwd $mainWorktree -GitArgs @('rev-list', '--left-right', '--count', "$Base...$Branch")
+    if ($rl.Code -ne 0) {
+        Write-ErrorToken "git rev-list failed (exit $($rl.Code)) for $Base...$Branch"
         exit 1
     }
-    $parts  = @($counts -split '\s+' | Where-Object { $_ -ne '' })
+    $parts  = @($rl.Text.Trim() -split '\s+' | Where-Object { $_ -ne '' })
     $behind = [int]$parts[0]
     $ahead  = [int]$parts[1]
 
@@ -203,12 +229,22 @@ try {
         exit 0
     }
 
+    $lg = Read-Git -Cwd $mainWorktree -GitArgs @('log', '--no-merges', '--reverse', '--format=  %h %s', "$Base..$Branch")
+    if ($lg.Code -ne 0) {
+        Write-ErrorToken "git log failed (exit $($lg.Code)) for $Base..$Branch"
+        exit 1
+    }
     $subjects = @(
-        (& git -C $mainWorktree log --no-merges --reverse --format='  %h %s' "$Base..$Branch" 2>$null | Out-String) -split "`n" |
+        $lg.Text -split "`n" |
             ForEach-Object { $_.TrimEnd() } |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     )
-    $diffstat = ((& git -C $mainWorktree diff --stat "$Base...$Branch" 2>$null | Out-String) -replace "`r", '').TrimEnd()
+    $df = Read-Git -Cwd $mainWorktree -GitArgs @('diff', '--stat', "$Base...$Branch")
+    if ($df.Code -ne 0) {
+        Write-ErrorToken "git diff --stat failed (exit $($df.Code)) for $Base...$Branch"
+        exit 1
+    }
+    $diffstat = ($df.Text -replace "`r", '').TrimEnd()
 
     Write-Output '─── Merge request ───────────────────────────────────────────────────'
     Write-Output "  branch : $Branch"
@@ -264,7 +300,7 @@ try {
     # would report "not merged" about a branch that is merged -- the worst answer available.
     $mergeSha = ''
     try {
-        $mergeSha = (& git -C $mainWorktree rev-parse --short "refs/heads/$Base" 2>$null | Out-String).Trim()
+        $mergeSha = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--short', "refs/heads/$Base")).Text.Trim()
     } catch { $mergeSha = '' }
     if ([string]::IsNullOrWhiteSpace($mergeSha)) { $mergeSha = '(unknown)' }
     Restore-OriginalBranch

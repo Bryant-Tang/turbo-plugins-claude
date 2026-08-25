@@ -392,16 +392,16 @@ Describe 'Request-Merge' {
         # terminating NativeCommandError the moment git writes ANYTHING to stderr -- and git
         # warns on stderr while still exiting 0 (`detected dubious ownership` is the everyday
         # instance: a repo owned by another user, the normal state in CI images and agent
-        # containers). Without a token in the terminal catch the script would exit 1 emitting
-        # NOTHING, and the SKILL routes on nothing else.
+        # containers). The requirement is not merely "say something" -- it is that this answers
+        # exactly what request-merge.sh answers, because the two are supposed to be one tool
+        # with two implementations. `Read-Git` drops EAP to Continue for the duration of each
+        # read, which is what keeps a warning from pre-empting the exit-code check.
         #
-        # The shim warns ONLY for `worktree` subcommands on purpose: Probe-GitVersion,
-        # check-ref-format, Get-MainWorktree and rev-parse --verify all have to succeed, so the
-        # first throw lands well after validation -- which is the only region where a token is
-        # owed. A shim that warned on everything would fail inside Get-MainWorktree instead,
-        # whose own catch emits a token regardless, and the case would pass without testing
-        # the thing it names.
-        It 'a git that warns on stderr still yields a routing token, never a silent exit' {
+        # The shim warns ONLY for `worktree` subcommands on purpose. Probe-GitVersion and
+        # Get-MainWorktree live in the shared Core.ps1 and still capture git output the old way,
+        # so a shim that warned on EVERY call would fail inside Get-MainWorktree and the case
+        # would be measuring that instead. Narrowing it keeps the case pointed at this script.
+        It 'a git that warns on stderr still produces the normal answer, same as the .sh twin' {
             $sb = New-Sandbox -Tag 'rqm-23'
             $shimDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'tp-shim-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
             $savedPath = $env:PATH
@@ -439,7 +439,11 @@ Describe 'Request-Merge' {
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
 
                 Get-TokenCount $res.Stdout | Should -Be 1
-                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:ERROR reason=.'
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main ahead=2 '
+                $res.ExitCode | Should -Be 0
+                # And the warning must not have leaked into the values either -- that is the
+                # other half of the same bug, and it would surface as a dirty verdict.
+                $res.Stdout | Should -Not -Match 'DIRTY'
             } finally {
                 $env:PATH = $savedPath
                 Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue
