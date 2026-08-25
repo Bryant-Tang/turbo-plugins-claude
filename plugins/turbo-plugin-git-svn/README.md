@@ -14,6 +14,7 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 | `/tp-checkout-svn-branch` | 把**既有** SVN 分支**唯讀**匯入成 bridge + 已填內容工作分支(對 SVN 端零寫入;日後走 `/tp-pull-from-svn` 同步) |
 | `/tp-svn-log` | 在 `remote-svn-*` worktree 跑 SVN log(中文安全 + 互動分頁) |
 | `/tp-merge-main-into-branches` | 把最新 main merge 進指定(預設全部非 remote-svn)本地分支 |
+| `/tp-request-merge` | **沒有 git remote 時的 PR 等價物**:報告某條工作分支會併進 main 的內容(commit / diffstat / 領先落後),使用者確認後由腳本在主 worktree `git merge --no-ff`。合併完成後 `ExitWorktree` 的 `remove` 才安全 |
 | `/tp-suggest-ignore` | 找出不該進版控的檔案並加進 `.gitignore`,也可把已不該追蹤的檔從 SVN un-track(SVN 移除委派 `Remove-SvnFile`,不裸 svn)。**哪些該排除由 agent 看專案實際內容判斷,不套固定 pattern 清單**(判準在 `skills/tp-suggest-ignore/assets/ignore-rubric.md`);`/tp-setup` 收尾會自動跑一次,`/tp-push-to-svn` 只在偵測到才出聲 |
 | `/tp-commit-msg` | 撰寫 / 檢查 commit message 語意(祈使句、what+why;禁 SHA / 本地識別碼;不驗證 / 不限制 type) |
 
@@ -52,7 +53,34 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 - 目錄名（`remote-svn-main` / `remote-svn-<branch>`）與 branch ref（`remote-svn/main` / `remote-svn/<branch>`）兩維度一致，集中由 `Resolve-RemoteWorktree` / `resolve_remote_worktree`（`scripts/lib/`）解析；worktree 容器路徑由 `Get-WorktreesDir` / `get_worktrees_dir` helper 統一定義。工作分支名中的斜線（如 `feat/login`）在目錄名會轉成 dash（`remote-svn-feat-login`），branch ref 則保留斜線（`remote-svn/feat/login`）。
 - `remote-svn-*` worktree 是 git/SVN 橋樑，通常不直接編輯。
 - 在任一 worktree 開的 Claude session 都能呼叫指令——script 會自動定位主 worktree。
-- 本 plugin 只管 `remote-svn-*` 橋接 worktree，**不建立 / 不碰**個人開發用的隔離 worktree（若你自行用 `git worktree add` 建 peer worktree，plugin 不干涉）。
+- 本 plugin 只管 `remote-svn-*` 橋接 worktree，**不建立 / 不碰**個人開發用的隔離 worktree（若你自行用 `git worktree add` 建 peer worktree，plugin 不干涉）。這條沒有變：`/tp-request-merge` 會**合併**在隔離 worktree 上開發出來的分支，但仍然不建立、不刪除任何 worktree。
+
+## 沒有 git remote，就沒有「人按 Merge」那一關（`/tp-request-merge`）
+
+本 plugin 服務的是**純本地 git ↔ SVN** 的專案：沒有 git 遠端，因此開不了 PR。平常不覺得少什麼，直到要收掉一個隔離工作副本的時候。
+
+`ExitWorktree` 的 `remove` 會**連分支一起刪**，這隱含一個前提：走到這一步時分支已經被合併掉了。在有遠端的專案，那個前提由 PR 流程保證（開 PR → CI → 人手動按 Merge → 分支才被刪）。沒有遠端就沒有這條流程，而**沒有任何東西補上那一關**。結果是在「工作順利完成」這條最正常的路徑上，`remove` 兩條路都不可接受——不帶 `discard_changes` 會被拒（保護機制正確運作），帶了會毀掉還沒合併的成果。只能退回 `keep`，然後手動 merge、手動清理。
+
+`/tp-request-merge` 補上那一關：
+
+```
+agent 完成工作、全部 commit
+  → /tp-request-merge --branch <b>        報告：commit 清單 / diffstat / 領先落後
+  → 使用者確認
+  → 腳本在主 worktree 跑 git merge --no-ff
+  → 這時 ExitWorktree 的 remove 才安全（分支已併入，刪掉不會掉東西）
+```
+
+幾個刻意的決定：
+
+- **報告與合併是同一支腳本的兩個模式**（`--merge` 才動手），不是兩支腳本。`--merge` 會**重跑全部守門**，所以使用者看到的那道關卡與放行合併的那道關卡是同一段程式碼，不會漂移；使用者思考期間狀態變了也會被擋下來，而不是拿舊報告放行。
+- **`SOURCE_DIRTY` 是這裡最重要的守門**。分支所在的 worktree 若有未 commit 的變更，那些變更不在這次合併裡，而接下來的 `remove` 會把它們刪掉——這是整條路徑上唯一會**無聲掉東西**的地方，所以腳本一律拒跑。
+- **`remote-svn/*` 兩端都不碰。** 它出現在**目標**那端是「把工作併進橋接分支」，會污染要 commit 回 SVN 的樹（`/tp-merge-main-into-branches` 排除它也是同一個理由）；出現在**來源**那端則是 `/tp-pull-from-svn` 的工作——那支會連同修訂簿記一起維護，本 skill 只會產生一顆一樣的 merge commit 卻不更新任何狀態。兩種都直接擋下，而且是**按名字**擋，所以橋接分支還沒建起來時答案也一樣。
+- **衝突永遠 `merge --abort`**，`<base>` 與開跑前完全一樣、不留衝突樹。建議先用 `/tp-merge-main-into-branches` 把 main 併進分支、在**分支上**解衝突。
+- **沒有 CI 就不假裝有**。腳本只報客觀事實（commit、diffstat、乾不乾淨），不做驗收把關，也不要求 agent 交出結構化的「測試通過」宣告——那只會變成一句沒人驗證的自我宣稱。判斷這批東西能不能進 main 的是使用者。
+- **不串 SVN**。併進 main 之後要不要 `/tp-push-to-svn` 是另一個明確決定，而且 SVN 寫入是永久的。
+
+它和 `/tp-merge-main-into-branches` 是一對：那支是下行（main → 分支），這支是上行（分支 → main）。兩支都用 `Get-MainWorktree` 自行定位，所以**在 linked worktree 裡呼叫，操作仍落在主 worktree**。
 
 ## 要對哪個 repo 動手（`--repo-root`）
 

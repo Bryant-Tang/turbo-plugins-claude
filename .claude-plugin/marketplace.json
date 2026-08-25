@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "turbo-plugin-git-svn",
-      "description": "git↔SVN bridge 本機開發工具集（8 個 skill:setup / pull / push / checkout-svn-branch / svn-log / merge / suggest-ignore / commit-msg）。env-free，集中設定於 .turbo-plugin/。",
+      "description": "git↔SVN bridge 本機開發工具集（9 個 skill:setup / pull / push / checkout-svn-branch / svn-log / merge / request-merge / suggest-ignore / commit-msg）。env-free，集中設定於 .turbo-plugin/。",
       "source": "./plugins/turbo-plugin-git-svn"
     },
     {
