@@ -60,14 +60,37 @@ jobs:
       #
       # 為什麼不用 '*':那會讓任何 App / bot 都能叫起這個 reviewer。這裡只開自己建立、且只有
       # release-please 在用的那一個身分。
+      #
+      # `client-id`, not `app-id`: v3 deprecated `app-id`, and Dependabot bumps this action, so a
+      # v4 that drops the input would arrive as a routine version PR. Here that failure is
+      # especially unpleasant because of the `continue-on-error` above -- see the warning step
+      # below. The two inputs take DIFFERENT values (App ID is numeric, Client ID looks like
+      # `Iv23...`); `RELEASE_APP_PRIVATE_KEY` is unchanged.
       - name: Resolve the release bot's identity
         id: release-app
         if: github.actor != 'dependabot[bot]'
         continue-on-error: true
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      # `continue-on-error` means a failure above is GREEN, and its only symptom is that Release
+      # PRs quietly go back to needing manual approval before anything reviews them -- identical to
+      # what a revoked App secret looks like, and reached by a completely different route. Nothing
+      # says which. This does not change the blast-radius decision (the step still must not fail
+      # every PR's review over a release credential); it just refuses to let the degradation be
+      # silent. Reading it out of the API afterwards, which was the only way to tell, is not
+      # something anyone does unprompted.
+      #
+      # `outcome`, NOT `conclusion`. With `continue-on-error: true` the two diverge on purpose:
+      # `outcome` is the raw result and `conclusion` is what it becomes after continue-on-error is
+      # applied -- i.e. `success`, always. A guard written against `conclusion` here would never
+      # fire even once, while looking exactly like one that works.
+      - name: Warn if the release bot's identity could not be resolved
+        if: github.actor != 'dependabot[bot]' && steps.release-app.outcome == 'failure'
+        shell: bash
+        run: echo "::warning::Could not mint the release App token; allowed_bots is empty, so Release PRs will need manual approval before a review runs. Human PRs are unaffected. Check the RELEASE_APP_CLIENT_ID / RELEASE_APP_PRIVATE_KEY secrets."
 
       - name: PR Review with Progress Tracking
         if: github.actor != 'dependabot[bot]'

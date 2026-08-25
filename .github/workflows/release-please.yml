@@ -66,11 +66,20 @@ jobs:
       #
       # 代價是 actor 變成 `<app-slug>[bot]`,仍然是 bot 身分,所以 claude-code-action 那道
       # `allowed_bots` 閘要另外開——見 pr-review-comprehensive.yml 的對應註解。
+      #
+      # `client-id`, not `app-id`: v3 deprecated `app-id` with "Use 'client-id' instead", and
+      # Dependabot is configured to bump this action. When upstream drops the input in v4, that
+      # arrives as an innocuous-looking version bump PR and this step starts failing -- taking the
+      # whole release path with it. Changing it now costs nothing and removes that trap.
+      #
+      # The two are DIFFERENT values, not two spellings of one: App ID is numeric, Client ID looks
+      # like `Iv23...`. `RELEASE_APP_ID` is therefore not reusable here and stays behind until it
+      # is confirmed unused. `RELEASE_APP_PRIVATE_KEY` is unchanged.
       - name: Mint a GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       # v5's only breaking change is the runtime moving to node24 (upstream release notes), which
