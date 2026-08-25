@@ -2,6 +2,25 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.4.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.3.0...turbo-plugin-git-svn--v0.4.0) (2026-08-25)
+
+
+### Added
+
+* **git-svn:** tp-request-merge 拒絕 remote-svn/* 兩端,且不受 git 的 stderr 警告影響 ([f0ea227](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f0ea227f9e86c6225b0721972b1a011d8737583e))
+* **git-svn:** 沒有 git remote 時補上 PR 的等價物 tp-request-merge ([85bf110](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/85bf110274f83f6e3733d8f3a2cab6baf3d4de87))
+
+
+### Fixed
+
+* **git-svn:** tp-request-merge 的 PowerShell 版在 git 出警告時仍給出正常答案 ([51812a0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/51812a01ec4a357793732e88f5de9033cfcabcdd))
+* 共用 setup base 的 ignore 說明改用新的 dbhub 範本檔名 ([a5f9816](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a5f9816ccce9b5cd7457a8bcd3ba1ef94d396ad9))
+
+
+### Documentation
+
+* **tp-setup base:** case (a) 的白話只描述情境,動作交給各 concern 自己接 ([82ae1cf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/82ae1cfcea768bc30c236ef56e70802ab163c734))
+
 ## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.2.0...turbo-plugin-git-svn--v0.3.0) (2026-08-19)
 
 

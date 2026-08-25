@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-knowledge-placement 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-knowledge-placement--v0.1.0...turbo-plugin-knowledge-placement--v0.1.1) (2026-08-25)
+
+
+### Fixed
+
+* **knowledge-placement:** 規範分流到本專案之外時,規定指路要滿足什麼 ([0f10cfb](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0f10cfbe8cbca21bf3c8727a585dbe7758fc1d63))
+
 ## [Unreleased]
 
 ## [0.1.0] - 2026-08-18

@@ -2,6 +2,15 @@
 
 本檔記錄 turbo-plugin-multi-repo-workspace 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.3.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.3.0...turbo-plugin-multi-repo-workspace--v0.3.1) (2026-08-25)
+
+
+### Fixed
+
+* **multi-repo-workspace:** 在子專案裡開隔離時改建成工作區鏡像 ([0ec634a](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0ec634a84459f3712ea1bf473a68c19d3a824bd4))
+* **multi-repo-workspace:** 移除端也要認得重導向後的鏡像 ([028bbd3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/028bbd3176a0089980e08221fdb81157e51fd105))
+* **multi-repo-workspace:** 範本裡的指路示範改成無條件觸發 ([1734d6d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/1734d6d8c2539fc1554b86923551209be0240ac7))
+
 ## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.2.0...turbo-plugin-multi-repo-workspace--v0.3.0) (2026-08-19)
 
 

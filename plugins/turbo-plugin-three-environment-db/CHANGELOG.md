@@ -2,6 +2,33 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.4.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.3.0...turbo-plugin-three-environment-db--v0.4.0) (2026-08-25)
+
+
+### Added
+
+* **three-environment-db:** SQL 落點改用 &lt;slug&gt;,沒有 git 時問使用者 ([2bef75f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/2bef75f1a7e36d699161da91fb5bc135efd707ce))
+
+
+### Fixed
+
+* **three-environment-db:** case (a) 照樣寫 CLAUDE.md base,且不再把 tp-db-management 說成不可用 ([6f085c9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6f085c935337addc33830f0246c22012b89276e5))
+* **three-environment-db:** case (a) 自己供給白話,並把完成報告的四項都納入檢查 ([470d5e5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/470d5e5a8a5e5f2b417994e3c70ae4d8726ed56e))
+* **three-environment-db:** dbhub 範本改名成 dbhub.example.toml,標記同時認舊檔名 ([12de519](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/12de51983fb04ac34f7e2f0133ee3aaab2d96f16))
+* **three-environment-db:** 對齊 tp-setup 裡幾處互相不一致的說法 ([9f258db](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/9f258db67c6d873f834b5e9a0fadc77133845e2b))
+* **three-environment-db:** 找不到設定時的提示也要提改名前的範本檔名 ([54e16ca](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/54e16cafa9464ba2ab465d345e7faa1c07737917))
+* **three-environment-db:** 文件改用新範本名,並定死舊檔名不改也不重複部署 ([a9f1e3f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a9f1e3f20d3efebf17a334c07320b0e57e47f653))
+* **three-environment-db:** 更正 case (a) 對 CLAUDE.md marker 機制的說明 ([eb0605f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/eb0605ff1388f6223cd42495d6fae58c1759a521))
+* **three-environment-db:** 更正 tp-setup 說 SQL 產出需要 git 的過時說法 ([97f0d6f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/97f0d6f03797b9703ae9c8e41fb31cd807a3347d))
+* **three-environment-db:** 非 git repo 時只跳過需要 git 的段,不整個擋掉 ([b36e779](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/b36e779f4a6612f44d71be71db5524c526ddd3d5))
+* 共用 setup base 的 ignore 說明改用新的 dbhub 範本檔名 ([a5f9816](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a5f9816ccce9b5cd7457a8bcd3ba1ef94d396ad9))
+
+
+### Documentation
+
+* **three-environment-db:** Phase 2 概述句補上 case (a) 的例外 ([3b5f016](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3b5f0169c9fd581c776ed51c6317e52998c6fd60))
+* **tp-setup base:** case (a) 的白話只描述情境,動作交給各 concern 自己接 ([82ae1cf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/82ae1cfcea768bc30c236ef56e70802ab163c734))
+
 ## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.2.0...turbo-plugin-three-environment-db--v0.3.0) (2026-08-19)
 
 
