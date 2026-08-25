@@ -82,6 +82,11 @@ jobs:
       # every PR's review over a release credential); it just refuses to let the degradation be
       # silent. Reading it out of the API afterwards, which was the only way to tell, is not
       # something anyone does unprompted.
+      #
+      # `outcome`, NOT `conclusion`. With `continue-on-error: true` the two diverge on purpose:
+      # `outcome` is the raw result and `conclusion` is what it becomes after continue-on-error is
+      # applied -- i.e. `success`, always. A guard written against `conclusion` here would never
+      # fire even once, while looking exactly like one that works.
       - name: Warn if the release bot's identity could not be resolved
         if: github.actor != 'dependabot[bot]' && steps.release-app.outcome == 'failure'
         shell: bash
