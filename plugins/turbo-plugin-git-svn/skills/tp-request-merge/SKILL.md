@@ -24,7 +24,7 @@ allowed-tools: Bash, Read, AskUserQuestion
 
 讀 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`,依它的判準決定要不要帶 `-RepoRoot` / `--repo-root`。單一專案的目錄不用帶。**決定後本 SKILL 每一次呼叫都要帶同一個值**——報告階段與合併階段指到不同 repo 會讓使用者對著 A 的報告核准 B 的合併。
 
-這支會**寫入 main**,所以 Step 2 的確認裡**必須**帶上要動的專案絕對路徑(腳本的 `main=` 欄位就是,直接用它)。
+這支會**寫入 main**,所以 Step 2 的確認裡**必須**帶上要動的專案絕對路徑——報告本體的 `repo :` 那一行就是,直接用它。
 
 ### Step 1 — 產出報告(唯讀)
 
@@ -47,6 +47,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - `TP_TOKEN:NOTHING_TO_MERGE branch=<b> base=<base>` → 沒有東西要合併(已經合併過,或這條分支沒有新 commit)。**告訴使用者這條分支現在就可以安全清掉**,結束 skill。
 - `TP_TOKEN:BRANCH_NOT_FOUND branch=<b>` / `TP_TOKEN:BASE_NOT_FOUND base=<base>` → 名字打錯或分支不存在,請使用者確認後重跑。
 - `TP_TOKEN:BRANCH_IS_BASE branch=<b>` → 來源與目標同一條,無意義,結束。
+- `TP_TOKEN:BRIDGE_BRANCH name=<n>` → **停下**。`<n>` 是 `remote-svn/*` SVN 橋接分支,本 skill 兩端都不碰它。
+  - 它出現在**目標**那一端 → 那是「把工作併進橋接分支」,會污染要 commit 回 SVN 的樹。不要做。
+  - 它出現在**來源**那一端 → 使用者想要的多半是**從 SVN 拉更新**,請他改用 `/tp-pull-from-svn`;那支會連同修訂簿記一起維護,本 skill 只會產生一顆一樣的 merge commit 卻不更新任何狀態。
 - `TP_TOKEN:ERROR reason=<訊息>` → 把 `reason` 原文顯示給使用者並**結束 skill,不合併任何東西**。
 - (防呆)非零 exit 且**完全沒有** `TP_TOKEN:` 行(例如分支名不合法)→ 顯示 stderr 給使用者並結束,**不要臆測路由**。
 
@@ -54,7 +57,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 
 把報告本體**原樣** echo 給使用者——就是兩條 `───` 橫線之間那一段。**`TP_TOKEN:` 那行不要給使用者看**,它是給你路由用的內部標記,對使用者沒有意義。然後用 `AskUserQuestion` 取得明確確認,確認訊息裡要有:
 
-- 要動的專案**絕對路徑**(token 的 `main=` 欄位)
+- 要動的專案**絕對路徑**(報告的 `repo :` 那一行)
 - `<branch>` → `<base>`,以及 `ahead` 筆 commit
 - 你自己對驗收狀態的敘述(建置過了沒、實測了什麼)——**用你自己的話講,不要宣稱腳本驗過**。腳本報的是客觀事實(commit、diffstat、乾不乾淨),**沒有 CI、沒有驗收把關**;判斷「這批東西可不可以進 main」的是使用者。
 
@@ -93,6 +96,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - **合併是寫入 main,一定要明確確認**。可以在「隔離 worktree 的工作完成、要收尾」時**主動建議**這支,但**絕不**在沒有使用者確認的情況下跑 `--merge`。
 - **報告與合併是同一支腳本的兩個模式,不是兩支腳本**。`--merge` 會重跑全部守門,所以使用者看到的那道關卡與放行合併的那道關卡是**同一段程式碼**,不會漂移。不要為了省一次呼叫而跳過 Step 1 直接跑 `--merge`。
 - **`SOURCE_DIRTY` 一律停下,不要建議繞過**。那條分支的 worktree 還有沒 commit 的東西時,合併會少帶,而接下來的 `remove` 會把少帶的部分刪掉——這是這條路徑上唯一會**無聲掉東西**的地方。
+- **`remote-svn/*` 兩端都不碰**。腳本會直接以 `BRIDGE_BRANCH` 擋下,不管它出現在來源還是目標。要從 SVN 拉更新請用 `/tp-pull-from-svn`。
 - **衝突在分支上解,不在 `<base>` 上解**。腳本永遠 `merge --abort`,不會留下衝突樹要人收拾。
 - **不串 SVN**。合併進 main 之後要不要推 SVN 是另一個決定,而且 SVN 寫入是永久的。
 - **沒有 CI 就不要假裝有**。腳本不做驗收把關,也不要求 agent 提交結構化的「測試通過」宣告——那只會變成一句沒人驗證的自我宣稱。客觀事實由腳本提供,判斷交給使用者。
@@ -114,4 +118,6 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - **Conflict**:分支與 main 改同一行 → `CONFLICT`,main sha 不變、無 `MERGE_HEAD`、HEAD 回原分支。
 - **Nothing to merge**:已經合併過的分支 → `NOTHING_TO_MERGE`,並告知可以安全清掉。
 - **Detached / base elsewhere**:主 worktree detached、或 `main` 被別的 worktree 佔用 → 各自的 token,不合併。
+- **Bridge branch**:`remote-svn/*` 出現在來源或目標任一端 → `BRIDGE_BRANCH`,不合併;名字只是相似(如 `remote-svn-ish`)則**不受影響**。
 - **不存在的分支 / 不合法的分支名**:前者 `BRANCH_NOT_FOUND`;後者 exit 1 且**完全沒有** `TP_TOKEN:` 行。
+- **git 在 stderr 出警告但 exit 0**(`detected dubious ownership` 之類):乾淨的樹仍然 `READY`(不得誤判成髒),而任何 validation 之後的意外失敗仍然吐得出一行 `TP_TOKEN:ERROR`(不得靜默退出)。

@@ -134,6 +134,42 @@ Describe 'Request-Merge' {
             } finally { Remove-Sandbox -Dir $sb }
         }
 
+        # As base it would merge work INTO the bridge; as branch it does tp-pull-from-svn's job
+        # without any of its bookkeeping. Refused by name, so it holds even when the bridge exists.
+        It 'BRIDGE_BRANCH when remote-svn/* is the base' {
+            $sb = New-Sandbox -Tag 'rqm-20'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Run-Git -Cwd $root -GitArgs @('branch', 'remote-svn/main')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Base', 'remote-svn/main')
+                (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:BRIDGE_BRANCH name=remote-svn/main'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        It 'BRIDGE_BRANCH when remote-svn/* is the source' {
+            $sb = New-Sandbox -Tag 'rqm-21'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Run-Git -Cwd $root -GitArgs @('branch', 'remote-svn/main')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'remote-svn/main')
+                (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:BRIDGE_BRANCH name=remote-svn/main'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # The refusal must not swallow ordinary branches that merely start with similar text.
+        It 'a branch merely NAMED like the bridge prefix is not refused' {
+            $sb = New-Sandbox -Tag 'rqm-22'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Run-Git -Cwd $root -GitArgs @('branch', 'remote-svn-ish', 'feat')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'remote-svn-ish')
+                (Get-Token $res.Stdout) | Should -Not -Match '^TP_TOKEN:BRIDGE_BRANCH'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
         It 'a malformed ref name is a HARD, TOKENLESS error (anti-forge)' {
             $sb = New-Sandbox -Tag 'rqm-6'
             try {
@@ -349,6 +385,65 @@ Describe 'Request-Merge' {
                 (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:ERROR reason=.'
             } finally {
                 Remove-Item -LiteralPath $outside -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        # Under EAP=Stop a native git call whose output PowerShell CAPTURES is wrapped as a
+        # terminating NativeCommandError the moment git writes ANYTHING to stderr -- and git
+        # warns on stderr while still exiting 0 (`detected dubious ownership` is the everyday
+        # instance: a repo owned by another user, the normal state in CI images and agent
+        # containers). Without a token in the terminal catch the script would exit 1 emitting
+        # NOTHING, and the SKILL routes on nothing else.
+        #
+        # The shim warns ONLY for `worktree` subcommands on purpose: Probe-GitVersion,
+        # check-ref-format, Get-MainWorktree and rev-parse --verify all have to succeed, so the
+        # first throw lands well after validation -- which is the only region where a token is
+        # owed. A shim that warned on everything would fail inside Get-MainWorktree instead,
+        # whose own catch emits a token regardless, and the case would pass without testing
+        # the thing it names.
+        It 'a git that warns on stderr still yields a routing token, never a silent exit' {
+            $sb = New-Sandbox -Tag 'rqm-23'
+            $shimDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'tp-shim-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+            $savedPath = $env:PATH
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+
+                $realGit = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+                $null = New-Item -ItemType Directory -Path $shimDir -Force
+                [System.IO.File]::WriteAllLines(
+                    [System.IO.Path]::Combine($shimDir, 'git.cmd'),
+                    @(
+                        '@echo off',
+                        'echo %* | findstr /C:"worktree" >nul',
+                        'if not errorlevel 1 echo warning: detected dubious ownership in repository 1>&2',
+                        ('"' + $realGit + '" %*')
+                    ),
+                    [System.Text.Encoding]::ASCII)
+
+                $env:PATH = $shimDir + ';' + $savedPath
+
+                # Preconditions: prove the shim is doing exactly what the case assumes before
+                # trusting anything it concludes. A shim that never resolves, or one that warns
+                # on every call, both produce a pass that means nothing.
+                # stderr goes to a file rather than being folded in: this asks about stderr
+                # specifically, and it keeps the lint's `2>&1`-on-a-native-exe rule satisfied
+                # (the redirect here would be cmd's own, not PowerShell's, but the rule cannot
+                # see that difference and there is no reason to make it guess).
+                $probeErr = [System.IO.Path]::Combine($shimDir, 'probe.err')
+                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
+                [System.IO.File]::ReadAllText($probeErr) | Should -Not -Match 'dubious ownership'
+                & cmd.exe /c "git worktree list 2> `"$probeErr`"" | Out-Null
+                [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
+
+                Get-TokenCount $res.Stdout | Should -Be 1
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:ERROR reason=.'
+            } finally {
+                $env:PATH = $savedPath
+                Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Sandbox -Dir $sb
             }
         }
 

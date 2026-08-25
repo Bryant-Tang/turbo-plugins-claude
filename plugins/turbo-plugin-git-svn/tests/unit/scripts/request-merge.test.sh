@@ -18,6 +18,10 @@ SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/request-merge.sh"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
 setUp() {
+    # `startSkipping` is a GLOBAL flag in shUnit2, not a per-test one. One case turning it on
+    # (the git-shim case below can) would silently skip every case after it, and a suite that
+    # skips everything still reports OK. Clear it at the start of each case.
+    endSkipping
     # Short name on purpose: a peer worktree's admin file lands at
     # <main>/.git/worktrees/<peer>/… so every character of the sandbox path is spent twice,
     # and on Windows a long one silently fails to create the worktree at all.
@@ -125,6 +129,35 @@ test_branch_is_base() {
     root="$(make_fixture)"
     out="$(run_sut "$root" --branch main)"
     assertEquals 'BRANCH_IS_BASE' 'TP_TOKEN:BRANCH_IS_BASE branch=main' "$(token_of "$out")"
+}
+
+# ── Case 6b: remote-svn/* is refused at BOTH ends ─────────────────────────────
+# As base it would merge work INTO the bridge; as branch it does tp-pull-from-svn's job
+# without any of its bookkeeping. Refused by name, so it holds even when the bridge exists.
+test_bridge_branch_refused_as_base() {
+    local root out
+    root="$(make_fixture)"
+    git -C "$root" branch remote-svn/main >/dev/null 2>&1
+    out="$(run_sut "$root" --branch feat --base remote-svn/main)"
+    assertEquals 'BRIDGE_BRANCH as base' 'TP_TOKEN:BRIDGE_BRANCH name=remote-svn/main' "$(token_of "$out")"
+}
+
+test_bridge_branch_refused_as_source() {
+    local root out
+    root="$(make_fixture)"
+    git -C "$root" branch remote-svn/main >/dev/null 2>&1
+    out="$(run_sut "$root" --branch remote-svn/main)"
+    assertEquals 'BRIDGE_BRANCH as source' 'TP_TOKEN:BRIDGE_BRANCH name=remote-svn/main' "$(token_of "$out")"
+}
+
+# The refusal must not swallow ordinary branches that merely contain the word.
+test_similarly_named_branch_is_not_refused() {
+    local root out
+    root="$(make_fixture)"
+    git -C "$root" branch remote-svn-ish feat >/dev/null 2>&1
+    out="$(run_sut "$root" --branch remote-svn-ish)"
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:BRIDGE_BRANCH'
+    assertFalse 'a branch merely NAMED like the bridge prefix is not refused' $?
 }
 
 # ── Case 7: a malformed ref name is a HARD, TOKENLESS error (anti-forge) ──────
@@ -319,7 +352,42 @@ test_missing_repo_root_emits_error_token() {
     assertTrue 'ERROR token carries a reason' $?
 }
 
-# ── Case 21: every mode emits exactly one token ───────────────────────────────
+# ── Case 21: a git that WARNS on stderr but exits 0 must not read as a dirty tree ─
+# `detected dubious ownership` is the everyday instance -- a repo owned by another user, which
+# is the normal state inside CI images and agent containers. Capturing it into the value (2>&1)
+# makes `status --porcelain` non-empty on a perfectly clean tree, and the script would then
+# refuse a merge it should have offered. The stderr is discarded and the exit code is what is
+# checked; this case is what holds that in place.
+test_git_stderr_warning_is_not_mistaken_for_dirt() {
+    local root out shim real_git probe
+    root="$(make_fixture)"
+    real_git="$(command -v git)"
+    shim="$SB/shim"
+    mkdir -p "$shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'echo "warning: detected dubious ownership in repository" >&2\n'
+        printf 'exec "%s" "$@"\n' "$real_git"
+    } > "$shim/git"
+    chmod +x "$shim/git"
+
+    # Prove the shim is actually on the path before trusting anything this case concludes. A
+    # shim that never resolves produces a clean pass that means nothing at all.
+    probe="$( PATH="$shim:$PATH" git --version 2>&1 )"
+    if ! printf '%s' "$probe" | grep -q 'dubious ownership'; then
+        echo "SKIP: the git shim did not take effect on this platform"
+        startSkipping
+        return
+    fi
+
+    out="$( cd "$root" && PATH="$shim:$PATH" bash "$SCRIPT_UNDER_TEST" --branch feat 2>&1 )"
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:READY '
+    assertTrue 'a clean tree stays READY even when git warns on stderr' $?
+    printf '%s' "$(token_of "$out")" | grep -q 'DIRTY'
+    assertFalse 'and is never reported as dirty' $?
+}
+
+# ── Case 22: every mode emits exactly one token ───────────────────────────────
 test_exactly_one_token_per_run() {
     local root
     root="$(make_fixture)"

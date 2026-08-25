@@ -21,14 +21,20 @@ $ErrorActionPreference = 'Stop'
 # script supplies it -- a read-only report by default, the merge itself only under -Merge.
 #
 # Emits exactly ONE terminal token line prefixed 'TP_TOKEN:'. Precedence (a total order):
-#   ERROR > BRANCH_IS_BASE > BRANCH_NOT_FOUND > BASE_NOT_FOUND > SOURCE_DIRTY > MAIN_DIRTY
-#         > MAIN_DETACHED > BASE_ELSEWHERE > NOTHING_TO_MERGE > READY   (report mode)
+#   ERROR > BRANCH_IS_BASE > BRIDGE_BRANCH > BRANCH_NOT_FOUND > BASE_NOT_FOUND > SOURCE_DIRTY
+#         > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE > NOTHING_TO_MERGE > READY  (report mode)
 #         > MERGED | CONFLICT                                           (-Merge mode)
 #
 # -Merge re-runs every check before acting, so the gate the user was shown and the gate that
 # admits the merge are the same code and cannot drift apart.
 
 $PREFIX = 'TP_TOKEN:'
+
+# Flips to $true once the ref names have passed validation. It is what lets the terminal catch
+# tell the two kinds of failure apart: BEFORE this point a failure must stay TOKENLESS (a
+# malformed name must never earn a routing token -- anti-forge), AFTER it every failure owes the
+# SKILL a token, because the SKILL routes on nothing else.
+$script:Validated = $false
 
 # Terminal ERROR token for a POST-validation failure, so such a failure is never a tokenless
 # non-zero exit. Pre-validation rejection stays tokenless (anti-forge). Newlines are collapsed
@@ -65,6 +71,7 @@ try {
         } catch { $valid = $false }
         if (-not $valid) { throw "'$n' is not a valid branch name." }
     }
+    $script:Validated = $true
 
     # Post-validation: resolution failures route as TP_TOKEN:ERROR.
     try {
@@ -79,6 +86,22 @@ try {
     if ($Branch -eq $Base) {
         Write-Output "${PREFIX}BRANCH_IS_BASE branch=$Branch"
         exit 0
+    }
+
+    # `remote-svn/*` are the SVN bridge branches, and this script must not touch either end of
+    # one:
+    #   - as $Base, this would merge work INTO the bridge -- exactly what Merge-MainIntoBranches
+    #     excludes, and it pollutes the tree that gets committed back to SVN.
+    #   - as $Branch, merging the bridge into a work branch is a real operation, but it belongs
+    #     to tp-pull-from-svn, which also maintains the revision bookkeeping. Doing it here
+    #     would produce the same merge commit with none of that state updated.
+    # Refused by NAME, before the existence checks: the answer must not depend on whether the
+    # bridge happens to exist yet.
+    foreach ($n in @($Branch, $Base)) {
+        if ($n -like 'remote-svn/*') {
+            Write-Output "${PREFIX}BRIDGE_BRANCH name=$n"
+            exit 0
+        }
     }
 
     & git -C $mainWorktree rev-parse --verify --quiet "refs/heads/$Branch" 2>$null | Out-Null
@@ -236,7 +259,14 @@ try {
         exit 1
     }
 
-    $mergeSha = (& git -C $mainWorktree rev-parse --short "refs/heads/$Base" 2>$null | Out-String).Trim()
+    # Tolerant on purpose, and it is the one place in the script where that is right: the merge
+    # has ALREADY been written to $Base. Throwing here over a failure to pretty-print its sha
+    # would report "not merged" about a branch that is merged -- the worst answer available.
+    $mergeSha = ''
+    try {
+        $mergeSha = (& git -C $mainWorktree rev-parse --short "refs/heads/$Base" 2>$null | Out-String).Trim()
+    } catch { $mergeSha = '' }
+    if ([string]::IsNullOrWhiteSpace($mergeSha)) { $mergeSha = '(unknown)' }
     Restore-OriginalBranch
     Write-Output ''
     Write-Output "Merged '$Branch' into '$Base' as $mergeSha."
@@ -244,6 +274,15 @@ try {
     exit 0
 }
 catch {
+    # Any post-validation throw still owes the SKILL a routing token. Under EAP=Stop a native
+    # git call whose output PowerShell CAPTURES is wrapped as a terminating NativeCommandError
+    # the moment git writes ANYTHING to stderr -- `detected dubious ownership` is the common
+    # trigger, and it fires exactly where this script runs (CI images, agent containers, a repo
+    # owned by another user). Without this the script would exit 1 emitting no token at all,
+    # breaking its own "exactly one terminal token" contract. The worst case it closes is a
+    # throw AFTER the merge has been written: the SKILL would otherwise never learn that $Base
+    # had already moved.
+    if ($script:Validated) { Write-ErrorToken $_.Exception.Message }
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1
 }

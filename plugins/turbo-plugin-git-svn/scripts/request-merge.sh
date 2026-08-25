@@ -24,7 +24,7 @@
 #   Emits exactly ONE terminal token line prefixed 'TP_TOKEN:'. The SKILL reads ONLY that
 #   line and routes on it; it does NOT run git itself. Precedence (a total order):
 #
-#     ERROR > BRANCH_IS_BASE > BRANCH_NOT_FOUND > BASE_NOT_FOUND
+#     ERROR > BRANCH_IS_BASE > BRIDGE_BRANCH > BRANCH_NOT_FOUND > BASE_NOT_FOUND
 #           > SOURCE_DIRTY > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE
 #           > NOTHING_TO_MERGE > READY            (report mode)
 #           > MERGED | CONFLICT                   (--merge mode)
@@ -95,6 +95,21 @@ if [[ "$BRANCH" == "$BASE" ]]; then
   exit 0
 fi
 
+# `remote-svn/*` are the SVN bridge branches, and this script must not touch either end of one:
+#   - as BASE, this would merge work INTO the bridge -- exactly what merge-main-into-branches
+#     excludes, and it pollutes the tree that gets committed back to SVN.
+#   - as BRANCH, merging the bridge into a work branch is a real operation, but it belongs to
+#     tp-pull-from-svn, which also maintains the revision bookkeeping. Doing it here would
+#     produce the same merge commit with none of that state updated.
+# Refused by NAME, before the existence checks: the answer must not depend on whether the
+# bridge happens to exist yet.
+for _n in "$BRANCH" "$BASE"; do
+  if [[ "$_n" == remote-svn/* ]]; then
+    echo "${PREFIX}BRIDGE_BRANCH name=$_n"
+    exit 0
+  fi
+done
+
 if ! git -C "$MAIN_WORKTREE" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null; then
   echo "${PREFIX}BRANCH_NOT_FOUND branch=$BRANCH"
   exit 0
@@ -108,8 +123,15 @@ fi
 # process substitution would turn a git failure into "no worktree has this branch", which
 # reads exactly like the healthy answer and would make the SOURCE_DIRTY guard below pass
 # without ever looking at anything.
-if ! WT_LIST="$(git -C "$MAIN_WORKTREE" worktree list --porcelain 2>&1)"; then
-  _die_token "git worktree list failed in $MAIN_WORKTREE: $WT_LIST"
+# NOTE on `2>/dev/null` rather than `2>&1` on this and every value-carrying call below. git
+# writes warnings to stderr while still exiting 0 -- `detected dubious ownership` is the common
+# one, and it appears exactly where this script runs (CI images, agent containers, a repo owned
+# by another user). Folding that into the captured value makes `status --porcelain` non-empty on
+# a perfectly clean tree, which this script would then report as SOURCE_DIRTY / MAIN_DIRTY and
+# refuse a merge it should have offered. Discarding stderr keeps the VALUE trustworthy; the
+# exit-code check is what catches a real failure, and the token carries enough context to act on.
+if ! WT_LIST="$(git -C "$MAIN_WORKTREE" worktree list --porcelain 2>/dev/null)"; then
+  _die_token "git worktree list failed in $MAIN_WORKTREE"
 fi
 
 # Which worktree, if any, has a given branch checked out. Echoes the normalized absolute
@@ -136,8 +158,8 @@ worktree_for_branch() {
 # removal -- and nothing else in the sequence would have said so.
 SOURCE_WT="$(worktree_for_branch "$BRANCH")"
 if [[ -n "$SOURCE_WT" ]]; then
-  if ! SRC_STATUS="$(git -C "$SOURCE_WT" status --porcelain 2>&1)"; then
-    _die_token "git status --porcelain failed in $SOURCE_WT: $SRC_STATUS"
+  if ! SRC_STATUS="$(git -C "$SOURCE_WT" status --porcelain 2>/dev/null)"; then
+    _die_token "git status --porcelain failed in $SOURCE_WT"
   fi
   if [[ -n "$SRC_STATUS" ]]; then
     echo "${PREFIX}SOURCE_DIRTY path=$SOURCE_WT"
@@ -145,8 +167,8 @@ if [[ -n "$SOURCE_WT" ]]; then
   fi
 fi
 
-if ! MAIN_STATUS="$(git -C "$MAIN_WORKTREE" status --porcelain 2>&1)"; then
-  _die_token "git status --porcelain failed in $MAIN_WORKTREE: $MAIN_STATUS"
+if ! MAIN_STATUS="$(git -C "$MAIN_WORKTREE" status --porcelain 2>/dev/null)"; then
+  _die_token "git status --porcelain failed in $MAIN_WORKTREE"
 fi
 if [[ -n "$MAIN_STATUS" ]]; then
   echo "${PREFIX}MAIN_DIRTY path=$MAIN_WORKTREE"
@@ -173,8 +195,8 @@ fi
 
 # --- The report -------------------------------------------------------------------------
 
-if ! COUNTS="$(git -C "$MAIN_WORKTREE" rev-list --left-right --count "$BASE...$BRANCH" 2>&1)"; then
-  _die_token "git rev-list failed for $BASE...$BRANCH: $COUNTS"
+if ! COUNTS="$(git -C "$MAIN_WORKTREE" rev-list --left-right --count "$BASE...$BRANCH" 2>/dev/null)"; then
+  _die_token "git rev-list failed for $BASE...$BRANCH"
 fi
 BEHIND="$(printf '%s' "$COUNTS" | awk '{print $1}')"
 AHEAD="$(printf '%s' "$COUNTS" | awk '{print $2}')"
@@ -184,9 +206,15 @@ if [[ "$AHEAD" -eq 0 ]]; then
   exit 0
 fi
 
-SUBJECTS="$(git -C "$MAIN_WORKTREE" log --no-merges --reverse --format='  %h %s' "$BASE..$BRANCH")"
+# Guarded like every other call, for the same reason: under `set -e` an unchecked failure here
+# would abort with no token at all, and the SKILL routes on nothing else.
+if ! SUBJECTS="$(git -C "$MAIN_WORKTREE" log --no-merges --reverse --format='  %h %s' "$BASE..$BRANCH" 2>/dev/null)"; then
+  _die_token "git log failed for $BASE..$BRANCH"
+fi
 NON_MERGE_COUNT="$(printf '%s\n' "$SUBJECTS" | grep -c '[^[:space:]]' || true)"
-DIFFSTAT="$(git -C "$MAIN_WORKTREE" diff --stat "$BASE...$BRANCH")"
+if ! DIFFSTAT="$(git -C "$MAIN_WORKTREE" diff --stat "$BASE...$BRANCH" 2>/dev/null)"; then
+  _die_token "git diff --stat failed for $BASE...$BRANCH"
+fi
 
 echo '─── Merge request ───────────────────────────────────────────────────'
 echo "  branch : $BRANCH"
@@ -226,7 +254,11 @@ if [[ "$ORIGINAL_BRANCH" != "$BASE" ]]; then
 fi
 
 if git -C "$MAIN_WORKTREE" merge --no-ff "$BRANCH" -m "Merge branch '$BRANCH' into $BASE" >/dev/null 2>&1; then
-  MERGE_SHA="$(git -C "$MAIN_WORKTREE" rev-parse --short "refs/heads/$BASE")"
+  # Tolerant on purpose, and it is the one place in this script where that is right: the merge
+  # has ALREADY been written to $BASE. Aborting here over a failure to pretty-print its sha
+  # would report "not merged" about a branch that is merged -- the worst answer available.
+  MERGE_SHA="$(git -C "$MAIN_WORKTREE" rev-parse --short "refs/heads/$BASE" 2>/dev/null || true)"
+  [[ -n "$MERGE_SHA" ]] || MERGE_SHA='(unknown)'
   restore_original
   echo ''
   echo "Merged '$BRANCH' into '$BASE' as $MERGE_SHA."
