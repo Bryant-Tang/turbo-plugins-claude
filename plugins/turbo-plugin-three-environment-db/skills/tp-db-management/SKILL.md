@@ -1,6 +1,6 @@
 ---
 name: tp-db-management
-description: 'Use proactively for any database or SQL work: inspecting schema/data/objects, or preparing seed, migration or deployment SQL. Inspect read-only through the DBHub MCP server and write standardised SQL to `.turbo-plugin/sql/<env>-db/<slug>/`. Do not bypass this skill by hand-writing SQL or querying another way.'
+description: 'Use proactively for any database or SQL work: inspecting schema/data/objects, or preparing seed, migration or deployment SQL. Inspect read-only through the DBHub MCP server and write standardised SQL to `<sql_root>/<env>-db/<slug>/`, where sql_root comes from `[db] sql_root` in .turbo-plugin/config.toml and defaults to `.turbo-plugin/sql`. Do not bypass this skill by hand-writing SQL or querying another way.'
 argument-hint: 'Optional: database name 或 target environment（local-db / test-db / main-db）'
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbhub__execute_sql, mcp__tp-dbhub__run_sql, mcp__tp-dbhub__search_objects, mcp__tp-dbhub__list_tables, mcp__tp-dbhub__list_schemas, mcp__tp-dbhub__get_table_schema
@@ -13,7 +13,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 兩件事：
 
 1. **唯讀檢視資料庫** — 透過 `tp-dbhub` DBHub MCP server 查 schema、資料、stored procedure、function、index 等，幫助理解結構後再改 code。**只讀不寫**。
-2. **標準化 SQL 輸出** — 若工作需要任何寫入側的資料庫異動（補資料 / 改 schema / seed / backfill / migration），不直接透過 MCP 執行寫操作，而是產出標準化 `.sql` 檔，落在 `.turbo-plugin/sql/<env>-db/<slug>/`，供使用者在各環境手動執行。
+2. **標準化 SQL 輸出** — 若工作需要任何寫入側的資料庫異動（補資料 / 改 schema / seed / backfill / migration），不直接透過 MCP 執行寫操作，而是產出標準化 `.sql` 檔，落在 `<sql_root>/<env>-db/<slug>/`，供使用者在各環境手動執行。
 
 本 skill 是從舊 dev-flow `db-management` 移植來的 **de-coupled 版本**：移除了所有 spec / work-item /
 `finish-dev` 自動歸檔等 dev-flow 耦合,只保留**單一分組鍵** `<slug>`——**有 git 就是當前 branch 名**,
@@ -30,15 +30,43 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 標準化 SQL **一律** 落在：
 
 ```
-.turbo-plugin/sql/<env>-db/<slug>/<order>-<database>-<purpose>.sql
+<sql_root>/<env>-db/<slug>/<order>-<database>-<purpose>.sql
 ```
 
+- `<sql_root>` = SQL 樹的根目錄，**唯一可由專案自訂的一層**。見下方「決定 `<sql_root>`」。
 - `<env>` = 目標資料庫環境，固定三選一：`local-db` / `test-db` / `main-db`（與舊 skill 同一組）。
 - `<slug>` = 這批 SQL 屬於哪件事的分組鍵。**來源看有沒有 git,語意完全相同**——見下方「決定 `<slug>`」。
 - `<order>` = 2 位數執行順序（`01` / `02` / `03`…）。
 - `<database>` = 實際目標資料庫名。
 - `<purpose>` = 簡短用途描述，建議繁體中文（如 `補資料` / `新增欄位` / `重建索引` / `建立測試資料`）。
 - **同一個邏輯變更** 在 `local-db` / `test-db` / `main-db` 之間用 **相同 `<slug>` 子資料夾名 + 相同檔名**，方便對齊。
+
+### 決定 `<sql_root>`
+
+讀 `.turbo-plugin/config.toml` 的 `[db] sql_root`(`config.local.toml` 的同名 key 會逐 key 覆寫它,
+那是讀取鏈本來就有的行為,不必特別處理)。
+
+**沒有這個 key、或值是空字串 → `.turbo-plugin/sql`。** 這是預設,而且**必須跟以前逐字元相同**——
+沒設過這個 key 的專案不該察覺到任何差異。
+
+有值的話,**先驗這四件事,任何一項不過就停下來報錯,不要自己改寫成一個看起來能用的路徑**:
+
+| 拒絕 | 為什麼 |
+|---|---|
+| **絕對路徑**(`C:\...`、`/var/...`、`\\server\...`) | `config.toml` 進版控。一條機器路徑會讓同事 clone 下來就壞,而且違反本 repo「不得提交僅限本機才有的東西」。 |
+| **跑到工作區根外面**(`../shared-sql` 這種) | SQL 之所以有價值是因為它跟專案一起進版控;跑到外面就兩者都失去。 |
+| **含 `..` 的任何一段** | 就算最後沒跑出去,也讓落點難以一眼看懂。要哪個目錄就直接寫哪個。 |
+| **空白開頭 / 結尾,或結尾是 `.`** | Windows 會**默默**把它去掉,於是設定字串與實際資料夾名不同。 |
+
+**基準點是工作區根**——也就是 `.turbo-plugin/` 的上一層,**不是** agent 當下的工作目錄。這件事不講死,
+在子目錄工作時會靜默落在錯的地方:`db/scripts` 會變成 `<子目錄>/db/scripts`,而且一路都不會報錯。
+末尾的 `/` 有沒有都接受(去掉再用)。
+
+**驗完之後、開始寫檔之前,對算出來的落點跑一次 `git check-ignore`**(在 git work tree 裡才跑)。
+**被 ignore 就停下來講清楚**,不要照樣寫下去:專案可能本來就 ignore 了 `sql/` 或 `db/` 之類的目錄,
+而那會讓產出的 SQL **永遠不出現在 `git status`**——檔案在硬碟上、內容也對,只是沒有人會看到它,
+也永遠傳不到同事手上。這正是預設落點 `.turbo-plugin/sql/` 刻意不進 gitignore 的那個性質,換了地方
+就得重新確認一次。
 
 ### 決定 `<slug>`
 
@@ -95,23 +123,26 @@ checkout 了一顆 commit、忘了切回去),而在那裡做的 commit 很容易
      人打的字串應該要求打對。默默改寫會讓他拿到一個跟自己打的不一樣的資料夾名,而且下次打一個稍微
      不同的字可能落到**另一個**資料夾——那正是這裡要防的事。
 
-`.turbo-plugin/sql/` **進 git 版控**（可分享的 SQL，與 gitignored 的 `.turbo-plugin/worktrees/` 區隔）。`.gitignore`（由 tp-setup 寫入）只忽略 `.turbo-plugin/worktrees/` 與 `*.local.*`，**不** 忽略 `.turbo-plugin/sql/`。產出的 SQL 檔應正常出現在 `git status`。
+`<sql_root>` **進 git 版控**（可分享的 SQL，與 gitignored 的 `.turbo-plugin/worktrees/` 區隔）。預設落點
+`.turbo-plugin/sql/` 天生就滿足這件事:`.gitignore`（由 tp-setup 寫入）只忽略 `.turbo-plugin/worktrees/`
+與 `*.local.*`，**不** 忽略它。**換到別的地方就不再是天生的**——所以上面那條 `git check-ignore` 是
+必要的,不是保險。無論落在哪裡,產出的 SQL 檔都應正常出現在 `git status`。
 
 ## Fixed Constraints
 
 - 本 repo 所有 DBHub MCP 存取 **皆唯讀**，**絕不** 透過 MCP tool 執行 `INSERT` / `UPDATE` / `DELETE` / `CREATE` / `ALTER` / `DROP` 等寫操作。
 - **DBHub 連線範圍 = local 資料庫（`local-db`）only**，絕不直連 test / production；test / main 的物件差異一律靠使用者在目標環境跑最小唯讀查詢確認。
-- 任何寫入側需求（資料修正 / schema 變更 / seed / backfill / migration）→ 產 `.sql` 檔到 `.turbo-plugin/sql/<env>-db/<slug>/`，**不** 直接寫資料庫。
+- 任何寫入側需求（資料修正 / schema 變更 / seed / backfill / migration）→ 產 `.sql` 檔到 `<sql_root>/<env>-db/<slug>/`，**不** 直接寫資料庫。
 - **不要假設 local / test / production 結構一致**：欄位、view、stored procedure、function、trigger 都可能依環境不同。
 - 若 `test-db` / `main-db` 腳本依賴某物件定義，而該定義在非 local 環境可能不同 → 先給使用者一個 **最小唯讀查詢**（最好是簡單 `SELECT`），請他在目標環境跑完回傳結果，再據此 finalize 對應 SQL。**不要** 假裝 DBHub 能檢視 test / production。
 - **已發佈的 SQL 視為不可變**：已透過 `tp-push-to-svn` 推到 `remote-svn/*` 且已打過 release tag 的 `.sql`，**不得**再編輯舊檔——要修正改走**新檔**（遞增 `<order>` 的新 `.sql`）。SVN history 與 release tag 是永久紀錄，改舊檔會讓已部署環境與版控對不上。
-- **版控 SQL 不得含敏感資料**：`.turbo-plugin/sql/`（進 git）裡的 `.sql` **不得**包含字面憑證、含密碼的連線字串、或超出該 schema 遷移所需的 PII。連線資訊一律走 gitignored 的 `.turbo-plugin/dbhub.local.toml`；SQL 內需要範例值時用 placeholder，不要寫真實機密 / 個資。
+- **版控 SQL 不得含敏感資料**：`<sql_root>`（進 git）裡的 `.sql` **不得**包含字面憑證、含密碼的連線字串、或超出該 schema 遷移所需的 PII。連線資訊一律走 gitignored 的 `.turbo-plugin/dbhub.local.toml`；SQL 內需要範例值時用 placeholder，不要寫真實機密 / 個資。
 
 | 環境資料夾 | 用途 |
 |---|---|
-| `.turbo-plugin/sql/local-db/<slug>/` | local 驗證、暫時測試資料、或本地驗證後會回滾的腳本 |
-| `.turbo-plugin/sql/test-db/<slug>/` | 客戶測試環境部署腳本 |
-| `.turbo-plugin/sql/main-db/<slug>/` | production 部署腳本 |
+| `<sql_root>/local-db/<slug>/` | local 驗證、暫時測試資料、或本地驗證後會回滾的腳本 |
+| `<sql_root>/test-db/<slug>/` | 客戶測試環境部署腳本 |
+| `<sql_root>/main-db/<slug>/` | production 部署腳本 |
 
 - 環境資料夾或 `<slug>` 子資料夾不存在時，先建再放腳本。
 - 純 local 驗證（測完回滾）的腳本只放 `local-db/<slug>/`。
@@ -132,11 +163,15 @@ checkout 了一顆 commit、忘了切回去),而在那裡做的 commit 很容易
 3. 用 `tp-dbhub` 的查詢 MCP tool **只查最小必要資料**（唯讀）。
 4. 把資料庫查到的事實轉成需要的 code 變更或實作決策。
 5. 若需要任何寫入側資料庫動作，先決定目標環境範圍：local-only 驗證 / test 部署 / 含 production 的完整發佈。
+5b. 決定 `<sql_root>`，依「決定 `<sql_root>`」那一節：讀 `[db] sql_root`，沒有就用預設
+   `.turbo-plugin/sql`；有值就先驗（拒絕絕對路徑 / 跑出工作區根 / 含 `..` / 前後空白或結尾 `.`），
+   基準點是**工作區根**而不是當下目錄，再對算出來的落點跑 `git check-ignore` 確認它沒被擋掉。
+   **這一步要在建任何資料夾之前做完**——落點錯了，後面每一件事都落在錯的地方。
 6. 決定 `<slug>` 分組鍵，依「決定 `<slug>`」那一節：**在 git work tree 裡**跑
    `git rev-parse --abbrev-ref HEAD` 把 `/` 換成 `-`（detached HEAD → fail loudly，請使用者先 checkout
    具名 branch）；**不在 work tree 裡**則列出既有資料夾讓使用者選，輸入不合法就拒絕重問。
-7. 若 SQL 只供 local 驗證且測完回滾 → 只建 `.turbo-plugin/sql/local-db/<slug>/`。
-8. 若是最終發佈且 production 也要改 → 在 `.turbo-plugin/sql/local-db/<slug>/`、`.turbo-plugin/sql/test-db/<slug>/`、`.turbo-plugin/sql/main-db/<slug>/` 建對齊腳本。
+7. 若 SQL 只供 local 驗證且測完回滾 → 只建 `<sql_root>/local-db/<slug>/`。
+8. 若是最終發佈且 production 也要改 → 在 `<sql_root>/local-db/<slug>/`、`<sql_root>/test-db/<slug>/`、`<sql_root>/main-db/<slug>/` 建對齊腳本。
 9. finalize `test-db` / `main-db` 腳本前，確認相關欄位 / view / procedure / function / trigger 在該環境是否已知相同；若不確定，給使用者最小驗證查詢並等結果。
 10. 目標環境範圍從需求不明顯時，先問再建檔。
 11. 每個 SQL 檔用 `<order>-<database>-<purpose>.sql` 命名。
@@ -156,7 +191,13 @@ checkout 了一顆 commit、忘了切回去),而在那裡做的 commit 很容易
   不是只看當前環境——同一件事常常跨 session 分次完成不同環境,只看一個環境會讓候選是空的。
   不要只給空白輸入框;輸入含不合法字元**拒絕重問,不默默改寫**。
 - **不依賴 dev-flow**：沒有 spec / work-item 概念,分組鍵只有 `<slug>` 一個;不做 `finish-dev` 式自動歸檔。
-- **SQL 目錄進版控**：`.turbo-plugin/sql/` 不在 gitignore，產出的 SQL 是可分享、可 commit 的；不要把它跟 gitignored 的 `.turbo-plugin/worktrees/` 混淆。
+- **可自訂的只有 `<sql_root>` 這一層**:`<env>-db/<slug>/` 的形狀固定。三環境對齊與 `<slug>` 的推導
+  規則是上面一整組 Decision Rules 與 Completion Checks 的依據,開放整段 pattern 自訂會讓它們全部
+  失去意義。
+- **`sql_root` 不合法就停下來報錯,不要自己修**:改寫成一個看起來能用的路徑會讓使用者以為自己設對了,
+  然後檔案落在他沒預期的地方。說出哪裡不行、要他改 `config.toml`。
+- **沒設 `sql_root` 的專案不該察覺到任何差異**:預設就是原本的 `.turbo-plugin/sql`,逐字元相同。
+- **SQL 目錄進版控**：產出的 SQL 是可分享、可 commit 的；不要把它跟 gitignored 的 `.turbo-plugin/worktrees/` 混淆。預設落點不在 gitignore,**換了落點就要用 `git check-ignore` 重新確認一次**。
 - 純調查（不需寫入）→ 不建 SQL 檔。
 - 需要 schema discovery → 先用 `tp-dbhub` 物件搜尋 tool 再寫廣泛 `SELECT`。
 - local 變更只放 `local-db/<slug>/`；只進 test 不進 production 放 `test-db/<slug>/`；要上 production 三處都備。
@@ -178,18 +219,21 @@ checkout 了一顆 commit、忘了切回去),而在那裡做的 commit 很容易
 ## Completion Checks
 
 - 資料庫檢視只用了 `tp-dbhub` 的唯讀 MCP tool，**沒有** 透過 MCP 執行任何寫 SQL。
-- 任何寫入側資料庫工作都落成 `.turbo-plugin/sql/<env>-db/<slug>/` 下的 `.sql` 檔（`<env>` ∈ {local-db, test-db, main-db}）。
+- 任何寫入側資料庫工作都落成 `<sql_root>/<env>-db/<slug>/` 下的 `.sql` 檔（`<env>` ∈ {local-db, test-db, main-db}）。
+- **`<sql_root>` 是解析出來的,不是假設的**:`[db] sql_root` 沒設 → 落點就是 `.turbo-plugin/sql`;
+  有設 → 落點在**工作區根**底下的那個相對路徑(不是當下目錄底下),而且它通過了那四項檢查。
 - **在 git work tree 裡**：分組鍵是當前 branch 名且已套用 slash→dash 轉換（如 `feature/x` → `feature-x`）；
   **沒有問過使用者**（有 branch 卻去問,就是把「唯一」這個性質丟掉了）；沒有用 detached `HEAD` 當分組鍵。
 - **不在 git work tree 裡**：使用者是從**既有資料夾清單**裡選的,或明確選了「開新的」；他輸入的字串
   **原封不動**成為資料夾名（沒有被默默改寫）,含不合法字元時被**拒絕並重問**過。
 - **那份候選清單涵蓋三個環境**（`local-db` / `test-db` / `main-db` 去重),不是只有這次要寫入的那一個
   ——只看一個環境的話,「先 local 驗證、之後才補 main」這種跨 session 流程會拿到空清單。
-- **`.turbo-plugin/sql/<env>-db/` 底下不存在只差一點點的兩個資料夾**（`補會員資料` 與 `補會員資料v2`
+- **`<sql_root>/<env>-db/` 底下不存在只差一點點的兩個資料夾**（`補會員資料` 與 `補會員資料v2`
   這種）——若出現,代表「先列既有的讓人選」那一步被跳過了。
-- local-only 驗證腳本只在 `.turbo-plugin/sql/local-db/<slug>/`；production-bound 變更三處 `local-db` / `test-db` / `main-db` 都備齊。
+- local-only 驗證腳本只在 `<sql_root>/local-db/<slug>/`；production-bound 變更三處 `local-db` / `test-db` / `main-db` 都備齊。
 - 產出檔遵循 [assets/sql-script-template.sql](./assets/sql-script-template.sql) 的版面，檔名遵循 `<order>-<database>-<purpose>.sql`。
-- 產出的 SQL 出現在 `git status`（`.turbo-plugin/sql/` 非 gitignored），落點與命名可重現。
+- 產出的 SQL 出現在 `git status`,而且那是**驗過的**——落點在 git work tree 裡時跑過 `git check-ignore`
+  並確認沒有被擋。預設落點天生滿足這件事,自訂落點不一定。落點與命名可重現。
 - 最終回報清楚區分「唯讀檢視驗證到的事實」與「準備供手動執行的 SQL 變更」。
 - 沒有連線就產出的腳本，其開頭與回報**都**帶了「未經實際資料庫驗證」以及實際依據的檔案。
 

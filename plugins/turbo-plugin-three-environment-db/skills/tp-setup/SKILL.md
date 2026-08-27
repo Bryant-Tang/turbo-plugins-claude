@@ -19,7 +19,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 > 本 plugin **不**處理 git↔SVN bridge(屬 `turbo-plugin-git-svn`)、IIS apphost(屬
 > `turbo-plugin-dotnet-framework`)。三個 plugin 共用同一份 base 段、各寫自己的標記區塊,彼此不覆蓋。
-> db **不碰** `config.toml`(db 在 config.toml 無設定),base 段對 db 會跳過 config.toml 那一項。
+> db 寫 `config.toml` 的 `db` 標記區塊(只有 `[db] sql_root` 這一個 key,而且**可以留空**)。
 > `.mcp.json`(`tp-dbhub` MCP 宣告)隨**本 plugin** 出貨,不由 setup 寫進專案。
 
 ### 無 git 時照樣完成 setup,不整個停下
@@ -31,7 +31,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 | --- | --- | --- |
 | **setup 寫的全部檔案** | **不需要** | `.turbo-plugin/`、`.gitignore` 的 `base` 區塊、`CLAUDE.md` 的 `base` 區塊、`dbhub.example.toml`、node probe —— 全都只是寫檔案 |
 | `tp-db-management` 的**唯讀查詢** | **不需要** | 它只需要 dbhub MCP server,而那正是 setup 設定好的東西 |
-| `tp-db-management` 的 **SQL 產出** | **不需要** | 落點是 `.turbo-plugin/sql/<env>-db/<slug>/`;有 git 時 `<slug>` 直接用當前 branch 名,**沒有 git 就問使用者**要用哪個 |
+| `tp-db-management` 的 **SQL 產出** | **不需要** | 落點是 `<sql_root>/<env>-db/<slug>/`(`sql_root` 預設 `.turbo-plugin/sql`);有 git 時 `<slug>` 直接用當前 branch 名,**沒有 git 就問使用者**要用哪個 |
 | 範本部署後的 `git check-ignore` | **需要** | 這是唯一一項,沒有 git 就跳過 |
 
 dbhub 本身——一份連線設定加一個 MCP server——**跟版控沒有任何關係**:它不讀 branch、不寫 repo,
@@ -96,8 +96,8 @@ db 在 case (a) 的白話用這句:
 
 ### Phase 2 — base 骨架 + db concern
 
-先依 base 段建立 concern-neutral 共用檔骨架:`.turbo-plugin/` 目錄、`.gitignore` 的 `base` 標記區塊、
-`CLAUDE.md` base;**db 跳過 config.toml**。**`.gitignore` / `CLAUDE.md` 這兩個標記區塊
+先依 base 段建立 concern-neutral 共用檔骨架:`.turbo-plugin/` 目錄、`config.toml` 殼、`.gitignore` 的
+`base` 標記區塊、`CLAUDE.md` base。**`.gitignore` / `CLAUDE.md` 這兩個標記區塊
 要調和(找到就取代),不是「已存在就跳過」**——見 base 段開頭那兩種 idempotent 語意。再做 db concern:
 
 > **case (a) 對這份骨架沒有例外**:`.gitignore` 與 `CLAUDE.md` 的 `base` 區塊照寫,理由見上方
@@ -108,6 +108,7 @@ db 在 case (a) 的白話用這句:
 **跟 case (b)/(c) 幾乎一樣**,只有第 3 項的驗證步驟不同。
 
 1. **`.turbo-plugin/`** — 建立(整檔層級 idempotent,存在就跳過)。
+1b. **`.turbo-plugin/config.toml` 的 `db` 標記區塊** — 見下方「`[db] sql_root`」。case (a) 沒有例外。
 2. **`.gitignore` 與 `CLAUDE.md` 的 `base` 標記區塊** — **照樣調和**,理由見上方「理由是同一個」。
    `CLAUDE.md` 不存在就建立,與 case (b)/(c) 相同。
    **`CLAUDE.md` 的 `base` 是 tp-setup 家族共用的單一區塊**(不是各 concern 各一個 —— 那是
@@ -154,8 +155,23 @@ db 在 case (a) 的白話用這句:
    使用者只會在 `/mcp` 看到一個紅叉,原因埋在 debug log 裡。**設定當下是唯一講得清楚的時機**;
    錯過就只剩本 plugin 的 SessionStart hook 會補講一次。
 
-> db 在 `config.toml` 不寫入(db 在 config.toml 無設定);`tp-db-management` 改靠 skill 自身 description 讓 agent
-> 主動觸發(`conventions.md` 機制已退役)。`CLAUDE.md` 由 base 段注入 base 區塊(「不得提交僅限本機之物」),db 不另加。
+4. **`.turbo-plugin/config.toml` 的 `db` 標記區塊** — 見下方「`[db] sql_root`」。
+
+> `tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發(`conventions.md` 機制已退役)。
+> `CLAUDE.md` 由 base 段注入 base 區塊(「不得提交僅限本機之物」),db 不另加。
+
+#### `[db] sql_root` — db 在 `config.toml` 的唯一一個 key
+
+用 base 段「更新自己區塊的通用程序」,**只**動 `# >>> turbo-plugin:db >>>` 區塊,內容是
+`${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/config.toml` 裡那一段(`[db]` + 說明註解 +
+被註解掉的 `sql_root` 範例)。
+
+**取代之前先讀:區塊裡若已經有一行未被註解的 `sql_root`,原樣寫回去。** 那是**使用者填的值**,
+不是 setup 產生的骨架;照字面取代就是把它無聲刪掉,而且刪的時機(「他重跑了一次 setup」)跟那個
+設定毫無因果關係,幾乎不可能聯想回來。base 段的 marker 慣例對這件事有一條通則,這裡是它的實例。
+
+**不要問使用者要設什麼。** 絕大多數專案用預設就好,而 setup 已經夠長了;這個 key 的存在本身
+(連同區塊裡那段說明)就是它的發現途徑。要改的人自己改一行,不必被問。
 
 #### Case (d) peer-mode（per-peer dbhub.local.toml）
 
@@ -195,20 +211,26 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 ## Decision Rules
 
 - **先跑共用 base 段、再做 db concern** — base 只建 concern-neutral 共用檔;dbhub 相關屬 db。
-- **db 不碰 config.toml** — base 段對 db 跳過 config.toml 那一項。
+- **db 只寫 `config.toml` 的 `db` 區塊** — 一個 key(`[db] sql_root`),其它 concern 的區塊與標記外的
+  內容一律不動。
 - **無 `.git/` 時照跑,不整個停下** — setup 寫的東西沒有一樣需要 git,`tp-db-management` 兩半也都
   不需要(SQL 落點的 `<slug>` 沒有 git 就問使用者)。整支流程唯一要問 git 的是範本部署後那項
   `git check-ignore`,沒有 git 就跳過。仍然**不自行 `git init`**(建 git repo 屬
   `turbo-plugin-git-svn`),`.gitignore` 與 `CLAUDE.md` 的 `base` 區塊**都照寫**。
 - **`dbhub.local.toml` 永不自動建立** — 只 prompt 使用者複製 example 後手動編輯(避免誤以為已 ready)。
-- **db 不寫 `config.toml` 的任何標記區塊** — base 段建立的共用檔維持原樣,db 只管自己的 dbhub 檔(db-management 靠 skill description 觸發;`conventions.md` 機制已退役)。
+- **既有的 `sql_root` 要保值** — `db` 區塊是「找到就取代」的,但區塊裡那一行是**使用者填的**。
+  取代前先讀出來、原樣寫回;直接覆蓋等於在他重跑 setup 的時候無聲刪掉他的設定。
+  (db-management 靠 skill description 觸發;`conventions.md` 機制已退役。)
 - **Case (b)/(c) idempotent**;**Case (d)** 只處理 per-peer `dbhub.local.toml`,不碰 git-versioned shared file。
 - **不自動代填使用者設定 / credentials** — 缺漏一律先 `AskUserQuestion`。
 - **Phase summary transparency**:db 動作皆 repo-only,summary 無外部副作用可列。
 
 ## Completion Checks
 
-- `.turbo-plugin/` 存在;db 未在 `config.toml` 寫入任何內容(亦不涉及 `conventions.md`——該機制已退役)。
+- `.turbo-plugin/` 存在;`config.toml` 含**恰好一組** `db` 標記區塊(不是零組,也不是兩組),區塊內有
+  `[db]`,而且**其它 concern 的區塊與標記外的內容逐字未變**(亦不涉及 `conventions.md`——該機制已退役)。
+- **重跑之後 `sql_root` 還在**:區塊裡原本若有一行未被註解的 `sql_root`,重跑 setup 後它**逐字還在**。
+  這一項是專門守著「取代」語意的——沒有它,那個設定會在某次重跑時無聲消失。
 - `.turbo-plugin/` 底下有一個 dbhub 範本(新專案是 `dbhub.example.toml`;改名前設定的專案維持
   `dbhub.example.local.toml`,**不會**被改名、也**不會**多出第二份);`dbhub.local.toml` **未**被自動
   建立(只提示)。
@@ -237,7 +259,10 @@ db 是唯一有 per-peer 專屬檔的 concern。`tp-dbhub` MCP server 鎖定 ses
 - **dbhub.local.toml 不自動建**:乾淨 sandbox 跑 case (c),確認只建 `dbhub.example.toml`、提示複製,但**未**自動建 `dbhub.local.toml`。
 - **舊範本檔名不被動到**:sandbox 裡只放一個 `dbhub.example.local.toml` 再跑 case (c),確認 setup
   **沒有**改名、**沒有**多部署一份 `dbhub.example.toml`,而完成報告有講「已改名、舊名仍可用」。
-- **db 只管 dbhub 檔**:跑 db setup 後,只建 / 提示 dbhub 檔,未寫入 `config.toml`(`conventions.md` 機制已退役,不涉及)。
+- **db 只動自己那一塊**:跑 db setup 後,dbhub 檔已建 / 已提示,`config.toml` 多了一組 `db` 標記區塊,
+  而其它 concern 的區塊(`git-svn` / `dotnet`)與標記外的內容**逐字未變**(`conventions.md` 機制已退役,不涉及)。
+- **`sql_root` 保值**:在 `db` 區塊裡填一行 `sql_root = "db/scripts"`,再跑一次 setup,確認那一行還在。
+  這是最容易做錯的一項——「找到就取代」照字面做就會把它洗掉,而且要等到重跑那一刻才發現。
 
 ## Tool Preference
 

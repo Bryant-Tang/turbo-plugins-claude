@@ -1,0 +1,30 @@
+# turbo-plugin 集中設定
+# 進 git，跨同事 / 跨 worktree 共享。
+# 不要把 credentials 寫進這裡 — 那是 dbhub.local.toml 的工作。
+#
+# [tools](machine-specific 工具路徑,如 msbuild_path / iis_express_path)請寫到
+# .turbo-plugin/config.local.toml(gitignored 的 sibling 檔案),不要寫在這裡。
+#
+# 下面的 "# >>> turbo-plugin:<concern> >>>" / "# <<< ... <<<" 是各 plugin 的標記區塊;
+# 每個 plugin 只會更新自己的區塊,彼此不覆蓋。標記是 TOML 註解(# 開頭),
+# config reader 會略過,不影響解析。找不到自己的區塊時,寫入方會在檔尾補一組
+# ——所以這份殼只帶 db 那一組,其它 plugin 的 setup 跑起來會自己補上自己的。
+#
+# 標記之間的內容由 plugin 產生,重跑 setup 時會被整段取代。不要往裡面加自己的設定
+# ——加的當下不會有任何錯誤或警告,直到某次 setup 把它無聲刪掉。自己的設定寫在標記外面。
+#
+# 例外是區塊裡本來就屬於你的那幾個 key(下面 [db] 的 sql_root 就是):setup 在取代之前
+# 會先把它們讀出來原樣寫回,所以那些 key 可以放心在區塊內修改。
+
+# >>> turbo-plugin:db >>>
+[db]
+# SQL 落點的根目錄。留空 / 整行不存在 = 用預設的 .turbo-plugin/sql
+#
+# 專案本來就有自己的 SQL 慣例(db/scripts、sql、database/migrations …)時設這個,
+# 就不必為了 turbo-plugin 多開一個資料夾。底下的 <env>-db/<slug>/ 那層不變。
+#
+# 寫法:相對路徑,基準是這個檔案所在的 .turbo-plugin/ 的上一層(工作區根),
+# 不是 agent 當下的目錄。不接受絕對路徑——那會讓這個進版控的檔案帶上機器路徑。
+#
+# sql_root = "db/scripts"
+# <<< turbo-plugin:db <<<
