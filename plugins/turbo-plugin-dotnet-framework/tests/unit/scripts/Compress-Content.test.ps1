@@ -40,9 +40,12 @@ BeforeAll {
         }
     }
 
+    # -GroupKey mirrors the script: the bare [frontend] keeps the historical input verbatim so
+    # approvals granted before groups existed still match, and a keyed group prefixes its key so
+    # approving one project never authorises another.
     function Compute-TrustHash {
-        param([string]$InstallCmd, [string]$BuildCmd)
-        $trustInput = "$InstallCmd|$BuildCmd"
+        param([string]$InstallCmd, [string]$BuildCmd, [string]$GroupKey = '')
+        $trustInput = if ([string]::IsNullOrWhiteSpace($GroupKey)) { "$InstallCmd|$BuildCmd" } else { "$GroupKey|$InstallCmd|$BuildCmd" }
         $sha = [System.Security.Cryptography.SHA256]::Create()
         try {
             $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($trustInput))
@@ -72,6 +75,55 @@ BeforeAll {
         $dir = $sysDrive + '\tp-sentinel-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
         $null = New-Item -ItemType Directory -Path $dir -Force
         return [System.IO.Path]::Combine($dir, "$Leaf.txt")
+    }
+
+    # Two keyed [frontend] groups, one per project, each with its own frontend dir. Both groups
+    # get the SAME install command on purpose in the isolation case; the caller decides.
+    function New-KeyedFrontendProject {
+        param([string]$TestRoot, [string]$ProjName, [string]$SentinelPath)
+        $projDir = [System.IO.Path]::Combine($TestRoot, $ProjName)
+        $frontendDir = [System.IO.Path]::Combine($projDir, 'frontend')
+        $null = New-Item -ItemType Directory -Path $frontendDir -Force
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($frontendDir, 'package.json'), '{"name":"x"}')
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($projDir, "$ProjName.csproj"), '<Project/>')
+        $installCmd = "cmd /c type nul > $SentinelPath"
+        $cfg = [System.IO.Path]::Combine($TestRoot, '.turbo-plugin', 'config.toml')
+        Append-Utf8 -Path $cfg -Content "`n[frontend.`"$ProjName`"]`ndir = `"./$ProjName/frontend`"`ninstall_command = `"$installCmd`"`nbuild_command = `"`"`n"
+        return [PSCustomObject]@{
+            Key         = $ProjName
+            InstallCmd  = $installCmd
+            BuildCmd    = ''
+            ProjectFile = [System.IO.Path]::Combine($projDir, "$ProjName.csproj")
+        }
+    }
+
+    # The hash the SCRIPT asks to have approved, harvested from its own TRUST_REQUIRED line.
+    #
+    # This is the oracle for every group-keyed case, and recomputing it with Compute-TrustHash
+    # would NOT be: the test would then encode the same formula as the code, so removing the group
+    # key from the hash changes both sides together and the case stays green. Measured, not
+    # assumed -- that mutation was run and the mirrored version did not catch it. Harvesting is
+    # also exactly what the SKILL does, so the case exercises the real approval path.
+    #
+    # The gate blocks before running anything, so harvesting has no side effects.
+    function Get-EmittedTrustHash {
+        param([string]$TestRoot, [string]$ProjectFile)
+        $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $TestRoot -ScriptArgs @('-Project', $ProjectFile)
+        $line = @($res.Stdout -split "`r?`n" | Where-Object { $_ -match '^TRUST_REQUIRED ' })[0]
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            throw "fixture: expected TRUST_REQUIRED for '$ProjectFile' but got:`n$($res.Stdout)"
+        }
+        if ($line -notmatch 'hash=([0-9a-f]+)') {
+            throw "fixture: TRUST_REQUIRED line carried no hash: $line"
+        }
+        return $Matches[1]
+    }
+
+    # Entries accumulate, one per approved command set -- [[approved]] is an array of tables, so
+    # repeating it stays valid TOML (a repeated [approved] header would not).
+    function Add-TrustEntry {
+        param([string]$Path, [string]$GroupKey, [string]$Hash)
+        Append-Utf8 -Path $Path -Content "`n[[approved]]`ngroup = `"$GroupKey`"`napproved_hash = `"$Hash`"`n"
     }
 
     function New-FrontendWithSentinel {
@@ -416,6 +468,137 @@ Describe 'Compress-Content' {
             $expected = [System.IO.Path]::Combine($script:mainRoot9, '.turbo-plugin', 'pack-content-trust.local.toml')
             # Compare resolved forms: the sandbox path may reach the script via a different spelling.
             ([System.IO.Path]::GetFullPath($emitted)) | Should -Be ([System.IO.Path]::GetFullPath($expected))
+        }
+    }
+
+    # ─── multi-project [frontend] groups (issue #125) ───────────────────────────
+    # The bug being closed here was silent in both directions at once: the target project's
+    # frontend never ran, and ANOTHER project's did -- successfully, in its own directory, so
+    # nothing errored. Sentinels are what make "which one actually ran" observable; asserting on
+    # stdout alone would pass for a script that printed the right thing and did the wrong thing.
+
+    Context 'Case 10: -Project picks its own group, and only that group runs' {
+        BeforeAll {
+            $sb10 = New-Sandbox -Tag 'pc-10'
+            $script:sb10 = $sb10
+            $testRoot = [System.IO.Path]::Combine($sb10, 'test-turbo-plugin')
+            $null = Mirror-Base-To -TestRoot $testRoot
+            $script:sentA10 = New-SpaceFreeSentinel -Leaf 'sentinel-a'
+            $script:sentB10 = New-SpaceFreeSentinel -Leaf 'sentinel-b'
+            $a = New-KeyedFrontendProject -TestRoot $testRoot -ProjName 'proj-a' -SentinelPath $script:sentA10
+            $b = New-KeyedFrontendProject -TestRoot $testRoot -ProjName 'proj-b' -SentinelPath $script:sentB10
+
+            # BOTH approvals in one file: that also exercises the reader, which used to stop at the
+            # first approved_hash and would therefore have compared proj-b's hash against proj-a's
+            # entry forever. Hashes come from the script's own TRUST_REQUIRED line, not from a
+            # recomputation here -- see Get-EmittedTrustHash.
+            $hashA = Get-EmittedTrustHash -TestRoot $testRoot -ProjectFile $a.ProjectFile
+            $hashB = Get-EmittedTrustHash -TestRoot $testRoot -ProjectFile $b.ProjectFile
+            $script:distinct10 = ($hashA -ne $hashB)
+            $trustFile = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
+            Write-Utf8NoBom-Local -Path $trustFile -Content "# approvals`n"
+            # ORDER IS LOAD-BEARING: the entry for the project actually built (proj-a) is written
+            # SECOND. With proj-a first, a reader that stops at the first approved_hash still
+            # passes, and the "does not stop at the first" assertion below measures nothing --
+            # measured, not assumed: that mutation was run and the first-entry version stayed green.
+            Add-TrustEntry -Path $trustFile -GroupKey $b.Key -Hash $hashB
+            Add-TrustEntry -Path $trustFile -GroupKey $a.Key -Hash $hashA
+
+            $script:res10 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $testRoot -ScriptArgs @('-Project', $a.ProjectFile)
+        }
+        AfterAll {
+            Remove-Sandbox -Dir $script:sb10
+            if ($script:sentA10) { Remove-Sandbox -Dir ([System.IO.Path]::GetDirectoryName($script:sentA10)) }
+            if ($script:sentB10) { Remove-Sandbox -Dir ([System.IO.Path]::GetDirectoryName($script:sentB10)) }
+        }
+
+        It 'exits 0' {
+            $script:res10.ExitCode | Should -Be 0 -Because "stdout:`n$($script:res10.Stdout)`nstderr:`n$($script:res10.Stderr)"
+        }
+        It "runs the target project's frontend" {
+            [System.IO.File]::Exists($script:sentA10) | Should -BeTrue -Because "stdout:`n$($script:res10.Stdout)"
+        }
+        It 'does NOT run the other project''s frontend' {
+            [System.IO.File]::Exists($script:sentB10) | Should -BeFalse -Because 'that is exactly the silent mis-pack this change removes'
+        }
+        It 'both approvals in one file are honoured (reader does not stop at the first)' {
+            $script:res10.Stdout | Should -Not -Match 'TRUST_REQUIRED'
+        }
+        It 'the two projects ask for DIFFERENT approvals despite living in one repo' {
+            $script:distinct10 | Should -BeTrue -Because 'one approval must not cover another project'
+        }
+    }
+
+    Context 'Case 11: approving one project does not authorise another with identical commands' {
+        BeforeAll {
+            $sb11 = New-Sandbox -Tag 'pc-11'
+            $script:sb11 = $sb11
+            $testRoot = [System.IO.Path]::Combine($sb11, 'test-turbo-plugin')
+            $null = Mirror-Base-To -TestRoot $testRoot
+            # ONE sentinel, so both groups carry a byte-identical install_command. If the group key
+            # were not part of the hash, approving proj-a would silently approve proj-b too -- and
+            # the two are only identical today; proj-b's command is free to change tomorrow.
+            $script:sent11 = New-SpaceFreeSentinel -Leaf 'sentinel-shared'
+            $a = New-KeyedFrontendProject -TestRoot $testRoot -ProjName 'proj-a' -SentinelPath $script:sent11
+            $b = New-KeyedFrontendProject -TestRoot $testRoot -ProjName 'proj-b' -SentinelPath $script:sent11
+            $script:sameCmd11 = ($a.InstallCmd -eq $b.InstallCmd)
+
+            # Record EXACTLY what a user approving proj-a would record: the hash the script itself
+            # printed. Recomputing it here would make the case blind to the very thing it tests --
+            # drop the group key from the hash and a mirrored fixture drops it too, so both sides
+            # move together and nothing goes red.
+            $hashA = Get-EmittedTrustHash -TestRoot $testRoot -ProjectFile $a.ProjectFile
+            $trustFile = [System.IO.Path]::Combine($testRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
+            Write-Utf8NoBom-Local -Path $trustFile -Content "# approvals`n"
+            Add-TrustEntry -Path $trustFile -GroupKey $a.Key -Hash $hashA
+
+            $script:res11 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $testRoot -ScriptArgs @('-Project', $b.ProjectFile)
+        }
+        AfterAll {
+            Remove-Sandbox -Dir $script:sb11
+            if ($script:sent11) { Remove-Sandbox -Dir ([System.IO.Path]::GetDirectoryName($script:sent11)) }
+        }
+
+        It 'precondition: the two groups really do carry identical commands' {
+            $script:sameCmd11 | Should -BeTrue -Because 'otherwise this case proves nothing about the key'
+        }
+        It 'still asks for approval' { $script:res11.Stdout | Should -Match 'TRUST_REQUIRED' }
+        It 'names the group being approved' {
+            $line = @($script:res11.Stdout -split "`r?`n" | Where-Object { $_ -match '^TRUST_GROUP ' })[0]
+            $line | Should -Not -BeNullOrEmpty -Because "stdout:`n$($script:res11.Stdout)"
+            $line.Substring('TRUST_GROUP '.Length).Trim() | Should -Be 'proj-b'
+        }
+        It 'nothing ran' {
+            [System.IO.File]::Exists($script:sent11) | Should -BeFalse
+        }
+    }
+
+    Context 'Case 12: a project no group names is reported as such, not as plain "not configured"' {
+        BeforeAll {
+            $sb12 = New-Sandbox -Tag 'pc-12'
+            $script:sb12 = $sb12
+            $testRoot = [System.IO.Path]::Combine($sb12, 'test-turbo-plugin')
+            $null = Mirror-Base-To -TestRoot $testRoot
+            $script:sent12 = New-SpaceFreeSentinel -Leaf 'sentinel-unmatched'
+            $null = New-KeyedFrontendProject -TestRoot $testRoot -ProjName 'proj-a' -SentinelPath $script:sent12
+            # proj-b exists as a project but has no group of its own.
+            $projB = [System.IO.Path]::Combine($testRoot, 'proj-b')
+            $null = New-Item -ItemType Directory -Path $projB -Force
+            $bCsproj = [System.IO.Path]::Combine($projB, 'proj-b.csproj')
+            [System.IO.File]::WriteAllText($bCsproj, '<Project/>')
+            $script:res12 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $testRoot -ScriptArgs @('-Project', $bCsproj)
+        }
+        AfterAll {
+            Remove-Sandbox -Dir $script:sb12
+            if ($script:sent12) { Remove-Sandbox -Dir ([System.IO.Path]::GetDirectoryName($script:sent12)) }
+        }
+
+        It 'exits 0 (a project without a frontend is not an error)' { $script:res12.ExitCode | Should -Be 0 }
+        It 'says no group names this project' {
+            $script:res12.Stdout | Should -Match 'none names'
+        }
+        It 'does not fall back to another project''s group' {
+            [System.IO.File]::Exists($script:sent12) | Should -BeFalse
         }
     }
 }

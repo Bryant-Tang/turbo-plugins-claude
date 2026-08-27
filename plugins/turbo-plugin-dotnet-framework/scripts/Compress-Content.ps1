@@ -1,5 +1,9 @@
 ﻿param(
-    [string]$RepoRoot = ''
+    [string]$RepoRoot = '',
+    # The resolved project/solution this pack belongs to. Build-Web / Publish-Web forward what
+    # they resolved, so the group chosen here is the same one their result template reported.
+    # Omitted means "no target in view": only the bare [frontend] can apply (issue #125).
+    [string]$Project = ''
 )
 
 Set-StrictMode -Version Latest
@@ -17,12 +21,21 @@ function Find-CommandPath {
 try {
     $repoRoot = Resolve-DotnetRepoRoot -RepoRoot $RepoRoot
 
-    # Resolve-FrontendPackDir, not a direct [frontend] dir read: Build-Web / Publish-Web fill the
+    # Resolve-FrontendGroup, not a direct [frontend] dir read: Build-Web / Publish-Web fill the
     # result template's Frontend line from the SAME function, so what the template states and what
-    # this script does cannot drift apart (issue #30). It also honours [frontend] enabled = false.
-    $frontendDirRel = Resolve-FrontendPackDir -RepoRoot $repoRoot
+    # this script does cannot drift apart (issue #30). It also honours enabled = false, and picks
+    # the group belonging to $Project when the repo carries several (issue #125).
+    $group = Resolve-FrontendGroup -RepoRoot $repoRoot -TargetProject $Project
+    $frontendDirRel = $group.Dir
     if ([string]::IsNullOrWhiteSpace($frontendDirRel)) {
-        Write-Output '[frontend] not configured (or disabled) in .turbo-plugin/config.toml. Skipping frontend pack.'
+        # Say WHICH of the non-running outcomes this is. "no group names this project" means
+        # someone configured frontend for this repo and this project fell through the gap; that is
+        # a different thing from "this repo does no frontend work" and must not read the same.
+        switch ($group.Status) {
+            'disabled'  { Write-Output '[frontend] enabled = false in .turbo-plugin/config.toml. Skipping frontend pack.' }
+            'unmatched' { Write-Output "[frontend] groups exist in .turbo-plugin/config.toml but none names '$Project'. Skipping frontend pack." }
+            default     { Write-Output '[frontend] not configured in .turbo-plugin/config.toml. Skipping frontend pack.' }
+        }
         exit 0
     }
 
@@ -35,15 +48,26 @@ try {
         throw "Missing package.json in frontend directory: $packageJsonFile"
     }
 
-    $installCmd = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'frontend' -Key 'install_command' -CliValue $null -Default $null
-    $buildCmd = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'frontend' -Key 'build_command' -CliValue $null -Default $null
-    $requiredNodeVersion = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'frontend' -Key 'node_version' -CliValue $null -Default $null
+    # $group.Section, never a literal 'frontend': the commands must come from the SAME group whose
+    # dir was just resolved. Reading dir from one group and commands from another is the multi-
+    # project version of the bug this whole path exists to stop.
+    $installCmd = Resolve-ConfigValue -RepoRoot $repoRoot -Section $group.Section -Key 'install_command' -CliValue $null -Default $null
+    $buildCmd = Resolve-ConfigValue -RepoRoot $repoRoot -Section $group.Section -Key 'build_command' -CliValue $null -Default $null
+    $requiredNodeVersion = Resolve-ConfigValue -RepoRoot $repoRoot -Section $group.Section -Key 'node_version' -CliValue $null -Default $null
 
     # F22: trust prompt — verify install_command + build_command haven't changed since last approval.
     # Uses "VS Code workspace trust" pattern: hash is stored in a gitignored local file.
     # If commands match the approved hash, proceed silently. If not, emit a TRUST_REQUIRED token
     # and exit non-zero so the invoking SKILL can prompt the user for confirmation.
-    $trustInput = "$installCmd|$buildCmd"
+    # The group key is part of the hash, so approving one project's commands never authorises
+    # another project's -- even when the second project is added later. The BARE group keeps the
+    # historical input verbatim (no separator, no key) so approvals granted before groups existed
+    # still match and nobody is asked to re-approve commands they already approved.
+    $trustInput = if ([string]::IsNullOrWhiteSpace($group.Key)) {
+        "$installCmd|$buildCmd"
+    } else {
+        "$($group.Key)|$installCmd|$buildCmd"
+    }
     $sha256 = [System.Security.Cryptography.SHA256]::Create()
     try {
         $hashBytes = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($trustInput))
@@ -62,13 +86,17 @@ try {
     try { $mainRoot = Get-MainWorktree -RepoRoot $repoRoot } catch { $mainRoot = $repoRoot }
     $trustFile = [System.IO.Path]::Combine($mainRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
     $localTrustFile = [System.IO.Path]::Combine($repoRoot, '.turbo-plugin', 'pack-content-trust.local.toml')
+    # ALL occurrences, not the first: with one group per project the file holds one entry per
+    # approved command set. `-match` stops at the first hit, so it would have answered about
+    # whichever entry happened to be at the top -- approving project A and then building project B
+    # would have compared B's hash against A's entry and re-prompted forever.
     $trustApproved = $false
     foreach ($candidate in @($trustFile, $localTrustFile)) {
         if ($trustApproved) { break }
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
         $trustContent = (Get-Content -LiteralPath $candidate -Raw -Encoding UTF8)
-        if ($trustContent -match 'approved_hash\s*=\s*"([^"]+)"') {
-            $trustApproved = ($Matches[1] -eq $commandHash)
+        foreach ($m in [regex]::Matches($trustContent, 'approved_hash\s*=\s*"([^"]+)"')) {
+            if ($m.Groups[1].Value -eq $commandHash) { $trustApproved = $true; break }
         }
     }
     if (-not $trustApproved) {
@@ -78,6 +106,9 @@ try {
         # Own line: the path may contain spaces, and the TRUST_REQUIRED fields are already
         # free-form, so appending another key= there would make both ambiguous to parse.
         Write-Output "TRUST_FILE $trustFile"
+        # Which group is being approved. Empty for the bare [frontend]; the SKILL writes it into
+        # the recorded entry so a human reading the trust file later can tell the entries apart.
+        Write-Output "TRUST_GROUP $($group.Key)"
         throw "pack-content: commands not approved. Re-invoke via /tp-build or /tp-publish skill — the skill will prompt for confirmation and record approval."
     }
 

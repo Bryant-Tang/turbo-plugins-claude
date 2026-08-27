@@ -292,27 +292,174 @@ function Get-MsbuildProperty {
     return $nodes[$nodes.Count - 1].InnerText.Trim()
 }
 
-# Single source of truth for "will a frontend pack run, and against which directory".
+# ─── [frontend] group resolution (issue #125) ───────────────────────────────────
+#
+# A repo has ONE .turbo-plugin/config.toml but may hold many Web projects, and the old single
+# [frontend] was applied no matter which project was being built. That failed silently in BOTH
+# directions at once: the target project's frontend was never packed, and some OTHER project's
+# pack ran -- successfully, in its own directory, so nothing errored -- while the result template
+# reported 已執行. The only way to notice was a downstream "why is this page dead after deploy".
+#
+# Two forms are supported:
+#
+#   [frontend]                          the bare group. Unchanged, and it still applies to
+#                                       whatever is being built, so single-project repos (the
+#                                       overwhelming majority) behave exactly as before.
+#   [frontend."src/proj-1/Proj1.Web"]   a keyed group. Applies ONLY when the resolved target is
+#                                       that project.
+#
+# The section name arrives verbatim from Core's TOML reader -- it does not parse dotted/quoted
+# keys and does not need to, because the whole header string is the section name. So
+# `frontend."x"` is simply a section whose name starts with `frontend.`.
+#
+# Once ANY keyed group exists the bare group stops being a catch-all: a project with no group of
+# its own gets NO pack, reported as such. Falling back would reinstate exactly the bug above.
+#
+# Status values, and why they are distinct rather than collapsed into "no dir":
+#   ready      a pack will run.
+#   unset      nothing is configured for this target. Normal, and says so.
+#   disabled   an applicable group exists with enabled = false. Deliberate, not absence.
+#   unmatched  keyed groups exist but none names this target. SUSPICIOUS -- someone set frontend
+#              up for this repo and this project is not covered, which is a different thing from
+#              "this repo does no frontend work" and must not read the same (issue #30's lesson).
+#   foreign    a bare group applies but its dir is not under the target project's directory. It
+#              still runs -- silencing it would change behaviour for existing single-project
+#              repos, which is not this change's business -- but the report says so, because in a
+#              multi-project repo this is precisely the silent mis-pack described above.
+
+# Comparable form for path equality on Windows: separators unified, trailing separator dropped,
+# case folded. Windows paths are case-insensitive, and `src/web` vs `src\web\` vs `SRC\Web` are
+# the same place -- a plain string compare answers "no" for all three and does it silently.
+function ConvertTo-ComparablePath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    return ($Path -replace '/', '\').TrimEnd('\').ToLowerInvariant()
+}
+
+# Section names of the keyed groups, as written in config.toml.
+function Get-FrontendGroupSections {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $cfg = Get-TurboPluginConfig -RepoRoot $RepoRoot
+    return @($cfg.Keys | Where-Object { $_ -like 'frontend.*' } | Sort-Object)
+}
+
+# The project path a keyed section names: `frontend."x"` -> `x`.
+# Quotes are optional so `[frontend.src/web]` -- what people write first -- also works.
+function Get-FrontendGroupKey {
+    param([Parameter(Mandatory = $true)][string]$Section)
+
+    $k = $Section.Substring('frontend.'.Length).Trim()
+    if ($k.Length -ge 2 -and $k.StartsWith('"') -and $k.EndsWith('"')) {
+        return $k.Substring(1, $k.Length - 2)
+    }
+    if ($k.Length -ge 2 -and $k.StartsWith("'") -and $k.EndsWith("'")) {
+        return $k.Substring(1, $k.Length - 2)
+    }
+    return $k
+}
+
+# A group key may name the project FILE or the directory that holds it; both are things a user
+# would reasonably write, and `--project` accepts both spellings too.
+function Test-FrontendGroupMatchesTarget {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$GroupKey,
+        [Parameter(Mandatory = $true)][string]$TargetProject
+    )
+
+    $keyAbs = ConvertTo-ComparablePath (Resolve-RepoPath -RepoRoot $RepoRoot -PathValue $GroupKey)
+    if ([string]::IsNullOrWhiteSpace($keyAbs)) { return $false }
+    $targetAbs = ConvertTo-ComparablePath $TargetProject
+    $targetDir = ConvertTo-ComparablePath ([System.IO.Path]::GetDirectoryName($TargetProject))
+    return ($keyAbs -eq $targetAbs) -or ($keyAbs -eq $targetDir)
+}
+
+# Single source of truth for "will a frontend pack run, from which config group, against which
+# directory, and if not -- why not".
 #
 # Build-Web / Publish-Web use it to fill the result template's Frontend line and Compress-Content
 # uses it to decide whether to act, so the template can never claim a pack that did not happen --
 # which is the whole point: the silent skip in issue #30 was invisible precisely because reporting
 # and behaviour were decided in different places.
 #
-# `[frontend] enabled = false` is an explicit opt-out and WINS over a configured dir (mirrors the
-# existing `[iis] enabled` switch), so a project can keep its frontend settings while turning the
-# step off. tp-build / tp-publish also write it as the "already asked, user said no" marker.
+# `enabled = false` is an explicit opt-out and WINS over a configured dir (mirrors the existing
+# `[iis] enabled` switch), so a project can keep its frontend settings while turning the step off.
+# tp-build / tp-publish also write it as the "already asked, user said no" marker.
 #
-# Returns '' when no pack will run, else the configured directory (as written in config).
+# $TargetProject is the RESOLVED project/solution path. Omitting it means "no target in view":
+# keyed groups then cannot be matched, so only the bare group applies and the containment check
+# is skipped. Callers that know the target must pass it.
+function Resolve-FrontendGroup {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [string]$TargetProject = ''
+    )
+
+    $none = { param($Status) [PSCustomObject]@{ Section = ''; Key = ''; Dir = ''; Status = $Status; TargetDir = '' } }
+    # @() at the CALL SITE, not just inside the function: returning an empty array from a
+    # PowerShell function unrolls to $null, and returning a one-element array unrolls to the
+    # element -- so `.Count` would be an error in the first case and the STRING LENGTH of the
+    # single section name in the second. Both fail as "there are keyed groups" nonsense.
+    $sections = @(Get-FrontendGroupSections -RepoRoot $RepoRoot)
+
+    $section = 'frontend'
+    $key = ''
+    if ($sections.Count -gt 0) {
+        if ([string]::IsNullOrWhiteSpace($TargetProject)) { return (& $none 'unmatched') }
+        $matched = @($sections | Where-Object {
+            Test-FrontendGroupMatchesTarget -RepoRoot $RepoRoot -GroupKey (Get-FrontendGroupKey -Section $_) -TargetProject $TargetProject
+        })
+        if ($matched.Count -eq 0) { return (& $none 'unmatched') }
+        if ($matched.Count -gt 1) {
+            # Two groups naming the same project (typically one by directory and one by .csproj).
+            # Picking the "more specific" one would be a guess about which the user meant, made
+            # silently, in the one function whose entire job is to stop silent mis-packing.
+            throw ("Ambiguous [frontend] configuration: $($matched.Count) groups all name '$TargetProject' " +
+                   "($($matched -join ', ')). Keep exactly one group per project.")
+        }
+        $section = $matched[0]
+        $key = Get-FrontendGroupKey -Section $section
+    }
+
+    $enabled = Resolve-ConfigValue -RepoRoot $RepoRoot -Section $section -Key 'enabled' -CliValue $null -Default $true
+    if ($enabled -eq $false) {
+        return [PSCustomObject]@{ Section = $section; Key = $key; Dir = ''; Status = 'disabled'; TargetDir = '' }
+    }
+
+    $dir = Resolve-ConfigValue -RepoRoot $RepoRoot -Section $section -Key 'dir' -CliValue $null -Default $null
+    if ($null -eq $dir) { return (& $none 'unset') }
+    $dir = [string]$dir
+
+    # Containment applies to the BARE group only. A keyed group's key IS its statement of
+    # ownership, so second-guessing where it points would just add a rule the user cannot see.
+    $status = 'ready'
+    $targetDirDisplay = ''
+    if ($sections.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($TargetProject)) {
+        # A .sln legitimately spans projects, and its directory is usually the repo root, so this
+        # check neutralises itself there rather than crying wolf on every solution build.
+        $targetDirRaw = [System.IO.Path]::GetDirectoryName($TargetProject)
+        $dirAbs = ConvertTo-ComparablePath (Resolve-RepoPath -RepoRoot $RepoRoot -PathValue $dir)
+        $targetDirCmp = ConvertTo-ComparablePath $targetDirRaw
+        if ($targetDirCmp -ne '' -and $dirAbs -ne '' -and
+            $dirAbs -ne $targetDirCmp -and -not $dirAbs.StartsWith($targetDirCmp + '\')) {
+            $status = 'foreign'
+            $targetDirDisplay = $targetDirRaw
+        }
+    }
+    return [PSCustomObject]@{ Section = $section; Key = $key; Dir = $dir; Status = $status; TargetDir = $targetDirDisplay }
+}
+
+# Thin wrapper kept because "the directory a pack will use, or '' for none" is what most callers
+# actually want, and because it keeps the reporting/behaviour single-source property explicit.
 function Resolve-FrontendPackDir {
-    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [string]$TargetProject = ''
+    )
 
-    $enabled = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'frontend' -Key 'enabled' -CliValue $null -Default $true
-    if ($enabled -eq $false) { return '' }
-
-    $dir = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'frontend' -Key 'dir' -CliValue $null -Default $null
-    if ($null -eq $dir) { return '' }
-    return [string]$dir
+    return (Resolve-FrontendGroup -RepoRoot $RepoRoot -TargetProject $TargetProject).Dir
 }
 
 # ─── per-operation result-template family (KTD5) ────────────────────────────────
@@ -338,13 +485,30 @@ function Get-UnspecifiedConfigNote {
 # skipped in complete silence -- the skip message existed, but nothing was ever going to repeat it
 # (issue #30). Projects with no frontend step still get a line, so "未設定" is an explicit
 # statement rather than the absence of one.
+# Takes the whole Resolve-FrontendGroup descriptor rather than just the directory: the four
+# non-running outcomes are NOT interchangeable, and collapsing them into one 未設定 line is what
+# made the original silent skip invisible. In particular `unmatched` -- frontend is configured for
+# this repo but no group names this project -- is a suspicious state, while `unset` is a normal
+# one, and a reader has to be able to tell them apart from the result template alone.
 function Format-FrontendStatusLine {
-    param([string]$FrontendDir = '')
+    param($Group)
 
-    if ([string]::IsNullOrWhiteSpace($FrontendDir)) {
-        return 'Frontend: 未設定 (未執行前端打包)'
+    $none = 'Frontend: 未設定 (未執行前端打包)'
+    if ($null -eq $Group) { return $none }
+    switch ($Group.Status) {
+        'ready' {
+            if ([string]::IsNullOrWhiteSpace($Group.Key)) { return "Frontend: 已執行 ($($Group.Dir))" }
+            return 'Frontend: 已執行 (' + $Group.Dir + ',設定來自 [frontend."' + $Group.Key + '"])'
+        }
+        'foreign' {
+            return ('Frontend: 已執行 (' + $Group.Dir + ')。警告:這個目錄不在目標專案 (' + $Group.TargetDir +
+                    ') 底下。[frontend] 只有一組,會套用到任何被建置的專案——一個 repo 裡有多個 Web 專案時,' +
+                    '請改成以專案路徑為鍵的 [frontend."<專案路徑>"] 分組。')
+        }
+        'disabled'  { return 'Frontend: 已停用 (enabled = false,未執行前端打包)' }
+        'unmatched' { return 'Frontend: 未設定 (config.toml 有 [frontend."..."] 分組,但沒有一組對應這個專案——未執行前端打包)' }
+        default     { return $none }
     }
-    return "Frontend: 已執行 ($FrontendDir)"
 }
 
 function Format-BuildResultLines {
@@ -352,7 +516,7 @@ function Format-BuildResultLines {
         [Parameter(Mandatory = $true)][string]$ResolvedTarget,
         [string]$Configuration = '',
         [string]$Platform = '',
-        [string]$FrontendDir = '',
+        $FrontendGroup = $null,
         [switch]$IsSolution
     )
     $note = Get-UnspecifiedConfigNote
@@ -360,7 +524,7 @@ function Format-BuildResultLines {
     $lines += if ($IsSolution) { "Target: $ResolvedTarget (整個 solution)" } else { "Target: $ResolvedTarget" }
     $lines += if ([string]::IsNullOrWhiteSpace($Configuration)) { "Configuration: $note" } else { "Configuration: $Configuration" }
     $lines += if ([string]::IsNullOrWhiteSpace($Platform)) { "Platform: $note" } else { "Platform: $Platform" }
-    $lines += Format-FrontendStatusLine -FrontendDir $FrontendDir
+    $lines += Format-FrontendStatusLine -Group $FrontendGroup
     return $lines
 }
 

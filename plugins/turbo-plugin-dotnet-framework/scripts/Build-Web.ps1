@@ -70,20 +70,25 @@ try {
     # whether a frontend pack ran, and "it printed a skip message" is not something the agent ever
     # relays (issue #30). Read before invoking, so the reported state is the configured one even if
     # the pack itself is what fails.
-    $frontendDir = Resolve-FrontendPackDir -RepoRoot $repoRoot
+    # -TargetProject is what makes the answer specific to THIS build: with several Web projects in
+    # one repo, [frontend] groups are keyed by project and the un-keyed form is only reported as
+    # applying when its directory actually belongs to the resolved target (issue #125).
+    $frontendGroup = Resolve-FrontendGroup -RepoRoot $repoRoot -TargetProject $projectFile
 
     # Frontend pack is delegated to Compress-Content.ps1 (shipped alongside Build-Web.ps1);
     # Compress-Content exits 0 with a skip message when [frontend] isn't set, so no Test-Path guard needed.
     # -RepoRoot is forwarded (Publish-Web already does this): without it a -RepoRoot-targeted build in
     # a multi-project workspace would pack whichever project the ambient cwd happens to be.
-    & ([System.IO.Path]::Combine($PSScriptRoot, 'Compress-Content.ps1')) -RepoRoot $repoRoot
+    # -Project is forwarded for the same reason one level down: Compress-Content has to resolve the
+    # SAME group this line just reported, or the template and the behaviour drift apart again.
+    & ([System.IO.Path]::Combine($PSScriptRoot, 'Compress-Content.ps1')) -RepoRoot $repoRoot -Project $projectFile
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     # BUILD result template (KTD5): report the agent's inputs + the RESOLVED target (the 糾錯閘 so
     # the user sees which project/solution was built). Configuration/Platform left unspecified are
     # shown as MSBuild/solution-decided, never fabricated.
     Write-Output 'BUILD_OUTPUT (relay these lines to the user as the build result):'
-    $buildLines = Format-BuildResultLines -ResolvedTarget $projectFile -Configuration $buildConfiguration -Platform $buildPlatform -FrontendDir $frontendDir -IsSolution:$isSolution
+    $buildLines = Format-BuildResultLines -ResolvedTarget $projectFile -Configuration $buildConfiguration -Platform $buildPlatform -FrontendGroup $frontendGroup -IsSolution:$isSolution
     foreach ($l in $buildLines) { Write-Output $l }
 }
 catch {
