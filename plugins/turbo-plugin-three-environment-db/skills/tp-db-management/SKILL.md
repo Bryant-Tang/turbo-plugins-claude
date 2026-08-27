@@ -43,8 +43,16 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 
 ### 決定 `<sql_root>`
 
-讀 `.turbo-plugin/config.toml` 的 `[db] sql_root`(`config.local.toml` 的同名 key 會逐 key 覆寫它,
-那是讀取鏈本來就有的行為,不必特別處理)。
+讀 `.turbo-plugin/config.toml` 的 `[db] sql_root`。
+
+> **只讀這一個檔,不要去看 `config.local.toml`。** 別的設定確實有「local 逐 key 覆寫」那條鏈,但那是
+> `Core.ps1` / `core.sh` **真的實作**出來的合併邏輯,而這支 skill 沒有任何 script——落點完全由你照這份
+> 文件讀檔決定,沒寫進來的步驟就不會發生。
+>
+> 而且這個 key **不該**被單機覆寫:`config.local.toml` 是給機器差異用的(工具路徑、credentials),
+> 但 `sql_root` 決定的是**進版控、要給全隊看的**產物落在哪裡。一個人在自己機器上改掉它,結果是同一個
+> repo 裡長出兩棵平行的 SQL 樹、`<slug>` 再也對不齊——而且沒有任何東西會提醒,因為兩邊的檔案都正常
+> 進了版控。這個值是專案慣例,不是機器設定。
 
 **沒有這個 key、或值是空字串 → `.turbo-plugin/sql`。** 這是預設,而且**必須跟以前逐字元相同**——
 沒設過這個 key 的專案不該察覺到任何差異。
@@ -163,22 +171,22 @@ checkout 了一顆 commit、忘了切回去),而在那裡做的 commit 很容易
 3. 用 `tp-dbhub` 的查詢 MCP tool **只查最小必要資料**（唯讀）。
 4. 把資料庫查到的事實轉成需要的 code 變更或實作決策。
 5. 若需要任何寫入側資料庫動作，先決定目標環境範圍：local-only 驗證 / test 部署 / 含 production 的完整發佈。
-5b. 決定 `<sql_root>`，依「決定 `<sql_root>`」那一節：讀 `[db] sql_root`，沒有就用預設
+6. 決定 `<sql_root>`，依「決定 `<sql_root>`」那一節：讀 `[db] sql_root`，沒有就用預設
    `.turbo-plugin/sql`；有值就先驗（拒絕絕對路徑 / 跑出工作區根 / 含 `..` / 前後空白或結尾 `.`），
    基準點是**工作區根**而不是當下目錄，再對算出來的落點跑 `git check-ignore` 確認它沒被擋掉。
    **這一步要在建任何資料夾之前做完**——落點錯了，後面每一件事都落在錯的地方。
-6. 決定 `<slug>` 分組鍵，依「決定 `<slug>`」那一節：**在 git work tree 裡**跑
+7. 決定 `<slug>` 分組鍵，依「決定 `<slug>`」那一節：**在 git work tree 裡**跑
    `git rev-parse --abbrev-ref HEAD` 把 `/` 換成 `-`（detached HEAD → fail loudly，請使用者先 checkout
    具名 branch）；**不在 work tree 裡**則列出既有資料夾讓使用者選，輸入不合法就拒絕重問。
-7. 若 SQL 只供 local 驗證且測完回滾 → 只建 `<sql_root>/local-db/<slug>/`。
-8. 若是最終發佈且 production 也要改 → 在 `<sql_root>/local-db/<slug>/`、`<sql_root>/test-db/<slug>/`、`<sql_root>/main-db/<slug>/` 建對齊腳本。
-9. finalize `test-db` / `main-db` 腳本前，確認相關欄位 / view / procedure / function / trigger 在該環境是否已知相同；若不確定，給使用者最小驗證查詢並等結果。
-10. 目標環境範圍從需求不明顯時，先問再建檔。
-11. 每個 SQL 檔用 `<order>-<database>-<purpose>.sql` 命名。
-12. 從 [assets/sql-script-template.sql](./assets/sql-script-template.sql) 起手，讓產出檔共用同結構。
-13. 每支腳本適當時加 `USE [DatabaseName]`，statement 依執行順序排，加足夠註解說明特殊步驟 / 回滾預期 / 環境差異。
-14. 多個邏輯變更時優先拆成多支 SQL 檔，除非步驟必須一起執行。
-15. 回報兩部分結果：唯讀檢視驗證到什麼、使用者還需要在 test / production 自行驗證什麼（若有）、以及準備了哪些 SQL 供手動執行（含落點路徑）。
+8. 若 SQL 只供 local 驗證且測完回滾 → 只建 `<sql_root>/local-db/<slug>/`。
+9. 若是最終發佈且 production 也要改 → 在 `<sql_root>/local-db/<slug>/`、`<sql_root>/test-db/<slug>/`、`<sql_root>/main-db/<slug>/` 建對齊腳本。
+10. finalize `test-db` / `main-db` 腳本前，確認相關欄位 / view / procedure / function / trigger 在該環境是否已知相同；若不確定，給使用者最小驗證查詢並等結果。
+11. 目標環境範圍從需求不明顯時，先問再建檔。
+12. 每個 SQL 檔用 `<order>-<database>-<purpose>.sql` 命名。
+13. 從 [assets/sql-script-template.sql](./assets/sql-script-template.sql) 起手，讓產出檔共用同結構。
+14. 每支腳本適當時加 `USE [DatabaseName]`，statement 依執行順序排，加足夠註解說明特殊步驟 / 回滾預期 / 環境差異。
+15. 多個邏輯變更時優先拆成多支 SQL 檔，除非步驟必須一起執行。
+16. 回報兩部分結果：唯讀檢視驗證到什麼、使用者還需要在 test / production 自行驗證什麼（若有）、以及準備了哪些 SQL 供手動執行（含落點路徑）。
 
 ## Decision Rules
 
