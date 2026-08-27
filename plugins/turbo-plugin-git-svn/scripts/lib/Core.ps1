@@ -345,6 +345,40 @@ function Get-InheritedLocalConfigPath {
     return [System.IO.Path]::Combine($mainRoot, '.turbo-plugin', 'config.local.toml')
 }
 
+# The whole merged config for a repo root, as section → key → value.
+#
+# read config.toml first then merge config.local.toml on top of it.
+# config.local.toml is gitignored (machine-specific tool paths etc.) and takes precedence.
+# In a linked worktree the MAIN worktree's local config is layered in between, so machine
+# settings are inherited -- but this worktree's own file still wins, so anyone who has
+# deliberately set one per worktree keeps that behaviour.
+#
+# Resolve-ConfigValue is the right call for "give me one key"; this exists for the callers that
+# must ENUMERATE sections (a plugin whose config carries a variable set of groups, keyed by
+# something only the caller knows). Those callers must not rebuild the lookup chain themselves:
+# the order above is load-bearing and a second copy of it would drift silently -- a config that
+# resolves one way through one code path and another way through the other is exactly the kind
+# of bug that shows up as "it works for me".
+#
+# No core.sh twin, and that is not an oversight. core.sh's reader streams and filters per key
+# rather than building a table (bash has no natural return type for section → key → value), and
+# the only plugin that needs enumeration is turbo-plugin-dotnet-framework, which ships no .sh
+# implementations at all -- its scripts are reached through ps1-delegate.sh. A bash half here
+# would be a translation with no caller.
+function Get-TurboPluginConfig {
+    param([string]$RepoRoot)
+
+    $configPath      = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
+    $configLocalPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.local.toml')
+    $inheritedPath   = Get-InheritedLocalConfigPath -RepoRoot $RepoRoot
+    $chain = if ([string]::IsNullOrWhiteSpace($inheritedPath)) {
+        @($configPath, $configLocalPath)
+    } else {
+        @($configPath, $inheritedPath, $configLocalPath)
+    }
+    return Read-TurboPluginConfig -ConfigPath $chain
+}
+
 # Lookup chain: CLI arg → config.toml → inherited local → local → built-in default
 #   1. $CliValue (already-resolved CLI argument; pass $null if not provided)
 #   2. config.toml under repo-root .turbo-plugin/config.toml, $Section.$Key
@@ -361,20 +395,7 @@ function Resolve-ConfigValue {
     if ($null -ne $CliValue -and -not ([string]::IsNullOrWhiteSpace([string]$CliValue))) {
         return $CliValue
     }
-    # read config.toml first then merge config.local.toml on top of it.
-    # config.local.toml is gitignored (machine-specific tool paths etc.) and takes precedence.
-    # In a linked worktree the MAIN worktree's local config is layered in between, so machine
-    # settings are inherited -- but this worktree's own file still wins, so anyone who has
-    # deliberately set one per worktree keeps that behaviour.
-    $configPath      = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.toml')
-    $configLocalPath = [System.IO.Path]::Combine($RepoRoot, '.turbo-plugin', 'config.local.toml')
-    $inheritedPath   = Get-InheritedLocalConfigPath -RepoRoot $RepoRoot
-    $chain = if ([string]::IsNullOrWhiteSpace($inheritedPath)) {
-        @($configPath, $configLocalPath)
-    } else {
-        @($configPath, $inheritedPath, $configLocalPath)
-    }
-    $cfg = Read-TurboPluginConfig -ConfigPath $chain
+    $cfg = Get-TurboPluginConfig -RepoRoot $RepoRoot
     if ($cfg.ContainsKey($Section) -and $cfg[$Section].ContainsKey($Key)) {
         return $cfg[$Section][$Key]
     }
