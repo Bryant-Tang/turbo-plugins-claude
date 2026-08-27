@@ -2,6 +2,23 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.2.1...turbo-plugin-dotnet-framework--v0.3.0) (2026-08-27)
+
+
+### Added
+
+* **dotnet-framework:** [frontend] 可依專案分組,一個 repo 裡的多個 Web 專案各自打包 ([d113cd0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d113cd024909256771894e22aafe955dba7e932f)), closes [#125](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/125)
+
+
+### Fixed
+
+* git 對 stderr 出警告時不再把健康的 repo 誤判成「不是 git repo」 ([60fabcf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/60fabcf63a2008b5735db429c12722ce375f8227)), closes [#123](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/123)
+
+
+### Documentation
+
+* **dotnet-framework:** Resolve-FrontendGroup 的註解如實描述省略 -TargetProject 的行為 ([cabf4d7](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/cabf4d72ee7fadbb63ed2f87dcd3958e322d3411))
+
 ## [0.2.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.2.0...turbo-plugin-dotnet-framework--v0.2.1) (2026-08-19)
 
 

@@ -1,7 +1,7 @@
 {
   "name": "turbo-plugin-git-svn",
   "description": "git↔SVN bridge 本機開發工具集（9 個 skill:setup / pull / push / checkout-svn-branch / svn-log / merge / request-merge / suggest-ignore / commit-msg）。env-free 設計,集中設定於 .turbo-plugin/。",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "MIT",
   "repository": "https://github.com/Bryant-Tang/turbo-plugins-claude",
   "author": {

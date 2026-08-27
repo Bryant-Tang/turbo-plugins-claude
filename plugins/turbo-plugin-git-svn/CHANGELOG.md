@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.4.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.4.0...turbo-plugin-git-svn--v0.4.1) (2026-08-27)
+
+
+### Fixed
+
+* git 對 stderr 出警告時不再把健康的 repo 誤判成「不是 git repo」 ([60fabcf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/60fabcf63a2008b5735db429c12722ce375f8227)), closes [#123](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/123)
+
 ## [0.4.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.3.0...turbo-plugin-git-svn--v0.4.0) (2026-08-25)
 
 
