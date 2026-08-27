@@ -67,7 +67,7 @@ publish 這條路徑比 build 更要緊:發佈產出會送到**部署環境**,�
 
 ### Step 2 — 執行 publish
 
-跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶明確參數:`-Project <csproj>`、(可選)`-Pubxml <path>`、(可選)`-Configuration`/`-Platform`、(逃生口,平常不用)`-MsBuildProperty Name=Value,Name2=Value2`。Script 會:解析 csproj target(CLI → `[publish].project` → 清楚報錯;**收到 `.sln` 報錯**)、找 MSBuild、解析 pubxml(CLI → `[publish].default_pubxml` → `Properties/PublishProfiles/` 單一)、跑 frontend pack(若 `[frontend]` 齊備)、跑 `msbuild /restore /p:DeployOnBuild=true /p:PublishProfile=<name>`、後處理 parse `<PublishUrl>` + `<WebPublishMethod>` 回報產出位置。
+跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Publish-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/publish-web.sh`)帶明確參數:`-Project <csproj>`、(可選)`-Pubxml <path>`、(可選)`-Configuration`/`-Platform`、(逃生口,平常不用)`-MsBuildProperty Name=Value,Name2=Value2`。Script 會:解析 csproj target(CLI → `[publish].project` → 清楚報錯;**收到 `.sln` 報錯**)、找 MSBuild、解析 pubxml(CLI → `[publish].default_pubxml` → `Properties/PublishProfiles/` 單一)、跑 frontend pack(**對應這個 csproj 的**那組 `[frontend]` 齊備才跑;一個 repo 裡有多個 Web 專案時設定是分組的,target 由 Publish-Web 自己轉交)、跑 `msbuild /restore /p:DeployOnBuild=true /p:PublishProfile=<name>`、後處理 parse `<PublishUrl>` + `<WebPublishMethod>` 回報產出位置。
 
 **configuration / platform 各有兩層 pubxml fallback**:`/p:Configuration` 取「你傳的值 → pubxml 的 `<Configuration>` → `<LastUsedBuildConfiguration>`」,`/p:Platform` 取「你傳的值 → `<Platform>` → `<LastUsedPlatform>`」,全都沒有才省略。**`LastUsed*` 那層是必要的**——Visual Studio 產生的 FileSystem profile 往往只有 `LastUsed*`、沒有 `<Configuration>` / `<Platform>`,少了這層就會悄悄落回 csproj 的 `Debug|AnyCPU`,和使用者在 VS 裡看到的選擇相反。
 
@@ -94,7 +94,15 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
-- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 script 緊接著印出的 `TRUST_FILE <絕對路徑>` 那個檔(格式:`approved_hash = "<h>"`)並重新呼叫 script;**要用它給的路徑,不要自己組**——它指向主 worktree,所以同一個 repo 的其它 worktree 不必再問一次同樣的指令。使用者選 No → 終止 skill。
+- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → **附加**一筆到 script 緊接著印出的 `TRUST_FILE <絕對路徑>` 那個檔,再重新呼叫 script。**是附加,不是覆蓋**——一個 repo 裡每個有前端的專案各有一筆,覆蓋掉別人那筆會讓那個專案下次被重問。格式(`<g>` 是 script 印的 `TRUST_GROUP` 值,單一 `[frontend]` 時是空字串):
+
+  ```toml
+  [[approved]]
+  group = "<g>"
+  approved_hash = "<h>"
+  ```
+
+  **要用它給的路徑,不要自己組**——它指向主 worktree,所以同一個 repo 的其它 worktree 不必再問一次同樣的指令。使用者選 No → 終止 skill。
 - **target 只能 csproj**:publish 收到 `.sln` 會報錯;發佈是針對單一 web 專案。
 - **console 專案不走這一支**:`<OutputType>` 是 `Exe` / `WinExe` 時不要跑 publish。
   **不要說「主控台專案沒有發佈」——那是錯的。** VS 右鍵那個「發行」對 .NET Framework 主控台專案

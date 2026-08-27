@@ -58,14 +58,18 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 摘要:`Compress-Content` 在沒有前端設定時會**安靜跳過**,而那行 skip 訊息不在你會轉述的結果模板裡,
 使用者只會看到「build 成功」、不會知道前端沒打包。所以由**你**在跑之前判斷——已設定 / 使用者已說過不用
-→ 直接往下;都沒有且專案裡找得到 `package.json` → 問一次(白話問句,別丟設定 key 名),把答案寫進
-`.turbo-plugin/config.toml` 的 `[frontend]`,之後不再重問。
+→ 直接往下;都沒有且**目標專案目錄裡**找得到 `package.json` → 問一次(白話問句,別丟設定 key 名),
+把答案寫進 `.turbo-plugin/config.toml`,之後不再重問。
+
+**一個 repo 裡有多個 Web 專案時,設定是分組的**(`[frontend."<專案路徑>"]`),而且每一步都只針對**這次的
+目標專案**。細節在那份共用片段裡,包含「有分組但沒有一組對應這個專案」這個**可疑**狀態要怎麼處理——
+它跟「這個 repo 沒有前端」不是同一件事,不可以同樣地默默跳過。
 
 ### Step 2 — 執行 build
 
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Build-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/build-web.sh`)帶你判斷出的明確參數:`-Project <csproj 或 .sln>`、(可選)`-Configuration <name>`、`-Platform <name>`。`.sh` 是 thin wrapper 轉呼叫 `.ps1`。
 
-Script 會:解析 target(CLI `-Project` → `config.toml [build].project` → 清楚報錯,**不自動偵測**)、找 MSBuild(`config.local.toml [tools].msbuild_path` → 標準 VS 安裝路徑)、跑 `msbuild /restore /t:Build`(**有值才附** `/p:Configuration|Platform`;`.sln` 的 `SolutionDir` 由 `.sln` 所在目錄推導)、build 成功後跑 `Compress-Content`(`[frontend]` 設定齊備才跑,否則 skip)。
+Script 會:解析 target(CLI `-Project` → `config.toml [build].project` → 清楚報錯,**不自動偵測**)、找 MSBuild(`config.local.toml [tools].msbuild_path` → 標準 VS 安裝路徑)、跑 `msbuild /restore /t:Build`(**有值才附** `/p:Configuration|Platform`;`.sln` 的 `SolutionDir` 由 `.sln` 所在目錄推導)、build 成功後跑 `Compress-Content`(**對應這個 target 的**那組 `[frontend]` 設定齊備才跑,否則 skip;target 由 Build-Web 自己轉交,你不必另外帶)。
 
 ### Step 3 — 回報結果模板
 
@@ -87,7 +91,15 @@ build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
-- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → 寫入 script 緊接著印出的 `TRUST_FILE <絕對路徑>` 那個檔(格式:`approved_hash = "<h>"`)並重新呼叫 script;**要用它給的路徑,不要自己組**——它指向主 worktree,所以同一個 repo 的其它 worktree 不必再問一次同樣的指令。使用者選 No → 終止 skill。
+- **TRUST_REQUIRED 處理**: 若 script stdout 含 `TRUST_REQUIRED hash=<h> install_command=<cmd> build_command=<cmd>`,用 `AskUserQuestion` 顯示實際指令並詢問:「即將執行以下 frontend 指令,確認允許?`install: <cmd>` / `build: <cmd>`」。使用者選 Yes → **附加**一筆到 script 緊接著印出的 `TRUST_FILE <絕對路徑>` 那個檔,再重新呼叫 script。**是附加,不是覆蓋**——一個 repo 裡每個有前端的專案各有一筆,覆蓋掉別人那筆會讓那個專案下次被重問。格式(`<g>` 是 script 印的 `TRUST_GROUP` 值,單一 `[frontend]` 時是空字串):
+
+  ```toml
+  [[approved]]
+  group = "<g>"
+  approved_hash = "<h>"
+  ```
+
+  **要用它給的路徑,不要自己組**——它指向主 worktree,所以同一個 repo 的其它 worktree 不必再問一次同樣的指令。使用者選 No → 終止 skill。
 - **全權判斷 target,不靠 script 偵測**:要建哪個由你看 context / 記憶 / 必要時 `AskUserQuestion`;script 不再自動偵測單一 csproj、多個也不 throw,純吃你給的明確 target。
 - **config 預設省略**:沒明確理由(使用者指定 / 記憶有值)就別帶 `/p:Configuration|Platform`,讓 MSBuild/.sln/props 決定——這是對齊 VS 的關鍵。
 - **build 預設整方案、小改建單一**:見 Step 1;由你判斷,選錯可重跑。
@@ -115,8 +127,11 @@ build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.
 
 - **[frontend] config absent**: 沒設 `[frontend]` 段 → /tp-build 略過 frontend 步驟、直接 MSBuild、`BUILD_OUTPUT` 模板出現,且模板含 `Frontend: 未設定 (未執行前端打包)`。
 - **有 package.json 但沒設定**: 專案內有 `package.json`、`[frontend]` 未設且 `[frontend] enabled` 不是 `false` → Step 1.5 用 `AskUserQuestion` 主動問要不要打包前端,**不會**默默略過。
-- **已表態不用**: `[frontend] enabled = false` → 不再詢問,直接 build,模板仍顯示 `Frontend: 未設定`。
+- **已表態不用**: `enabled = false` → 不再詢問,直接 build,模板顯示 `Frontend: 已停用`(與「未設定」分開,因為那是使用者的決定,不是缺漏)。
 - **[frontend] config present**: 設 `[frontend] dir = "src/web/frontend"; install_command = "npm install"; build_command = "npm run build"` → /tp-build 先跑 frontend 兩個 command,再 MSBuild。
+- **多專案、有對應分組**: 設 `[frontend."src/proj-1/Proj1.Web"]` 與 `[frontend."src/proj-2/Proj2.Web"] enabled = false` → 建 proj-1 跑 proj-1 那組、建 proj-2 完全不跑,兩者的模板各自說明。
+- **多專案、沒對應分組**: 有帶鍵的分組但沒有一組是 proj-5 → 模板顯示「有分組但沒有一組對應這個專案」,**不是**單純的「未設定」;Step 1.5 要問,不要默默跳過。
+- **單組 `[frontend]` 打到別的專案**: 只有不帶鍵的 `[frontend]`,而它的 `dir` 不在這次目標專案底下 → 仍然執行(維持既有行為),但模板明講這件事並建議改成分組。這一格原本是**完全沉默**的:兩個指令都成功、模板照樣寫「已執行」。
 - **省略 config 對齊 VS**: 不傳 `--configuration` 且 `[build]` 無 configuration 記憶 → MSBuild 命令列**不含** `/p:Configuration`,讓 csproj 的 `<Configuration Condition>` 預設生效(非硬帶 Debug)。
 - **多個 csproj、無記憶**: worktree 有多個 csproj 又沒設 `[build].project` → 你用 `AskUserQuestion` 列候選請使用者選(script 不會 throw「multiple」,而是在完全沒 target 時才清楚報錯)。
 - **`.sln` 整方案 build**: 傳 `.sln` → 建整個方案、`/p:SolutionDir` 指向 `.sln` 所在目錄。

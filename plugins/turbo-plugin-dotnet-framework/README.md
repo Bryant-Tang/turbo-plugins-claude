@@ -56,10 +56,30 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
 - **前端打包**(可選):在 `.turbo-plugin/config.toml` 的 `[frontend]` 設 `dir` / `install_command` /
   `build_command`(可選 `node_version`),build 與 publish 成功後會在該目錄跑安裝與打包。**沒設定也不會
   默默跳過**——skill 偵測到專案裡有 `package.json` 就會主動問要不要設定,而結果模板一律回報
-  `Frontend: 已執行 (<dir>)` 或 `Frontend: 未設定`。確定不需要前端打包就寫 `[frontend] enabled = false`,
+  `Frontend: 已執行 (<dir>)` 或 `Frontend: 未設定`。確定不需要前端打包就寫 `enabled = false`,
   之後不再詢問。首次執行(或指令改過)會要求確認實際要跑的指令,核准記在**主 worktree** 的
-  `.turbo-plugin/pack-content-trust.local.toml`——被 hash 的兩個指令都來自進版控的 `config.toml`,
+  `.turbo-plugin/pack-content-trust.local.toml`——被 hash 的指令都來自進版控的 `config.toml`,
   同一個 repo 的每個 worktree 一定算出同一個值,所以新開 worktree 不會再問你一次同樣的指令。
+- **一個 repo 裡有多個 Web 專案時,`[frontend]` 以專案路徑分組**:
+
+  ```toml
+  [frontend."src/proj-1/Proj1.Web"]     # 只有目標是 proj-1 時才套用
+  dir = "src/proj-1/Proj1.Web/frontend"
+  install_command = "yarn install --frozen-lockfile"
+  build_command = "yarn build"
+  node_version = ">=16.0.0"
+
+  [frontend."src/proj-2/Proj2.Web"]
+  enabled = false                        # 這個專案不需要前端打包
+  ```
+
+  鍵可以寫專案目錄或 `.csproj` 本身。**只要出現任何一組帶鍵的,不帶鍵的 `[frontend]` 就不再是萬用組**
+  ——沒有對應分組的專案不打包,而且結果模板會說「有分組但沒有一組對應這個專案」(那跟「這個 repo
+  沒有前端」是兩回事)。信任核准也**每組各一份**:核准 proj-1 的指令不會順帶授權 proj-2 的。
+
+  仍然只有一組不帶鍵的 `[frontend]` 時行為完全不變,但如果它的 `dir` 不在這次目標專案底下,模板會
+  明講並建議改成分組——那一格原本是完全沉默的:打包指令在**別的**專案目錄下跑,兩個指令都成功,
+  模板照樣寫「已執行」。
 - **哪些檔案不該進版控**(`bin/` / `obj/` / `.vs/` / 本機設定 …)由 `turbo-plugin-git-svn` 的
   `/tp-suggest-ignore` 判斷,本 plugin 不寫死清單。唯一的例外是 `*.local.*`:記憶存回在寫
   `config.local.toml` 之前會先確保 `.gitignore` 擋住它(誰寫這種檔誰負責)。

@@ -46,31 +46,17 @@ function Write-ErrorToken {
     Write-Output "${PREFIX}ERROR reason=$r"
 }
 
-# Read a git command's stdout with $LASTEXITCODE actually reachable.
+# Every read below goes through `Read-Git` from the shared Core.ps1 (dot-sourced via Common.ps1
+# above): it returns .Text (stdout) and .Code (exit code), with stderr discarded, and it is what
+# makes $LASTEXITCODE reachable under PS 5.1 + EAP=Stop instead of pre-empted by a stderr throw.
+# The full rationale lives on the function.
 #
-# PS 5.1 + EAP=Stop turns ANY stderr from a native command whose output is CAPTURED into a
-# terminating NativeCommandError, and `2>$null` does not prevent it. git writes warnings to
-# stderr while still exiting 0 -- `detected dubious ownership` whenever the repo is owned by a
-# different user, which is the normal state in CI images and agent containers, i.e. exactly
-# where this skill is meant to run. Without this helper every read below would throw and the
-# script would answer ERROR about a perfectly healthy repository, while request-merge.sh --
-# which simply discards stderr -- answers normally. Dropping EAP to Continue for the duration
-# of the call is what makes the exit code reachable instead of pre-empted by a throw.
-#
-# Returns .Text (stdout) and .Code (exit code). stderr is discarded on purpose: folding it into
-# .Text is the OTHER half of this bug -- a warning would make `status --porcelain` non-empty and
-# a clean tree would read as dirty.
-function Read-Git {
-    param([string]$Cwd, [string[]]$GitArgs)
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $text = (& git -C $Cwd @GitArgs 2>$null | Out-String)
-        return [PSCustomObject]@{ Text = $text; Code = $LASTEXITCODE }
-    } finally {
-        $ErrorActionPreference = $prev
-    }
-}
+# This script used to carry its own copy. It cannot: the moment Core.ps1 grew the same helper
+# (issue #123), the local definition shadowed it for the WHOLE script -- including inside
+# Core's own Probe-GitVersion, which calls Read-Git with no -Cwd while the local copy always
+# passed `-C ''`. Every invocation then died on `git -C '' --version` and the script answered
+# "git CLI not available on PATH." with git plainly on PATH. Two same-named helpers in one
+# dot-source chain is not duplication that merely risks drift; it is a live collision.
 
 # NOTE on stderr handling (PS 5.1): git writes progress to stderr even on success, and on a
 # conflicted merge it writes "Automatic merge failed" there too. Under EAP=Stop, a native
@@ -90,12 +76,14 @@ try {
     # which is independently why a branch name cannot forge a 'TP_TOKEN:' line.
     foreach ($n in @($Branch, $Base)) {
         if ([string]::IsNullOrWhiteSpace($n)) { throw "A branch name must not be empty." }
-        $valid = $true
-        try {
-            & git check-ref-format "refs/heads/$n" 2>$null | Out-Null
-            if ($LASTEXITCODE -ne 0) { $valid = $false }
-        } catch { $valid = $false }
-        if (-not $valid) { throw "'$n' is not a valid branch name." }
+        # Read-Git rather than an inline call in a try/catch: that catch could not tell "git
+        # rejected the name" from "git wrote a warning to stderr", so a warning rejected a
+        # perfectly valid branch name -- and tokenlessly, which is the loudest failure this
+        # script has. Same defect as issue #123, one layer earlier. No -Cwd: check-ref-format
+        # is a pure string check and never opens a repository.
+        if ((Read-Git -GitArgs @('check-ref-format', "refs/heads/$n")).Code -ne 0) {
+            throw "'$n' is not a valid branch name."
+        }
     }
     $script:Validated = $true
 
@@ -287,7 +275,12 @@ try {
 
     & git -C $mainWorktree merge --no-ff $Branch -m "Merge branch '$Branch' into $Base"
     if ($LASTEXITCODE -ne 0) {
-        & git -C $mainWorktree merge --abort 2>$null | Out-Null
+        # Read-Git even though nothing reads the output: `2>$null | Out-Null` is a CAPTURE, so
+        # under EAP=Stop any stderr from the abort throws -- and this is the recovery path, so
+        # that throw would jump past Restore-OriginalBranch and leave the conflicted tree the
+        # header promises never to leave behind. Read-Git tolerates the stderr; the abort is
+        # unconditional either way, exactly as before.
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--abort')
         Restore-OriginalBranch
         Write-Output ''
         Write-Output "Merge conflicted; '$Base' was left exactly as it was (merge aborted)."

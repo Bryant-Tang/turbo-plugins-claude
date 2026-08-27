@@ -397,10 +397,12 @@ Describe 'Request-Merge' {
         # with two implementations. `Read-Git` drops EAP to Continue for the duration of each
         # read, which is what keeps a warning from pre-empting the exit-code check.
         #
-        # The shim warns ONLY for `worktree` subcommands on purpose. Probe-GitVersion and
-        # Get-MainWorktree live in the shared Core.ps1 and still capture git output the old way,
-        # so a shim that warned on EVERY call would fail inside Get-MainWorktree and the case
-        # would be measuring that instead. Narrowing it keeps the case pointed at this script.
+        # The shim warns on EVERY call. It used to warn only for `worktree` subcommands, because
+        # Probe-GitVersion and Get-MainWorktree in the shared Core.ps1 still captured git output
+        # the old way and would have failed first, leaving the case measuring them rather than
+        # this script. Core.ps1 goes through its own Read-Git as of issue #123, so the narrowing
+        # is gone -- which makes this the end-to-end version of that fix: the whole call chain,
+        # shared library included, has to survive a git that warns on every single invocation.
         It 'a git that warns on stderr still produces the normal answer, same as the .sh twin' {
             $sb = New-Sandbox -Tag 'rqm-23'
             $shimDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'tp-shim-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -415,24 +417,23 @@ Describe 'Request-Merge' {
                     [System.IO.Path]::Combine($shimDir, 'git.cmd'),
                     @(
                         '@echo off',
-                        'echo %* | findstr /C:"worktree" >nul',
-                        'if not errorlevel 1 echo warning: detected dubious ownership in repository 1>&2',
+                        'echo warning: detected dubious ownership in repository 1>&2',
                         ('"' + $realGit + '" %*')
                     ),
                     [System.Text.Encoding]::ASCII)
 
                 $env:PATH = $shimDir + ';' + $savedPath
 
-                # Preconditions: prove the shim is doing exactly what the case assumes before
-                # trusting anything it concludes. A shim that never resolves, or one that warns
-                # on every call, both produce a pass that means nothing.
+                # Precondition: prove the shim is doing exactly what the case assumes before
+                # trusting anything it concludes. A shim that never resolves produces a pass
+                # that means nothing.
                 # stderr goes to a file rather than being folded in: this asks about stderr
                 # specifically, and it keeps the lint's `2>&1`-on-a-native-exe rule satisfied
                 # (the redirect here would be cmd's own, not PowerShell's, but the rule cannot
                 # see that difference and there is no reason to make it guess).
                 $probeErr = [System.IO.Path]::Combine($shimDir, 'probe.err')
                 & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
-                [System.IO.File]::ReadAllText($probeErr) | Should -Not -Match 'dubious ownership'
+                [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
                 & cmd.exe /c "git worktree list 2> `"$probeErr`"" | Out-Null
                 [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
 
@@ -444,6 +445,60 @@ Describe 'Request-Merge' {
                 # And the warning must not have leaked into the values either -- that is the
                 # other half of the same bug, and it would surface as a dirty verdict.
                 $res.Stdout | Should -Not -Match 'DIRTY'
+
+                # The write path too, not just the report: it is the half where being wrong
+                # costs something.
+                $merged = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge')
+                (Get-Token $merged.Stdout) | Should -Match '^TP_TOKEN:MERGED branch=feat base=main commit=.'
+                $merged.ExitCode | Should -Be 0
+            } finally {
+                $env:PATH = $savedPath
+                Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Sandbox -Dir $sb
+            }
+        }
+
+        # The recovery path is the one that must survive a noisy git most of all: `merge --abort`
+        # was written as `2>$null | Out-Null`, which is a CAPTURE, so a warning threw straight
+        # past the abort and left exactly the conflicted tree this script promises never to leave.
+        It 'a git that warns on stderr still aborts a conflicted merge cleanly' {
+            $sb = New-Sandbox -Tag 'rqm-24'
+            $shimDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'tp-shim-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+            $savedPath = $env:PATH
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', '-b', 'clash', 'main')
+                Add-CommitFile -Root $root -Name 'shared.txt' -Content 'from-clash' -Msg 'clash side'
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', 'main')
+                Add-CommitFile -Root $root -Name 'shared.txt' -Content 'from-main' -Msg 'main side'
+                $before = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')
+
+                $realGit = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+                $null = New-Item -ItemType Directory -Path $shimDir -Force
+                [System.IO.File]::WriteAllLines(
+                    [System.IO.Path]::Combine($shimDir, 'git.cmd'),
+                    @(
+                        '@echo off',
+                        'echo warning: detected dubious ownership in repository 1>&2',
+                        ('"' + $realGit + '" %*')
+                    ),
+                    [System.Text.Encoding]::ASCII)
+                $env:PATH = $shimDir + ';' + $savedPath
+                $probeErr = [System.IO.Path]::Combine($shimDir, 'probe.err')
+                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
+                [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-Merge')
+
+                (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:CONFLICT branch=clash base=main'
+                $res.ExitCode | Should -Be 1
+                # The abort really happened: base unmoved, no half-finished merge state, and the
+                # worktree back on the branch it started on.
+                $env:PATH = $savedPath
+                (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')) | Should -Be $before
+                (Test-Path -LiteralPath ([System.IO.Path]::Combine($root, '.git', 'MERGE_HEAD'))) | Should -BeFalse
+                (Run-Git-Capture -Cwd $root -GitArgs @('symbolic-ref', '--short', 'HEAD')) | Should -Be 'main'
             } finally {
                 $env:PATH = $savedPath
                 Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue

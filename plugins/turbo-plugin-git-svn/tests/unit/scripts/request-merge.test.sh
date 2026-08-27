@@ -387,6 +387,48 @@ test_git_stderr_warning_is_not_mistaken_for_dirt() {
     assertFalse 'and is never reported as dirty' $?
 }
 
+# ── Case 21b: the same warning git must not derail the CONFLICT recovery path ─
+# Parity partner of the .ps1 case of the same name, and the .ps1 side is why it exists: there
+# `merge --abort` was written as a CAPTURE, so a warning threw past the abort, answered ERROR,
+# and left behind exactly the conflicted tree the script promises never to leave. bash discards
+# that stderr outright (`>/dev/null 2>&1 || true`) and so was never exposed -- this case is what
+# keeps it that way, because "immune by construction" only holds until someone rewrites the line.
+test_git_stderr_warning_does_not_derail_conflict_abort() {
+    local root out rc before after shim real_git probe
+    root="$(make_fixture)"
+    git -C "$root" checkout -qb clash main >/dev/null 2>&1
+    commit_file "$root" shared.txt 'from-clash' 'clash side'
+    git -C "$root" checkout -q main >/dev/null 2>&1
+    commit_file "$root" shared.txt 'from-main' 'main side'
+    before="$(git -C "$root" rev-parse main)"
+
+    real_git="$(command -v git)"
+    shim="$SB/shim-abort"
+    mkdir -p "$shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'echo "warning: detected dubious ownership in repository" >&2\n'
+        printf 'exec "%s" "$@"\n' "$real_git"
+    } > "$shim/git"
+    chmod +x "$shim/git"
+
+    probe="$( PATH="$shim:$PATH" git --version 2>&1 )"
+    if ! printf '%s' "$probe" | grep -q 'dubious ownership'; then
+        echo "SKIP: the git shim did not take effect on this platform"
+        startSkipping
+        return
+    fi
+
+    out="$( cd "$root" && PATH="$shim:$PATH" bash "$SCRIPT_UNDER_TEST" --branch clash --merge 2>&1 )"; rc=$?
+    after="$(git -C "$root" rev-parse main)"
+    assertEquals 'conflict exits 1' 1 "$rc"
+    assertEquals 'CONFLICT token' 'TP_TOKEN:CONFLICT branch=clash base=main' "$(token_of "$out")"
+    assertEquals 'main did not move' "$before" "$after"
+    [ ! -f "$root/.git/MERGE_HEAD" ]
+    assertTrue 'no merge state left behind' $?
+    assertEquals 'HEAD still on main' 'main' "$(git -C "$root" symbolic-ref --short HEAD)"
+}
+
 # ── Case 22: every mode emits exactly one token ───────────────────────────────
 test_exactly_one_token_per_run() {
     local root

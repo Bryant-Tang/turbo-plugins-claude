@@ -812,14 +812,212 @@ Describe 'Resolve-FrontendPackDir' {
     }
 }
 
+Describe 'Resolve-FrontendGroup (multi-project [frontend], issue #125)' {
+
+    # BeforeAll, not the Describe body: under Pester 5 a function defined directly in a Describe
+    # block is not in scope inside its It blocks.
+    BeforeAll {
+        # Writes a config.toml and returns a repo root INSIDE the sandbox, so the containment
+        # check has something real to measure against. The project file itself need not exist:
+        # nothing in this resolution path opens it, and creating one would only invite
+        # Resolve-Path to succeed for the wrong reason.
+        function New-FrontendFixture {
+            param([string]$Tag, [string[]]$ConfigLines)
+            $root = New-IsolatedRepoRoot $Tag
+            $tp = Join-Path $root '.turbo-plugin'
+            New-Item -ItemType Directory -Path $tp -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $tp 'config.toml') -Value $ConfigLines -Encoding UTF8
+            return $root
+        }
+    }
+
+    It 'a keyed group applies to its own project and to nothing else' {
+        $root = New-FrontendFixture 'feKeyed' @(
+            '[frontend."src/proj-1/Proj1.Web"]'
+            'dir = "src/proj-1/Proj1.Web/frontend"'
+            '[frontend."src/proj-2/Proj2.Web"]'
+            'enabled = false'
+        )
+        try {
+            $p1 = [System.IO.Path]::Combine($root, 'src', 'proj-1', 'Proj1.Web', 'Proj1.Web.csproj')
+            $g1 = Resolve-FrontendGroup -RepoRoot $root -TargetProject $p1
+            $g1.Status | Should -Be 'ready'
+            $g1.Dir | Should -Be 'src/proj-1/Proj1.Web/frontend'
+            $g1.Key | Should -Be 'src/proj-1/Proj1.Web'
+
+            $p2 = [System.IO.Path]::Combine($root, 'src', 'proj-2', 'Proj2.Web', 'Proj2.Web.csproj')
+            $g2 = Resolve-FrontendGroup -RepoRoot $root -TargetProject $p2
+            $g2.Status | Should -Be 'disabled'
+            $g2.Dir | Should -Be ''
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    # The bug this whole change exists for: a project with no group of its own must get NOTHING,
+    # and must be reported differently from "this repo does no frontend work". Falling back to
+    # another group is what packed one project's frontend during another project's build.
+    It 'a project with no group of its own is unmatched, not silently packed by another group' {
+        $root = New-FrontendFixture 'feUnmatched' @(
+            '[frontend."src/proj-1/Proj1.Web"]'
+            'dir = "src/proj-1/Proj1.Web/frontend"'
+        )
+        try {
+            $p5 = [System.IO.Path]::Combine($root, 'src', 'proj-5', 'Proj5.Web', 'Proj5.Web.csproj')
+            $g = Resolve-FrontendGroup -RepoRoot $root -TargetProject $p5
+            $g.Status | Should -Be 'unmatched'
+            $g.Dir | Should -Be ''
+            Format-FrontendStatusLine -Group $g | Should -Match '沒有一組對應這個專案'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'a bare [frontend] alongside keyed groups is no longer a catch-all' {
+        $root = New-FrontendFixture 'feNoFallback' @(
+            '[frontend]'
+            'dir = "src/web/frontend"'
+            '[frontend."src/proj-1/Proj1.Web"]'
+            'dir = "src/proj-1/Proj1.Web/frontend"'
+        )
+        try {
+            $p9 = [System.IO.Path]::Combine($root, 'src', 'proj-9', 'Proj9.Web', 'Proj9.Web.csproj')
+            (Resolve-FrontendGroup -RepoRoot $root -TargetProject $p9).Status | Should -Be 'unmatched'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'a group key may name the project directory OR the .csproj itself' {
+        $root = New-FrontendFixture 'feKeyForms' @(
+            '[frontend."src/proj-1/Proj1.Web/Proj1.Web.csproj"]'
+            'dir = "src/proj-1/Proj1.Web/frontend"'
+        )
+        try {
+            $p1 = [System.IO.Path]::Combine($root, 'src', 'proj-1', 'Proj1.Web', 'Proj1.Web.csproj')
+            (Resolve-FrontendGroup -RepoRoot $root -TargetProject $p1).Status | Should -Be 'ready'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'two groups naming the same project is an error, not a silent pick' {
+        $root = New-FrontendFixture 'feAmbiguous' @(
+            '[frontend."src/proj-1/Proj1.Web"]'
+            'dir = "a"'
+            '[frontend."src/proj-1/Proj1.Web/Proj1.Web.csproj"]'
+            'dir = "b"'
+        )
+        try {
+            $p1 = [System.IO.Path]::Combine($root, 'src', 'proj-1', 'Proj1.Web', 'Proj1.Web.csproj')
+            { Resolve-FrontendGroup -RepoRoot $root -TargetProject $p1 } | Should -Throw -ExpectedMessage '*Ambiguous*'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    # The un-keyed form still runs -- changing that would break single-project repos, which is not
+    # this change's business -- but it must stop being SILENT about packing somebody else's
+    # frontend. That silence is the entire complaint in issue #125.
+    It 'a bare [frontend] pointing outside the target project still runs but says so' {
+        $root = New-FrontendFixture 'feForeign' @(
+            '[frontend]'
+            'dir = "src/proj-2/Proj2.Web/frontend"'
+        )
+        try {
+            $p1 = [System.IO.Path]::Combine($root, 'src', 'proj-1', 'Proj1.Web', 'Proj1.Web.csproj')
+            $g = Resolve-FrontendGroup -RepoRoot $root -TargetProject $p1
+            $g.Status | Should -Be 'foreign'
+            $g.Dir | Should -Be 'src/proj-2/Proj2.Web/frontend'
+            Format-FrontendStatusLine -Group $g | Should -Match '警告'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'a bare [frontend] inside the target project is plain ready, no warning' {
+        $root = New-FrontendFixture 'feOwn' @(
+            '[frontend]'
+            'dir = "src/web/frontend"'
+        )
+        try {
+            $p = [System.IO.Path]::Combine($root, 'src', 'web', 'Web.csproj')
+            $g = Resolve-FrontendGroup -RepoRoot $root -TargetProject $p
+            $g.Status | Should -Be 'ready'
+            Format-FrontendStatusLine -Group $g | Should -Be 'Frontend: 已執行 (src/web/frontend)'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    # Every caller passes -TargetProject today, so this is what a FUTURE caller gets if it
+    # forgets. Documented behaviour deserves a test, or the comment is the only thing holding it.
+    It 'with no target in view and keyed groups present, nothing runs' {
+        $root = New-FrontendFixture 'feNoTargetKeyed' @(
+            '[frontend."src/proj-1/Proj1.Web"]'
+            'dir = "src/proj-1/Proj1.Web/frontend"'
+        )
+        try {
+            (Resolve-FrontendGroup -RepoRoot $root).Status | Should -Be 'unmatched'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'with no target in view and no keyed groups, the bare group still applies' {
+        $root = New-FrontendFixture 'feNoTargetBare' @(
+            '[frontend]'
+            'dir = "src/web/frontend"'
+        )
+        try {
+            $g = Resolve-FrontendGroup -RepoRoot $root
+            $g.Status | Should -Be 'ready'
+            $g.Dir | Should -Be 'src/web/frontend'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    # A .sln spans projects and normally sits at the repo root, so the containment check has to
+    # neutralise itself there instead of warning on every solution build.
+    It 'a solution at the repo root does not trip the containment warning' {
+        $root = New-FrontendFixture 'feSln' @(
+            '[frontend]'
+            'dir = "src/web/frontend"'
+        )
+        try {
+            $sln = [System.IO.Path]::Combine($root, 'All.sln')
+            (Resolve-FrontendGroup -RepoRoot $root -TargetProject $sln).Status | Should -Be 'ready'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+}
+
 Describe 'Format-FrontendStatusLine' {
 
     It 'states 未設定 when no pack will run (the line that was missing in issue #30)' {
-        Format-FrontendStatusLine -FrontendDir '' | Should -Match '未設定'
+        Format-FrontendStatusLine -Group $null | Should -Match '未設定'
+        Format-FrontendStatusLine -Group ([PSCustomObject]@{ Section = ''; Key = ''; Dir = ''; Status = 'unset'; TargetDir = '' }) |
+            Should -Match '未設定'
     }
 
     It 'names the directory when a pack ran' {
-        Format-FrontendStatusLine -FrontendDir 'src/web/frontend' | Should -Be 'Frontend: 已執行 (src/web/frontend)'
+        Format-FrontendStatusLine -Group ([PSCustomObject]@{ Section = 'frontend'; Key = ''; Dir = 'src/web/frontend'; Status = 'ready'; TargetDir = '' }) |
+            Should -Be 'Frontend: 已執行 (src/web/frontend)'
+    }
+
+    It 'names the group a keyed pack came from, so the reader can tell which project it was for' {
+        Format-FrontendStatusLine -Group ([PSCustomObject]@{ Section = 'frontend."src/proj-1/Proj1.Web"'; Key = 'src/proj-1/Proj1.Web'; Dir = 'src/proj-1/Proj1.Web/frontend'; Status = 'ready'; TargetDir = '' }) |
+            Should -Be 'Frontend: 已執行 (src/proj-1/Proj1.Web/frontend,設定來自 [frontend."src/proj-1/Proj1.Web"])'
+    }
+
+    # 停用 and 未設定 are different facts: one is the user's decision, the other is an omission,
+    # and Step 1.5 is supposed to act on the second only.
+    It 'distinguishes a deliberate opt-out from an omission' {
+        $disabled = Format-FrontendStatusLine -Group ([PSCustomObject]@{ Section = 'frontend'; Key = ''; Dir = ''; Status = 'disabled'; TargetDir = '' })
+        $disabled | Should -Match '已停用'
+        $disabled | Should -Not -Match '未設定'
     }
 }
 
@@ -1057,8 +1255,16 @@ Describe 'Result-template family (KTD5)' {
             $none = Format-BuildResultLines -ResolvedTarget 'Web.csproj'
             ($none -join "`n") | Should -Match 'Frontend:.*未設定'
 
-            $packed = Format-BuildResultLines -ResolvedTarget 'Web.csproj' -FrontendDir 'src/web/frontend'
+            $packed = Format-BuildResultLines -ResolvedTarget 'Web.csproj' -FrontendGroup ([PSCustomObject]@{
+                Section = 'frontend'; Key = ''; Dir = 'src/web/frontend'; Status = 'ready'; TargetDir = '' })
             ($packed -join "`n") | Should -Match 'Frontend: 已執行 \(src/web/frontend\)'
+
+            # issue #125: a template that says 已執行 while the pack ran in ANOTHER project's
+            # directory is the exact failure that had to be made visible. The relayed lines are
+            # the only thing the user sees, so the warning has to live here.
+            $foreign = Format-BuildResultLines -ResolvedTarget 'src/proj-1/Proj1.Web/Proj1.Web.csproj' -FrontendGroup ([PSCustomObject]@{
+                Section = 'frontend'; Key = ''; Dir = 'src/proj-2/Proj2.Web/frontend'; Status = 'foreign'; TargetDir = 'src/proj-1/Proj1.Web' })
+            ($foreign -join "`n") | Should -Match '警告'
         }
     }
 

@@ -109,12 +109,15 @@ try {
     # Read [frontend] dir for the result template. Publish is the costlier place for a silently
     # skipped frontend pack: the output can reach a deployed environment, so "was the frontend
     # packed?" must be stated, not left to a stdout line nobody relays (issue #30).
-    $frontendDir = Resolve-FrontendPackDir -RepoRoot $repoRoot
+    # -TargetProject: with several Web projects in one repo the [frontend] group is chosen by the
+    # resolved project, and publish is where packing the WRONG project's frontend costs the most --
+    # the artifact reaches a deployed environment (issue #125).
+    $frontendGroup = Resolve-FrontendGroup -RepoRoot $repoRoot -TargetProject $projectFile
 
     # Pre-publish: run Compress-Content for frontend. Compress-Content.ps1 is shipped in this
     # plugin alongside Publish-Web.ps1, so the prior Test-Path guard was redundant —
     # Compress-Content already exits 0 with a skip message when [frontend] isn't configured.
-    & ([System.IO.Path]::Combine($PSScriptRoot, 'Compress-Content.ps1')) -RepoRoot $repoRoot
+    & ([System.IO.Path]::Combine($PSScriptRoot, 'Compress-Content.ps1')) -RepoRoot $repoRoot -Project $projectFile
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $publishProfileName = [System.IO.Path]::GetFileNameWithoutExtension($pubxmlAbsPath)
@@ -221,7 +224,7 @@ try {
     # (...\.claude\... -> ....claude\...), which reads as a typo rather than as corruption. A code
     # block is not rendered, so the path survives verbatim AND stays on its own selectable line.
     $publishMarker = 'PUBLISH_OUTPUT (relay these lines to the user as the publish result, inside a fenced code block so the path is not mangled by markdown):'
-    $publishLead   = @("Target: $projectFile", "Profile: $publishProfileName", (Format-FrontendStatusLine -FrontendDir $frontendDir))
+    $publishLead   = @("Target: $projectFile", "Profile: $publishProfileName", (Format-FrontendStatusLine -Group $frontendGroup))
 
     if ($publishUrlRaw -match '\$\(') {
         [Console]::Error.WriteLine('Warning: <PublishUrl> contains MSBuild properties; cannot resolve statically.')
