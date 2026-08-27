@@ -27,13 +27,21 @@
 
 | 檔案 | 標記語法 | concern 值 |
 |---|---|---|
-| `.turbo-plugin/config.toml` | `# >>> turbo-plugin:<concern> >>>` … `# <<< turbo-plugin:<concern> <<<`(TOML 註解,reader 會略過) | `git-svn` / `dotnet` |
+| `.turbo-plugin/config.toml` | `# >>> turbo-plugin:<concern> >>>` … `# <<< turbo-plugin:<concern> <<<`(TOML 註解,reader 會略過) | `git-svn` / `dotnet` / `db` |
 | 專案根 `.gitignore` | 同上(`#` 註解,git 會略過) | `base` / `git-svn` |
 | 專案根 `CLAUDE.md` | `<!-- turbo-plugin:begin base -->` … `<!-- turbo-plugin:end base -->`(只有單一 base 區塊) | `base` |
 
 **更新自己區塊的通用程序**(idempotent):讀檔 → 若找到自己 concern 的 begin/end 標記 → 用新內容
 **取代**該對標記之間的內容(標記本身保留);若找不到 → 在檔尾**追加**一組自己的 begin/end 標記
 + 內容。**絕不**動別的 concern 的標記區塊或標記外的內容。
+
+> **區塊裡若有「使用者填的值」,取代前必須先讀出來、再原樣寫回去。** 「取代」是對**沒有值**的骨架
+> 講的;一旦某個 concern 的區塊開始承載使用者設定(例如 db 的 `[db] sql_root`),照字面取代就是把
+> 使用者的設定**無聲刪掉**——而且刪的時機是「他重跑了一次 setup」,和設定的內容毫無因果關係,幾乎
+> 不可能聯想回來。這條對**每一個** concern 都成立,不是 db 專屬的例外。
+>
+> 這也是為什麼那個值不該叫使用者寫在標記**外面**:寫在外面確實不會被洗掉,但那樣 setup 就無從
+> 建立、無從說明它存在,使用者得先知道有這個 key 才找得到它。承載值 + 保值,兩件一起做。
 
 **每個注入的區塊都必須自己講明這件事**(issue #68)。上面那條「整段取代」的語意原本只寫在這份
 SKILL 文件裡,而打開 `CLAUDE.md` 的人看到的只有一對 HTML 註解——標記不會告訴你裡面的內容有覆寫
@@ -62,9 +70,13 @@ SKILL 文件裡,而打開 `CLAUDE.md` 的人看到的只有一對 HTML 註解—
 
 1. **`.turbo-plugin/` 目錄** — 不存在則建立。
 2. **`.turbo-plugin/config.toml`** — 不存在則複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/config.toml`
-   (concern-neutral 殼:header 註解 + 空的 `git-svn` / `dotnet` 標記區塊);**已存在則不覆寫整檔**
+   (concern-neutral 殼:header 註解 + 標記區塊);**已存在則不覆寫整檔**
    (concern 段稍後只更新自己的標記區塊)。
-   - db plugin **不碰** config.toml(db 在 config.toml 沒有設定);db 的 base 段跳過此項。
+   - **殼裡實際帶哪幾組標記區塊,依複製來源的 plugin 而定**,唯一的保證是它帶了**自己**那一組
+     (git-svn / dotnet 的殼各帶 `git-svn` + `dotnet` 兩組空區塊;db 的殼只帶 `db`)。這不影響結果:
+     每個 concern 走「找到就取代、找不到就在檔尾追加」,不管誰先跑都會收斂到同一份檔案。
+   - **db plugin 也會碰 config.toml**(自 `[db] sql_root` 起——SQL 落點的根目錄可由專案自訂)。
+     它跟 git-svn / dotnet 一樣只動自己的 `db` 標記區塊。
 3. **專案根 `.gitignore`** — 確保含 base 標記區塊,內容如下。**用上面「更新自己區塊的通用程序」處理**
    (找到 `base` 標記 → 取代之間的內容;找不到 → 檔尾追加一組),不要用「整塊已存在就跳過」:
    ```

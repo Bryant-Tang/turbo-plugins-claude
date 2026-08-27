@@ -4,11 +4,18 @@
 
 ## 內容
 
-- **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.toml` 範本、提示複製填 `dbhub.local.toml`、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時**照樣完成**（見下方）。`tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發（`conventions.md` 機制已退役）。
+- **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.toml` 範本、提示複製填 `dbhub.local.toml`、寫 `config.toml` 的 `db` 標記區塊、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時**照樣完成**（見下方）。`tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發（`conventions.md` 機制已退役）。
 - **`tp-db-management`** skill — DB 相關開發雜務（SQL 腳本撰寫等），附 `assets/sql-script-template.sql`。
-  產出的 SQL 落在 `.turbo-plugin/sql/<env>-db/<slug>/`，`<slug>` **有 git 就是當前 branch 名**（行為與
+  產出的 SQL 落在 `<sql_root>/<env>-db/<slug>/`，`<slug>` **有 git 就是當前 branch 名**（行為與
   先前相同、不會問你）；**沒有 git 才問**，而且是列出既有資料夾讓你選，不是給一個空白輸入框——
   手打會讓同一件事散進兩個名字相近的資料夾，而沒有任何東西會提醒。
+- **SQL 落點的根目錄可自訂** — `.turbo-plugin/config.toml` 的 `[db] sql_root`。專案本來就有自己的
+  慣例（`db/scripts`、`sql`、`database/migrations` …）時設它，就不必為了 turbo-plugin 多開一個
+  `.turbo-plugin/sql/`。**沒設就是原本的 `.turbo-plugin/sql`，逐字元相同**，既有專案不受影響。
+  只有根目錄可換，底下的 `<env>-db/<slug>/` 不變。相對路徑的基準是**工作區根**（`config.toml` 那一層），
+  **不接受絕對路徑**——那會讓一個進版控的檔案帶上機器路徑。換了落點時 skill 會先跑 `git check-ignore`
+  確認新位置沒有被專案既有的 ignore 規則擋掉；被擋掉的話產出的 SQL 永遠不會出現在 `git status`，
+  而那個失敗是完全靜默的。
 - **`tp-dbhub`** MCP server（`.mcp.json`）— 經 [DBHub](https://github.com/bytebase/dbhub) 連 SQL Server，讓 agent 能查詢資料庫。
   設定檔的位置由 `scripts/start-dbhub.js` 解析：**工作區根**的 `.turbo-plugin/dbhub.local.toml` 優先；沒有的話往下掃**直屬子資料夾**，剛好一個就用它；
   好幾個就停下來把它們列出來，請你在工作區根放一份指明要用哪個。找不到時**乾淨結束並說明原因**（exit 0，不會讓 MCP server 看起來像掛掉）。
@@ -65,7 +72,7 @@
 > `.turbo-plugin/` 為四個 turbo-plugin 共用的專案根設定目錄；本 plugin 的 `tp-setup` 先跑共用 base 段建立 concern-neutral 共用檔（用標記區塊),再只寫自己的 db 相關檔,不覆蓋其它 plugin 的區塊。**無 git repo 時照樣完成 setup**:它寫的東西**沒有一樣需要 git**。dbhub 本身跟版控沒有關係(不讀 branch、
 不寫 repo,產出本來就 gitignored),而 `tp-db-management` 在這裡**兩半都能用**——唯讀查詢只需要 dbhub
 MCP server(正是 setup 設定好的東西),產出 SQL 也照常,只是落點
-`.turbo-plugin/sql/<env>-db/<slug>/` 的 `<slug>` 會**問你**要用哪個,而不是像在 repo 裡直接拿當前
+`<sql_root>/<env>-db/<slug>/` 的 `<slug>` 會**問你**要用哪個,而不是像在 repo 裡直接拿當前
 branch 名。
 
 所以在非 repo 目錄——**多專案工作區的根正是這種形狀,而且正是最需要那份設定的地方**——setup 照常部署
