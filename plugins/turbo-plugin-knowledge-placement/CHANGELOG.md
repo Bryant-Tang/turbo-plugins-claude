@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-knowledge-placement 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-knowledge-placement--v0.1.1...turbo-plugin-knowledge-placement--v0.2.0) (2026-08-27)
+
+
+### Added
+
+* **knowledge-placement:** 判準補上「同一個 repo 內,根還是子目錄」這一格 ([fb04dd9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/fb04dd956b5abb3df9a95efefa7492a795414ad3)), closes [#126](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/126)
+
 ## [0.1.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-knowledge-placement--v0.1.0...turbo-plugin-knowledge-placement--v0.1.1) (2026-08-25)
 
 
