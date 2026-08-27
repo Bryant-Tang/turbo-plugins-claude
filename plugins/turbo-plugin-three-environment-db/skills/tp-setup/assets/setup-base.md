@@ -70,8 +70,11 @@ SKILL 文件裡,而打開 `CLAUDE.md` 的人看到的只有一對 HTML 註解—
 
 1. **`.turbo-plugin/` 目錄** — 不存在則建立。
 2. **`.turbo-plugin/config.toml`** — 不存在則複製 `${CLAUDE_PLUGIN_ROOT}/default-files/.turbo-plugin/config.toml`
-   (concern-neutral 殼:header 註解 + 空的 `git-svn` / `dotnet` 標記區塊);**已存在則不覆寫整檔**
+   (concern-neutral 殼:header 註解 + 標記區塊);**已存在則不覆寫整檔**
    (concern 段稍後只更新自己的標記區塊)。
+   - **殼裡實際帶哪幾組標記區塊,依複製來源的 plugin 而定**,唯一的保證是它帶了**自己**那一組
+     (git-svn / dotnet 的殼各帶 `git-svn` + `dotnet` 兩組空區塊;db 的殼只帶 `db`)。這不影響結果:
+     每個 concern 走「找到就取代、找不到就在檔尾追加」,不管誰先跑都會收斂到同一份檔案。
    - **db plugin 也會碰 config.toml**(自 `[db] sql_root` 起——SQL 落點的根目錄可由專案自訂)。
      它跟 git-svn / dotnet 一樣只動自己的 `db` 標記區塊。
 3. **專案根 `.gitignore`** — 確保含 base 標記區塊,內容如下。**用上面「更新自己區塊的通用程序」處理**
