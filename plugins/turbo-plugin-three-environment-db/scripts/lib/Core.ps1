@@ -13,9 +13,65 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 # it. The OutputEncoding settings above are the load-bearing part.
 try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
+# Run a READ-ONLY git command and hand back its stdout together with the exit code.
+#
+# Why this exists instead of calling git inline: Windows PowerShell 5.1 turns ANY stderr output
+# from a native command whose output is CAPTURED into a terminating NativeCommandError while
+# $ErrorActionPreference = 'Stop' — and `2>$null` does NOT prevent it. git writes to stderr in
+# perfectly healthy situations while still exiting 0; the everyday instance is
+# `warning: detected dubious ownership in repository`, which is the normal state of a repo owned
+# by another account — CI images, containers, and any machine where the clone was made under a
+# different user. Callers that wrapped the inline call in try/catch therefore read a warning as
+# "the command failed" and reported the exact opposite of the truth (issue #123: a healthy repo
+# answering `Not inside a git repository.`), with nothing in the message pointing at the cause.
+#
+# Dropping $ErrorActionPreference to 'Continue' for the duration of the call is what makes
+# $LASTEXITCODE reachable — it is the piece that keeps a stderr write from pre-empting the
+# exit-code check. That restores the parity the bash half gets for free from `2>/dev/null || true`.
+#
+# $LASTEXITCODE is pre-seeded to 127 (the shell's command-not-found convention) because a `git`
+# that is not on PATH never runs and so never sets it: without the seed the helper would report
+# whatever the previous native command left behind, and under StrictMode an unset $LASTEXITCODE
+# is itself an error. The `2>$null` also swallows the CommandNotFoundException record, so that
+# case surfaces as Code=127 with empty Text rather than as console noise.
+#
+# STATE-CHANGING git calls must NOT go through this: they want EAP=Stop's fail-loud behaviour.
+function Read-Git {
+    param(
+        [string]$Cwd = '',
+        [Parameter(Mandatory = $true)][string[]]$GitArgs
+    )
+
+    $argv = @()
+    if (-not [string]::IsNullOrWhiteSpace($Cwd)) { $argv += @('-C', $Cwd) }
+    $argv += $GitArgs
+
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $text = ''
+    $code = 127
+    try {
+        $global:LASTEXITCODE = 127
+        $text = (& git @argv 2>$null | Out-String)
+        $code = $global:LASTEXITCODE
+    } catch {
+        $text = ''
+        $code = 127
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if ($null -eq $code) { $code = 127 }
+
+    return [PSCustomObject]@{ Text = $text; Code = $code }
+}
+
 function Probe-GitVersion {
-    $raw = (& git --version | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
+    $probe = Read-Git -GitArgs @('--version')
+    $raw = $probe.Text.Trim()
+    # Empty output is part of the test, not redundant with the exit code: a `git` missing from
+    # PATH leaves Code at the 127 seed, but so would any future change to how the miss is
+    # detected — an unparseable empty string must never reach the version regex below.
+    if ($probe.Code -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
         throw 'git CLI not available on PATH.'
     }
     if ($raw -notmatch 'git version (\d+)\.(\d+)') {
@@ -82,16 +138,12 @@ function Get-MainWorktree {
     param([string]$RepoRoot = '')
 
     $root = Resolve-GitRoot -RepoRoot $RepoRoot
-    # fix: wrap git call in try/catch to prevent PS 5.1 + StrictMode + EAP=Stop
-    # from bubbling raw git "fatal: not a git repository" stderr as terminating NativeCommandError
-    # before our self-emitted "Not inside a git repository." throw can fire.
-    $commonDir = ''
-    try {
-        $commonDir = (& git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
-    } catch {
-        $commonDir = ''
-    }
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonDir)) {
+    # Read-Git, not an inline call in a try/catch: the catch shape this replaced could not tell
+    # "git said no such repository" from "git warned on stderr and answered anyway", so it
+    # reported the latter as the former. See the note on Read-Git.
+    $probe = Read-Git -Cwd $root -GitArgs @('rev-parse', '--path-format=absolute', '--git-common-dir')
+    $commonDir = $probe.Text.Trim()
+    if ($probe.Code -ne 0 -or [string]::IsNullOrWhiteSpace($commonDir)) {
         throw 'Not inside a git repository.'
     }
     $parent = [System.IO.Path]::GetDirectoryName($commonDir)
@@ -102,9 +154,14 @@ function Test-IsMainWorktree {
     param([string]$RepoRoot = '')
 
     $root = Resolve-GitRoot -RepoRoot $RepoRoot
-    $commonDir = (& git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
-    $topLevel = (& git -C $root rev-parse --path-format=absolute --show-toplevel 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonDir) -or [string]::IsNullOrWhiteSpace($topLevel)) {
+    $commonProbe = Read-Git -Cwd $root -GitArgs @('rev-parse', '--path-format=absolute', '--git-common-dir')
+    $topProbe = Read-Git -Cwd $root -GitArgs @('rev-parse', '--path-format=absolute', '--show-toplevel')
+    $commonDir = $commonProbe.Text.Trim()
+    $topLevel = $topProbe.Text.Trim()
+    # Both codes, not just the last one: the single $LASTEXITCODE check this replaced could only
+    # ever see the second call, so a first call that failed was judged by the second's success.
+    if ($commonProbe.Code -ne 0 -or $topProbe.Code -ne 0 -or
+        [string]::IsNullOrWhiteSpace($commonDir) -or [string]::IsNullOrWhiteSpace($topLevel)) {
         return $false
     }
     $parent = Get-NormalizedAbsolutePath -Path ([System.IO.Path]::GetDirectoryName($commonDir))
@@ -116,7 +173,11 @@ function Test-IsSubmodule {
     param([string]$RepoRoot = '')
 
     $root = Resolve-GitRoot -RepoRoot $RepoRoot
-    $super = (& git -C $root rev-parse --show-superproject-working-tree 2>$null | Out-String).Trim()
+    # No exit-code test on purpose, matching is_submodule in core.sh: outside a repository git
+    # fails and prints nothing, and "no superproject" is the same answer as "not a submodule".
+    # It still has to go through Read-Git — otherwise a stderr warning would throw straight out
+    # of a predicate that has no failure mode of its own.
+    $super = (Read-Git -Cwd $root -GitArgs @('rev-parse', '--show-superproject-working-tree')).Text.Trim()
     return -not [string]::IsNullOrWhiteSpace($super)
 }
 
