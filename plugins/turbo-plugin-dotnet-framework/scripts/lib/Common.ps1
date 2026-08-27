@@ -388,9 +388,17 @@ function Test-FrontendGroupMatchesTarget {
 # `[iis] enabled` switch), so a project can keep its frontend settings while turning the step off.
 # tp-build / tp-publish also write it as the "already asked, user said no" marker.
 #
-# $TargetProject is the RESOLVED project/solution path. Omitting it means "no target in view":
-# keyed groups then cannot be matched, so only the bare group applies and the containment check
-# is skipped. Callers that know the target must pass it.
+# $TargetProject is the RESOLVED project/solution path. Omitting it means "no target in view",
+# and what that implies depends on how the repo is configured:
+#
+#   keyed groups exist  -> 'unmatched'. There is no way to tell WHICH group applies, and falling
+#                          back to the bare group would pick one arbitrarily -- the precise
+#                          mis-pack this function exists to prevent. Running nothing is the only
+#                          answer that cannot be wrong.
+#   no keyed groups     -> the bare group applies, with the containment check skipped (there is
+#                          nothing to measure containment against).
+#
+# All three callers always pass it; this path is what a future caller gets if it forgets.
 function Resolve-FrontendGroup {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,

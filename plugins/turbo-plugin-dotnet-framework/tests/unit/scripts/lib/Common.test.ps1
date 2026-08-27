@@ -950,6 +950,34 @@ Describe 'Resolve-FrontendGroup (multi-project [frontend], issue #125)' {
         }
     }
 
+    # Every caller passes -TargetProject today, so this is what a FUTURE caller gets if it
+    # forgets. Documented behaviour deserves a test, or the comment is the only thing holding it.
+    It 'with no target in view and keyed groups present, nothing runs' {
+        $root = New-FrontendFixture 'feNoTargetKeyed' @(
+            '[frontend."src/proj-1/Proj1.Web"]'
+            'dir = "src/proj-1/Proj1.Web/frontend"'
+        )
+        try {
+            (Resolve-FrontendGroup -RepoRoot $root).Status | Should -Be 'unmatched'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
+    It 'with no target in view and no keyed groups, the bare group still applies' {
+        $root = New-FrontendFixture 'feNoTargetBare' @(
+            '[frontend]'
+            'dir = "src/web/frontend"'
+        )
+        try {
+            $g = Resolve-FrontendGroup -RepoRoot $root
+            $g.Status | Should -Be 'ready'
+            $g.Dir | Should -Be 'src/web/frontend'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+
     # A .sln spans projects and normally sits at the repo root, so the containment check has to
     # neutralise itself there instead of warning on every solution build.
     It 'a solution at the repo root does not trip the containment warning' {
