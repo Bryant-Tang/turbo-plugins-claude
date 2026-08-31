@@ -113,6 +113,16 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   底下的內容即可,並提議用 build 指定 Release 重建一次。**不要**硬跑任何 MSBuild publish target。
 - **config 以 pubxml 為準,但由執行器讀出來明確傳**:你預設不傳 `--configuration`,執行器會從 pubxml 取 `<Configuration>` 帶進 MSBuild;只有使用者明確要求才由你覆蓋。**不要**把它改回「省略讓 profile 決定」——那樣發出來的是 Debug。
 - **pubxml 由你判斷**:多個 profile 無從判斷就 `AskUserQuestion`,別硬猜。
+- **`[publish]` 可能依子專案分組**(`[publish."<專案路徑>"]`):執行器自己會挑對應這次 target 的那組、
+  沒寫的項目沿用不帶鍵的 `[publish]`,並在結果模板多印一行 `設定分組:`(要一起轉述)。你要處理的只有
+  一種情況:**有分組而你沒指定專案時,執行器拒跑並列出有哪幾組**——那時 `AskUserQuestion` 問使用者這次
+  要發哪一個(白話講子專案,別丟設定 key 名),**不要自己挑**。分組存在就代表沒有唯一答案,而發佈是會
+  送到部署環境的動作,挑錯的代價不可逆。
+- **`Any CPU` 與 `AnyCPU` 的空格是三套不同的寫法,不要互相代換**:pubxml 寫的是 `Any CPU`(有空格),
+  csproj 的條件是 `'$(Configuration)|$(Platform)' == 'Release|AnyCPU'`(無空格),而命令列要傳的是
+  **無空格**那個。在 VS 裡按發行遇不到(VS 自己做轉換),只有走 MSBuild 命令列才會浮出來。傳錯的失敗
+  訊息是「未設定專案 'X.csproj' 的 BaseOutputPath/OutputPath 屬性。設定='Release' 平臺='Any CPU'。」
+  ——**看起來像專案設定壞了,其實是參數帶錯**。看到這句話先核對 `MSBuild args:` 那行的 `/p:Platform`。
 - Frontend pack 是 publish 鏈的一部份;**不要在 SKILL 內額外呼叫** `pack-content`,script 已包含。
 - **MSBuild 找不到** → script fail loudly,提示在 `.turbo-plugin/config.local.toml` 的 `[tools]` 設 `msbuild_path`。
 - **一整片 `CS0246`「找不到類型或命名空間名稱」→ 先當成套件沒還原**:`/p:DeployOnBuild=true` 會**建置**

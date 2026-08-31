@@ -183,6 +183,32 @@ MSBuild 路徑設定指向不存在的檔案: $resolved
 #                    tp-cleanup-orphan-iis's no-project path to branch to generic site matching.
 #
 # Returns: [pscustomobject] @{ Path = <absolute path>; Type = 'csproj' | 'sln' }  (or $null with -AllowMissing).
+# Per-project groups mean the config names SEVERAL sub-projects and nothing in it says which one
+# this command is about, so there is no default target to fall back to. Picking one would act on a
+# project the user did not name -- the exact failure per-project groups exist to prevent -- so this
+# stops and lists the choices instead (issue #133).
+#
+# A bare `[<section>].project` is deliberately NOT used as the default once groups exist: it would
+# make "forgot to pass --project" silently mean "the main project", which is the same wrong answer
+# with an extra step. It is called out in the message so the reason is visible from the error alone.
+function Assert-ExplicitTargetWhenGrouped {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$Section
+    )
+
+    $sections = @(Get-ConfigGroupSections -RepoRoot $RepoRoot -Section $Section)
+    if ($sections.Count -eq 0) { return }
+    $keys = @($sections | ForEach-Object { Get-ConfigGroupKey -Section $_ -Parent $Section })
+    $msg = "[$Section] has per-project groups, so there is no default target. " +
+           "Specify the project explicitly. Configured groups: $($keys -join ', ')."
+    $bare = Resolve-ConfigValue -RepoRoot $RepoRoot -Section $Section -Key 'project' -CliValue $null -Default $null
+    if (-not [string]::IsNullOrWhiteSpace([string]$bare)) {
+        $msg += " ([$Section].project = '$bare' is not used as a default while groups exist.)"
+    }
+    throw $msg
+}
+
 function Resolve-ProjectTarget {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
@@ -191,11 +217,19 @@ function Resolve-ProjectTarget {
         [switch]$AllowSolution,
         [switch]$AllowMissing
     )
-    $projectPathRel = Resolve-ConfigValue -RepoRoot $RepoRoot -Section $Section -Key 'project' -CliValue $CliProjectValue -Default $null
-    # Back-compat: run/stop fall back to [build].project when [run].project is unset, so users
-    # who configured only [build].project before the per-operation key split keep working.
-    if ([string]::IsNullOrWhiteSpace($projectPathRel) -and $Section -eq 'run') {
-        $projectPathRel = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'build' -Key 'project' -CliValue $null -Default $null
+    if (-not [string]::IsNullOrWhiteSpace($CliProjectValue)) {
+        $projectPathRel = $CliProjectValue
+    } else {
+        Assert-ExplicitTargetWhenGrouped -RepoRoot $RepoRoot -Section $Section
+        $projectPathRel = Resolve-ConfigValue -RepoRoot $RepoRoot -Section $Section -Key 'project' -CliValue $null -Default $null
+        # Back-compat: run/stop fall back to [build].project when [run].project is unset, so users
+        # who configured only [build].project before the per-operation key split keep working. The
+        # grouped check applies to the section actually being read, or the fallback would reintroduce
+        # the arbitrary pick through the back door.
+        if ([string]::IsNullOrWhiteSpace($projectPathRel) -and $Section -eq 'run') {
+            Assert-ExplicitTargetWhenGrouped -RepoRoot $RepoRoot -Section 'build'
+            $projectPathRel = Resolve-ConfigValue -RepoRoot $RepoRoot -Section 'build' -Key 'project' -CliValue $null -Default $null
+        }
     }
     if ([string]::IsNullOrWhiteSpace($projectPathRel)) {
         if ($AllowMissing) { return $null }
@@ -385,20 +419,36 @@ function Resolve-SolutionDir {
     return ($RepoRoot.TrimEnd('\') + '\')
 }
 
-# Section names of the keyed groups, as written in config.toml.
-function Get-FrontendGroupSections {
-    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+# ─── per-project config groups ─────────────────────────────────────────────────
+# `[<section>."<project path>"]` scopes a section's settings to one sub-project. Introduced for
+# [frontend] (issue #125) and extended to [build] / [publish] (issue #133) unchanged: one repo
+# holding several sub-projects is the mainline layout now that multi-repo-workspace is retired,
+# and one flat [build] cannot hold two sub-projects whose .sln offer different platforms.
+#
+# The three helpers below are section-agnostic on purpose. Three sections sharing one spelling of
+# "which sub-project is this for" is the whole value to the user; a second, subtly different
+# matcher would be a rule they cannot see.
+
+# Section names of the keyed groups under $Section, as written in config.toml.
+function Get-ConfigGroupSections {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$Section
+    )
 
     $cfg = Get-TurboPluginConfig -RepoRoot $RepoRoot
-    return @($cfg.Keys | Where-Object { $_ -like 'frontend.*' } | Sort-Object)
+    return @($cfg.Keys | Where-Object { $_ -like "$Section.*" } | Sort-Object)
 }
 
 # The project path a keyed section names: `frontend."x"` -> `x`.
 # Quotes are optional so `[frontend.src/web]` -- what people write first -- also works.
-function Get-FrontendGroupKey {
-    param([Parameter(Mandatory = $true)][string]$Section)
+function Get-ConfigGroupKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$Section,
+        [Parameter(Mandatory = $true)][string]$Parent
+    )
 
-    $k = $Section.Substring('frontend.'.Length).Trim()
+    $k = $Section.Substring("$Parent.".Length).Trim()
     if ($k.Length -ge 2 -and $k.StartsWith('"') -and $k.EndsWith('"')) {
         return $k.Substring(1, $k.Length - 2)
     }
@@ -410,7 +460,12 @@ function Get-FrontendGroupKey {
 
 # A group key may name the project FILE or the directory that holds it; both are things a user
 # would reasonably write, and `--project` accepts both spellings too.
-function Test-FrontendGroupMatchesTarget {
+#
+# It does NOT match deeper: `proj-1` does not own `proj-1/src/Web/Web.csproj`. Ownership by
+# containment would need a "the deepest group wins" rule on top, and that rule only ever shows up
+# once two groups already overlap -- by which point the user is reading a config file whose
+# effective values they cannot see. Exact-or-parent means the key you read is the key that matched.
+function Test-ConfigGroupMatchesTarget {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [Parameter(Mandatory = $true)][string]$GroupKey,
@@ -422,6 +477,85 @@ function Test-FrontendGroupMatchesTarget {
     $targetAbs = ConvertTo-ComparablePath $TargetProject
     $targetDir = ConvertTo-ComparablePath ([System.IO.Path]::GetDirectoryName($TargetProject))
     return ($keyAbs -eq $targetAbs) -or ($keyAbs -eq $targetDir)
+}
+
+# Which keyed group under $Section applies to $TargetProject.
+#
+# Returns Section (the config section to read from), Key (the group key, '' for the bare section)
+# and Status:
+#   none       the section has no keyed groups at all -- a single-project repo, unchanged
+#   ready      a keyed group names this target
+#   unmatched  keyed groups exist but none names this target; the bare section still supplies every
+#              value (see Resolve-GroupedConfigValue), so this is not an error -- but it IS reported,
+#              because "I wrote a group for this project and it did nothing" has to be visible
+#
+# Status is deliberately NOT a behaviour switch for build/publish: it exists so the result template
+# can say which group was used. [frontend] is the exception and keeps its own stricter rules, where
+# 'unmatched' means run nothing (packing another project's frontend is worse than not packing).
+function Resolve-ConfigGroup {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$Section,
+        [string]$TargetProject = ''
+    )
+
+    # @() at the CALL SITE: an empty array returned from a PowerShell function unrolls to $null and
+    # a one-element array unrolls to the element, whose .Count would be a string length.
+    $sections = @(Get-ConfigGroupSections -RepoRoot $RepoRoot -Section $Section)
+    if ($sections.Count -eq 0) {
+        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'none' }
+    }
+    if ([string]::IsNullOrWhiteSpace($TargetProject)) {
+        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'unmatched' }
+    }
+    $matched = @($sections | Where-Object {
+        Test-ConfigGroupMatchesTarget -RepoRoot $RepoRoot -GroupKey (Get-ConfigGroupKey -Section $_ -Parent $Section) -TargetProject $TargetProject
+    })
+    if ($matched.Count -eq 0) {
+        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'unmatched' }
+    }
+    if ($matched.Count -gt 1) {
+        # Typically one group written by directory and one by .csproj. Picking the "more specific"
+        # one would be a silent guess about which the user meant.
+        throw ("Ambiguous [$Section] configuration: $($matched.Count) groups all name '$TargetProject' " +
+               "($($matched -join ', ')). Keep exactly one group per project.")
+    }
+    return [PSCustomObject]@{
+        Section = $matched[0]
+        Parent  = $Section
+        Key     = (Get-ConfigGroupKey -Section $matched[0] -Parent $Section)
+        Status  = 'ready'
+    }
+}
+
+# One setting, resolved through the group layering: CLI > this project's group > the bare section >
+# default.
+#
+# Per-KEY layering, not whole-group replacement: `configuration` is usually the same across a repo
+# while `platform` is not, so requiring every group to restate the shared values would mean editing
+# N places to change one thing -- and missing one of them is silent.
+function Resolve-GroupedConfigValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)]$Group,
+        [Parameter(Mandatory = $true)][string]$Key,
+        $CliValue = $null,
+        $Default = $null
+    )
+
+    if ($null -ne $CliValue -and -not ([string]::IsNullOrWhiteSpace([string]$CliValue))) {
+        return $CliValue
+    }
+    if ($Group.Status -eq 'ready') {
+        $fromGroup = Resolve-ConfigValue -RepoRoot $RepoRoot -Section $Group.Section -Key $Key -CliValue $null -Default $null
+        if ($null -ne $fromGroup -and -not ([string]::IsNullOrWhiteSpace([string]$fromGroup))) {
+            return $fromGroup
+        }
+    }
+    # The bare section is the base layer, so a group that omits a key inherits it. Parent is carried
+    # on the descriptor rather than recovered by splitting Section on '.', because a group key is a
+    # PATH and may well contain dots.
+    return Resolve-ConfigValue -RepoRoot $RepoRoot -Section $Group.Parent -Key $Key -CliValue $null -Default $Default
 }
 
 # Single source of truth for "will a frontend pack run, from which config group, against which
@@ -454,30 +588,16 @@ function Resolve-FrontendGroup {
     )
 
     $none = { param($Status) [PSCustomObject]@{ Section = ''; Key = ''; Dir = ''; Status = $Status; TargetDir = '' } }
-    # @() at the CALL SITE, not just inside the function: returning an empty array from a
-    # PowerShell function unrolls to $null, and returning a one-element array unrolls to the
-    # element -- so `.Count` would be an error in the first case and the STRING LENGTH of the
-    # single section name in the second. Both fail as "there are keyed groups" nonsense.
-    $sections = @(Get-FrontendGroupSections -RepoRoot $RepoRoot)
-
-    $section = 'frontend'
-    $key = ''
-    if ($sections.Count -gt 0) {
-        if ([string]::IsNullOrWhiteSpace($TargetProject)) { return (& $none 'unmatched') }
-        $matched = @($sections | Where-Object {
-            Test-FrontendGroupMatchesTarget -RepoRoot $RepoRoot -GroupKey (Get-FrontendGroupKey -Section $_) -TargetProject $TargetProject
-        })
-        if ($matched.Count -eq 0) { return (& $none 'unmatched') }
-        if ($matched.Count -gt 1) {
-            # Two groups naming the same project (typically one by directory and one by .csproj).
-            # Picking the "more specific" one would be a guess about which the user meant, made
-            # silently, in the one function whose entire job is to stop silent mis-packing.
-            throw ("Ambiguous [frontend] configuration: $($matched.Count) groups all name '$TargetProject' " +
-                   "($($matched -join ', ')). Keep exactly one group per project.")
-        }
-        $section = $matched[0]
-        $key = Get-FrontendGroupKey -Section $section
-    }
+    # Group selection is the shared one (Resolve-ConfigGroup), including its ambiguity throw. What
+    # stays FRONTEND-SPECIFIC is everything after it: 'unmatched' means run nothing, and `enabled` /
+    # `dir` are read from the matched section ALONE -- no layering onto the bare group. Inheriting
+    # `dir` would point one project's pack at another project's directory, which is precisely the
+    # silent mis-pack this function exists to prevent (issue #125).
+    $group = Resolve-ConfigGroup -RepoRoot $RepoRoot -Section 'frontend' -TargetProject $TargetProject
+    if ($group.Status -eq 'unmatched') { return (& $none 'unmatched') }
+    $hasKeyedGroups = ($group.Status -ne 'none')
+    $section = $group.Section
+    $key = $group.Key
 
     $enabled = Resolve-ConfigValue -RepoRoot $RepoRoot -Section $section -Key 'enabled' -CliValue $null -Default $true
     if ($enabled -eq $false) {
@@ -492,7 +612,7 @@ function Resolve-FrontendGroup {
     # ownership, so second-guessing where it points would just add a rule the user cannot see.
     $status = 'ready'
     $targetDirDisplay = ''
-    if ($sections.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($TargetProject)) {
+    if (-not $hasKeyedGroups -and -not [string]::IsNullOrWhiteSpace($TargetProject)) {
         # A .sln legitimately spans projects, and its directory is usually the repo root, so this
         # check neutralises itself there rather than crying wolf on every solution build.
         $targetDirRaw = [System.IO.Path]::GetDirectoryName($TargetProject)
@@ -546,6 +666,23 @@ function Get-UnspecifiedConfigNote {
 # made the original silent skip invisible. In particular `unmatched` -- frontend is configured for
 # this repo but no group names this project -- is a suspicious state, while `unset` is a normal
 # one, and a reader has to be able to tell them apart from the result template alone.
+# Which config group supplied this run's settings, for the build/publish result templates.
+#
+# Returns $null -- and the caller emits NOTHING -- when the section has no groups at all. A
+# single-project repo has one obvious answer, and a line restating it on every build would be noise
+# that trains the reader to skip the block. Once groups EXIST the line is always emitted, including
+# the 'no group matched' case: "I wrote a group for this project and it did nothing" is exactly the
+# state a user cannot otherwise see, because the build still succeeds with the shared values.
+function Format-ConfigGroupLine {
+    param($Group, [string]$Label)
+
+    if ($null -eq $Group -or $Group.Status -eq 'none') { return $null }
+    if ($Group.Status -eq 'ready') {
+        return ($Label + ': [' + $Group.Parent + '."' + $Group.Key + '"] (未寫在分組裡的項目沿用共用的 [' + $Group.Parent + '])')
+    }
+    return ($Label + ': 無對應分組,全部使用共用的 [' + $Group.Parent + ']')
+}
+
 function Format-FrontendStatusLine {
     param($Group)
 
@@ -573,6 +710,7 @@ function Format-BuildResultLines {
         [string]$Configuration = '',
         [string]$Platform = '',
         $FrontendGroup = $null,
+        $BuildGroup = $null,
         [switch]$IsSolution
     )
     $note = Get-UnspecifiedConfigNote
@@ -580,6 +718,8 @@ function Format-BuildResultLines {
     $lines += if ($IsSolution) { "Target: $ResolvedTarget (整個 solution)" } else { "Target: $ResolvedTarget" }
     $lines += if ([string]::IsNullOrWhiteSpace($Configuration)) { "Configuration: $note" } else { "Configuration: $Configuration" }
     $lines += if ([string]::IsNullOrWhiteSpace($Platform)) { "Platform: $note" } else { "Platform: $Platform" }
+    $groupLine = Format-ConfigGroupLine -Group $BuildGroup -Label '設定分組'
+    if ($null -ne $groupLine) { $lines += $groupLine }
     $lines += Format-FrontendStatusLine -Group $FrontendGroup
     return $lines
 }

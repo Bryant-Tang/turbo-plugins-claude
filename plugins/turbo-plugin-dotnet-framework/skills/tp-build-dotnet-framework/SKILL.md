@@ -69,11 +69,21 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Build-Web.ps1`(或 `${CLAUDE_PLUGIN_ROOT}/scripts/build-web.sh`)帶你判斷出的明確參數:`-Project <csproj 或 .sln>`、(可選)`-Configuration <name>`、`-Platform <name>`。`.sh` 是 thin wrapper 轉呼叫 `.ps1`。
 
+**`[build]` 也可能是分組的**(`[build."<專案路徑>"]`,一個 repo 裡多個子專案時各自的 platform 不同)。
+你不必自己解讀分組——執行器會挑對應這次 target 的那組、沒寫的項目沿用不帶鍵的 `[build]`,並在結果模板
+多印一行 `設定分組:`。你要處理的只有一種情況:**設定檔有分組、而你沒指定 target 時,執行器會拒跑並把
+有哪幾組列出來**。那時用 `AskUserQuestion` 問使用者這次要建哪一個(白話講子專案,別丟設定 key 名),
+**不要自己挑一個**——分組存在就代表沒有唯一答案。
+
 Script 會:解析 target(CLI `-Project` → `config.toml [build].project` → 清楚報錯,**不自動偵測**)、找 MSBuild(`config.local.toml [tools].msbuild_path` → 標準 VS 安裝路徑)、跑 `msbuild /restore /t:Build`(**有值才附** `/p:Configuration|Platform`;`.sln` 的 `SolutionDir` 由 `.sln` 所在目錄推導)、build 成功後跑 `Compress-Content`(**對應這個 target 的**那組 `[frontend]` 設定齊備才跑,否則 skip;target 由 Build-Web 自己轉交,你不必另外帶)。
 
 ### Step 3 — 回報結果模板
 
 腳本結尾印一行 `BUILD_OUTPUT (...)` marker + 數行:**解析後的實際 target**、configuration、platform(未指定者標「未指定 (由 MSBuild / solution / Directory.Build.props 決定)」)、**Frontend**(有打包標「已執行 (<dir>)」、沒有標「未設定 (未執行前端打包)」)。把這些**逐字轉述**給使用者當結果,**一行都不要略過**,並把整段放進一個 **fenced code block**(三個反引號)——`Target:` 是 Windows 絕對路徑,而 Markdown 會把「`\` + ASCII 標點」當跳脫序列吃掉反斜線,經過 `.claude` / `.turbo-plugin` 這類隱藏目錄時就會少一個分隔符;code block 不做算繪,路徑才會逐字保留。
+
+設定檔有 `[build."..."]` 分組時還會多一行 **`設定分組:`**(沒有分組的 repo 不會出現),同樣要逐字轉述。
+它有兩種內容:用了哪一組、或「無對應分組,全部使用共用的 `[build]`」。後者**建置仍然成功**,所以不講的話
+使用者不會發現自己寫的那組沒生效。
 
 其中兩行各自是一道閘:「解析後 target」讓使用者確認建的是不是對的專案(建錯了就改 `-Project` 重跑);
 「Frontend」讓「前端沒被打包」這件事**一定會被說出口**——那正是它會被漏掉的原因(Step 1.5)。

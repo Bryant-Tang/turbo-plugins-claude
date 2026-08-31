@@ -37,8 +37,14 @@ try {
     # (strict cut, no env var fallback — throws pointing at config.local.toml if missing)
     $msbuildPath = Find-MSBuild -RepoRoot $repoRoot
 
+    # Per-project group for this target (issue #133). `default_pubxml` is the key that forced this:
+    # a pubxml belongs to ONE csproj, so a flat [publish] can only ever name one sub-project's
+    # profile and every other sub-project has to pass --pubxml by hand. Layering is per KEY, so a
+    # repo-wide `configuration` still lives once in the bare [publish].
+    $publishGroup = Resolve-ConfigGroup -RepoRoot $repoRoot -Section 'publish' -TargetProject $projectFile
+
     # pubxml: CLI arg → config.toml [publish].default_pubxml → auto-detect single .pubxml under project's Properties/PublishProfiles
-    $pubxmlPathRaw = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'default_pubxml' -CliValue $Pubxml -Default $null
+    $pubxmlPathRaw = Resolve-GroupedConfigValue -RepoRoot $repoRoot -Group $publishGroup -Key 'default_pubxml' -CliValue $Pubxml -Default $null
     if ([string]::IsNullOrWhiteSpace($pubxmlPathRaw)) {
         $projectDir = [System.IO.Path]::GetDirectoryName($projectFile)
         $profilesDir = Join-Path $projectDir 'Properties/PublishProfiles'
@@ -91,14 +97,14 @@ try {
     # measured on the same project, PlatformTarget=x64 silenced the MSB3270 architecture warning but
     # precompilation still failed, while Platform=x64 succeeded. They select different intermediate
     # directories (obj\Release\ vs obj\x64\Release\) and therefore different build paths.
-    $publishConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'configuration' -CliValue $Configuration -Default $null
+    $publishConfiguration = Resolve-GroupedConfigValue -RepoRoot $repoRoot -Group $publishGroup -Key 'configuration' -CliValue $Configuration -Default $null
     if ([string]::IsNullOrWhiteSpace($publishConfiguration)) {
         $publishConfiguration = Get-MsbuildProperty -Path $pubxmlAbsPath -Name 'Configuration'
     }
     if ([string]::IsNullOrWhiteSpace($publishConfiguration)) {
         $publishConfiguration = Get-MsbuildProperty -Path $pubxmlAbsPath -Name 'LastUsedBuildConfiguration'
     }
-    $publishPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'publish' -Key 'platform' -CliValue $Platform -Default $null
+    $publishPlatform = Resolve-GroupedConfigValue -RepoRoot $repoRoot -Group $publishGroup -Key 'platform' -CliValue $Platform -Default $null
     if ([string]::IsNullOrWhiteSpace($publishPlatform)) {
         $publishPlatform = Get-MsbuildProperty -Path $pubxmlAbsPath -Name 'Platform'
     }
@@ -224,7 +230,12 @@ try {
     # (...\.claude\... -> ....claude\...), which reads as a typo rather than as corruption. A code
     # block is not rendered, so the path survives verbatim AND stays on its own selectable line.
     $publishMarker = 'PUBLISH_OUTPUT (relay these lines to the user as the publish result, inside a fenced code block so the path is not mangled by markdown):'
-    $publishLead   = @("Target: $projectFile", "Profile: $publishProfileName", (Format-FrontendStatusLine -Group $frontendGroup))
+    # 設定分組 sits between Profile and Frontend, and is omitted entirely when the repo has no
+    # [publish."..."] groups -- see Format-ConfigGroupLine for why absence is the right default.
+    $publishLead   = @("Target: $projectFile", "Profile: $publishProfileName")
+    $publishGroupLine = Format-ConfigGroupLine -Group $publishGroup -Label '設定分組'
+    if ($null -ne $publishGroupLine) { $publishLead += $publishGroupLine }
+    $publishLead  += (Format-FrontendStatusLine -Group $frontendGroup)
 
     if ($publishUrlRaw -match '\$\(') {
         [Console]::Error.WriteLine('Warning: <PublishUrl> contains MSBuild properties; cannot resolve statically.')
