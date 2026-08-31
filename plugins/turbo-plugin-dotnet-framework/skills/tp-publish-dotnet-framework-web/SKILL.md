@@ -118,9 +118,9 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   一種情況:**有分組而你沒指定專案時,執行器拒跑並列出有哪幾組**——那時 `AskUserQuestion` 問使用者這次
   要發哪一個(白話講子專案,別丟設定 key 名),**不要自己挑**。分組存在就代表沒有唯一答案,而發佈是會
   送到部署環境的動作,挑錯的代價不可逆。
-- **`Any CPU` 與 `AnyCPU` 的空格是三套不同的寫法,不要互相代換**:pubxml 寫的是 `Any CPU`(有空格),
-  csproj 的條件是 `'$(Configuration)|$(Platform)' == 'Release|AnyCPU'`(無空格),而命令列要傳的是
-  **無空格**那個。在 VS 裡按發行遇不到(VS 自己做轉換),只有走 MSBuild 命令列才會浮出來。傳錯的失敗
+- **`Any CPU` 與 `AnyCPU` 只差一個空格,但三個地方各該用哪一種是固定的,不要互相代換**:pubxml 寫的是
+  `Any CPU`(**有**空格),csproj 的條件是 `'$(Configuration)|$(Platform)' == 'Release|AnyCPU'`(**無**
+  空格),命令列要傳的是**無**空格那個。也就是兩種拼法、三個情境,而 pubxml 是唯一用有空格版本的。在 VS 裡按發行遇不到(VS 自己做轉換),只有走 MSBuild 命令列才會浮出來。傳錯的失敗
   訊息是「未設定專案 'X.csproj' 的 BaseOutputPath/OutputPath 屬性。設定='Release' 平臺='Any CPU'。」
   ——**看起來像專案設定壞了,其實是參數帶錯**。看到這句話先核對 `MSBuild args:` 那行的 `/p:Platform`。
 - Frontend pack 是 publish 鏈的一部份;**不要在 SKILL 內額外呼叫** `pack-content`,script 已包含。

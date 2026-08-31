@@ -114,6 +114,11 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
 
   結果模板多一行 `設定分組:`,說明這次用了哪一組、或「有分組但沒有一組對應這個專案」(後者仍然會用
   共用設定建置成功,所以不講的話看不出來)。沒有任何分組的 repo 不會多這一行,行為也完全不變。
+
+  **`[run]` 目前不支援分組**,只有 `[frontend]` / `[build]` / `[publish]` 三個區塊有。寫成
+  `[run."proj-1"]` 的話,底下的 `configuration` / `arguments` / `working_directory` **不會**生效
+  (仍然讀不帶鍵的 `[run]`);而因為 run 在沒設定 `[run] project` 時會退回讀 `[build] project`,
+  一旦 `[build]` 有分組,run 也一樣會要求你明講是哪個子專案。
 - **哪些檔案不該進版控**(`bin/` / `obj/` / `.vs/` / 本機設定 …)由 `turbo-plugin-git-svn` 的
   `/tp-suggest-ignore` 判斷,本 plugin 不寫死清單。唯一的例外是 `*.local.*`:記憶存回在寫
   `config.local.toml` 之前會先確保 `.gitignore` 擋住它(誰寫這種檔誰負責)。

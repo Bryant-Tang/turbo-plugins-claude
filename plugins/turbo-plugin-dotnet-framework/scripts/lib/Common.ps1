@@ -191,6 +191,12 @@ MSBuild 路徑設定指向不存在的檔案: $resolved
 # A bare `[<section>].project` is deliberately NOT used as the default once groups exist: it would
 # make "forgot to pass --project" silently mean "the main project", which is the same wrong answer
 # with an extra step. It is called out in the message so the reason is visible from the error alone.
+#
+# This check is section-agnostic, but only [build] / [publish] LAYER their values through
+# Resolve-GroupedConfigValue -- [run] does not (issue #133 covers build and publish). So a
+# `[run."proj-1"]` section makes run demand an explicit target while its other keys stay inert.
+# That asymmetry is the safe direction (loud about the target, no silent mis-target) and it is
+# documented in the README; making [run] layer too is a separate change, not a bug fix.
 function Assert-ExplicitTargetWhenGrouped {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
