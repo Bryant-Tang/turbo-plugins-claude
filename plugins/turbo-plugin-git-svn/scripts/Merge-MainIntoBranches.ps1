@@ -92,8 +92,9 @@ try {
     # success (e.g. "Switched to branch 'x'"). Under EAP=Stop, redirecting that native stderr
     # with `2>$null` makes PS 5.1 wrap it as a terminating NativeCommandError. So we call git
     # BARE here (stderr flows to the inherited handle / parent's cmd redirect) and gate purely
-    # on $LASTEXITCODE — matching Sync-FromSvn.ps1. Only `merge --abort` (a recovery path whose
-    # noise we want swallowed) uses `2>$null | Out-Null`.
+    # on $LASTEXITCODE — matching Sync-FromSvn.ps1. `merge --abort` wants its noise swallowed,
+    # and gets that from Read-Git, which discards stderr WITHOUT the `2>` redirect that causes
+    # the throw (issue #128).
     foreach ($branch in $targetBranches) {
         & git -C $mainWorktree checkout $branch
         if ($LASTEXITCODE -ne 0) {
@@ -104,7 +105,11 @@ try {
 
         & git -C $mainWorktree merge main --no-ff -m "Merge branch 'main' into $branch"
         if ($LASTEXITCODE -ne 0) {
-            & git -C $mainWorktree merge --abort 2>$null | Out-Null
+            # Read-Git, not `& git ... 2>$null | Out-Null` (issue #128): under EAP=Stop the `2>`
+            # redirection turns git's stderr into a terminating error. This one sits INSIDE the
+            # per-branch loop, so a throw here would leave the conflicted merge in progress, skip
+            # every remaining branch, AND skip the "restore the branch we started on" step below.
+            $null = Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--abort')
             $conflict += $branch
             Write-Output "CONFLICT $branch (merge aborted)"
         } else {

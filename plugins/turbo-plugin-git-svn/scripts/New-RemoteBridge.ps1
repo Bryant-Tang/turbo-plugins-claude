@@ -268,8 +268,13 @@ try {
         # an orphan SVN path. Re-running first-push is idempotent: `svn info` detects the
         # existing path and takes the checkout branch instead of re-copying.
         Write-Output "Bridge setup failed; rolling back local git state (an already-created SVN path is permanent)..."
-        & git -C $mainWorktree worktree remove --force $remoteWorktreePath 2>$null | Out-Null
-        & git -C $mainWorktree branch -D $remoteBranch 2>$null | Out-Null
+        # Read-Git, not `& git ... 2>$null | Out-Null` (issue #128): under EAP=Stop the `2>`
+        # redirection makes git's stderr a terminating error, which inside this catch would skip the
+        # rest of the rollback and replace the real failure with a NativeCommandError about a git
+        # warning -- and here the message being replaced is the one telling the user that an SVN
+        # path may already exist permanently. See Checkout-SvnBranch.ps1's rollback.
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'remove', '--force', $remoteWorktreePath)
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('branch', '-D', $remoteBranch)
         throw
     }
 

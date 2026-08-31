@@ -481,9 +481,13 @@ try {
                 } catch { }
             }
         }
-        & git -C $mainWorktree worktree remove --force $remoteWorktreePath 2>$null | Out-Null
-        & git -C $mainWorktree worktree prune 2>$null | Out-Null
-        & git -C $mainWorktree branch -D $remoteBranch 2>$null | Out-Null
+        # Read-Git, not `& git ... 2>$null | Out-Null` (issue #128): under EAP=Stop the `2>`
+        # redirection makes git's stderr a terminating error, which inside this catch would skip the
+        # rest of the rollback and replace the real bootstrap failure with a NativeCommandError
+        # about a git warning. See Checkout-SvnBranch.ps1's rollback for the full account.
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'remove', '--force', $remoteWorktreePath)
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'prune')
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('branch', '-D', $remoteBranch)
         throw
     }
 

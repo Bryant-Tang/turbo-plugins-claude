@@ -200,12 +200,14 @@ try {
         $mergeExit = $LASTEXITCODE
         if ($mergeExit -ne 0) {
             $conflicts = (& git -C $mainWorktree diff --name-only --diff-filter=U | Out-String).Trim()
-            & git -C $mainWorktree merge --abort 2>$null | Out-Null
-            $abortStatus = $LASTEXITCODE
+            # Read-Git, not `& git ... 2>$null | Out-Null`: under EAP=Stop a `2>` redirection makes
+            # any stderr output a terminating error, so on a machine where git warns (dubious
+            # ownership) the throw would land here and skip the whole rollback -- see the same
+            # block in Sync-FromSvn.ps1 for the full account (issue #128).
+            $abortStatus = (Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--abort')).Code
             $checkoutStatus = 0
             if ($switched) {
-                & git -C $mainWorktree checkout $originalBranch 2>$null | Out-Null
-                $checkoutStatus = $LASTEXITCODE
+                $checkoutStatus = (Read-Git -Cwd $mainWorktree -GitArgs @('checkout', $originalBranch)).Code
             }
             if ($abortStatus -ne 0 -or $checkoutStatus -ne 0) {
                 throw "Merge conflict; automatic rollback failed (abort exit=$abortStatus, checkout exit=$checkoutStatus). Working tree is in an inconsistent state. Resolve manually before re-running."

@@ -191,6 +191,90 @@ Describe 'Merge-MainIntoBranches' {
         }
     }
 
+    # Under EAP=Stop, a `2>` redirection on a native command makes PS 5.1 wrap ANY stderr output as
+    # a TERMINATING NativeCommandError -- `2>$null` does not prevent it (measured). git writes to
+    # stderr on a perfectly healthy repo whose owner differs from the caller ("detected dubious
+    # ownership": CI images, containers, a clone made under another account). The rollback
+    # `git merge --abort` used to be written that way, so on those machines the throw landed BEFORE
+    # the abort: the conflicted merge stayed in progress, the remaining branches were never
+    # attempted, and the original branch was never restored (issue #128; the same shape was
+    # reproduced on Request-Merge.ps1 in #127).
+    #
+    # The shim warns ONLY on the rollback command, not on every git call. That is the honest scope
+    # today: the reads in this script still capture with `2>$null` and are being converted in a
+    # separate pass, so a warn-on-everything shim would fail here for a different reason and this
+    # case would stop measuring the rollback. Widen it to warn unconditionally once those land --
+    # Request-Merge.test.ps1 did exactly that after #123 fixed the shared library.
+    Context 'Case 7 (issue #128): a git that warns on stderr must not skip the conflict rollback' {
+        It 'aborts the merge, keeps going, and restores the original branch' {
+            $sb = New-Sandbox -Tag 'mmb-7'
+            $shimDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'tp-shim-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+            $savedPath = $env:PATH
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-GitMainRepo -Root $root
+
+                Add-CommitFile -Root $root -Name 'shared.txt' -Content 'base' -Msg 'feat: add shared'
+                # Named so the CONFLICTING branch sorts FIRST: `git branch --format` lists
+                # alphabetically, so with the clean branch first a rollback that killed the loop
+                # would still leave it merged and the case would pass while broken.
+                $null = Run-Git -Cwd $root -GitArgs @('branch', 'aaa-conflict')
+                $null = Run-Git -Cwd $root -GitArgs @('branch', 'zzz-clean')
+
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', 'aaa-conflict')
+                Add-CommitFile -Root $root -Name 'shared.txt' -Content 'branch-version' -Msg 'feat: branch edits shared'
+
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', 'main')
+                Add-CommitFile -Root $root -Name 'shared.txt' -Content 'main-version' -Msg 'feat: main edits shared'
+                $mainSha = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')
+
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', 'zzz-clean')
+
+                $realGit = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+                $null = New-Item -ItemType Directory -Path $shimDir -Force
+                [System.IO.File]::WriteAllLines(
+                    [System.IO.Path]::Combine($shimDir, 'git.cmd'),
+                    @(
+                        '@echo off',
+                        'set "TP_ARGS=%*"',
+                        'echo(%TP_ARGS%| findstr /C:"--abort" >nul && echo warning: detected dubious ownership in repository 1>&2',
+                        ('"' + $realGit + '" %*')
+                    ),
+                    [System.Text.Encoding]::ASCII)
+
+                $env:PATH = $shimDir + ';' + $savedPath
+
+                # Preconditions: prove the shim resolves AND that it is selective. A shim that never
+                # loads gives a pass that means nothing; one that warns on everything would move
+                # what this case measures.
+                $probeErr = [System.IO.Path]::Combine($shimDir, 'probe.err')
+                & cmd.exe /c "git merge --abort 2> `"$probeErr`"" | Out-Null
+                [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
+                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
+                [System.IO.File]::ReadAllText($probeErr) | Should -Not -Match 'dubious ownership'
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
+
+                # STATE, not messages: printing the right thing while leaving the tree wedged is the
+                # failure this case exists to catch, and it prints the right thing either way.
+                [System.IO.File]::Exists([System.IO.Path]::Combine($root, '.git', 'MERGE_HEAD')) | Should -BeFalse
+                (Run-Git-Capture -Cwd $root -GitArgs @('status', '--porcelain')) | Should -Be ''
+                (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')) | Should -Be 'zzz-clean'
+
+                # The loop survived the conflicting branch and reached the one after it.
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', $mainSha, 'zzz-clean'))    | Should -Be 0
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', $mainSha, 'aaa-conflict')) | Should -Not -Be 0
+
+                $res.ExitCode | Should -Be 1
+                $res.Stdout | Should -Match '(?m)^CONFLICT aaa-conflict\b'
+            } finally {
+                $env:PATH = $savedPath
+                Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
     Context 'Case 6: git status failure (corrupt index) -> fail-loud, does not merge' {
         It 'exits non-zero on a status failure and never proceeds to a clean merge' {
             $sb = New-Sandbox -Tag 'mmb-6'

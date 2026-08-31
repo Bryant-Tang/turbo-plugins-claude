@@ -173,12 +173,19 @@ Cannot read SVN at the path this bridge is attached to:
         # Rollback: abort the merge and return to original branch so the worktree is clean.
         # Capture each rollback op's exit code separately so we can detect rollback failure
         # and emit a distinct error (working tree may be in an inconsistent state).
-        & git -C $mainWorktree merge --abort 2>$null | Out-Null
-        $abortStatus = $LASTEXITCODE
+        #
+        # Through Read-Git, NOT `& git ... 2>$null | Out-Null` (issue #128). Under
+        # $ErrorActionPreference = 'Stop', a `2>` redirection on a native command turns anything the
+        # command writes to stderr into a TERMINATING error -- measured, and `2>$null` does not
+        # prevent it. git warns on a healthy repo whose owner differs from the caller (CI images,
+        # containers, a clone made under another account), so on those machines the throw would
+        # happen HERE: the merge is never aborted, the exit-code guard below is unreachable, and the
+        # conflicted worktree is left exactly as it was -- the one thing this block promises never
+        # to do. Reproduced on Request-Merge.ps1 in #127.
+        $abortStatus = (Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--abort')).Code
         $checkoutStatus = 0
         if ($switched) {
-            & git -C $mainWorktree checkout $originalBranch 2>$null | Out-Null
-            $checkoutStatus = $LASTEXITCODE
+            $checkoutStatus = (Read-Git -Cwd $mainWorktree -GitArgs @('checkout', $originalBranch)).Code
         }
         if ($abortStatus -ne 0 -or $checkoutStatus -ne 0) {
             throw "Merge conflict detected; automatic rollback failed (abort exit=$abortStatus, checkout exit=$checkoutStatus). Working tree is in an inconsistent state. Resolve manually before re-running."
