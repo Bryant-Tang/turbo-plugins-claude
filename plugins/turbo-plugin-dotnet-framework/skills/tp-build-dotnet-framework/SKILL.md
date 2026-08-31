@@ -123,8 +123,9 @@ build **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-back.
   **對不上的時候,下一個要看的是同一行的 `/p:SolutionDir=`**,不是 csproj:`<HintPath>..\packages\`
   是相對於 **solution 目錄**算的,所以 `SolutionDir` 指錯地方,還原就會落在別處。它應該是**這個
   專案所屬的那個 `.sln` 的目錄**;一個 repo 內有多個子專案、各自有 `.sln` 與 `packages\` 時,指到
-  repo 根就是錯的。要臨時驗證,用 `--msbuild-property "SolutionDir=<正確目錄>/"` 重跑一次
-  (**結尾用正斜線**——反斜線結尾在 `.sh` 那條路徑會把後面的引號跳脫掉)。
+  repo 根就是錯的。那個值由執行器往上找最近的 `.sln` 決定,所以指到 repo 根通常代表**那個子專案
+  底下根本沒有自己的 `.sln`**(往上找就一路找到根)——要修的是那裡,不是傳個參數蓋過去。
+  **build 沒有 `--msbuild-property` 這個逃生口**(只有 publish 有),別建議使用者那樣做。
   **陷阱**:沒有 `EnsureNuGetPackageBuildImports` target 的舊 csproj **不會**印出「missing packages」
   那句友善提示,套件沒還原時直接就是幾百個 `CS0246`。別因為沒看到那句話就排除還原的可能。
 - Build 失敗可逆(重跑即可),屬於 agent-proactive 觸發類別——偵測「剛改完程式碼」可建議跑。
