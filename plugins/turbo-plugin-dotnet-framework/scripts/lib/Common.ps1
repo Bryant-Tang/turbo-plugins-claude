@@ -337,6 +337,54 @@ function ConvertTo-ComparablePath {
     return ($Path -replace '/', '\').TrimEnd('\').ToLowerInvariant()
 }
 
+# The value for MSBuild's /p:SolutionDir, with the trailing separator the $(SolutionDir) convention
+# expects.
+#
+# The packages.config `<HintPath>..\packages\...` convention is anchored on the SOLUTION directory.
+# That is the same place as the repo root only in a single-solution repo; in a mono repo each
+# sub-project owns its own .sln and its own packages\, so anchoring on the repo root restores into
+# <repo>\packages\ while every HintPath points at <repo>\<sub>\packages\ (issue #132).
+#
+# What made that hard to diagnose: build passes the .sln, so SolutionDir was already derived
+# correctly there, while publish only ever takes a csproj and fell back to the repo root. The same
+# sub-project therefore BUILT fine and FAILED to publish, and MSBuild's message named a missing
+# NuGet package -- pointing at restore, not at this argument.
+#
+# Resolution: a .sln answers with its own directory. A csproj walks UP from the project directory
+# to the nearest .sln, which is the solution VS would have open for it. No .sln on that walk falls
+# back to the repo root -- the historical answer, so a repo with no .sln at all is unaffected.
+#
+# The walk never leaves the repo. A .sln sitting ABOVE the repo root is not this repo's business,
+# and following one would make the answer depend on where the repo happens to be checked out.
+function Resolve-SolutionDir {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$TargetPath,
+        [switch]$IsSolution
+    )
+
+    if ($IsSolution) {
+        return ([System.IO.Path]::GetDirectoryName($TargetPath).TrimEnd('\') + '\')
+    }
+
+    $rootCmp = ConvertTo-ComparablePath $RepoRoot
+    $dir = [System.IO.Path]::GetDirectoryName($TargetPath)
+    while (-not [string]::IsNullOrWhiteSpace($dir)) {
+        $dirCmp = ConvertTo-ComparablePath $dir
+        if ($dirCmp -ne $rootCmp -and -not $dirCmp.StartsWith($rootCmp + '\')) { break }
+        # @() because a single match unrolls to the FileInfo itself, whose .Count is not the number
+        # of matches.
+        if (@(Get-ChildItem -LiteralPath $dir -Filter '*.sln' -File -ErrorAction SilentlyContinue).Count -gt 0) {
+            return ($dir.TrimEnd('\') + '\')
+        }
+        if ($dirCmp -eq $rootCmp) { break }
+        $parent = [System.IO.Path]::GetDirectoryName($dir)
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $dir) { break }
+        $dir = $parent
+    }
+    return ($RepoRoot.TrimEnd('\') + '\')
+}
+
 # Section names of the keyed groups, as written in config.toml.
 function Get-FrontendGroupSections {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)

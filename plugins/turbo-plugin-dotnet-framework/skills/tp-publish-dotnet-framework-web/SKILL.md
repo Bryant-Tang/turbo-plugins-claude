@@ -119,6 +119,9 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   專案,所以 publish 也吃得到還原問題。script 已帶 `/restore /p:RestorePackagesConfig=true`,
   **不要建議使用者手動跑 `nuget.exe`**;讀 stdout 的 `MSBuild args:` 那行確認旗標帶上了即可。
   詳細判準見 `tp-build-dotnet-framework` 的同名規則。
+  **同一個子專案「建置成功、發佈失敗」時,先看 `MSBuild args:` 的 `/p:SolutionDir=`**:build 吃
+  `.sln` 時那個值由 `.sln` 自己的位置決定,publish 只吃 csproj、得靠往上找,兩條路徑算出來的答案
+  可能不同。它應該指向這個專案所屬的 `.sln` 的目錄。
 - **`ASPNETCOMPILER : error ASPCONFIG` + 「試圖載入格式錯誤的程式」→ 32/64 位元不合,不是程式碼壞了**。
   那句話是 `BadImageFormatException`,發生在**預先編譯**階段(pubxml 開了
   `<PrecompileBeforePublish>true</PrecompileBeforePublish>`)。**同一個症狀有兩個不同的根因**,

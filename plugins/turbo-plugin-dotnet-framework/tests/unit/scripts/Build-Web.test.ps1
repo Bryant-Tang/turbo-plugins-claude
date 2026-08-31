@@ -263,6 +263,50 @@ Describe 'Build-Web' {
         }
     }
 
+    # Publish is where issue #132 was reported, because publish only ever takes a csproj. Build has
+    # the same hole whenever the agent builds a single csproj instead of the .sln -- which the SKILL
+    # explicitly tells it to do for a small change. Same helper, so the two can no longer diverge.
+    Context 'issue #132 - a csproj target anchors on its own solution, not the repo root' {
+        BeforeAll {
+            $script:sbBMono = New-Sandbox 'build-mono-solutiondir'
+            $webDir = [System.IO.Path]::Combine($script:sbBMono, 'proj-1', 'src', 'Web')
+            $null = New-Item -ItemType Directory -Path $webDir -Force
+            $utf8 = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $webDir 'HelloApp.csproj'), $script:CsprojConditional, $utf8)
+            # Decoy at the repo root: without it, "the outermost .sln" and the buggy answer are the
+            # same directory, so a walk running the wrong way round would still pass.
+            [System.IO.File]::WriteAllText((Join-Path $script:sbBMono 'Everything.sln'), '', $utf8)
+            [System.IO.File]::WriteAllText(([System.IO.Path]::Combine($script:sbBMono, 'proj-1', 'App.sln')), '', $utf8)
+
+            $tpDir = Join-Path $script:sbBMono '.turbo-plugin'
+            $null = New-Item -ItemType Directory -Path $tpDir -Force
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.local.toml'),
+                "[tools]`r`nmsbuild_path = `"msbuild-stub.bat`"`r`n", $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $script:sbBMono 'msbuild-stub.bat'),
+                "@echo off`r`necho MSBUILD_ARGS: %*`r`n", $utf8)
+
+            Push-Location -LiteralPath $script:sbBMono
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                Invoke-GitSilent add -A
+                & git -c commit.gpgsign=false commit -q -m init *>$null
+            } finally { Pop-Location }
+
+            $script:rBMono = Invoke-Script -WorkDir $script:sbBMono -ExtraArgs @('-Project', 'proj-1/src/Web/HelloApp.csproj')
+            $script:sbBMonoProj1 = [System.IO.Path]::Combine($script:sbBMono, 'proj-1')
+        }
+        AfterAll { Remove-Sandbox $script:sbBMono }
+
+        It 'passes the sub-project solution directory as SolutionDir' {
+            $script:rBMono.Stdout | Should -Match ('/p:SolutionDir=' + [regex]::Escape($script:sbBMonoProj1) + '\\ ')
+        }
+        It 'does NOT pass the repo root (the regression)' {
+            $script:rBMono.Stdout | Should -Not -Match ('/p:SolutionDir=' + [regex]::Escape($script:sbBMono) + '\\ ')
+        }
+    }
+
     # -RepoRoot names the project outright. The scenario this exists for: a session opened at a
     # root that holds several sibling projects, where the cwd is not any of them.
     Context 'U8: -RepoRoot targets a project other than the current directory' {

@@ -812,6 +812,113 @@ Describe 'Resolve-FrontendPackDir' {
     }
 }
 
+Describe 'Resolve-SolutionDir (mono-repo SolutionDir, issue #132)' {
+
+    # BeforeAll, not the Describe body: under Pester 5 a function defined directly in a Describe
+    # block is not in scope inside its It blocks.
+    BeforeAll {
+        # The .sln files have to EXIST -- the walk looks for them on disk, so a fixture that only
+        # names them would make every case fall through to the repo root and pass for the wrong
+        # reason. The .csproj need not exist: nothing on this path opens it.
+        function New-SolutionDirFixture {
+            param([string]$Tag, [string[]]$SolutionDirs)
+            $root = New-IsolatedRepoRoot $Tag
+            foreach ($rel in $SolutionDirs) {
+                $dir = if ($rel -eq '.') { $root } else { [System.IO.Path]::Combine($root, ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)) }
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                Set-Content -LiteralPath (Join-Path $dir 'App.sln') -Value '' -Encoding UTF8
+            }
+            return $root
+        }
+        function Join-Rel {
+            param([string]$Root, [string]$Rel)
+            return [System.IO.Path]::Combine($Root, ($Rel -replace '/', [System.IO.Path]::DirectorySeparatorChar))
+        }
+    }
+
+    # The regression itself. Before the fix this answered with the repo root, so NuGet restored to
+    # <root>/packages while the csproj's <HintPath>..\packages\ pointed at <root>/proj-1/packages.
+    It 'a csproj under a sub-project solution anchors on that sub-project, not the repo root' {
+        $root = New-SolutionDirFixture 'sdMono' @('proj-1', 'proj-2')
+        try {
+            $csproj = Join-Rel $root 'proj-1/src/Web/Web.csproj'
+            $got = Resolve-SolutionDir -RepoRoot $root -TargetPath $csproj
+            $got | Should -Be ((Join-Rel $root 'proj-1') + '\')
+            $got | Should -Not -Be ($root.TrimEnd('\') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    It 'each sub-project gets its own answer' {
+        $root = New-SolutionDirFixture 'sdMonoBoth' @('proj-1', 'proj-2')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-2/Web/Web.csproj')) |
+                Should -Be ((Join-Rel $root 'proj-2') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    # Both solutions are on the walk, so this fails if the walk ever runs outermost-first or keeps
+    # going after its first hit. The repo-root solution is created FIRST so a fixture-order accident
+    # cannot be what makes the expected answer come out.
+    It 'the NEAREST solution wins when the repo root also has one' {
+        $root = New-SolutionDirFixture 'sdNearest' @('.', 'proj-1')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-1/src/Web/Web.csproj')) |
+                Should -Be ((Join-Rel $root 'proj-1') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    It 'a csproj sitting beside its solution answers with that directory' {
+        $root = New-SolutionDirFixture 'sdBeside' @('proj-1')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-1/Web.csproj')) |
+                Should -Be ((Join-Rel $root 'proj-1') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    # The historical answer, kept: a single-project repo with no .sln at all must not change.
+    It 'falls back to the repo root when there is no solution anywhere on the walk' {
+        $root = New-IsolatedRepoRoot 'sdNoSln'
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'src/Web/Web.csproj')) |
+                Should -Be ($root.TrimEnd('\') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    It 'a .sln target answers with its own directory' {
+        $root = New-SolutionDirFixture 'sdSlnTarget' @('proj-1')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-1/App.sln') -IsSolution) |
+                Should -Be ((Join-Rel $root 'proj-1') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    # A solution ABOVE the repo root is not this repo's business, and following one would make the
+    # answer depend on where the repo happens to be checked out.
+    It 'never walks above the repo root' {
+        $outer = New-IsolatedRepoRoot 'sdOuter'
+        try {
+            Set-Content -LiteralPath (Join-Path $outer 'App.sln') -Value '' -Encoding UTF8
+            $root = Join-Path $outer 'repo'
+            New-Item -ItemType Directory -Path (Join-Rel $root 'src/Web') -Force | Out-Null
+            $got = Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'src/Web/Web.csproj')
+            $got | Should -Be ($root.TrimEnd('\') + '\')
+            $got | Should -Not -Be ($outer.TrimEnd('\') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $outer }
+    }
+
+    # $(SolutionDir) is documented as ending in a separator, and MSBuild property concatenation
+    # relies on it; dropping it produces paths like <root>proj-1packages.
+    It 'always ends with a path separator' {
+        $root = New-SolutionDirFixture 'sdTrailing' @('proj-1')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-1/Web.csproj')).EndsWith('\') |
+                Should -BeTrue
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'nope/Web.csproj')).EndsWith('\') |
+                Should -BeTrue
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+}
+
 Describe 'Resolve-FrontendGroup (multi-project [frontend], issue #125)' {
 
     # BeforeAll, not the Describe body: under Pester 5 a function defined directly in a Describe

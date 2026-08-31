@@ -127,10 +127,10 @@ try {
     Write-Output "  Publish profile: $publishProfileName"
     Write-Output "  Profile root:    $publishProfileDir"
 
-    # SolutionDir for a csproj target, same as Build-Web does: publish only ever takes a csproj, and
-    # the packages.config `<HintPath>..\packages\...` convention is anchored on the solution / repo
-    # root rather than the project directory.
-    $solutionDir = $repoRoot.TrimEnd('\') + '\'
+    # SolutionDir, same helper Build-Web uses. Publish only ever takes a csproj, so this is always
+    # the walk-up-to-the-nearest-.sln path -- which is the whole point: anchoring on the repo root
+    # is what made publish fail in a mono repo while build succeeded (issue #132).
+    $solutionDir = Resolve-SolutionDir -RepoRoot $repoRoot -TargetPath $projectFile
 
     # /restore + /p:RestorePackagesConfig=true, matching Build-Web (see there for why /restore has to
     # stay the switch form and what RestorePackagesConfig buys). Publish needs them in its own right:

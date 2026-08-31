@@ -31,12 +31,11 @@ try {
     $buildConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'build' -Key 'configuration' -CliValue $Configuration -Default $null
     $buildPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'build' -Key 'platform' -CliValue $Platform -Default $null
 
-    # SolutionDir: for a .sln, derive from the .sln's own directory (so $(SolutionDir) resolves for a
-    # non-root solution); for a csproj, use the repo root (unchanged). Keep the trailing separator the
-    # $(SolutionDir) convention expects.
+    # SolutionDir: a .sln derives it from its own directory; a csproj walks up to the nearest .sln
+    # and falls back to the repo root. See Resolve-SolutionDir for why the repo root is the wrong
+    # anchor once a repo holds more than one solution.
     $isSolution = ($target.Type -eq 'sln')
-    $solutionDirBase = if ($isSolution) { [System.IO.Path]::GetDirectoryName($projectFile) } else { $repoRoot }
-    $solutionDir = $solutionDirBase.TrimEnd('\') + '\'
+    $solutionDir = Resolve-SolutionDir -RepoRoot $repoRoot -TargetPath $projectFile -IsSolution:$isSolution
 
     # /restore + /p:RestorePackagesConfig=true — both are load-bearing for packages.config projects:
     #
