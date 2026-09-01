@@ -812,6 +812,113 @@ Describe 'Resolve-FrontendPackDir' {
     }
 }
 
+Describe 'Resolve-SolutionDir (mono-repo SolutionDir, issue #132)' {
+
+    # BeforeAll, not the Describe body: under Pester 5 a function defined directly in a Describe
+    # block is not in scope inside its It blocks.
+    BeforeAll {
+        # The .sln files have to EXIST -- the walk looks for them on disk, so a fixture that only
+        # names them would make every case fall through to the repo root and pass for the wrong
+        # reason. The .csproj need not exist: nothing on this path opens it.
+        function New-SolutionDirFixture {
+            param([string]$Tag, [string[]]$SolutionDirs)
+            $root = New-IsolatedRepoRoot $Tag
+            foreach ($rel in $SolutionDirs) {
+                $dir = if ($rel -eq '.') { $root } else { [System.IO.Path]::Combine($root, ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)) }
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                Set-Content -LiteralPath (Join-Path $dir 'App.sln') -Value '' -Encoding UTF8
+            }
+            return $root
+        }
+        function Join-Rel {
+            param([string]$Root, [string]$Rel)
+            return [System.IO.Path]::Combine($Root, ($Rel -replace '/', [System.IO.Path]::DirectorySeparatorChar))
+        }
+    }
+
+    # The regression itself. Before the fix this answered with the repo root, so NuGet restored to
+    # <root>/packages while the csproj's <HintPath>..\packages\ pointed at <root>/proj-1/packages.
+    It 'a csproj under a sub-project solution anchors on that sub-project, not the repo root' {
+        $root = New-SolutionDirFixture 'sdMono' @('proj-1', 'proj-2')
+        try {
+            $csproj = Join-Rel $root 'proj-1/src/Web/Web.csproj'
+            $got = Resolve-SolutionDir -RepoRoot $root -TargetPath $csproj
+            $got | Should -Be ((Join-Rel $root 'proj-1') + '\')
+            $got | Should -Not -Be ($root.TrimEnd('\') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    It 'each sub-project gets its own answer' {
+        $root = New-SolutionDirFixture 'sdMonoBoth' @('proj-1', 'proj-2')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-2/Web/Web.csproj')) |
+                Should -Be ((Join-Rel $root 'proj-2') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    # Both solutions are on the walk, so this fails if the walk ever runs outermost-first or keeps
+    # going after its first hit. The repo-root solution is created FIRST so a fixture-order accident
+    # cannot be what makes the expected answer come out.
+    It 'the NEAREST solution wins when the repo root also has one' {
+        $root = New-SolutionDirFixture 'sdNearest' @('.', 'proj-1')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-1/src/Web/Web.csproj')) |
+                Should -Be ((Join-Rel $root 'proj-1') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    It 'a csproj sitting beside its solution answers with that directory' {
+        $root = New-SolutionDirFixture 'sdBeside' @('proj-1')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-1/Web.csproj')) |
+                Should -Be ((Join-Rel $root 'proj-1') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    # The historical answer, kept: a single-project repo with no .sln at all must not change.
+    It 'falls back to the repo root when there is no solution anywhere on the walk' {
+        $root = New-IsolatedRepoRoot 'sdNoSln'
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'src/Web/Web.csproj')) |
+                Should -Be ($root.TrimEnd('\') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    It 'a .sln target answers with its own directory' {
+        $root = New-SolutionDirFixture 'sdSlnTarget' @('proj-1')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-1/App.sln') -IsSolution) |
+                Should -Be ((Join-Rel $root 'proj-1') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+
+    # A solution ABOVE the repo root is not this repo's business, and following one would make the
+    # answer depend on where the repo happens to be checked out.
+    It 'never walks above the repo root' {
+        $outer = New-IsolatedRepoRoot 'sdOuter'
+        try {
+            Set-Content -LiteralPath (Join-Path $outer 'App.sln') -Value '' -Encoding UTF8
+            $root = Join-Path $outer 'repo'
+            New-Item -ItemType Directory -Path (Join-Rel $root 'src/Web') -Force | Out-Null
+            $got = Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'src/Web/Web.csproj')
+            $got | Should -Be ($root.TrimEnd('\') + '\')
+            $got | Should -Not -Be ($outer.TrimEnd('\') + '\')
+        } finally { Remove-IsolatedRepoRoot -Dir $outer }
+    }
+
+    # $(SolutionDir) is documented as ending in a separator, and MSBuild property concatenation
+    # relies on it; dropping it produces paths like <root>proj-1packages.
+    It 'always ends with a path separator' {
+        $root = New-SolutionDirFixture 'sdTrailing' @('proj-1')
+        try {
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'proj-1/Web.csproj')).EndsWith('\') |
+                Should -BeTrue
+            (Resolve-SolutionDir -RepoRoot $root -TargetPath (Join-Rel $root 'nope/Web.csproj')).EndsWith('\') |
+                Should -BeTrue
+        } finally { Remove-IsolatedRepoRoot -Dir $root }
+    }
+}
+
 Describe 'Resolve-FrontendGroup (multi-project [frontend], issue #125)' {
 
     # BeforeAll, not the Describe body: under Pester 5 a function defined directly in a Describe
@@ -990,6 +1097,223 @@ Describe 'Resolve-FrontendGroup (multi-project [frontend], issue #125)' {
             (Resolve-FrontendGroup -RepoRoot $root -TargetProject $sln).Status | Should -Be 'ready'
         } finally {
             Remove-IsolatedRepoRoot -Dir $root
+        }
+    }
+}
+
+Describe 'Per-project config groups for [build] / [publish] (issue #133)' {
+
+    BeforeAll {
+        function New-GroupFixture {
+            param([string]$Tag, [string[]]$ConfigLines)
+            $root = New-IsolatedRepoRoot $Tag
+            $tp = Join-Path $root '.turbo-plugin'
+            New-Item -ItemType Directory -Path $tp -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $tp 'config.toml') -Value $ConfigLines -Encoding UTF8
+            return $root
+        }
+        function New-GroupProject {
+            param([string]$Root, [string]$Rel)
+            $abs = [System.IO.Path]::Combine($Root, ($Rel -replace '/', [System.IO.Path]::DirectorySeparatorChar))
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($abs)) -Force | Out-Null
+            Set-Content -LiteralPath $abs -Value '<Project />' -Encoding UTF8
+            return $abs
+        }
+    }
+
+    Context 'Resolve-ConfigGroup' {
+        It 'a section with no keyed groups reports none and reads the bare section' {
+            $root = New-GroupFixture 'grpNone' @('[build]', 'platform = "x64"')
+            try {
+                $g = Resolve-ConfigGroup -RepoRoot $root -Section 'build' -TargetProject ([System.IO.Path]::Combine($root, 'App.csproj'))
+                $g.Status | Should -Be 'none'
+                $g.Section | Should -Be 'build'
+                $g.Key | Should -Be ''
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        It 'a keyed group naming the project directory applies to that project' {
+            $root = New-GroupFixture 'grpReady' @(
+                '[build."proj-1/src/Web"]'
+                'platform = "x64"'
+                '[build."proj-2/src/Web"]'
+                'platform = "AnyCPU"'
+            )
+            try {
+                $g = Resolve-ConfigGroup -RepoRoot $root -Section 'build' -TargetProject ([System.IO.Path]::Combine($root, 'proj-1', 'src', 'Web', 'Web.csproj'))
+                $g.Status | Should -Be 'ready'
+                $g.Key | Should -Be 'proj-1/src/Web'
+                $g.Parent | Should -Be 'build'
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        # The Q1 decision, made explicit: a key names the project file or the ONE directory holding
+        # it, never everything underneath. Matching by containment would need a "deepest group wins"
+        # rule layered on top, which only surfaces once two groups already overlap.
+        It 'a key does NOT own projects nested deeper beneath it' {
+            $root = New-GroupFixture 'grpDepth' @('[build."proj-1"]', 'platform = "x64"')
+            try {
+                $deep = Resolve-ConfigGroup -RepoRoot $root -Section 'build' -TargetProject ([System.IO.Path]::Combine($root, 'proj-1', 'src', 'Web', 'Web.csproj'))
+                $deep.Status | Should -Be 'unmatched'
+                # ...while the project sitting directly in that directory still matches.
+                $flat = Resolve-ConfigGroup -RepoRoot $root -Section 'build' -TargetProject ([System.IO.Path]::Combine($root, 'proj-1', 'App.csproj'))
+                $flat.Status | Should -Be 'ready'
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        It 'groups that name other projects leave this one unmatched' {
+            $root = New-GroupFixture 'grpUnmatched' @('[build."proj-1"]', 'platform = "x64"')
+            try {
+                (Resolve-ConfigGroup -RepoRoot $root -Section 'build' -TargetProject ([System.IO.Path]::Combine($root, 'proj-9', 'App.csproj'))).Status |
+                    Should -Be 'unmatched'
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        It 'two groups naming the same project is an error, not a silent pick' {
+            $root = New-GroupFixture 'grpAmbig' @(
+                '[build."proj-1"]'
+                'platform = "x64"'
+                '[build."proj-1/App.csproj"]'
+                'platform = "AnyCPU"'
+            )
+            try {
+                { Resolve-ConfigGroup -RepoRoot $root -Section 'build' -TargetProject ([System.IO.Path]::Combine($root, 'proj-1', 'App.csproj')) } |
+                    # Brackets are escaped: -ExpectedMessage is a -like pattern, where an unescaped
+                    # [build] is the CHARACTER CLASS {b,u,i,l,d} and would not match the literal.
+                    Should -Throw -ExpectedMessage '*Ambiguous `[build`] configuration*'
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        It 'groups under one section do not leak into another' {
+            $root = New-GroupFixture 'grpIsolation' @('[publish."proj-1"]', 'platform = "x64"')
+            try {
+                (Resolve-ConfigGroup -RepoRoot $root -Section 'build' -TargetProject ([System.IO.Path]::Combine($root, 'proj-1', 'App.csproj'))).Status |
+                    Should -Be 'none'
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+    }
+
+    Context 'Resolve-GroupedConfigValue - per-key layering (the Q2 decision)' {
+        BeforeAll {
+            $script:layerRoot = New-GroupFixture 'grpLayer' @(
+                '[build]'
+                'configuration = "Release"'
+                'platform = "AnyCPU"'
+                '[build."proj-1"]'
+                'platform = "x64"'
+                '[build."proj-2"]'
+                'configuration = "Debug"'
+            )
+            $script:layerP1 = Resolve-ConfigGroup -RepoRoot $script:layerRoot -Section 'build' -TargetProject ([System.IO.Path]::Combine($script:layerRoot, 'proj-1', 'App.csproj'))
+            $script:layerP2 = Resolve-ConfigGroup -RepoRoot $script:layerRoot -Section 'build' -TargetProject ([System.IO.Path]::Combine($script:layerRoot, 'proj-2', 'App.csproj'))
+            $script:layerP9 = Resolve-ConfigGroup -RepoRoot $script:layerRoot -Section 'build' -TargetProject ([System.IO.Path]::Combine($script:layerRoot, 'proj-9', 'App.csproj'))
+        }
+        AfterAll { Remove-IsolatedRepoRoot -Dir $script:layerRoot }
+
+        It "a key the group sets overrides the bare section's value" {
+            (Resolve-GroupedConfigValue -RepoRoot $script:layerRoot -Group $script:layerP1 -Key 'platform') | Should -Be 'x64'
+        }
+        # The whole reason layering was chosen over whole-group replacement: a repo-wide setting is
+        # written ONCE. Under replacement this returns nothing and the build silently loses Release.
+        It 'a key the group omits is inherited from the bare section' {
+            (Resolve-GroupedConfigValue -RepoRoot $script:layerRoot -Group $script:layerP1 -Key 'configuration') | Should -Be 'Release'
+        }
+        It 'each group overrides independently' {
+            (Resolve-GroupedConfigValue -RepoRoot $script:layerRoot -Group $script:layerP2 -Key 'configuration') | Should -Be 'Debug'
+            (Resolve-GroupedConfigValue -RepoRoot $script:layerRoot -Group $script:layerP2 -Key 'platform') | Should -Be 'AnyCPU'
+        }
+        It 'an explicit CLI value beats both layers' {
+            (Resolve-GroupedConfigValue -RepoRoot $script:layerRoot -Group $script:layerP1 -Key 'platform' -CliValue 'ARM64') | Should -Be 'ARM64'
+        }
+        It 'an unmatched project still gets every shared value' {
+            (Resolve-GroupedConfigValue -RepoRoot $script:layerRoot -Group $script:layerP9 -Key 'configuration') | Should -Be 'Release'
+            (Resolve-GroupedConfigValue -RepoRoot $script:layerRoot -Group $script:layerP9 -Key 'platform') | Should -Be 'AnyCPU'
+        }
+        It 'falls through to the supplied default when neither layer has the key' {
+            (Resolve-GroupedConfigValue -RepoRoot $script:layerRoot -Group $script:layerP1 -Key 'nothing_sets_this' -Default 'fallback') | Should -Be 'fallback'
+        }
+    }
+
+    Context 'Resolve-ProjectTarget - no default target once groups exist (the Q3 decision)' {
+        It 'refuses to pick a target and names the configured groups' {
+            $root = New-GroupFixture 'grpNoDefault' @(
+                '[publish."proj-1/src/Web"]'
+                'default_pubxml = "a.pubxml"'
+                '[publish."proj-2/src/Web"]'
+                'default_pubxml = "b.pubxml"'
+            )
+            try {
+                { Resolve-ProjectTarget -RepoRoot $root -Section 'publish' } |
+                    Should -Throw -ExpectedMessage '*proj-1/src/Web*proj-2/src/Web*'
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        # Rejected alternative: let a bare `project` remain the default. That turns "forgot to say
+        # which project" into "silently acted on the main one" -- the same wrong answer, one step
+        # later. The message says so rather than leaving the user to infer it.
+        It 'a bare project key is not a default while groups exist, and the message says so' {
+            $root = New-GroupFixture 'grpBareIgnored' @(
+                '[publish]'
+                'project = "proj-1/src/Web/Web.csproj"'
+                '[publish."proj-2/src/Web"]'
+                'default_pubxml = "b.pubxml"'
+            )
+            try {
+                $null = New-GroupProject -Root $root -Rel 'proj-1/src/Web/Web.csproj'
+                { Resolve-ProjectTarget -RepoRoot $root -Section 'publish' } |
+                    Should -Throw -ExpectedMessage '*not used as a default*'
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        It 'an explicitly named project is accepted as before' {
+            $root = New-GroupFixture 'grpExplicit' @('[publish."proj-1/src/Web"]', 'default_pubxml = "a.pubxml"')
+            try {
+                $abs = New-GroupProject -Root $root -Rel 'proj-1/src/Web/Web.csproj'
+                (Resolve-ProjectTarget -RepoRoot $root -Section 'publish' -CliProjectValue 'proj-1/src/Web/Web.csproj').Path |
+                    Should -Be $abs
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        # Single-project repos are the majority and must be untouched by all of the above.
+        It 'a repo with no groups still uses its bare project key' {
+            $root = New-GroupFixture 'grpLegacy' @('[publish]', 'project = "src/Web/Web.csproj"')
+            try {
+                $abs = New-GroupProject -Root $root -Rel 'src/Web/Web.csproj'
+                (Resolve-ProjectTarget -RepoRoot $root -Section 'publish').Path | Should -Be $abs
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+
+        # run falls back to [build].project, so without the same check the arbitrary pick would come
+        # back through that door.
+        It 'the run -> build fallback is covered by the same rule' {
+            $root = New-GroupFixture 'grpRunFallback' @(
+                '[build]'
+                'project = "proj-1/App.csproj"'
+                '[build."proj-2"]'
+                'platform = "x64"'
+            )
+            try {
+                $null = New-GroupProject -Root $root -Rel 'proj-1/App.csproj'
+                { Resolve-ProjectTarget -RepoRoot $root -Section 'run' } |
+                    Should -Throw -ExpectedMessage '*`[build`] has per-project groups*'
+            } finally { Remove-IsolatedRepoRoot -Dir $root }
+        }
+    }
+
+    Context 'Format-ConfigGroupLine' {
+        It 'says nothing at all when the repo has no groups' {
+            (Format-ConfigGroupLine -Group ([PSCustomObject]@{ Section = 'build'; Parent = 'build'; Key = ''; Status = 'none' }) -Label '設定分組') |
+                Should -BeNullOrEmpty
+        }
+        It 'names the group that supplied the settings' {
+            (Format-ConfigGroupLine -Group ([PSCustomObject]@{ Section = 'build."proj-1"'; Parent = 'build'; Key = 'proj-1'; Status = 'ready' }) -Label '設定分組') |
+                Should -Match 'proj-1'
+        }
+        # Groups exist but none matched: the build still succeeds on the shared values, so without
+        # this line "my group did nothing" is invisible.
+        It 'reports the unmatched case rather than staying silent' {
+            (Format-ConfigGroupLine -Group ([PSCustomObject]@{ Section = 'build'; Parent = 'build'; Key = ''; Status = 'unmatched' }) -Label '設定分組') |
+                Should -Match '無對應分組'
         }
     }
 }
