@@ -200,14 +200,17 @@ Describe 'Merge-MainIntoBranches' {
     # attempted, and the original branch was never restored (issue #128; the same shape was
     # reproduced on Request-Merge.ps1 in #127).
     #
-    # The shim warns ONLY on the rollback command, not on every git call. That is the honest scope
-    # today: the reads in this script still capture with `2>$null` and are being converted in a
-    # separate pass, so a warn-on-everything shim would fail here for a different reason and this
-    # case would stop measuring the rollback. Widen it to warn unconditionally once those land --
-    # Request-Merge.test.ps1 did exactly that after #123 fixed the shared library.
-    Context 'Case 7 (issue #128): a git that warns on stderr must not skip the conflict rollback' {
+    # The shim warns on EVERY git call. It started out warning only on `--abort`, because this
+    # script's own reads still captured with `2>$null` and would have failed first, leaving the case
+    # measuring them rather than the rollback. Those reads now go through Read-Git too, so the
+    # narrowing is gone -- which makes this the end-to-end version: the whole call chain, shared
+    # library included, has to survive a git that warns on every single invocation.
+    # (Request-Merge.test.ps1 was widened the same way after #123 fixed Core.ps1.)
+    # Numbered 5b rather than 7: this is Case 5's scenario re-run against a git that warns, so it
+    # belongs next to it -- and appending it as 7 would have left the file reading 1,2,3,4,5,7,6.
+    Context 'Case 5b (issue #128): a git that warns on stderr must not skip the conflict rollback' {
         It 'aborts the merge, keeps going, and restores the original branch' {
-            $sb = New-Sandbox -Tag 'mmb-7'
+            $sb = New-Sandbox -Tag 'mmb-5b'
             $shimDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'tp-shim-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
             $savedPath = $env:PATH
             try {
@@ -236,22 +239,21 @@ Describe 'Merge-MainIntoBranches' {
                     [System.IO.Path]::Combine($shimDir, 'git.cmd'),
                     @(
                         '@echo off',
-                        'set "TP_ARGS=%*"',
-                        'echo(%TP_ARGS%| findstr /C:"--abort" >nul && echo warning: detected dubious ownership in repository 1>&2',
+                        'echo warning: detected dubious ownership in repository 1>&2',
                         ('"' + $realGit + '" %*')
                     ),
                     [System.Text.Encoding]::ASCII)
 
                 $env:PATH = $shimDir + ';' + $savedPath
 
-                # Preconditions: prove the shim resolves AND that it is selective. A shim that never
-                # loads gives a pass that means nothing; one that warns on everything would move
-                # what this case measures.
+                # Precondition: prove the shim actually resolves before trusting anything this case
+                # concludes -- a shim that never loads produces a pass that means nothing. Both a
+                # read and the rollback command are probed, since the point is that EVERY call warns.
                 $probeErr = [System.IO.Path]::Combine($shimDir, 'probe.err')
+                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
+                [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
                 & cmd.exe /c "git merge --abort 2> `"$probeErr`"" | Out-Null
                 [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
-                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
-                [System.IO.File]::ReadAllText($probeErr) | Should -Not -Match 'dubious ownership'
 
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
 
@@ -285,17 +287,17 @@ Describe 'Merge-MainIntoBranches' {
                 # uses rev-parse, does not read the index) still succeeds, so this hits the
                 # dirty-check stage. Safety contract: the script fails loud and does NOT silently
                 # treat the tree as clean and merge.
-                # NOTE: on PS 5.1 with EAP=Stop, 2>$null does NOT prevent the NativeCommandError
-                # when git writes to stderr (empirically verified), so the corrupt-index failure
-                # surfaces git's own fatal ("...index file...") at the status call here; the
-                # script's $LASTEXITCODE guard is the fallback for a silent non-zero exit. Hence
-                # we assert the index/status failure text, not the guard's message.
+                # The status read now goes through Read-Git (issue #128), so the script's own
+                # $LASTEXITCODE guard is what fires here -- it is no longer a fallback behind a
+                # NativeCommandError thrown by the `2>` redirect before the guard could run. The
+                # assertion below already accepted both wordings, so it stayed green across that
+                # change; this note replaces the old one, which described the opposite mechanism.
                 [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, '.git', 'index'), 'garbage-not-a-git-index')
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
                 $res.ExitCode | Should -Not -Be 0
-                # Failed at the status/index stage, not elsewhere. Accept EITHER git's native
-                # fatal (the EAP=Stop path -- 'index file') OR the script's own guard message
-                # (the rare silent-exit path) -- precise without coupling to one git version's wording.
+                # Failed at the status/index stage, not elsewhere. Both wordings stay accepted:
+                # the guard's message is the expected one now, and git's own fatal ('index file')
+                # would still be correct evidence of the same stage failing.
                 $res.Combined | Should -Match 'index file|git status --porcelain failed'
                 $res.Stdout   | Should -Not -Match 'Merged cleanly'  # never reached a successful merge
             } finally {
