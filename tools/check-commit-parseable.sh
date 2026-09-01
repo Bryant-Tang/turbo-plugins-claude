@@ -55,7 +55,17 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 2
 fi
 
-shas="$(git rev-list --no-merges "$RANGE" 2>/dev/null || true)"
+# An UNRESOLVABLE range and an EMPTY range are different facts and must not collapse into one.
+# `... || true` would turn "git cannot parse this range" into "no commits", and --allow-empty would
+# then wave it through -- a broken caller reported as a clean run. The all-zero `before` GitHub
+# sends when a branch is created is exactly such a range, and it arrives on the one code path that
+# passes --allow-empty.
+if ! shas="$(git rev-list --no-merges "$RANGE" 2>/dev/null)"; then
+    echo "check-commit-parseable: '$RANGE' is not a range git can resolve." >&2
+    echo "  Refusing to report success: that is a broken caller, not an empty range." >&2
+    echo "  --allow-empty covers a legitimately empty range; it does not cover an unresolvable one." >&2
+    exit 2
+fi
 if [ -z "$shas" ]; then
     # An empty range is not evidence of anything, so the DEFAULT is to refuse: a range that
     # silently resolves to nothing is precisely how a check becomes a no-op that still shows green
@@ -83,7 +93,17 @@ bad=0
 while IFS= read -r sha; do
     [ -n "$sha" ] || continue
     subject="$(git log -1 --format='%s' "$sha")"
-    if ! printf '%s' "$subject" | grep -qE "^($VISIBLE_TYPES)(\([^)]*\))?!?: "; then
+    # Deliberately LOOSE: a known type followed by any of `(`, `!` or `:` is enough to send the
+    # message to the real parser. An exact `type(scope)!: ` shape was the first attempt and it was
+    # wrong in the one direction that matters -- `fix:no-space` fails to match, gets filed as "not
+    # a visible type", and is never judged at all. But release-please would reject that message
+    # too, so the bullet still vanishes. That is this script's own failure mode, moved from the
+    # verdict into the selection. The verdict is the authority; selection only decides what is
+    # WORTH asking about, and it should err towards asking.
+    #
+    # The trailing-character requirement keeps `fixup!` and `perfectly:` out: after `fix` comes
+    # `u`, after `perf` comes `e`, neither of which is `(`, `!` or `:`.
+    if ! printf '%s' "$subject" | grep -qE "^($VISIBLE_TYPES)[(!:]"; then
         skipped=$((skipped + 1))
         continue
     fi

@@ -656,6 +656,21 @@ jobs:
         shell: bash
         run: bash tools/check-commit-parseable.sh --allow-empty "${{ github.event.before }}..${{ github.sha }}"
 
+      # EVERY declared trigger must reach a step that actually runs. `on:` also lists
+      # workflow_dispatch, and with only the two conditions above a manual run skipped both steps
+      # and reported success having judged nothing -- a job that is green because it did no work,
+      # which is the precise failure this whole job exists to stop. A dispatch has no "incoming"
+      # commit set, so the honest range is "whatever this ref has that main does not", and on main
+      # itself that is legitimately empty. `tools/tests/unit/check-commit-parseable.test.sh` asserts
+      # that every trigger in `on:` is covered here, so adding a trigger later cannot quietly
+      # reopen this hole.
+      - name: Check this ref's commits (manual run)
+        if: github.event_name != 'pull_request' && github.event_name != 'push'
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.event.repository.default_branch }}"
+          bash tools/check-commit-parseable.sh --allow-empty "FETCH_HEAD..HEAD"
+
   # ── tests-passed ────────────────────────────────────────────────────────────
   # The ONE check branch protection should point at. Its whole purpose is to have a name that never
   # changes.

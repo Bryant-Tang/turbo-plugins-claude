@@ -165,5 +165,71 @@ test_the_workflow_actually_runs_this_guard() {
     assertTrue 'tests.yml must invoke the guard' $?
 }
 
+# A range git cannot resolve is a broken caller, not an empty one. Collapsing the two -- which
+# `git rev-list ... || true` does -- lets --allow-empty wave a broken invocation through as a clean
+# run. The all-zero `before` GitHub sends on branch creation is exactly such a range, and it lands
+# on the one path that passes --allow-empty.
+test_an_unresolvable_range_is_refused_even_with_allow_empty() {
+    local repo; repo="$(make_repo 'fix(x): something')"
+    run_guard "$repo" "$STUBS/ok" --allow-empty '0000000000000000000000000000000000000000..HEAD'
+    assertEquals 'an unresolvable range must exit 2 even with --allow-empty' 2 $?
+    rm -rf "$repo"
+}
+
+# Selection must err towards ASKING. `fix:no-space` is not valid conventional-commits, so
+# release-please drops it -- but an exact-shape filter files it as "not a visible type" and never
+# judges it, which is this script's own failure mode relocated from the verdict to the selection.
+test_a_malformed_visible_type_is_still_judged() {
+    local repo; repo="$(make_repo 'fix:no space after the colon')"
+    run_guard "$repo" "$STUBS/bad" 'HEAD~1..HEAD'
+    assertEquals 'a malformed but clearly-typed subject must reach the parser' 1 $?
+    rm -rf "$repo"
+}
+
+# ...without becoming so loose that unrelated subjects get judged.
+test_lookalike_subjects_are_not_judged() {
+    local repo s
+    for s in 'fixup! earlier commit' 'perfectly fine prose' 'dbg: scratch note' 'documentation rewrite'; do
+        repo="$(make_repo "$s")"
+        run_guard "$repo" "$STUBS/bad" 'HEAD~1..HEAD'
+        assertEquals "subject '$s' must NOT be judged" 0 $?
+        rm -rf "$repo"
+    done
+}
+
+# The job must do real work on every declared trigger. With steps gated on event_name, a trigger
+# nobody wired up means both steps skip, no step fails, and the job reports success having judged
+# nothing -- green because it did nothing, which is the failure this job exists to stop.
+test_every_workflow_trigger_is_covered_by_a_step() {
+    local triggers trig conditions missing='' count=0
+    # Trigger names: two-space indent inside the `on:` block.
+    triggers="$(awk '
+        /^on:[[:space:]]*$/ { inon = 1; next }
+        inon && /^[a-z]/    { inon = 0 }
+        inon && /^  [a-z_]+:[[:space:]]*$/ { gsub(/[ :]/, "", $0); print }
+    ' "$WF")"
+    # Every `if:` on a step of this job, joined.
+    conditions="$(awk '
+        /^  commit-messages-parseable:/ { injob = 1; next }
+        injob && /^  [a-z]/ { injob = 0 }
+        injob && /if:/ { print }
+    ' "$WF" | tr '\n' ' ')"
+
+    for trig in $triggers; do
+        count=$((count + 1))
+        # Covered either by being named in a condition, or by a catch-all `!=` condition.
+        case "$conditions" in
+            *"$trig"*) ;;
+            *'!='*)    ;;
+            *) missing="$missing $trig" ;;
+        esac
+    done
+    assertTrue "expected to find the workflow's triggers, found $count" "[ '$count' -ge 2 ]"
+    assertEquals "triggers with no step that runs for them:$missing" '' "$missing"
+    # And the catch-all must exist, otherwise a future trigger silently skips every step.
+    printf '%s' "$conditions" | grep -q '!='
+    assertTrue 'the job needs a catch-all step so an unlisted trigger cannot no-op' $?
+}
+
 # shellcheck source=/dev/null
 . "$SHUNIT2"

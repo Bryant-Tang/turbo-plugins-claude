@@ -8,13 +8,16 @@
 | `plugin-requires-tool.sh` | 讀 `plugins/<name>/tests/required-tools`,答「這個 plugin 需不需要某個外部工具」 | `tests.yml` 的 `Install Subversion` 步驟(兩個平台) |
 | `install-svn.sh` | 裝 Subversion,並依平台用對的重試形狀(apt 要先有逾時才重試得動,choco 直接重試) | `tests.yml` 的 `Install Subversion` 步驟(兩個平台) |
 | `verify-inert-files.sh` | 把惰性檔案的**內容**換成垃圾再跑全部套件,用實驗證明「沒有東西讀它們」 | `tests.yml` 的 `inert-files-are-inert` job |
-<!-- ⚠️ 本機跑它之前先把惰性檔案的修改 commit 掉:它會換掉內容再「還原」,而還原的來源是 git,
-     所以**未 commit 的惰性檔修改會被消滅**。CI 的工作目錄永遠是乾淨的,只有本機會踩到。
-     實際發生過:一次在 CLAUDE.md 加規則、還沒 commit 就跑了 tools 套件,那段字直接沒了。 -->
 | `check-commit-parseable.{sh,js}` | 用 release-please 自己那支嚴格解析器判斷 commit 會不會被靜默丟掉(issue #141) | `tests.yml` 的 `commit-messages-parseable` job |
 | `verify-core-identical.{ps1,sh}` | 跨 plugin 逐位元組一致性 + marketplace 可安裝性 | `verify-core-identical` job；本機手動 |
 | `lint-ps-compat.{ps1,sh}` | PS 5.1 相容性 lint | 各 plugin orchestrator 的 pre-flight |
 | `verify-approved-verbs.ps1` | PowerShell approved verb 檢查 | 本機手動 |
+
+> ⚠️ **本機跑 `verify-inert-files.sh` 之前,先把惰性檔案的修改 commit 掉。** 它會把那些檔案的內容換成
+> 垃圾,再從 **git** 還原——所以**未 commit 的惰性檔修改會被消滅**（`CLAUDE.md`、repo 根 `README.md`、
+> 各 plugin 的 `CHANGELOG.md` 與 `plugin.json`,完整清單見 `--list`）。CI 的工作目錄永遠乾淨,只有本機
+> 會踩到。實際發生過:在 `CLAUDE.md` 加了一段規則、還沒 commit 就跑了 tools 套件,那段字直接沒了,
+> 是後來 grep 才發現的。
 
 ## 測試慣例
 
