@@ -171,6 +171,23 @@ try {
         try {
             $gitFile = Join-Path $remoteWorktreePath '.git'
             if (Test-Path -LiteralPath $gitFile) {
+                # `2>$null` under EAP=Stop, left inline on purpose (issue #137). Measured for this
+                # exact shape, `--keep-local` being the part that matters: removing a path that was
+                # never svn-added, one already scheduled for removal, and one that does not exist
+                # at all ALL exit 0 with empty stderr -- `--keep-local` makes an unversioned target
+                # a no-op. Without that flag the same call is `E200005`, exit 1, which is what the
+                # bash twin's `|| true` is defending against.
+                #
+                # So the guard below is DEAD, and honestly so: the only way to make svn exit
+                # non-zero here is to run it where the directory is not a working copy, and that
+                # case writes stderr (`E155007`) -- which under EAP=Stop terminates at the line
+                # above before the guard can run. There is no try/catch here, so that state aborts
+                # the script with an opaque NativeCommandError rather than logging "not tracked".
+                # Deliberately left as-is: it is pre-existing, it only occurs when the bridge
+                # worktree is not an SVN working copy (already broken), and aborting is not the
+                # wrong outcome -- only the message is poor. Note the bash twin does NOT abort
+                # there: `|| true` swallows it and carries on, so the two halves diverge in that
+                # one abnormal state.
                 & svn rm --keep-local '.git' 2>$null | Out-Null
                 if ($LASTEXITCODE -ne 0) { Write-Verbose 'svn rm .git: not tracked (ok)' }
             }

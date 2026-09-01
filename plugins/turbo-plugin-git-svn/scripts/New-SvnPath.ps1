@@ -38,6 +38,12 @@ try {
 
     # Already there? Say so and stop -- creating is not idempotent in a useful way (a second mkdir
     # fails), and a caller that reaches here with an existing path has misread its own preflight.
+    # `2>$null` under EAP=Stop, deliberately left inline (issue #137). It looks like the #128 bug
+    # -- a stderr write becomes terminating and the $LASTEXITCODE guard below is then unreachable
+    # -- and the mechanism really does apply to svn. What makes it safe is that `svn` is the
+    # --non-interactive shim in lib/Common.ps1: with that flag svn writes stderr only when the
+    # call GENUINELY fails, and "genuinely failed" is exactly when $exists must be false. The
+    # throw and the guard therefore agree. See the write-up at the shim before changing this.
     $exists = $false
     try {
         & svn info $url 2>$null | Out-Null

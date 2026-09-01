@@ -1320,5 +1320,91 @@ test_expand_unversioned_dir_ignores_non_directories() {
     rm -rf "$repo"
 }
 
+# --- the --non-interactive shim (issue #137) ----------------------------------------------------
+#
+# Everything that makes the `& svn ... 2>$null` call sites safe rests on ONE property: every svn
+# invocation carries --non-interactive. Without it svn can PROMPT, and a prompt is written to
+# stderr on an otherwise healthy call -- which is exactly the #128 shape (under EAP=Stop the `2>`
+# redirection turns that into a terminating error and the $LASTEXITCODE guard below it becomes
+# unreachable). It has already cost one real incident: a bootstrap replay sat in svn's interactive
+# conflict prompt indefinitely.
+#
+# That property had no test at all. Both checks below fail LOUDLY if it is broken, because the
+# breakage itself is silent: svn simply starts prompting again.
+
+# A fake `svn` on PATH: answers the version gate, and records the argv of every other call.
+_tp_make_fake_svn() {
+    local dir="$1"
+    cat > "$dir/svn" <<'FAKE'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then printf '1.14.5\n'; exit 0; fi
+printf '%s\n' "$@" > "$TP_FAKE_SVN_ARGV"
+exit 0
+FAKE
+    chmod +x "$dir/svn"
+}
+
+test_svn_shim_injects_non_interactive() {
+    local tmp
+    tmp="$(mktemp -d -t turbo-common-shim-XXXXXX)"
+    _tp_make_fake_svn "$tmp"
+
+    local saved_path="$PATH" saved_checked="${_tp_svn_version_checked:-}"
+    PATH="$tmp:$PATH"
+    _tp_svn_version_checked=''
+    TP_FAKE_SVN_ARGV="$tmp/argv"
+    export TP_FAKE_SVN_ARGV
+
+    svn info 'http://example.invalid/repo' >/dev/null 2>&1
+
+    PATH="$saved_path"
+    _tp_svn_version_checked="$saved_checked"
+
+    assertTrue 'the shim invoked svn at all' "[ -f '$tmp/argv' ]"
+    grep -qx -- '--non-interactive' "$tmp/argv"
+    assertTrue 'the svn shim injects --non-interactive' $?
+    # It must be injected, not replace the caller's own arguments.
+    grep -qx -- 'info' "$tmp/argv"
+    assertTrue 'the caller arguments survive the shim' $?
+    rm -rf "$tmp"
+}
+
+# Repo-level: the shim only applies to scripts that SOURCE the lib defining it. A script that
+# invokes svn without sourcing it gets the bare exe, no --non-interactive, and the prompt class
+# comes straight back -- with nothing to warn anyone. Checked for both language halves.
+test_every_svn_calling_script_sources_the_shim() {
+    local scripts_dir="$PLUGIN_ROOT/scripts"
+    local scanned=0 invoking=0 f
+    local svn_verbs='add|info|update|commit|log|status|propget|propset|propdel|rm|mkdir|checkout|copy|revert|cleanup|cat|list|delete|move|import|export|resolve|switch'
+
+    for f in "$scripts_dir"/*.sh; do
+        [ -e "$f" ] || continue
+        [ "$(basename "$f")" = 'common.sh' ] && continue
+        scanned=$((scanned + 1))
+        if grep -qE "(^|[^[:alnum:]_.-])svn[[:space:]]+($svn_verbs)([[:space:]]|\$)" "$f"; then
+            invoking=$((invoking + 1))
+            if ! grep -qE 'common\.sh' "$f"; then
+                fail "$(basename "$f") invokes svn but does not source common.sh (no --non-interactive)"
+            fi
+        fi
+    done
+
+    for f in "$scripts_dir"/*.ps1; do
+        [ -e "$f" ] || continue
+        scanned=$((scanned + 1))
+        if grep -qE '& *svn[[:space:]]' "$f"; then
+            invoking=$((invoking + 1))
+            if ! grep -qE 'Common\.ps1' "$f"; then
+                fail "$(basename "$f") invokes svn but does not source Common.ps1 (no --non-interactive)"
+            fi
+        fi
+    done
+
+    # Floors: a pattern that silently stops matching would turn this test into a no-op that still
+    # reports green -- the exact failure mode it exists to prevent.
+    assertTrue "expected to scan many scripts, scanned $scanned" "[ '$scanned' -ge 20 ]"
+    assertTrue "expected several svn-invoking scripts, found $invoking" "[ '$invoking' -ge 6 ]"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

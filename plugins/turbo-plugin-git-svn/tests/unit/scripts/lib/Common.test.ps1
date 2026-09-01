@@ -1417,3 +1417,75 @@ Describe 'Get-UnversionedDirectoryFiles (issue #24)' {
         }
     }
 }
+
+Describe 'svn shim injects --non-interactive (issue #137)' {
+    # Everything that makes the `& svn ... 2>$null` call sites safe under EAP=Stop rests on this
+    # one property. Without --non-interactive svn can PROMPT, and a prompt is written to stderr on
+    # an otherwise healthy call -- the exact #128 shape, where the `2>` redirection turns a stderr
+    # write into a TERMINATING error and the $LASTEXITCODE guard beneath it becomes unreachable.
+    # It has already cost one real incident: a bootstrap replay sat in svn's interactive conflict
+    # prompt indefinitely. Until now the property had no test on either language half.
+    #
+    # A fake svn on PATH, so this needs neither a real Subversion nor a real repository. No -Skip:
+    # a skip condition is evaluated at DISCOVERY time, so anything computed in BeforeAll reads as
+    # $null there and would silently disable the whole block while still reporting green.
+    BeforeAll {
+        $shimDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "tp-svn-shim-$([guid]::NewGuid().ToString('N').Substring(0,8))")
+        New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
+        $script:ShimArgv = [System.IO.Path]::Combine($shimDir, 'argv.txt')
+        $env:TP_FAKE_SVN_ARGV = $script:ShimArgv
+
+        if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+            $fake = [System.IO.Path]::Combine($shimDir, 'svn.cmd')
+            $lines = @(
+                '@echo off',
+                'if "%~1"=="--version" (echo 1.14.5& exit /b 0)',
+                '>"%TP_FAKE_SVN_ARGV%" echo %*',
+                'exit /b 0'
+            )
+            Set-Content -LiteralPath $fake -Value $lines -Encoding ascii
+        } else {
+            $fake = [System.IO.Path]::Combine($shimDir, 'svn')
+            $lines = @(
+                '#!/usr/bin/env bash',
+                'if [ "$1" = "--version" ]; then printf ''1.14.5\n''; exit 0; fi',
+                'printf ''%s\n'' "$@" > "$TP_FAKE_SVN_ARGV"',
+                'exit 0'
+            )
+            Set-Content -LiteralPath $fake -Value $lines -Encoding ascii
+            & chmod +x $fake
+        }
+
+        $script:SavedPath = $env:PATH
+        $script:ShimDir = $shimDir
+        $env:PATH = $shimDir + [System.IO.Path]::PathSeparator + $env:PATH
+
+        # Call through the shim exactly as production code does.
+        svn info 'http://example.invalid/repo' 2>$null | Out-Null
+
+        $script:ShimCaptured = if (Test-Path -LiteralPath $script:ShimArgv) {
+            (Get-Content -LiteralPath $script:ShimArgv -Raw)
+        } else { $null }
+    }
+
+    AfterAll {
+        if ($script:SavedPath) { $env:PATH = $script:SavedPath }
+        Remove-Item -Path Env:TP_FAKE_SVN_ARGV -ErrorAction SilentlyContinue
+        if ($script:ShimDir -and (Test-Path -LiteralPath $script:ShimDir)) {
+            Remove-Item -Recurse -Force -LiteralPath $script:ShimDir -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'actually reached the executable (guards against a vacuous pass)' {
+        $script:ShimCaptured | Should -Not -BeNullOrEmpty
+    }
+
+    It 'passes --non-interactive to the real svn executable' {
+        $script:ShimCaptured | Should -Match '--non-interactive'
+    }
+
+    It 'injects the flag without dropping the caller arguments' {
+        $script:ShimCaptured | Should -Match 'info'
+        $script:ShimCaptured | Should -Match 'example\.invalid'
+    }
+}

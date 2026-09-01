@@ -69,6 +69,14 @@ assert_svn_version() {
   fi
 }
 
+# Second reason the flag is load-bearing, on the PowerShell side (issue #137): it is also what
+# keeps the `& svn ... 2>$null` call sites safe under $ErrorActionPreference = 'Stop'. #128 fixed
+# the git side, where `warning: detected dubious ownership` writes to stderr on a HEALTHY, exit-0
+# call, and the `2>` redirection then turns that into a TERMINATING error. Measured for svn: the
+# mechanism applies identically, but svn's only "stderr while otherwise healthy" behaviour is its
+# INTERACTIVE PROMPTS -- which this flag removes. The same tree conflict that prompts exits 0 with
+# an empty stderr once the flag is present. Full write-up next to the PowerShell twin in
+# lib/Common.ps1; keep the two shims in step.
 svn() {
   if [[ -z "$_tp_svn_version_checked" ]]; then
     assert_svn_version || return 1

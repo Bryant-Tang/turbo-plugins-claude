@@ -45,6 +45,9 @@ function Assert-SvnVersion {
 
     # try/catch around the native call: under EAP=Stop anything svn writes to stderr becomes a
     # terminating NativeCommandError before the emptiness check can run (repo CLAUDE.md, PS 5.1 #4).
+    # This one deliberately calls the RAW EXE, not the `svn` shim below: it runs from inside that
+    # shim's own version gate, so the shim is not usable yet. That means no --non-interactive here
+    # -- harmless, because `--version` has no prompt path at all (measured: exit 0, empty stderr).
     $raw = ''
     try {
         $raw = (& $SvnExe --version --quiet 2>$null | Out-String).Trim()
@@ -72,6 +75,45 @@ Note: the chocolatey 'svn' package is win32svn and is pinned at 1.8.15, so it wi
     }
 }
 
+# `svn` is SHADOWED by this function so that --non-interactive is injected at every call site,
+# including ones added later. `Get-Command -CommandType Application` resolves the real exe, so
+# there is no recursion. The bash twin is the `svn()` function in lib/common.sh.
+#
+# Why the flag is load-bearing (two separate reasons, issue #137):
+#
+#   1. It stops svn from HANGING. A bootstrap replay once hit a tree conflict on `.gitignore`
+#      and sat in svn's interactive conflict prompt indefinitely. With --non-interactive svn
+#      returns a non-zero exit instead of prompting, so the existing $LASTEXITCODE guards and
+#      rollback traps do their job. (Credentials must therefore already be cached: an uncached
+#      password now fails loudly rather than waiting on a prompt nobody can answer.)
+#
+#   2. It is ALSO what keeps the `& svn ... 2>$null` call sites safe under EAP=Stop. #128 fixed
+#      the git side, where `warning: detected dubious ownership` writes to stderr on a HEALTHY,
+#      exit-0 call -- under EAP=Stop the `2>` redirection then turns that into a terminating
+#      NativeCommandError and the following $LASTEXITCODE guard becomes unreachable. #137 asked
+#      whether svn has an equivalent. Measured on svn 1.14.5 / Windows PowerShell 5.1:
+#
+#        * the mechanism DOES apply to svn, and the function boundary changes nothing --
+#          `& svn ... 2>$null` throws exactly like `& svn.exe ... 2>$null`;
+#        * but svn's only "writes stderr while otherwise healthy" behaviour is its INTERACTIVE
+#          PROMPTS (tree conflict, auth, certificate) -- and --non-interactive removes that
+#          entire class. The same tree conflict that prompts (and writes the prompt to stderr)
+#          exits 0 with an EMPTY stderr once the flag is present, reporting the conflict on
+#          stdout instead;
+#        * every other stderr write measured was a genuine failure with a non-zero exit, where
+#          the existing try/catch fallbacks already produce the right answer.
+#
+#      So there is no `dubious ownership` analogue for svn AS THIS PLUGIN INVOKES IT, and that
+#      is a property of this shim, not of svn. Two shapes DO write stderr on an otherwise fine
+#      call and are NOT suppressed by --non-interactive:
+#
+#        * `svn status <path that is not a working copy>` -> exit 0 + `svn: warning: W155007`
+#        * `svn propget <missing property>`               -> exit 1 + `svn: warning: W200017`
+#
+#      Both are normal conditions in this plugin, and today both call sites happen to run with
+#      $ErrorActionPreference already lowered. That is COINCIDENCE, not design: a new call of
+#      either shape inside an EAP=Stop region would reintroduce exactly the #128 failure. If you
+#      add one, either lower EAP locally or drop the `2>` redirection.
 function svn {
     $exe = (Get-Command svn -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     if (-not $script:TpSvnVersionChecked) {
@@ -778,6 +820,10 @@ function Get-SvnUrlAtRev {
         [Parameter(Mandatory = $true)][int]$PegRev,
         [Parameter(Mandatory = $true)][int]$Rev
     )
+    # `2>$null` under EAP=Stop, left inline on purpose (issue #137): safe only because `svn` is the
+    # --non-interactive shim above, which removes the one class of svn behaviour that writes stderr
+    # on an otherwise healthy call (interactive prompts). A throw here therefore means the lookup
+    # really failed, which is what the empty-string fallback already encodes.
     $url = ''
     try {
         $url = (& svn info --show-item url -r $Rev "$BaseUrl@$PegRev" 2>$null | Out-String).Trim()
