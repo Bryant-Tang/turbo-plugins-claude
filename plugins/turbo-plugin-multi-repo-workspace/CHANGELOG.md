@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-multi-repo-workspace 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.3.3](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.3.2...turbo-plugin-multi-repo-workspace--v0.3.3) (2026-09-01)
+
+
+### Documentation
+
+* Core.ps1 的 Read-Git 說明補上「復原路徑是允許的例外」 ([89871b3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/89871b319d28f547b6c1c20ac6a36d8aa600e4be))
+
 ## [0.3.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.3.1...turbo-plugin-multi-repo-workspace--v0.3.2) (2026-08-27)
 
 

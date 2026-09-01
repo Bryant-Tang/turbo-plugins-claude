@@ -2,6 +2,25 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.4.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.3.0...turbo-plugin-dotnet-framework--v0.4.0) (2026-09-01)
+
+
+### Added
+
+* **dotnet-framework:** [build] / [publish] 支援依子專案分組的設定 ([3c7b4a5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3c7b4a51d8516684f37dc911fa2a65346302922d)), closes [#133](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/133)
+
+
+### Fixed
+
+* **dotnet-framework:** build 的排查規則不再引用只有 publish 才有的參數 ([19bd043](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/19bd043040b047ed258242f8e55d53a7206aa0ab))
+* **dotnet-framework:** SolutionDir 改指向專案所屬的 .sln 目錄,而不是 repo 根 ([88b07bf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/88b07bfcb888e91d5875cdd8119adbcef0ecf498)), closes [#132](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/132)
+
+
+### Documentation
+
+* Core.ps1 的 Read-Git 說明補上「復原路徑是允許的例外」 ([89871b3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/89871b319d28f547b6c1c20ac6a36d8aa600e4be))
+* **dotnet-framework:** 講清楚 [run] 沒有分組,並修掉 AnyCPU 段落的用詞 ([67173e6](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/67173e61eb25d6031795fc70e9c96b1ee2879ea7))
+
 ## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.2.1...turbo-plugin-dotnet-framework--v0.3.0) (2026-08-27)
 
 
