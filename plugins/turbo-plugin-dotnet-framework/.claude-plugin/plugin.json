@@ -1,7 +1,7 @@
 {
   "name": "turbo-plugin-dotnet-framework",
   "description": ".NET Framework 本機開發雜務:build / run / stop / publish / cleanup-orphan-iis(IIS Express + MSBuild)。Web 與主控台專案皆可,依 <OutputType> 分派。env-free 設計,集中設定於 .turbo-plugin/;不需要 setup 指令,設定用到才建。",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "repository": "https://github.com/Bryant-Tang/turbo-plugins-claude",
   "author": {

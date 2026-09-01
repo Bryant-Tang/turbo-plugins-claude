@@ -2,6 +2,25 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.5.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.4.1...turbo-plugin-three-environment-db--v0.5.0) (2026-09-01)
+
+
+### Added
+
+* **three-environment-db:** SQL 落點的根目錄可由 [db] sql_root 自訂 ([3001067](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/300106730bfca9bca8a1e1ec2ceabdcec63cb65b)), closes [#124](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/124)
+* 共用 base 段承認 db 也會寫 config.toml,並要求標記區塊保住使用者填的值 ([3705c8f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3705c8f7bdec6cdf0b62fcafcd13e0e8cfd37cbe))
+
+
+### Fixed
+
+* **three-environment-db:** sql_root 只讀 config.toml,不吃 config.local.toml 的覆寫 ([2e216ba](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/2e216baef287bd3ee18dcbf883d54afe50fd6727))
+
+
+### Documentation
+
+* base 段不再宣稱 config.toml 的殼一定帶 git-svn / dotnet 兩組空區塊 ([8847fb5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/8847fb56f968da04f54dcc5dd43128c295b9bf91))
+* Core.ps1 的 Read-Git 說明補上「復原路徑是允許的例外」 ([89871b3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/89871b319d28f547b6c1c20ac6a36d8aa600e4be))
+
 ## [0.4.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.4.0...turbo-plugin-three-environment-db--v0.4.1) (2026-08-27)
 
 
