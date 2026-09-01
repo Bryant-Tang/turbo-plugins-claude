@@ -263,6 +263,116 @@ Describe 'Build-Web' {
         }
     }
 
+    # End-to-end proof of the whole chain for issue #133: config.toml -> group selection -> MSBuild
+    # args -> result template. The unit tests in Common.test.ps1 prove the resolution rules; only a
+    # real run proves Build-Web reads its settings THROUGH them.
+    #
+    # The fixture is the shape from the issue: one repo, two sub-projects, one needing x64 while the
+    # other's .sln only offers Any CPU, and a Configuration that is the same for both.
+    Context 'issue #133 - [build] settings layer per sub-project' {
+        BeforeAll {
+            $script:sbGrp = New-Sandbox 'build-group-layering'
+            $utf8 = New-Object System.Text.UTF8Encoding($false)
+            foreach ($p in @('proj-1', 'proj-2')) {
+                $d = [System.IO.Path]::Combine($script:sbGrp, $p)
+                $null = New-Item -ItemType Directory -Path $d -Force
+                [System.IO.File]::WriteAllText((Join-Path $d 'App.csproj'), $script:CsprojConditional, $utf8)
+            }
+            $tpDir = Join-Path $script:sbGrp '.turbo-plugin'
+            $null = New-Item -ItemType Directory -Path $tpDir -Force
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.toml'),
+                ("[build]`r`nconfiguration = `"Release`"`r`n" +
+                 "[build.`"proj-1`"]`r`nplatform = `"x64`"`r`n"), $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.local.toml'),
+                "[tools]`r`nmsbuild_path = `"msbuild-stub.bat`"`r`n", $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $script:sbGrp 'msbuild-stub.bat'),
+                "@echo off`r`necho MSBUILD_ARGS: %*`r`n", $utf8)
+
+            Push-Location -LiteralPath $script:sbGrp
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                Invoke-GitSilent add -A
+                & git -c commit.gpgsign=false commit -q -m init *>$null
+            } finally { Pop-Location }
+
+            $script:rGrp1 = Invoke-Script -WorkDir $script:sbGrp -ExtraArgs @('-Project', 'proj-1/App.csproj')
+            $script:rGrp2 = Invoke-Script -WorkDir $script:sbGrp -ExtraArgs @('-Project', 'proj-2/App.csproj')
+            $script:rGrpNone = Invoke-Script -WorkDir $script:sbGrp
+        }
+        AfterAll { Remove-Sandbox $script:sbGrp }
+
+        It 'the grouped project gets its own platform' {
+            $script:rGrp1.Stdout | Should -Match '/p:Platform=x64'
+        }
+        # The layering decision, end to end: `configuration` is written ONCE in the bare [build] and
+        # still reaches a project that has its own group. Whole-group replacement would drop it here
+        # and build Debug without saying anything.
+        It 'the grouped project still inherits the shared configuration' {
+            $script:rGrp1.Stdout | Should -Match '/p:Configuration=Release'
+        }
+        It 'a project with no group of its own gets the shared configuration and no platform' {
+            $script:rGrp2.Stdout | Should -Match '/p:Configuration=Release'
+            ($script:rGrp2.Stdout + "`n" + $script:rGrp2.Stderr) | Should -Not -Match '/p:Platform'
+        }
+        It 'the result template names the group that supplied the settings' {
+            $script:rGrp1.Stdout | Should -Match '設定分組.*proj-1'
+        }
+        It 'the result template says so when no group matched' {
+            $script:rGrp2.Stdout | Should -Match '設定分組.*無對應分組'
+        }
+        # Without an explicit target there is nothing that says WHICH sub-project this build is for.
+        It 'refuses to guess a target when groups exist and none was named' {
+            ($script:rGrpNone.Exit -ne 0) | Should -BeTrue
+            ($script:rGrpNone.Stdout + "`n" + $script:rGrpNone.Stderr) | Should -Match 'per-project groups'
+        }
+    }
+
+    # Publish is where issue #132 was reported, because publish only ever takes a csproj. Build has
+    # the same hole whenever the agent builds a single csproj instead of the .sln -- which the SKILL
+    # explicitly tells it to do for a small change. Same helper, so the two can no longer diverge.
+    Context 'issue #132 - a csproj target anchors on its own solution, not the repo root' {
+        BeforeAll {
+            $script:sbBMono = New-Sandbox 'build-mono-solutiondir'
+            $webDir = [System.IO.Path]::Combine($script:sbBMono, 'proj-1', 'src', 'Web')
+            $null = New-Item -ItemType Directory -Path $webDir -Force
+            $utf8 = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $webDir 'HelloApp.csproj'), $script:CsprojConditional, $utf8)
+            # Decoy at the repo root: without it, "the outermost .sln" and the buggy answer are the
+            # same directory, so a walk running the wrong way round would still pass.
+            [System.IO.File]::WriteAllText((Join-Path $script:sbBMono 'Everything.sln'), '', $utf8)
+            [System.IO.File]::WriteAllText(([System.IO.Path]::Combine($script:sbBMono, 'proj-1', 'App.sln')), '', $utf8)
+
+            $tpDir = Join-Path $script:sbBMono '.turbo-plugin'
+            $null = New-Item -ItemType Directory -Path $tpDir -Force
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.local.toml'),
+                "[tools]`r`nmsbuild_path = `"msbuild-stub.bat`"`r`n", $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $script:sbBMono 'msbuild-stub.bat'),
+                "@echo off`r`necho MSBUILD_ARGS: %*`r`n", $utf8)
+
+            Push-Location -LiteralPath $script:sbBMono
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                Invoke-GitSilent add -A
+                & git -c commit.gpgsign=false commit -q -m init *>$null
+            } finally { Pop-Location }
+
+            $script:rBMono = Invoke-Script -WorkDir $script:sbBMono -ExtraArgs @('-Project', 'proj-1/src/Web/HelloApp.csproj')
+            $script:sbBMonoProj1 = [System.IO.Path]::Combine($script:sbBMono, 'proj-1')
+        }
+        AfterAll { Remove-Sandbox $script:sbBMono }
+
+        It 'passes the sub-project solution directory as SolutionDir' {
+            $script:rBMono.Stdout | Should -Match ('/p:SolutionDir=' + [regex]::Escape($script:sbBMonoProj1) + '\\ ')
+        }
+        It 'does NOT pass the repo root (the regression)' {
+            $script:rBMono.Stdout | Should -Not -Match ('/p:SolutionDir=' + [regex]::Escape($script:sbBMono) + '\\ ')
+        }
+    }
+
     # -RepoRoot names the project outright. The scenario this exists for: a session opened at a
     # root that holds several sibling projects, where the cwd is not any of them.
     Context 'U8: -RepoRoot targets a project other than the current directory' {

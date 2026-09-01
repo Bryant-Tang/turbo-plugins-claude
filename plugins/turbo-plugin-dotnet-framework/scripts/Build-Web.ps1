@@ -28,15 +28,20 @@ try {
     # MSBuild / the .sln / Directory.Build.props resolve them — this matches VS. Forcing Debug/AnyCPU
     # (the prior behavior) overrode the csproj's `<Configuration Condition="'$(Configuration)'==''">`
     # default and silently diverged from VS. -Default $null keeps "no value" as no value.
-    $buildConfiguration = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'build' -Key 'configuration' -CliValue $Configuration -Default $null
-    $buildPlatform = Resolve-ConfigValue -RepoRoot $repoRoot -Section 'build' -Key 'platform' -CliValue $Platform -Default $null
+    #
+    # Read through the per-project group when config.toml has `[build."<project path>"]` sections
+    # (issue #133): one repo holding several sub-projects cannot share one platform, because some
+    # need x64 while their neighbours' .sln only offers Any CPU. Layering is per KEY, so a shared
+    # `configuration` stays written once in the bare [build].
+    $buildGroup = Resolve-ConfigGroup -RepoRoot $repoRoot -Section 'build' -TargetProject $projectFile
+    $buildConfiguration = Resolve-GroupedConfigValue -RepoRoot $repoRoot -Group $buildGroup -Key 'configuration' -CliValue $Configuration -Default $null
+    $buildPlatform = Resolve-GroupedConfigValue -RepoRoot $repoRoot -Group $buildGroup -Key 'platform' -CliValue $Platform -Default $null
 
-    # SolutionDir: for a .sln, derive from the .sln's own directory (so $(SolutionDir) resolves for a
-    # non-root solution); for a csproj, use the repo root (unchanged). Keep the trailing separator the
-    # $(SolutionDir) convention expects.
+    # SolutionDir: a .sln derives it from its own directory; a csproj walks up to the nearest .sln
+    # and falls back to the repo root. See Resolve-SolutionDir for why the repo root is the wrong
+    # anchor once a repo holds more than one solution.
     $isSolution = ($target.Type -eq 'sln')
-    $solutionDirBase = if ($isSolution) { [System.IO.Path]::GetDirectoryName($projectFile) } else { $repoRoot }
-    $solutionDir = $solutionDirBase.TrimEnd('\') + '\'
+    $solutionDir = Resolve-SolutionDir -RepoRoot $repoRoot -TargetPath $projectFile -IsSolution:$isSolution
 
     # /restore + /p:RestorePackagesConfig=true — both are load-bearing for packages.config projects:
     #
@@ -88,7 +93,7 @@ try {
     # the user sees which project/solution was built). Configuration/Platform left unspecified are
     # shown as MSBuild/solution-decided, never fabricated.
     Write-Output 'BUILD_OUTPUT (relay these lines to the user as the build result):'
-    $buildLines = Format-BuildResultLines -ResolvedTarget $projectFile -Configuration $buildConfiguration -Platform $buildPlatform -FrontendGroup $frontendGroup -IsSolution:$isSolution
+    $buildLines = Format-BuildResultLines -ResolvedTarget $projectFile -Configuration $buildConfiguration -Platform $buildPlatform -FrontendGroup $frontendGroup -BuildGroup $buildGroup -IsSolution:$isSolution
     foreach ($l in $buildLines) { Write-Output $l }
 }
 catch {
