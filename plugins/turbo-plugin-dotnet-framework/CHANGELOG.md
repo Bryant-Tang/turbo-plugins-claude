@@ -34,6 +34,11 @@
 * git 對 stderr 出警告時不再把健康的 repo 誤判成「不是 git repo」 ([60fabcf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/60fabcf63a2008b5735db429c12722ce375f8227)), closes [#123](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/123)
 
 
+### Changed
+
+* Core.ps1 的設定查找鏈抽成 Get-TurboPluginConfig,成為單一來源 ([a8fa467](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a8fa46720ba7bbe45226f587109ad766953de307))
+
+
 ### Documentation
 
 * **dotnet-framework:** Resolve-FrontendGroup 的註解如實描述省略 -TargetProject 的行為 ([cabf4d7](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/cabf4d72ee7fadbb63ed2f87dcd3958e322d3411))
@@ -54,6 +59,7 @@
 ### Added
 
 * **core:** linked worktree 繼承主 worktree 的機器層設定與 pack-content 核准 ([5a8ffc0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/5a8ffc01774e018bd58d5b8c04d63e176bc51007)), closes [#61](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/61)
+* **setup:** 注入內容能自我說明、能調和,並補上 TODO.md 這一格落點 ([3a6ae4d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3a6ae4dea61bcaf3827819273747a2ea370fe437))
 
 
 ### Fixed

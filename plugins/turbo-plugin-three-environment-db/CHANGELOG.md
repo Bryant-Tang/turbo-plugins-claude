@@ -2,6 +2,19 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.6.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.5.0...turbo-plugin-three-environment-db--v0.6.0) (2026-09-01)
+
+
+### Added
+
+* **three-environment-db:** SP / view / function / trigger 改走 _modules/ 固定檔名,擋掉跨分支的靜默覆蓋 ([84515b8](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/84515b894038cc14b113f699c44b062dc1b075c1))
+
+
+### Fixed
+
+* **three-environment-db:** 首次納管先分「既有物件 / 全新物件」,全新物件不必抓基線 ([0c57acf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0c57acf57812a4d5f040530e4347ab1c15b87c85))
+* **three-environment-db:** _modules 模板不預填兩行 SET,底線孤兒目錄不再無聲消失 ([603a13e](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/603a13e3f2861d7390325b828fc8417026664391))
+
 ## [0.5.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.4.1...turbo-plugin-three-environment-db--v0.5.0) (2026-09-01)
 
 
@@ -28,6 +41,11 @@
 
 * git 對 stderr 出警告時不再把健康的 repo 誤判成「不是 git repo」 ([60fabcf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/60fabcf63a2008b5735db429c12722ce375f8227)), closes [#123](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/123)
 
+
+### Changed
+
+* Core.ps1 的設定查找鏈抽成 Get-TurboPluginConfig,成為單一來源 ([a8fa467](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a8fa46720ba7bbe45226f587109ad766953de307))
+
 ## [0.4.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.3.0...turbo-plugin-three-environment-db--v0.4.0) (2026-08-25)
 
 
@@ -41,6 +59,7 @@
 * **three-environment-db:** case (a) 照樣寫 CLAUDE.md base,且不再把 tp-db-management 說成不可用 ([6f085c9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6f085c935337addc33830f0246c22012b89276e5))
 * **three-environment-db:** case (a) 自己供給白話,並把完成報告的四項都納入檢查 ([470d5e5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/470d5e5a8a5e5f2b417994e3c70ae4d8726ed56e))
 * **three-environment-db:** dbhub 範本改名成 dbhub.example.toml,標記同時認舊檔名 ([12de519](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/12de51983fb04ac34f7e2f0133ee3aaab2d96f16))
+* **three-environment-db:** slug 候選要掃三個環境的聯集,並補上 Windows 檔名地雷 ([d3c0445](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d3c04457c512b4555e0c4bb4631e2de5a31abfd7))
 * **three-environment-db:** 對齊 tp-setup 裡幾處互相不一致的說法 ([9f258db](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/9f258db67c6d873f834b5e9a0fadc77133845e2b))
 * **three-environment-db:** 找不到設定時的提示也要提改名前的範本檔名 ([54e16ca](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/54e16cafa9464ba2ab465d345e7faa1c07737917))
 * **three-environment-db:** 文件改用新範本名,並定死舊檔名不改也不重複部署 ([a9f1e3f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a9f1e3f20d3efebf17a334c07320b0e57e47f653))
@@ -53,6 +72,7 @@
 ### Documentation
 
 * **three-environment-db:** Phase 2 概述句補上 case (a) 的例外 ([3b5f016](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3b5f0169c9fd581c776ed51c6317e52998c6fd60))
+* **three-environment-db:** 分段表格改成三列,`.gitignore` 不再被歸進「需要 git 的段」 ([d2d5a51](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d2d5a51ce6024ad7d0470aadfaf96dd878a9d076))
 * **tp-setup base:** case (a) 的白話只描述情境,動作交給各 concern 自己接 ([82ae1cf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/82ae1cfcea768bc30c236ef56e70802ab163c734))
 
 ## [0.3.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.2.0...turbo-plugin-three-environment-db--v0.3.0) (2026-08-19)
@@ -68,6 +88,7 @@
 ### Added
 
 * **core:** linked worktree 繼承主 worktree 的機器層設定與 pack-content 核准 ([5a8ffc0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/5a8ffc01774e018bd58d5b8c04d63e176bc51007)), closes [#61](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/61)
+* **setup:** 注入內容能自我說明、能調和,並補上 TODO.md 這一格落點 ([3a6ae4d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3a6ae4dea61bcaf3827819273747a2ea370fe437))
 
 
 ### Fixed

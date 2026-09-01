@@ -28,6 +28,11 @@
 
 * git 對 stderr 出警告時不再把健康的 repo 誤判成「不是 git repo」 ([60fabcf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/60fabcf63a2008b5735db429c12722ce375f8227)), closes [#123](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/123)
 
+
+### Changed
+
+* Core.ps1 的設定查找鏈抽成 Get-TurboPluginConfig,成為單一來源 ([a8fa467](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a8fa46720ba7bbe45226f587109ad766953de307))
+
 ## [0.4.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.3.0...turbo-plugin-git-svn--v0.4.0) (2026-08-25)
 
 
@@ -69,11 +74,13 @@
 ### Added
 
 * **core:** linked worktree 繼承主 worktree 的機器層設定與 pack-content 核准 ([5a8ffc0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/5a8ffc01774e018bd58d5b8c04d63e176bc51007)), closes [#61](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/61)
+* **setup:** 注入內容能自我說明、能調和,並補上 TODO.md 這一格落點 ([3a6ae4d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3a6ae4dea61bcaf3827819273747a2ea370fe437))
 
 
 ### Fixed
 
 * **core:** 設定檔的行內註解不再吃掉整個 section 或整個值 ([7b0a34e](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7b0a34e0cb84d88435c0d1f2da1e357c2b1ae253)), closes [#60](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/60)
+* **git-svn:** 推送 body 依實際併入路徑歸類來源分支,判不出來就不分組 ([619502f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/619502fb94332e29c7ede839b7628673e5546410))
 
 
 ### Changed
