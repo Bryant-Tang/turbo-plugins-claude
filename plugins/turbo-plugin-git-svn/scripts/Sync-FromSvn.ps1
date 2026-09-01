@@ -88,6 +88,11 @@ try {
     # typed and will not recognise. There is no way to discover the new name from here: svn follows
     # copy history backwards from an existing path, not forwards from a deleted one (issue #32). So
     # the only honest thing to do is say precisely that.
+    # `2>$null` under EAP=Stop, left inline on purpose (issue #137). The worry was that a WARNING on
+    # an otherwise healthy call would throw here and produce the message below -- which asserts the
+    # SVN path is gone -- while SVN was in fact perfectly readable. Measured: with the
+    # --non-interactive shim in lib/Common.ps1 svn has no such warning-on-success path for `svn
+    # info`, so a throw here really does mean SVN could not be read, and the message is true.
     $headRevRaw = ''
     try {
         $headRevRaw = (& svn info --show-item revision $svnUrl 2>$null | Out-String).Trim()
@@ -131,6 +136,13 @@ Cannot read SVN at the path this bridge is attached to:
         # Catch it up anyway. It costs one no-op update, and a working copy left permanently behind
         # makes every later pull re-enumerate an ever-growing range of revisions that were never
         # ours. Failure is not fatal here -- we are already reporting "up to date".
+        # The empty catch is doing real work here, not hiding a bug (issue #137): under EAP=Stop the
+        # `2>` redirection makes any stderr write terminating, and `svn update` can legitimately
+        # write one -- e.g. `W205011: Error handling externals definition`, which is a warning about
+        # an external while the main tree updates fine. Swallowing it matches the paragraph above:
+        # this catch-up is best-effort. Measured with the --non-interactive shim: an ordinary update,
+        # a tree conflict, a locally missing file and a clean local modification all exit 0 with
+        # empty stderr, so the common paths do not throw at all.
         if ($wcRevStart -lt $headRev) {
             try { & svn update $remote.Path 2>$null | Out-Null } catch { }
         }

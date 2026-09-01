@@ -171,6 +171,11 @@ try {
         try {
             $gitFile = Join-Path $remoteWorktreePath '.git'
             if (Test-Path -LiteralPath $gitFile) {
+                # `2>$null` under EAP=Stop, left inline on purpose (issue #137): safe because `svn`
+                # is the --non-interactive shim, so stderr only appears on a real failure. Measured
+                # for this exact shape: `svn rm --keep-local` on an unversioned path, and on one
+                # already scheduled for removal, both exit 0 with empty stderr -- so the "not
+                # tracked (ok)" branch below stays reachable. See the shim in lib/Common.ps1.
                 & svn rm --keep-local '.git' 2>$null | Out-Null
                 if ($LASTEXITCODE -ne 0) { Write-Verbose 'svn rm .git: not tracked (ok)' }
             }
