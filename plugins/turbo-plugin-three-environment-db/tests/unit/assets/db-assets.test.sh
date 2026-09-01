@@ -136,6 +136,20 @@ test_module_template_carries_both_persisted_set_options() {
     assertTrue 'module template sets QUOTED_IDENTIFIER (persists with the object)' $?
 }
 
+# ...and they must stay PLACEHOLDERS. Pre-filling ON is the tempting "helpful" edit, and it is
+# wrong in the one direction that matters: an object scripted with ANSI_NULLS OFF gets silently
+# flipped to ON by whoever copies the template without re-reading the baseline. Nothing errors --
+# the object simply starts behaving differently. Almost every object is ON, which is precisely
+# what makes the rare OFF so easy to lose.
+test_module_template_does_not_prefill_the_set_option_values() {
+    local opt
+    for opt in ANSI_NULLS QUOTED_IDENTIFIER; do
+        if grep -qE "^[[:space:]]*SET[[:space:]]+$opt[[:space:]]+(ON|OFF)" "$MODULE_TEMPLATE"; then
+            fail "module template pre-fills SET $opt; it must stay a placeholder so the baseline is re-read"
+        fi
+    done
+}
+
 # DROP + CREATE silently strips every GRANT on the object, and if the CREATE half fails the
 # object is simply gone -- for a trigger that means auditing stops from that moment with no
 # error anywhere. CREATE OR ALTER is the entire reason this landing can exist.

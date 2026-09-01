@@ -40,11 +40,13 @@ USE [<DatabaseName>];
 GO
 
 -- 這兩行跟著物件持久化，漏抄會改變物件行為（影響索引檢視、計算欄位索引這種平常看不出來的地方）。
--- 抄基線時 SSMS 產生的是哪個值就照抄哪個值，不要一律填 ON。
-SET ANSI_NULLS ON;
+-- 下面兩個值是 placeholder，不是預設值：SSMS 抄出來的基線是 ON 就填 ON、是 OFF 就填 OFF。
+-- 絕大多數物件兩個都是 ON，但舊物件出現 OFF 是真的會發生的，而填錯不會報錯 —— 所以這裡刻意
+-- 不預填 ON，逼你回去看基線一眼。
+SET ANSI_NULLS <ON|OFF>;
 GO
 
-SET QUOTED_IDENTIFIER ON;
+SET QUOTED_IDENTIFIER <ON|OFF>;
 GO
 
 -- 下面這段要換成實際的物件類型（PROCEDURE / VIEW / FUNCTION / TRIGGER）與完整定義。
