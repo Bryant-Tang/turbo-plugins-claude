@@ -206,9 +206,11 @@ Describe 'Merge-MainIntoBranches' {
     # narrowing is gone -- which makes this the end-to-end version: the whole call chain, shared
     # library included, has to survive a git that warns on every single invocation.
     # (Request-Merge.test.ps1 was widened the same way after #123 fixed Core.ps1.)
-    Context 'Case 7 (issue #128): a git that warns on stderr must not skip the conflict rollback' {
+    # Numbered 5b rather than 7: this is Case 5's scenario re-run against a git that warns, so it
+    # belongs next to it -- and appending it as 7 would have left the file reading 1,2,3,4,5,7,6.
+    Context 'Case 5b (issue #128): a git that warns on stderr must not skip the conflict rollback' {
         It 'aborts the merge, keeps going, and restores the original branch' {
-            $sb = New-Sandbox -Tag 'mmb-7'
+            $sb = New-Sandbox -Tag 'mmb-5b'
             $shimDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'tp-shim-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
             $savedPath = $env:PATH
             try {
@@ -285,17 +287,17 @@ Describe 'Merge-MainIntoBranches' {
                 # uses rev-parse, does not read the index) still succeeds, so this hits the
                 # dirty-check stage. Safety contract: the script fails loud and does NOT silently
                 # treat the tree as clean and merge.
-                # NOTE: on PS 5.1 with EAP=Stop, 2>$null does NOT prevent the NativeCommandError
-                # when git writes to stderr (empirically verified), so the corrupt-index failure
-                # surfaces git's own fatal ("...index file...") at the status call here; the
-                # script's $LASTEXITCODE guard is the fallback for a silent non-zero exit. Hence
-                # we assert the index/status failure text, not the guard's message.
+                # The status read now goes through Read-Git (issue #128), so the script's own
+                # $LASTEXITCODE guard is what fires here -- it is no longer a fallback behind a
+                # NativeCommandError thrown by the `2>` redirect before the guard could run. The
+                # assertion below already accepted both wordings, so it stayed green across that
+                # change; this note replaces the old one, which described the opposite mechanism.
                 [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, '.git', 'index'), 'garbage-not-a-git-index')
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
                 $res.ExitCode | Should -Not -Be 0
-                # Failed at the status/index stage, not elsewhere. Accept EITHER git's native
-                # fatal (the EAP=Stop path -- 'index file') OR the script's own guard message
-                # (the rare silent-exit path) -- precise without coupling to one git version's wording.
+                # Failed at the status/index stage, not elsewhere. Both wordings stay accepted:
+                # the guard's message is the expected one now, and git's own fatal ('index file')
+                # would still be correct evidence of the same stage failing.
                 $res.Combined | Should -Match 'index file|git status --porcelain failed'
                 $res.Stdout   | Should -Not -Match 'Merged cleanly'  # never reached a successful merge
             } finally {
