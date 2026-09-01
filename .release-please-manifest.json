@@ -5,5 +5,5 @@
   "plugins/turbo-plugin-git-svn": "0.5.0",
   "plugins/turbo-plugin-knowledge-placement": "0.2.0",
   "plugins/turbo-plugin-multi-repo-workspace": "0.3.3",
-  "plugins/turbo-plugin-three-environment-db": "0.5.0"
+  "plugins/turbo-plugin-three-environment-db": "0.6.0"
 }

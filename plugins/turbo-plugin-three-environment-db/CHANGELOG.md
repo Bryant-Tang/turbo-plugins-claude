@@ -2,6 +2,18 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.6.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.5.0...turbo-plugin-three-environment-db--v0.6.0) (2026-09-01)
+
+
+### Added
+
+* **three-environment-db:** SP / view / function / trigger 改走 _modules/ 固定檔名,擋掉跨分支的靜默覆蓋 ([84515b8](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/84515b894038cc14b113f699c44b062dc1b075c1))
+
+
+### Fixed
+
+* **three-environment-db:** 首次納管先分「既有物件 / 全新物件」,全新物件不必抓基線 ([0c57acf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0c57acf57812a4d5f040530e4347ab1c15b87c85))
+
 ## [0.5.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.4.1...turbo-plugin-three-environment-db--v0.5.0) (2026-09-01)
 
 
