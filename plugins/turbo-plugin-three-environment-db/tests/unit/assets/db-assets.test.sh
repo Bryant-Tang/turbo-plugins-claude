@@ -24,6 +24,8 @@ CONFIG_TEMPLATE="$PLUGIN_ROOT/default-files/.turbo-plugin/config.toml"
 DB_SKILL="$PLUGIN_ROOT/skills/tp-db-management/SKILL.md"
 SETUP_BASE="$PLUGIN_ROOT/skills/tp-setup/assets/setup-base.md"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
+SKILL_ASSETS="$PLUGIN_ROOT/skills/tp-db-management/assets"
+MODULE_TEMPLATE="$SKILL_ASSETS/module-script-template.sql"
 
 test_config_template_exists_and_is_not_empty() {
     assertTrue "tp-setup copies this when config.toml is absent: $CONFIG_TEMPLATE" \
@@ -97,6 +99,85 @@ test_setup_base_lists_db_as_a_config_concern() {
     assertNotEquals 'setup-base names config.toml in the marker table' '' "$line"
     printf '%s' "$line" | grep -q 'db'
     assertTrue 'db is listed among the config.toml concerns' $?
+}
+
+# --- _modules/ fixed-filename half -------------------------------------------------------------
+#
+# Everything below guards a failure that produces NO error when it happens. The whole point of
+# the fixed-filename landing is to convert a silent database-level overwrite into a loud git
+# conflict; each of these checks protects one of the pieces that makes that trade pay off.
+
+# A dangling asset link is silent in the worst way: the agent follows it, finds nothing, and
+# invents its own layout for a file whose whole value is that the layout is fixed.
+test_every_skill_asset_link_resolves() {
+    local link count=0
+    for link in $(grep -oE '\(\./assets/[A-Za-z0-9._-]+\)' "$DB_SKILL" | tr -d '()' ); do
+        count=$((count + 1))
+        assertTrue "SKILL links ./assets/${link#./assets/} but the file is missing" \
+            "[ -f '$SKILL_ASSETS/${link#./assets/}' ]"
+    done
+    # A scan that silently matched nothing would pass the loop above without asserting anything.
+    assertTrue "expected at least the two SQL templates to be linked, found $count" \
+        "[ '$count' -ge 2 ]"
+}
+
+test_module_template_exists_and_is_not_empty() {
+    assertTrue "the _modules/ half has its own template: $MODULE_TEMPLATE" \
+        "[ -s '$MODULE_TEMPLATE' ]"
+}
+
+# These two SET options persist WITH the object. A template that omits them produces files that
+# run fine and leave the object behaving differently (index views, computed-column indexes) --
+# nothing errors, and the difference is invisible until something much later depends on it.
+test_module_template_carries_both_persisted_set_options() {
+    grep -q 'SET ANSI_NULLS' "$MODULE_TEMPLATE"
+    assertTrue 'module template sets ANSI_NULLS (persists with the object)' $?
+    grep -q 'SET QUOTED_IDENTIFIER' "$MODULE_TEMPLATE"
+    assertTrue 'module template sets QUOTED_IDENTIFIER (persists with the object)' $?
+}
+
+# DROP + CREATE silently strips every GRANT on the object, and if the CREATE half fails the
+# object is simply gone -- for a trigger that means auditing stops from that moment with no
+# error anywhere. CREATE OR ALTER is the entire reason this landing can exist.
+test_module_template_uses_create_or_alter_and_never_drops() {
+    grep -q 'CREATE OR ALTER' "$MODULE_TEMPLATE"
+    assertTrue 'module template uses CREATE OR ALTER' $?
+    local obj
+    for obj in PROCEDURE VIEW FUNCTION TRIGGER; do
+        if grep -qE "^[[:space:]]*DROP[[:space:]]+$obj" "$MODULE_TEMPLATE"; then
+            fail "module template has an active DROP $obj; that strips GRANTs and can lose the object"
+        fi
+    done
+}
+
+# CREATE OR ALTER must be the first statement in its batch, so it cannot sit inside TRY/CATCH or
+# an explicit transaction -- which is exactly why this template is separate from the <slug> one.
+# If someone "unifies" them by pasting the transaction wrapper back in, the separation is gone.
+test_module_template_is_not_wrapped_in_a_transaction() {
+    local forbidden
+    for forbidden in 'BEGIN TRANSACTION' 'BEGIN TRY'; do
+        if grep -qE "^[[:space:]]*$forbidden" "$MODULE_TEMPLATE"; then
+            fail "module template opens '$forbidden'; CREATE OR ALTER must be first in its batch"
+        fi
+    done
+}
+
+# The baseline for main-db MUST come from production, and OBJECT_DEFINITION is the tempting
+# shortcut that ruins it twice over: it drops the two SET lines above, and SSMS truncates the
+# result silently (65535 in the grid, 8192 in text mode) so a long procedure arrives cut in half.
+test_skill_rules_out_object_definition_as_the_baseline_source() {
+    grep -q 'OBJECT_DEFINITION' "$DB_SKILL"
+    assertTrue 'tp-db-management warns against OBJECT_DEFINITION for the baseline' $?
+}
+
+# _modules/ sits alongside the <slug> folders, so it lands in the "pick an existing folder"
+# candidate list unless something filters it out. Picking it is silent: one-shot scripts then
+# get written into the reserved folder and nothing objects.
+test_skill_keeps_the_reserved_folder_out_of_slug_candidates() {
+    grep -q '_modules' "$DB_SKILL"
+    assertTrue 'tp-db-management names the reserved _modules folder' $?
+    grep -q '底線開頭' "$DB_SKILL"
+    assertTrue 'tp-db-management states the leading-underscore rule for slug candidates' $?
 }
 
 # shellcheck source=/dev/null

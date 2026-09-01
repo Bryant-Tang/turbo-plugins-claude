@@ -5,10 +5,20 @@
 ## 內容
 
 - **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.toml` 範本、提示複製填 `dbhub.local.toml`、寫 `config.toml` 的 `db` 標記區塊、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時**照樣完成**（見下方）。`tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發（`conventions.md` 機制已退役）。
-- **`tp-db-management`** skill — DB 相關開發雜務（SQL 腳本撰寫等），附 `assets/sql-script-template.sql`。
+- **`tp-db-management`** skill — DB 相關開發雜務（SQL 腳本撰寫等），附兩份模板
+  （`assets/sql-script-template.sql` 與 `assets/module-script-template.sql`）。
   產出的 SQL 落在 `<sql_root>/<env>-db/<slug>/`，`<slug>` **有 git 就是當前 branch 名**（行為與
   先前相同、不會問你）；**沒有 git 才問**，而且是列出既有資料夾讓你選，不是給一個空白輸入框——
   手打會讓同一件事散進兩個名字相近的資料夾，而沒有任何東西會提醒。
+- **可覆寫物件走固定檔名** — stored procedure / view / function / trigger 不落在 `<slug>/`，改落在
+  `<sql_root>/<env>-db/_modules/<db>/{Procedures,Views,Functions,Triggers}/<schema>.<物件名>.sql`。
+  用 branch 當分組鍵對「加欄位」「補資料」這種**累加型**動作是對的，但對「一改就是整個物件被取代」
+  的東西會靜默出事：兩條分支各改同一支 SP，會是兩個**不同路徑**的新增檔——git 合併零衝突、兩支腳本
+  都執行成功（`ALTER PROCEDURE` 覆寫既有 SP 完全合法）、沒有任何錯誤訊息，而**先跑的那份改動就沒了**。
+  固定檔名讓它變成同一路徑的兩份內容，**git 必然衝突**，把資料庫層的靜默問題搬到 git 層變成吵鬧的問題。
+  連帶：回滾腳本不用再寫（`git show <tag>:<path>` 就是前一版全文），「這次要跑哪幾支」也有了可靠來源
+  （`git diff --name-only <tag>..HEAD`）。細節（判準、按需納管、基線必須來自目標環境）見 SKILL。
+  只保證 SQL Server（靠 `CREATE OR ALTER`，2016 SP1+）。
 - **SQL 落點的根目錄可自訂** — `.turbo-plugin/config.toml` 的 `[db] sql_root`。專案本來就有自己的
   慣例（`db/scripts`、`sql`、`database/migrations` …）時設它，就不必為了 turbo-plugin 多開一個
   `.turbo-plugin/sql/`。**沒設就是原本的 `.turbo-plugin/sql`，逐字元相同**，既有專案不受影響。
