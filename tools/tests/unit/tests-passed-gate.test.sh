@@ -107,5 +107,43 @@ test_the_loop_references_nothing_that_is_not_bound() {
     assertEquals "variables in the loop with no binding above them:$stray" '' "$stray"
 }
 
+# The four checks above all reason INSIDE the `needs:` list -- they verify that whatever is listed
+# there is bound, echoed and looped. None of them notices a job that was never added to the list at
+# all, and that is the easier mistake to make: you write a job, it runs, it reports, it goes green,
+# and nothing anywhere says it is not gating. Found while adding `commit-messages-parseable`: the
+# whole suite stayed green with the new job wired into nothing.
+#
+# Top-level job names: two-space indent, then `name:` and nothing else on the line -- but ONLY
+# inside the `jobs:` block. Without that restriction the `on:` block's `push:` is picked up as a
+# job name, and the check fails on something that does not exist. Measured, while writing this.
+all_job_names() {
+    awk '
+        /^jobs:[[:space:]]*$/ { injobs = 1; next }
+        injobs && /^[a-z]/    { injobs = 0 }
+        injobs && /^  [a-z][a-z0-9-]*:[[:space:]]*$/ { gsub(/[ :]/, "", $0); print }
+    ' "$WF"
+}
+
+test_every_job_in_the_workflow_is_gated() {
+    local needs jobs job missing=''
+    needs="$(gate_needs | tr '\n' ' ')"
+    jobs="$(all_job_names)"
+
+    # Floor: if the name pattern stops matching, this test would pass while checking nothing --
+    # the exact shape of failure it exists to prevent.
+    assertTrue "expected to find several jobs, found $(printf '%s' "$jobs" | grep -c .)" \
+        "[ $(printf '%s' "$jobs" | grep -c .) -ge 5 ]"
+
+    for job in $jobs; do
+        # The gate cannot depend on itself.
+        [ "$job" = 'tests-passed' ] && continue
+        case " $needs " in
+            *" $job "*) ;;
+            *) missing="$missing $job" ;;
+        esac
+    done
+    assertEquals "jobs defined in the workflow but not in the tests-passed gate:$missing" '' "$missing"
+}
+
 # shellcheck source=/dev/null
 . "$SHUNIT2"

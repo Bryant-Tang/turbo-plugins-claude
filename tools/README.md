@@ -8,6 +8,10 @@
 | `plugin-requires-tool.sh` | 讀 `plugins/<name>/tests/required-tools`,答「這個 plugin 需不需要某個外部工具」 | `tests.yml` 的 `Install Subversion` 步驟(兩個平台) |
 | `install-svn.sh` | 裝 Subversion,並依平台用對的重試形狀(apt 要先有逾時才重試得動,choco 直接重試) | `tests.yml` 的 `Install Subversion` 步驟(兩個平台) |
 | `verify-inert-files.sh` | 把惰性檔案的**內容**換成垃圾再跑全部套件,用實驗證明「沒有東西讀它們」 | `tests.yml` 的 `inert-files-are-inert` job |
+<!-- ⚠️ 本機跑它之前先把惰性檔案的修改 commit 掉:它會換掉內容再「還原」,而還原的來源是 git,
+     所以**未 commit 的惰性檔修改會被消滅**。CI 的工作目錄永遠是乾淨的,只有本機會踩到。
+     實際發生過:一次在 CLAUDE.md 加規則、還沒 commit 就跑了 tools 套件,那段字直接沒了。 -->
+| `check-commit-parseable.{sh,js}` | 用 release-please 自己那支嚴格解析器判斷 commit 會不會被靜默丟掉(issue #141) | `tests.yml` 的 `commit-messages-parseable` job |
 | `verify-core-identical.{ps1,sh}` | 跨 plugin 逐位元組一致性 + marketplace 可安裝性 | `verify-core-identical` job；本機手動 |
 | `lint-ps-compat.{ps1,sh}` | PS 5.1 相容性 lint | 各 plugin orchestrator 的 pre-flight |
 | `verify-approved-verbs.ps1` | PowerShell approved verb 檢查 | 本機手動 |
@@ -43,6 +47,10 @@ CI 由 `tests.yml` 的 **`tools-tests`** job 跑，而該 job **在 `tests-passe
   ——`verify-approved-verbs.ps1` 本來就沒有 `.sh`，`affected-plugins.sh` 也只有 GitHub Actions 的
   `shell: bash` 在呼叫。多一份沒人呼叫的拷貝＝多一個會漂移的地方，那正是這些測試要防的事。
   日後真的有 `.ps1` 需要 Pester，再補 `Invoke-ScriptTests.ps1` 與對應的 CI job。
+- **`check-commit-parseable` 拆成 `.sh` + `.js`,不要把 `.js` 那半改寫成 bash。** 它的工作是問
+  **release-please 自己那支解析器**（`@conventional-commits/parser`,嚴格 PEG 文法）答不答得出來,
+  而那是一個 npm 套件、只有 node 叫得動。用 bash 重寫等於改成「猜同一個文法」的近似規則——而近似規則
+  漏掉的構造會**靜默通過**,正是這支腳本存在要防的失效。`.sh` 那半只做選件與回報,判準完全外包。
 - **orchestrator 探索到零個測試檔會 FAIL，不是 exit 0。** plugin 版允許「沒有測試檔就過」（有純
   skill plugin）；`tools/` 現在有測試，探索不到只代表被改名或刪掉了，那正是「安靜地變綠」。
 - **邏輯是被呼叫、不是被複製。** `affected-plugins.sh` 從 `tests.yml` 的 `run:` 區塊裡抽出來，
