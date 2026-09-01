@@ -36,6 +36,18 @@ try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 # case surfaces as Code=127 with empty Text rather than as console noise.
 #
 # STATE-CHANGING git calls must NOT go through this: they want EAP=Stop's fail-loud behaviour.
+#
+# ONE EXCEPTION, and it is deliberate: best-effort RECOVERY and CLEANUP steps -- `merge --abort`,
+# switching back to the branch the run started on, `branch -D` / `worktree remove --force` /
+# `worktree prune` in a catch block. Those are state-changing, but fail-loud is exactly the wrong
+# behaviour for them: they run when something has ALREADY failed, so a throw there abandons the
+# rest of the cleanup, leaves the worktree in the broken state the block exists to undo, and (in a
+# catch block) REPLACES the real error with a NativeCommandError about a git warning. Worse, the
+# inline form throws even when the command SUCCEEDS: a successful `git checkout` writes
+# `Switched to branch 'x'` to stderr, so under EAP=Stop that rollback step could never complete
+# (measured; issues #127 and #128). Such call sites go through Read-Git and either ignore the
+# result (`$null = Read-Git ...`) or gate on `.Code` to report "rollback failed" themselves.
+# Do NOT "fix" those back to the inline form on the strength of the paragraph above.
 function Read-Git {
     param(
         [string]$Cwd = '',

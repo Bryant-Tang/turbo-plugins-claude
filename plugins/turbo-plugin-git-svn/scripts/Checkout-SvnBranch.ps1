@@ -268,6 +268,11 @@ try {
         # EMPTY the worktree (keep the .git pointer) so the plain `svn checkout` below yields the EXACT
         # SVN branch tree. `git add -A` then records precisely the branch's delta from trunk
         # (adds/mods/deletes) as ONE commit whose parent is remote-svn/main.
+        # The EAP softening is DELIBERATE and must stay (issue #128 classed this as "do not
+        # convert"): `rm -rf .` legitimately writes "pathspec '.' did not match" when the index is
+        # already empty, and under EAP=Stop the `2>` redirect would turn that into a terminating
+        # error. Softening keeps it tolerated here while `git clean -dffx` below stays the loud
+        # gate. Do not "tidy" this into Read-Git -- the point is that this one is allowed to fail.
         $eaRmIdx = $ErrorActionPreference
         $ErrorActionPreference = 'SilentlyContinue'
         & git -C $remoteWorktreePath rm -rf . 2>$null | Out-Null
@@ -336,14 +341,20 @@ try {
         # Rollback the LOCAL git side only. SVN was never written (read-only import), so the
         # target SVN branch has no new revision to undo.
         Write-Output 'Import failed; rolling back local git state (SVN was not modified)...'
+        # Every step goes through Read-Git rather than `& git ... 2>$null | Out-Null` (issue #128):
+        # under EAP=Stop a `2>` redirection turns whatever git writes to stderr into a TERMINATING
+        # error, and `2>$null` does not prevent it. In a catch block that is doubly bad -- the
+        # remaining rollback steps are skipped, AND the bare `throw` below never runs, so the user
+        # is shown a NativeCommandError about a git warning instead of the import failure that
+        # actually happened.
         if ($workBranchCreated) {
-            & git -C $mainWorktree branch -D $Branch 2>$null | Out-Null
+            $null = Read-Git -Cwd $mainWorktree -GitArgs @('branch', '-D', $Branch)
         }
-        & git -C $mainWorktree worktree remove --force $remoteWorktreePath 2>$null | Out-Null
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'remove', '--force', $remoteWorktreePath)
         # Prune the registration in case `worktree remove` could not fully delete the dir (e.g. a held
         # .svn handle) -- a surviving registration would wedge a re-run into a false "already imported".
-        & git -C $mainWorktree worktree prune 2>$null | Out-Null
-        & git -C $mainWorktree branch -D $remoteBranch 2>$null | Out-Null
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'prune')
+        $null = Read-Git -Cwd $mainWorktree -GitArgs @('branch', '-D', $remoteBranch)
         throw
     }
 

@@ -108,6 +108,10 @@ try {
     }
 
     $mergeMsg = "Merge branch '$Branch' into $($remote.Branch)"
+    # The EAP softening is DELIBERATE and must stay (issue #128 classed this as "do not convert"):
+    # a conflicting merge is an EXPECTED outcome here, reported through $mergeExit and the throw
+    # below. Under EAP=Stop the `2>` redirect would turn git's conflict notice into a terminating
+    # NativeCommandError and the user would lose the conflicting-file list entirely.
     $ea3 = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     # Bridges created before this pin exists still carry the inherited core.autocrlf, and THIS
