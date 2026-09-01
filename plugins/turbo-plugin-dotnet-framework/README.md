@@ -80,6 +80,45 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
   仍然只有一組不帶鍵的 `[frontend]` 時行為完全不變,但如果它的 `dir` 不在這次目標專案底下,模板會
   明講並建議改成分組——那一格原本是完全沉默的:打包指令在**別的**專案目錄下跑,兩個指令都成功,
   模板照樣寫「已執行」。
+- **`[build]` 與 `[publish]` 用同一套分組語法**(各子專案的建置 / 發佈參數本來就不同):
+
+  ```toml
+  [build]
+  configuration = "Release"              # 整個 repo 共用,只寫一次
+
+  [build."proj-1"]
+  platform = "x64"                       # 只有 proj-1 需要(相依 x64-only 的原生組件)
+
+  [publish]
+  configuration = "Release"
+
+  [publish."proj-1/src/Web"]
+  default_pubxml = "proj-1/src/Web/Properties/PublishProfiles/Prod.pubxml"
+
+  [publish."proj-2/src/Web"]
+  default_pubxml = "proj-2/src/Web/Properties/PublishProfiles/Prod.pubxml"
+  ```
+
+  三個區塊的分組規則一致,只有三條要記:
+
+  1. **鍵可以寫專案目錄或專案檔本身,但只算剛好那一層**。`[build."proj-1"]` 套用到
+     `proj-1/App.sln` 與 `proj-1/App.csproj`,**不套用**到 `proj-1/src/Web/Web.csproj`——那個要另外
+     寫 `[build."proj-1/src/Web"]`。兩組同時指向同一個專案會直接報錯,不會替你挑一組。
+  2. **`[build]` / `[publish]` 是逐項覆蓋**:不帶鍵的那組是共用底層,分組裡只寫要改的項目,沒寫的
+     沿用共用值(所以上面的 `configuration` 寫一次就好)。
+     ⚠️ **`[frontend]` 不是這樣**——它的 `dir` 只從對應到的那一組讀,不會沿用共用組,否則就會拿別的
+     專案的前端目錄來打包。
+  3. **只要出現任何一組帶鍵的,就沒有預設目標了**:`/tp-build`、`/tp-publish` 必須明講是哪個子專案,
+     否則會停下來把有哪幾組列給你。這時不帶鍵的 `[build] project` / `[publish] project` **不會**被
+     當成預設值(那等於把「忘了講」變成「安靜地動了主專案」)。
+
+  結果模板多一行 `設定分組:`,說明這次用了哪一組、或「有分組但沒有一組對應這個專案」(後者仍然會用
+  共用設定建置成功,所以不講的話看不出來)。沒有任何分組的 repo 不會多這一行,行為也完全不變。
+
+  **`[run]` 目前不支援分組**,只有 `[frontend]` / `[build]` / `[publish]` 三個區塊有。寫成
+  `[run."proj-1"]` 的話,底下的 `configuration` / `arguments` / `working_directory` **不會**生效
+  (仍然讀不帶鍵的 `[run]`);而因為 run 在沒設定 `[run] project` 時會退回讀 `[build] project`,
+  一旦 `[build]` 有分組,run 也一樣會要求你明講是哪個子專案。
 - **哪些檔案不該進版控**(`bin/` / `obj/` / `.vs/` / 本機設定 …)由 `turbo-plugin-git-svn` 的
   `/tp-suggest-ignore` 判斷,本 plugin 不寫死清單。唯一的例外是 `*.local.*`:記憶存回在寫
   `config.local.toml` 之前會先確保 `.gitignore` 擋住它(誰寫這種檔誰負責)。
