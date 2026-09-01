@@ -9,14 +9,19 @@
 目標環境: <local-db | test-db | main-db>
 檔案落點: <sql_root>/<目標環境>/_modules/<DbName>/<Procedures|Views|Functions|Triggers>/<schema>.<物件名>.sql
 
-基線來源環境: <local-db | test-db | main-db>
+基線來源環境: <local-db | test-db | main-db | N/A（全新物件，無既有基線）>
               ← 必須跟上面的「目標環境」是同一個。拿 local 全文當 main-db 的基線，第一次全文
                 覆寫就會把開發中、還沒核准的改動整批推上正式，而且腳本會執行成功、沒有任何警告。
-基線取得方式: SSMS 物件總管 →「編寫指令碼為」→「CREATE 至」
+              ← 動手前先用 SELECT OBJECT_ID('<schema>.<物件名>') 確認該物件在「這個環境」存不存在，
+                而且要逐環境確認：同一支 SP 在 test 是既有、在 main 是全新，是新功能過版的常態。
+                不存在就是全新物件，三欄都填 N/A，這個檔本身就是第一版。
+基線取得方式: SSMS 物件總管 →「編寫指令碼為」→「CREATE 至」 | N/A（全新物件）
               ← 不可用 SELECT OBJECT_DEFINITION(...)：它不含下面那兩行 SET（那兩行跟著物件
                 持久化），而且在結果窗格會被無聲截斷（grid 預設 65535 字元、文字模式 8192），
                 長 SP 被切一半而切口不會報錯。
-基線取得日期: <YYYY-MM-DD>
+基線取得日期: <YYYY-MM-DD | N/A（全新物件）>
+              ← 三欄都不要留空。留空跟「忘了填」看起來一模一樣，而這三欄存在的理由，
+                就是讓一份來源可疑的基線一眼看得出來。
 先前的一次性腳本: <這個物件以前若在 <slug>/ 底下被改過，寫該檔路徑；沒有就寫「無」>
 
 本次變更摘要:
@@ -27,8 +32,9 @@
           建立會成功、執行才炸。
 
 回滾: 不寫在這個檔裡，也不要為它另外寫一份反向 SQL。前一版全文用
-      `git show <上一個 release tag>:<本檔路徑>` 取得；首次納管那一次的回滾來源是基線那顆 commit
-      （所以基線必須自己獨立成一顆 commit，混進變更那顆就沒有前一版可取）。
+      `git show <上一個 release tag>:<本檔路徑>` 取得；首次納管一個「既有物件」那一次的回滾來源是
+      基線那顆 commit（所以基線必須自己獨立成一顆 commit，混進變更那顆就沒有前一版可取）。
+      全新物件則兩者都沒有 —— 它的回滾是把物件 DROP 掉，這件事要在交付時講明。
 
 SQL Server 版本需求: 2016 SP1+（CREATE OR ALTER，涵蓋 procedure / function / trigger / view）。
                      本檔只保證 SQL Server。PostgreSQL 是 CREATE OR REPLACE、MySQL 沒有對應語法

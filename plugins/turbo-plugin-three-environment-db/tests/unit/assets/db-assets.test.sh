@@ -184,6 +184,22 @@ test_skill_rules_out_object_definition_as_the_baseline_source() {
     assertTrue 'tp-db-management warns against OBJECT_DEFINITION for the baseline' $?
 }
 
+# The baseline procedure only makes sense for an object that ALREADY EXISTS in the target
+# environment -- you cannot "Script as > CREATE" something SQL Server does not have. Without an
+# explicit existence branch, a brand-new procedure sends the agent down that path, and the two
+# ways out of the dead end are both silent: write the new object into <slug>/ (the mechanism
+# never engages, nothing errors) or pass the local copy off as the production baseline (exactly
+# what the two-commit gate exists to prevent). The branch is also PER ENVIRONMENT -- the same SP
+# is routinely existing in test and brand-new in main.
+test_skill_branches_on_whether_the_object_already_exists() {
+    grep -q 'OBJECT_ID' "$DB_SKILL"
+    assertTrue 'tp-db-management checks object existence before demanding a baseline' $?
+    grep -q '全新物件' "$DB_SKILL"
+    assertTrue 'tp-db-management has a brand-new-object path' $?
+    grep -q '全新物件' "$MODULE_TEMPLATE"
+    assertTrue 'the module template lets the provenance fields say N/A for a new object' $?
+}
+
 # _modules/ sits alongside the <slug> folders, so it lands in the "pick an existing folder"
 # candidate list unless something filters it out. Picking it is silent: one-shot scripts then
 # get written into the reserved folder and nothing objects.
