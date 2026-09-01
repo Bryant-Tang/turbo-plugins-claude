@@ -16,6 +16,11 @@
 
 * git 對 stderr 出警告時不再把健康的 repo 誤判成「不是 git repo」 ([60fabcf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/60fabcf63a2008b5735db429c12722ce375f8227)), closes [#123](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/123)
 
+
+### Changed
+
+* Core.ps1 的設定查找鏈抽成 Get-TurboPluginConfig,成為單一來源 ([a8fa467](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a8fa46720ba7bbe45226f587109ad766953de307))
+
 ## [0.3.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-multi-repo-workspace--v0.3.0...turbo-plugin-multi-repo-workspace--v0.3.1) (2026-08-25)
 
 
@@ -37,6 +42,7 @@
 
 ### Fixed
 
+* **multi-repo-workspace:** 移除隔離副本時把分支與殘留目錄一起收乾淨 ([94fa9f3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/94fa9f36e5fb218a380f523a0afadc0743236cfd))
 * remove-worktree 補上註解,說明一般 repo 的容器目錄為何刻意不清理 _(文字經修正;原始標題以 SHA 為準)_ ([3fb675d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3fb675d633b0e0132c20a01d27e34b79ffa5bf2c))
 * **multi-repo-workspace:** .worktreeinclude 不再跟隨 symlink ([d84c092](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d84c0928a812a19cb3bb8bb57f62e201814c5327))
 
@@ -47,6 +53,7 @@
 
 * **core:** linked worktree 繼承主 worktree 的機器層設定與 pack-content 核准 ([5a8ffc0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/5a8ffc01774e018bd58d5b8c04d63e176bc51007)), closes [#61](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/61)
 * **multi-repo-workspace:** WorktreeCreate / WorktreeRemove,讓隔離工作副本在工作區根可用 ([4ad397b](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/4ad397b92ed63af9032c28e0022c7964c7f7a7d3)), closes [#69](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/69)
+* **setup:** 注入內容能自我說明、能調和,並補上 TODO.md 這一格落點 ([3a6ae4d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3a6ae4dea61bcaf3827819273747a2ea370fe437))
 
 
 ### Fixed
