@@ -13,6 +13,7 @@
 ### Fixed
 
 * **three-environment-db:** 首次納管先分「既有物件 / 全新物件」,全新物件不必抓基線 ([0c57acf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0c57acf57812a4d5f040530e4347ab1c15b87c85))
+* **three-environment-db:** _modules 模板不預填兩行 SET,底線孤兒目錄不再無聲消失 ([603a13e](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/603a13e3f2861d7390325b828fc8417026664391))
 
 ## [0.5.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.4.1...turbo-plugin-three-environment-db--v0.5.0) (2026-09-01)
 
