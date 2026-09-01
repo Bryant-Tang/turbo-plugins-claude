@@ -419,7 +419,11 @@ try {
                 # The amend REWROTE that commit, so any refs/tp/svn/<N> still pointing at the
                 # pre-amend SHA references an object no longer on the branch (it would read as an
                 # unmarked, orphan-shaped commit). Move those markers onto the rewritten commit.
-                $amendNewSha = (& git -C $remoteWorktreePath rev-parse HEAD 2>$null | Out-String).Trim()
+                # Read-Git (issue #128): the two reads around this one already soften EAP; this one
+                # was left exposed, so a git that writes to stderr would throw right after the amend
+                # and before the markers are moved -- leaving refs/tp/svn/<N> pointing at the
+                # rewritten-away SHA, which later reads as an unmarked orphan commit.
+                $amendNewSha = (Read-Git -Cwd $remoteWorktreePath -GitArgs @('rev-parse', 'HEAD')).Text.Trim()
                 foreach ($m in (Get-SvnRevMarks -RepoDir $remoteWorktreePath)) {
                     if ($m.Sha -eq $preAmendSha) {
                         Set-SvnRevMark -RepoDir $remoteWorktreePath -Rev $m.Rev -Sha $amendNewSha
@@ -439,8 +443,10 @@ try {
         # fail-safe above. It became reachable the moment New-SvnPath let a user create a trunk and
         # bootstrap straight into it, so the guard has to be unconditional rather than a branch of
         # the dirty-tree check.
-        & git -C $remoteWorktreePath rev-parse --verify --quiet HEAD 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        # Read-Git (issue #128): an UNBORN branch is the condition this guard tests for, and git
+        # reports that on stderr -- so written inline the throw landed here instead of the guard
+        # firing, i.e. the fail-safe was unreachable in exactly the state it exists for.
+        if ((Read-Git -Cwd $remoteWorktreePath -GitArgs @('rev-parse', '--verify', '--quiet', 'HEAD')).Code -ne 0) {
             & git -C $remoteWorktreePath -c commit.gpgsign=false commit --allow-empty -m "init: remote-svn/$Branch branch"
             if ($LASTEXITCODE -ne 0) { throw 'git commit (empty bridge init) failed' }
         }

@@ -38,13 +38,15 @@ try {
     $mainWorktree = Get-MainWorktree -RepoRoot $RepoRoot
 
     # Refuse to run from / against a dirty main worktree.
-    $status = (& git -C $mainWorktree status --porcelain 2>$null | Out-String).Trim()
-    # git status itself can fail (e.g. corrupted index). On PS 5.1 with EAP=Stop, a native
-    # command that writes to stderr throws a NativeCommandError even with 2>$null, so most real
-    # failures abort at the call above (surfacing git's own error). This $LASTEXITCODE guard is
-    # the fallback for the rarer silent case: a non-zero exit with NO stderr, where 2>$null
-    # yields an empty result that would otherwise read as "clean" and bypass the dirty check.
-    if ($LASTEXITCODE -ne 0) { throw "git status --porcelain failed (exit $LASTEXITCODE) in $mainWorktree" }
+    # Read-Git, so the exit-code guard below is the PRIMARY path rather than a fallback. Written
+    # inline as `2>$null | Out-String` this call throws on any stderr write under EAP=Stop, which
+    # made the guard unreachable exactly when git had something to say -- and a git that merely
+    # WARNS (dubious ownership) aborted the run outright (issue #128).
+    $statusRes = Read-Git -Cwd $mainWorktree -GitArgs @('status', '--porcelain')
+    # A non-zero exit with an EMPTY result would otherwise read as "clean" and bypass the dirty
+    # check below, so the code is checked before the text is trusted.
+    if ($statusRes.Code -ne 0) { throw "git status --porcelain failed (exit $($statusRes.Code)) in $mainWorktree" }
+    $status = $statusRes.Text.Trim()
     if (-not [string]::IsNullOrWhiteSpace($status)) {
         throw "Main worktree is dirty ($mainWorktree). Commit or stash changes before merging main into branches."
     }
@@ -61,7 +63,7 @@ try {
                 continue
             }
 
-            $exists = (& git -C $mainWorktree branch --list $name 2>$null | Out-String).Trim()
+            $exists = (Read-Git -Cwd $mainWorktree -GitArgs @('branch', '--list', $name)).Text.Trim()
             if ([string]::IsNullOrWhiteSpace($exists)) {
                 Write-Output "SKIP $name (not found / excluded)"
                 continue
@@ -72,7 +74,7 @@ try {
     } else {
         # Default: all local branches except 'main' and 'remote-svn/*'.
         $targetBranches = @(
-            (& git -C $mainWorktree branch --format='%(refname:short)' 2>$null | Out-String) -split "`n" |
+            (Read-Git -Cwd $mainWorktree -GitArgs @('branch', '--format=%(refname:short)')).Text -split "`n" |
                 ForEach-Object { $_.Trim() } |
                 Where-Object { $_ -ne '' -and $_ -ne 'main' -and $_ -notmatch '^remote-svn/' }
         )
@@ -83,7 +85,7 @@ try {
         exit 0
     }
 
-    $originalBranch = (& git -C $mainWorktree rev-parse --abbrev-ref HEAD 2>$null | Out-String).Trim()
+    $originalBranch = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Text.Trim()
 
     $merged   = @()
     $conflict = @()

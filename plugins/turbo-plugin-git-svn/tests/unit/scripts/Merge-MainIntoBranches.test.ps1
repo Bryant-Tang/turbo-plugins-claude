@@ -200,11 +200,12 @@ Describe 'Merge-MainIntoBranches' {
     # attempted, and the original branch was never restored (issue #128; the same shape was
     # reproduced on Request-Merge.ps1 in #127).
     #
-    # The shim warns ONLY on the rollback command, not on every git call. That is the honest scope
-    # today: the reads in this script still capture with `2>$null` and are being converted in a
-    # separate pass, so a warn-on-everything shim would fail here for a different reason and this
-    # case would stop measuring the rollback. Widen it to warn unconditionally once those land --
-    # Request-Merge.test.ps1 did exactly that after #123 fixed the shared library.
+    # The shim warns on EVERY git call. It started out warning only on `--abort`, because this
+    # script's own reads still captured with `2>$null` and would have failed first, leaving the case
+    # measuring them rather than the rollback. Those reads now go through Read-Git too, so the
+    # narrowing is gone -- which makes this the end-to-end version: the whole call chain, shared
+    # library included, has to survive a git that warns on every single invocation.
+    # (Request-Merge.test.ps1 was widened the same way after #123 fixed Core.ps1.)
     Context 'Case 7 (issue #128): a git that warns on stderr must not skip the conflict rollback' {
         It 'aborts the merge, keeps going, and restores the original branch' {
             $sb = New-Sandbox -Tag 'mmb-7'
@@ -236,22 +237,21 @@ Describe 'Merge-MainIntoBranches' {
                     [System.IO.Path]::Combine($shimDir, 'git.cmd'),
                     @(
                         '@echo off',
-                        'set "TP_ARGS=%*"',
-                        'echo(%TP_ARGS%| findstr /C:"--abort" >nul && echo warning: detected dubious ownership in repository 1>&2',
+                        'echo warning: detected dubious ownership in repository 1>&2',
                         ('"' + $realGit + '" %*')
                     ),
                     [System.Text.Encoding]::ASCII)
 
                 $env:PATH = $shimDir + ';' + $savedPath
 
-                # Preconditions: prove the shim resolves AND that it is selective. A shim that never
-                # loads gives a pass that means nothing; one that warns on everything would move
-                # what this case measures.
+                # Precondition: prove the shim actually resolves before trusting anything this case
+                # concludes -- a shim that never loads produces a pass that means nothing. Both a
+                # read and the rollback command are probed, since the point is that EVERY call warns.
                 $probeErr = [System.IO.Path]::Combine($shimDir, 'probe.err')
+                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
+                [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
                 & cmd.exe /c "git merge --abort 2> `"$probeErr`"" | Out-Null
                 [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
-                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
-                [System.IO.File]::ReadAllText($probeErr) | Should -Not -Match 'dubious ownership'
 
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
 

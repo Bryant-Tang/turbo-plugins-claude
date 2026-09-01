@@ -135,7 +135,9 @@ function Set-BridgeEolFaithful {
 function Set-SvnGitExcluded {
     param([Parameter(Mandatory = $true)][string]$MainWorktree)
 
-    $gitCommonDir = (& git -C $MainWorktree rev-parse --git-common-dir 2>$null | Out-String).Trim()
+    # Read-Git (issue #128): inline, a git that writes to stderr throws before the guard below,
+    # replacing "could not resolve the git common dir" with a NativeCommandError about a warning.
+    $gitCommonDir = (Read-Git -Cwd $MainWorktree -GitArgs @('rev-parse', '--git-common-dir')).Text.Trim()
     if ([string]::IsNullOrWhiteSpace($gitCommonDir)) { throw 'Could not resolve the git common dir.' }
     if (-not [System.IO.Path]::IsPathRooted($gitCommonDir)) {
         $gitCommonDir = [System.IO.Path]::Combine($MainWorktree, $gitCommonDir)
@@ -903,7 +905,10 @@ function Invoke-SvnBoundaryCommit {
     }
     # Mark the boundary either way: with or without a new commit, HEAD is where revision $Rev is
     # materialised, and the floor lookup needs that mapping.
-    $sha = (& git -C $RemotePath rev-parse --verify --quiet HEAD 2>$null | Out-String).Trim()
+    # Read-Git (issue #128): the read just above softens EAP for its own call, this one did not.
+    # A throw here skips the boundary marker entirely, and an empty read skips it silently -- either
+    # way revision $Rev becomes unresolvable to the floor lookup on a repo that is otherwise fine.
+    $sha = (Read-Git -Cwd $RemotePath -GitArgs @('rev-parse', '--verify', '--quiet', 'HEAD')).Text.Trim()
     if (-not [string]::IsNullOrWhiteSpace($sha)) {
         Set-SvnRevMark -RepoDir $RemotePath -Rev $Rev -Sha $sha
     }

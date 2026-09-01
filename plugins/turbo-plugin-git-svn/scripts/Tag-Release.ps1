@@ -36,14 +36,21 @@ try {
 
     # Confirm the remote-svn ref actually exists before tagging -- fail loudly otherwise
     # so we never create a tag pointing at an unknown revision.
-    $null = & git -C $mainWorktree rev-parse --verify "$remoteBranch^{commit}" 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    # Read-Git: written inline as `2>$null`, a missing ref reports on stderr and under EAP=Stop that
+    # throws before the exit-code check, so this guard's own message was unreachable in the very
+    # case it exists for -- and a git that merely warns turned a valid ref into a hard failure
+    # (issue #128).
+    if ((Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--verify', "$remoteBranch^{commit}")).Code -ne 0) {
         throw "Remote-svn branch '$remoteBranch' not found. Run /tp-setup (for main), or push the branch with /tp-push-to-svn (its first-push bootstrap builds the bridge), first."
     }
 
     $prefix = "$Branch-release-$(Get-Date -Format 'yyyy-MM-dd')"
 
-    $existing = @(& git -C $mainWorktree tag -l "$prefix-[0-9][0-9][0-9]" 2>$null |
+    # Serial numbering reads the existing tags: a warning swallowing this list would restart at 001
+    # and collide with a tag that already exists, so it must not be able to throw or come back empty
+    # for the wrong reason.
+    $existing = @((Read-Git -Cwd $mainWorktree -GitArgs @('tag', '-l', "$prefix-[0-9][0-9][0-9]")).Text -split "`n" |
+        ForEach-Object { $_.Trim() } |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object)
     if ($existing.Count -eq 0) {
         $serial = '001'

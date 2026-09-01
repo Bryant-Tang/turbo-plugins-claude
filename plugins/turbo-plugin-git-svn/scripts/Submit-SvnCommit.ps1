@@ -275,11 +275,15 @@ try {
                 # the script cannot tell. A transient failure (network, lock, credentials) should be
                 # retried -- unwinding would throw away a correct merge. A rejected commit needs
                 # unwinding -- retrying just fails again. So state the position and give both exits.
-                $mergeSha = ''
-                try { $mergeSha = (& git -C $remote.Path rev-parse --verify -q HEAD 2>$null | Out-String).Trim() } catch { $mergeSha = '' }
+                # Read-Git rather than try/catch around an inline `2>$null` call (issue #128). The
+                # catch was not dead code being tidied away: under EAP=Stop a `2>` redirection turns
+                # any stderr write into a throw, so on a git that merely WARNS both reads landed in
+                # their catch and the recovery instructions below degraded to a `<merge-sha>`
+                # placeholder and an empty pin dir -- at the exact moment the user needs the real
+                # values to unwind a half-done push.
+                $mergeSha = (Read-Git -Cwd $remote.Path -GitArgs @('rev-parse', '--verify', '-q', 'HEAD')).Text.Trim()
                 if ([string]::IsNullOrWhiteSpace($mergeSha)) { $mergeSha = '<merge-sha>' }
-                $pinDir = ''
-                try { $pinDir = (& git -C $remote.Path rev-parse --absolute-git-dir 2>$null | Out-String).Trim() } catch { $pinDir = '' }
+                $pinDir = (Read-Git -Cwd $remote.Path -GitArgs @('rev-parse', '--absolute-git-dir')).Text.Trim()
                 [Console]::Error.WriteLine(@"
 
 TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE
@@ -362,7 +366,10 @@ UNWIND (the commit was rejected and would be rejected again):
             # they create. Only the trunk branch is marked (refs/tp/svn/* maps TRUNK revisions; a
             # feature push creates a revision on the branch path, not on trunk).
             if ($Branch -eq 'main' -and $newRev -match '^[0-9]+$') {
-                $pushedSha = (& git -C $mainWorktree rev-parse $Branch 2>$null | Out-String).Trim()
+                # Read-Git (issue #128): this runs AFTER the SVN commit succeeded, so a throw here
+                # would abort a push that already reached SVN, and an empty read would silently skip
+                # the revision marker -- leaving a pushed revision that later pulls cannot resolve.
+                $pushedSha = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', $Branch)).Text.Trim()
                 if (-not [string]::IsNullOrWhiteSpace($pushedSha)) {
                     Set-SvnRevMark -RepoDir $mainWorktree -Rev ([int]$newRev) -Sha $pushedSha
                 }

@@ -38,7 +38,9 @@ try {
     # prefix with TP_TOKEN: to match the pre-flight contract — the SKILL
     # only trusts TP_TOKEN:-prefixed lines, so the backstop must use the same prefix or the
     # warning is silently dropped on the normal push path.
-    $currentHeadBranch = (& git -C $mainWorktree rev-parse --abbrev-ref HEAD 2>$null | Out-String).Trim()
+    # Read-Git (issue #128): inline, a git that writes to stderr throws under EAP=Stop and kills the
+    # push before this backstop can warn -- the one call whose whole job is to catch a wrong branch.
+    $currentHeadBranch = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Text.Trim()
     if (-not [string]::IsNullOrWhiteSpace($currentHeadBranch) -and $currentHeadBranch -ne $Branch) {
         Write-Output "TP_TOKEN:BRANCH_MISMATCH_WARNING current=$currentHeadBranch requested=$Branch"
     }
