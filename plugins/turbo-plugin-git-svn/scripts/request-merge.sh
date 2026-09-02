@@ -212,7 +212,7 @@ if ! SUBJECTS="$(git -C "$MAIN_WORKTREE" log --no-merges --reverse --format='  %
   _die_token "git log failed for $BASE..$BRANCH"
 fi
 NON_MERGE_COUNT="$(printf '%s\n' "$SUBJECTS" | grep -c '[^[:space:]]' || true)"
-if ! DIFFSTAT="$(git -C "$MAIN_WORKTREE" diff --stat "$BASE...$BRANCH" 2>/dev/null)"; then
+if ! DIFFSTAT="$(git -C "$MAIN_WORKTREE" -c core.quotePath=false diff --stat "$BASE...$BRANCH" 2>/dev/null)"; then
   _die_token "git diff --stat failed for $BASE...$BRANCH"
 fi
 

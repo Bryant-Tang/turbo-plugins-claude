@@ -234,7 +234,7 @@ git -C "$REMOTE_PATH" add -A
 if ! git -C "$REMOTE_PATH" diff --cached --quiet; then
   echo "" >&2
   echo "Note: the SVN branch content differs from this repo's mirror of trunk:" >&2
-  git -C "$REMOTE_PATH" diff --cached --name-only | sed 's/^/  /' >&2
+  git -C "$REMOTE_PATH" -c core.quotePath=false diff --cached --name-only | sed 's/^/  /' >&2
   echo "This usually means trunk moved since your last pull. Run '/tp-pull-from-svn' on main," >&2
   echo "merge it into '$BRANCH', then run the push again (the bridge is already created; re-running is safe)." >&2
 fi

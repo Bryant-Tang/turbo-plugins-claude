@@ -272,7 +272,7 @@ try {
         # git changes" on a worktree the user never touched explains nothing by itself.
         & git -C $remoteWorktreePath diff --cached --quiet
         if ($LASTEXITCODE -ne 0) {
-            $differing = (& git -C $remoteWorktreePath diff --cached --name-only | Out-String).Trim()
+            $differing = (& git -C $remoteWorktreePath -c core.quotePath=false diff --cached --name-only | Out-String).Trim()
             Write-Output ""
             Write-Output "Note: the SVN branch content differs from this repo's mirror of trunk:"
             foreach ($line in ($differing -split "`r?`n")) { Write-Output "  $line" }

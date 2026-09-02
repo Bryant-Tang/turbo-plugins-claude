@@ -124,7 +124,7 @@ try {
     $mergeExit = $LASTEXITCODE
     $ErrorActionPreference = $ea3
     if ($mergeExit -ne 0) {
-        $conflicts = (& git -C $remote.Path diff --name-only --diff-filter=U | Out-String).Trim()
+        $conflicts = (& git -C $remote.Path -c core.quotePath=false diff --name-only --diff-filter=U | Out-String).Trim()
         throw "Merge conflict in remote worktree. Resolve the following files in '$($remote.Name)', then re-run, or abort with 'git -C $($remote.Path) merge --abort':`n$conflicts"
     }
 

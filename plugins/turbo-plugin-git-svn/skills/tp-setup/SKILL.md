@@ -275,7 +275,7 @@ bridge bootstrap 的機械步驟(`git init` → 身分檢查 → 空 commit → 
      key,保留空 section 供未來 svn 行為設定)。用 base 段「更新自己區塊」程序,只動 `# >>> turbo-plugin:git-svn >>>` 區塊。
    - 4c-2. **產物 / 機密的 ignore 判斷(在 `git add -A` 之前)**:4b 只寫死 plugin 自造的基礎設施;
      **這個專案自己的**建置產物、本機設定與機密沒有固定清單,由你判斷。讀
-     `${CLAUDE_PLUGIN_ROOT}/skills/tp-suggest-ignore/assets/ignore-rubric.md`,對照 `git status --short`
+     `${CLAUDE_PLUGIN_ROOT}/skills/tp-suggest-ignore/assets/ignore-rubric.md`,對照 `git -c core.quotePath=false status --short`
      裡 `??` 的東西逐項判斷,把該擋的 pattern append 進 `.gitignore`(不必單獨 commit,4d 會一起帶走)。
      - **時機不能往後挪**:4d 的 `git add -A` 會把當下沒被忽略的東西全部掃進第一顆 commit,之後再補
        `.gitignore` 也救不回來(已經在版控裡了,而且很可能已經推上 SVN)。

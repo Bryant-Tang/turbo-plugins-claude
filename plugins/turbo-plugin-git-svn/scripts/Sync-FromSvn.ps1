@@ -181,7 +181,7 @@ Cannot read SVN at the path this bridge is attached to:
     $mergeExit = $LASTEXITCODE
 
     if ($mergeExit -ne 0) {
-        $conflicts = (& git -C $mainWorktree diff --name-only --diff-filter=U | Out-String).Trim()
+        $conflicts = (& git -C $mainWorktree -c core.quotePath=false diff --name-only --diff-filter=U | Out-String).Trim()
         # Rollback: abort the merge and return to original branch so the worktree is clean.
         # Capture each rollback op's exit code separately so we can detect rollback failure
         # and emit a distinct error (working tree may be in an inconsistent state).

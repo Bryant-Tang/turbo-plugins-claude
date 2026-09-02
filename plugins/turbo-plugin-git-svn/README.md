@@ -115,6 +115,32 @@ bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用
 - **檔名含 `@` 沒問題**：`banner@2x.jpg` 這種 retina 命名會自動處理掉 svn 的 peg revision 語法。
 - **檔名字元仍受系統字碼頁限制**：Windows 上路徑是透過系統 ANSI 字碼頁傳給 svn 的，所以檔名若用到你這台機器字碼頁裝不下的文字（例如繁中 cp950 系統上的日文假名、emoji），推送會**明確失敗並說明原因**，而不是送出壞掉的檔名。要用這類檔名請依 `/tp-setup` 的編碼說明改用 PowerShell 7+ 或開啟 Windows 的 UTF-8 設定。
 
+## 印給人看的 git 輸出會關掉 `core.quotePath`
+
+git 的 `core.quotePath` **預設是 `true`**，會把檔名裡的非 ASCII 逐 byte 轉成 `\ooo`。所以一份衝突清單
+在中文檔名下長這樣：
+
+```
+"docs/\347\231\274\344\275\210\350\252\252\346\230\216.md"
+```
+
+資訊沒遺失，但要人腦解碼。更糟的是 escape 後長度約是原字串的 **4 倍**，會把 `git diff --stat` 的欄寬
+撐爆而觸發截斷——而截斷位置常常**切在一個 `\ooo` 的中間**，連「拿去解碼」這條退路都沒了。
+
+所以**輸出要給人看的 git 呼叫都帶 `-c core.quotePath=false`**（衝突檔案清單、`tp-request-merge` 的
+diffstat、bridge 的差異清單，以及 SKILL 裡那幾條「Source:」指令）。它是**單次呼叫層級**的，不寫入任何
+設定檔，**不改變使用者 repo 或全域的 git 設定**——換一台機器、換一個使用者，行為都一樣。
+
+> 這跟 issue #79 是**不同的兩件事**，只是症狀都叫「檔名看不懂」。#79 是 **svn** 用系統字碼頁編它的
+> 人類可讀輸出（資訊真的遺失，變成 `?`）；這裡是 **git** 主動 escape（資訊還在）。修法也不同。
+
+**界線：給機器解析的輸出不要加。** `--porcelain` 的跳脫是**格式的一部分**——含空白或換行的檔名靠它
+消歧義，關掉會讓解析變得不安全。目前那幾處只判斷「空不空」，關掉無妨；真的要解析內容時，正確做法是
+`--porcelain -z`，不是關 quotePath。`tools`/測試裡的 `git status --porcelain`、以及不含檔名的
+`git log --oneline` 都**刻意沒有加**。
+
+`tests/unit/scripts/quote-path.test.sh` 守著這條規則：新增的衝突清單 / diffstat 呼叫漏了旗標會紅。
+
 ## SVN commit body 的組裝（`tp-push-to-svn`）
 
 `tp-push-to-svn` 組裝 SVN commit body 時,收錄推送範圍內**所有非-merge commit 的 subject**,**不依 conventional-commit type 過濾**——`feat` / `fix` / `refactor` / `docs` / `db` / `chore` 等各型 subject 都會進 SVN body。唯一被排除的是 **merge commit**（`Merge ...`;且範圍內若全是 merge commit、沒有任何 code-level subject 可記,腳本會 hard-stop 提示先補一個非-merge commit）。body 由腳本鎖定、agent 只寫 title。

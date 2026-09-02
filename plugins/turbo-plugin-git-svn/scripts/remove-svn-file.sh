@@ -171,7 +171,7 @@ if [[ "$GIT_TRACKED" == true ]]; then
   fi
 
   if ! git -C "$MAIN_WORKTREE" merge "$REMOTE_BRANCH" --no-ff -m "Merge branch '$REMOTE_BRANCH' into $BRANCH"; then
-    CONFLICTS="$(git -C "$MAIN_WORKTREE" diff --name-only --diff-filter=U)"
+    CONFLICTS="$(git -C "$MAIN_WORKTREE" -c core.quotePath=false diff --name-only --diff-filter=U)"
     if git -C "$MAIN_WORKTREE" merge --abort 2>/dev/null; then abort_status=0; else abort_status=$?; fi
     checkout_status=0
     if [[ "$SWITCHED" == true ]]; then
