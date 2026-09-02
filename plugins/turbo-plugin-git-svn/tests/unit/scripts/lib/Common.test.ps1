@@ -846,6 +846,108 @@ Describe 'Get-WorktreesDir' {
     }
 }
 
+Describe 'Get-WorktreeForBranch (issue #152 - one copy, not four)' {
+
+    BeforeAll {
+        # Declared in BeforeAll, not at Describe scope: a function defined directly under a
+        # Describe/Context body is gone by the time Pester 5 runs the It blocks.
+        function Invoke-GitQuiet {
+            param([string]$Cwd, [string[]]$GitArgs)
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            try {
+                & git -C $Cwd @GitArgs 2>$null | Out-Null
+            } finally {
+                $ErrorActionPreference = $prev
+            }
+        }
+
+        function New-SeededGitRepo {
+            param([string]$Path)
+            $null = New-Item -ItemType Directory -Path $Path -Force
+            Invoke-GitQuiet -Cwd $Path -GitArgs @('init', '-b', 'main')
+            Invoke-GitQuiet -Cwd $Path -GitArgs @('config', 'user.email', 'test@turbo-plugin')
+            Invoke-GitQuiet -Cwd $Path -GitArgs @('config', 'user.name', 'turbo-plugin-test')
+            Invoke-GitQuiet -Cwd $Path -GitArgs @('commit', '--allow-empty', '-m', 'init')
+        }
+
+        function Get-WorktreeLines {
+            param([string]$Cwd)
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'SilentlyContinue'
+            try {
+                $raw = (& git -C $Cwd worktree list --porcelain 2>$null) -join "`n"
+            } finally {
+                $ErrorActionPreference = $prev
+            }
+            return @($raw -split "`n" | ForEach-Object { $_.Trim() })
+        }
+    }
+
+    # The oracle for the normalization step is deliberately ANOTHER function's output, never a
+    # second copy of the same string surgery: `git worktree list --porcelain` prints Windows
+    # paths as `C:/...` while Get-MainWorktree returns `c:/...`, and Merge-MainIntoBranches.ps1
+    # compares the two directly. Dropping the normalization makes that comparison false forever
+    # without a word of complaint.
+    It 'the branch in the main worktree resolves to the same spelling Get-MainWorktree gives' {
+        $sandbox = New-IsolatedRepoRoot 'wfb'
+        try {
+            $main = Join-Path $sandbox 'main'
+            New-SeededGitRepo -Path $main
+
+            $got = Get-WorktreeForBranch -Want 'main' -WorktreeLines (Get-WorktreeLines -Cwd $main)
+            $got | Should -Be (Get-MainWorktree -RepoRoot $main)
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $sandbox
+        }
+    }
+
+    It 'a branch held by a linked worktree resolves to that worktree, not the main one' {
+        $sandbox = New-IsolatedRepoRoot 'wfblinked'
+        try {
+            $main = Join-Path $sandbox 'main'
+            $linked = Join-Path $sandbox 'linked'
+            New-SeededGitRepo -Path $main
+            Invoke-GitQuiet -Cwd $main -GitArgs @('worktree', 'add', '-b', 'feat/lw', $linked)
+
+            $got = Get-WorktreeForBranch -Want 'feat/lw' -WorktreeLines (Get-WorktreeLines -Cwd $main)
+            $got | Should -Not -Be ''
+            # That inequality is the whole basis of the "checked out elsewhere" decision.
+            $got | Should -Not -Be (Get-MainWorktree -RepoRoot $main)
+            # ...and the path must really be that branch's checkout.
+            (& git -C $got rev-parse --abbrev-ref HEAD).Trim() | Should -Be 'feat/lw'
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $sandbox
+        }
+    }
+
+    # The other direction. Without this, a lookup that answered "some worktree has it" for
+    # every branch would pass both cases above.
+    It 'a branch no worktree holds resolves to an empty string' {
+        $sandbox = New-IsolatedRepoRoot 'wfbabsent'
+        try {
+            $main = Join-Path $sandbox 'main'
+            New-SeededGitRepo -Path $main
+            Invoke-GitQuiet -Cwd $main -GitArgs @('branch', 'feat/parked')
+
+            $got = Get-WorktreeForBranch -Want 'feat/parked' -WorktreeLines (Get-WorktreeLines -Cwd $main)
+            $got | Should -Be ''
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $sandbox
+        }
+    }
+
+    # An empty listing can only mean the caller handed over a failed or unchecked read: a healthy
+    # --porcelain run always names at least the main worktree. Answering "nobody has it" there is
+    # indistinguishable from the healthy answer, which is the failure this refusal exists to stop.
+    It 'refuses an empty worktree list instead of answering "nobody has it"' {
+        { Get-WorktreeForBranch -Want 'main' -WorktreeLines @() } |
+            Should -Throw -ExpectedMessage '*empty worktree list*'
+        { Get-WorktreeForBranch -Want 'main' -WorktreeLines @('') } |
+            Should -Throw -ExpectedMessage '*empty worktree list*'
+    }
+}
+
 Describe 'Write-Utf8NoBom' {
 
     It 'writes CJK content without a BOM and byte-identical to canonical UTF-8 (R6)' {

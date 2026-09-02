@@ -174,29 +174,16 @@ if ! WT_LIST="$(git -C "$MAIN_WORKTREE" worktree list --porcelain 2>/dev/null)";
   _die_token "git worktree list failed in $MAIN_WORKTREE"
 fi
 
-# Which worktree, if any, has a given branch checked out. Echoes the normalized absolute
-# path, or nothing. The path is normalized before it is ever compared: git reports Windows
-# paths as `C:/...` while other sources hand back `/c/...`, and comparing those two spellings
-# is false every single time without saying so.
-worktree_for_branch() {
-  local want="$1" line cur=''
-  while IFS= read -r line; do
-    case "$line" in
-      'worktree '*) cur="${line#worktree }" ;;
-      "branch refs/heads/$want")
-        [[ -n "$cur" ]] && get_normalized_absolute_path "$cur"
-        return 0
-        ;;
-    esac
-  done <<< "$WT_LIST"
-  return 0
-}
+# The lookup itself lives in lib/common.sh (worktree_for_branch), shared with
+# merge-main-into-branches.sh: it carries a path-normalization step whose absence is silent,
+# and a copy per caller is a copy per silent-failure entry point. The READ stays here because
+# the failure report is script-specific -- this one has to be a TP_TOKEN line.
 
 # The work must be fully committed. This is the guard that matters most for the case this
 # script exists for: the caller is about to merge and then let `remove` delete the branch and
 # its worktree. Anything still uncommitted there is not in the merge and does not survive the
 # removal -- and nothing else in the sequence would have said so.
-SOURCE_WT="$(worktree_for_branch "$BRANCH")"
+SOURCE_WT="$(worktree_for_branch "$BRANCH" "$WT_LIST")"
 if [[ -n "$SOURCE_WT" ]]; then
   if ! SRC_STATUS="$(git -C "$SOURCE_WT" status --porcelain 2>/dev/null)"; then
     _die_token "git status --porcelain failed in $SOURCE_WT"
@@ -227,7 +214,7 @@ fi
 # The merge happens on BASE in the main worktree, so BASE has to be checkout-able there.
 # git forbids the same branch in two worktrees at once, so if BASE lives in some other
 # worktree the checkout would fail partway through. Say so up front instead.
-BASE_WT="$(worktree_for_branch "$BASE")"
+BASE_WT="$(worktree_for_branch "$BASE" "$WT_LIST")"
 if [[ -n "$BASE_WT" && "$BASE_WT" != "$MAIN_WORKTREE" ]]; then
   echo "${PREFIX}BASE_ELSEWHERE base=$BASE path=$BASE_WT"
   exit 0

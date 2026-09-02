@@ -103,23 +103,10 @@ try {
     if ($wt.Code -ne 0) { throw "git worktree list failed (exit $($wt.Code)) in $mainWorktree" }
     $wtLines = @($wt.Text -split "`n" | ForEach-Object { $_.Trim() })
 
-    # Which worktree, if any, has a given branch checked out. Returns the normalized absolute
-    # path, or ''. The path is normalized before it is ever compared: git reports Windows paths
-    # as `C:/...` while other sources hand back `/c/...`, and comparing those two spellings is
-    # false every single time without saying so.
-    function Get-WorktreeForBranch {
-        param([string]$Want)
-        $cur = ''
-        foreach ($line in $wtLines) {
-            if ($line -like 'worktree *') {
-                $cur = $line.Substring('worktree '.Length)
-            } elseif ($line -eq "branch refs/heads/$Want") {
-                if ($cur -ne '') { return (Get-NormalizedAbsolutePath $cur) }
-                return ''
-            }
-        }
-        return ''
-    }
+    # The lookup itself lives in lib/Common.ps1 (Get-WorktreeForBranch), shared with
+    # Request-Merge.ps1: it carries a path-normalization step whose absence is silent, and a copy
+    # per caller is a copy per silent-failure entry point. The READ stays here because the
+    # failure report is script-specific.
 
     $merged   = @()
     $conflict = @()
@@ -132,35 +119,42 @@ try {
     # on $LASTEXITCODE — matching Sync-FromSvn.ps1. `merge --abort` wants its noise swallowed,
     # and gets that from Read-Git, which discards stderr WITHOUT the `2>` redirect that causes
     # the throw (issue #128).
-    foreach ($branch in $targetBranches) {
+    # $targetBranch, NOT $branch: PowerShell variable names are case-insensitive, so a loop
+    # variable named $branch IS the script parameter [string[]]$Branch -- and a parameter carries
+    # its type constraint, so every assignment to it comes back out as a one-element String[]
+    # rather than the String that was put in. That stayed invisible while the lookup was a simple
+    # function (simple parameter binding quietly joins a one-element array into a string); the
+    # moment it became an advanced function in Common.ps1 every iteration died with "Cannot
+    # convert value to type System.String".
+    foreach ($targetBranch in $targetBranches) {
         # The main worktree holding it is fine -- that checkout is a no-op. Any OTHER worktree is
         # not: git refuses, and the refusal has nothing to do with the content.
-        $branchWt = Get-WorktreeForBranch $branch
+        $branchWt = Get-WorktreeForBranch -Want $targetBranch -WorktreeLines $wtLines
         if ($branchWt -ne '' -and $branchWt -ne $mainWorktree) {
-            $occupied += $branch
-            Write-Output "SKIP $branch (checked out at $branchWt)"
+            $occupied += $targetBranch
+            Write-Output "SKIP $targetBranch (checked out at $branchWt)"
             continue
         }
 
-        & git -C $mainWorktree checkout $branch
+        & git -C $mainWorktree checkout $targetBranch
         if ($LASTEXITCODE -ne 0) {
-            $conflict += $branch
-            Write-Output "CONFLICT $branch (checkout failed)"
+            $conflict += $targetBranch
+            Write-Output "CONFLICT $targetBranch (checkout failed)"
             continue
         }
 
-        & git -C $mainWorktree merge main --no-ff -m "Merge branch 'main' into $branch"
+        & git -C $mainWorktree merge main --no-ff -m "Merge branch 'main' into $targetBranch"
         if ($LASTEXITCODE -ne 0) {
             # Read-Git, not `& git ... 2>$null | Out-Null` (issue #128): under EAP=Stop the `2>`
             # redirection turns git's stderr into a terminating error. This one sits INSIDE the
             # per-branch loop, so a throw here would leave the conflicted merge in progress, skip
             # every remaining branch, AND skip the "restore the branch we started on" step below.
             $null = Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--abort')
-            $conflict += $branch
-            Write-Output "CONFLICT $branch (merge aborted)"
+            $conflict += $targetBranch
+            Write-Output "CONFLICT $targetBranch (merge aborted)"
         } else {
-            $merged += $branch
-            Write-Output "OK $branch"
+            $merged += $targetBranch
+            Write-Output "OK $targetBranch"
         }
     }
 
