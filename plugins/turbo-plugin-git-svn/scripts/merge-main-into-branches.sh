@@ -18,6 +18,14 @@
 #     mark it CONFLICT, and CONTINUE to the next branch (never leave a conflicted tree,
 #     never stop the whole run).
 #
+# A branch that some OTHER worktree has checked out is reported as its own state --
+# `SKIP <b> (checked out at <path>)` -- and NOT as a conflict. git forbids the same branch
+# in two worktrees at once, so the checkout simply cannot happen; calling that CONFLICT sent
+# the reader looking for a content clash that does not exist, while the actual fix (go to that
+# worktree and merge there, or remove it) is nowhere in the output. Under this plugin's own
+# workflow -- tp-request-merge exists precisely so that work happens in isolated worktrees --
+# an occupied branch is the ordinary case, not an edge one, so it does not fail the run either.
+#
 # Guard: if the main worktree is dirty at start, fail loudly before touching anything.
 set -euo pipefail
 
@@ -101,10 +109,47 @@ fi
 
 ORIGINAL_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD)"
 
+# Read the worktree list ONCE, with the failure checked. Letting a git failure fall through
+# would turn it into "no worktree has this branch", which reads exactly like the healthy
+# answer -- and the run would then walk into the very checkout failure this lookup exists to
+# report properly.
+if ! WT_LIST="$(git -C "$MAIN_WORKTREE" worktree list --porcelain 2>/dev/null)"; then
+  echo "Error: git worktree list failed in $MAIN_WORKTREE" >&2
+  exit 1
+fi
+
+# Which worktree, if any, has a given branch checked out. Echoes the normalized absolute path,
+# or nothing. The path is normalized before it is ever compared: git reports Windows paths as
+# `C:/...` while other sources hand back `/c/...`, and comparing those two spellings is false
+# every single time without saying so.
+worktree_for_branch() {
+  local want="$1" line cur=''
+  while IFS= read -r line; do
+    case "$line" in
+      'worktree '*) cur="${line#worktree }" ;;
+      "branch refs/heads/$want")
+        [[ -n "$cur" ]] && get_normalized_absolute_path "$cur"
+        return 0
+        ;;
+    esac
+  done <<< "$WT_LIST"
+  return 0
+}
+
 MERGED=()
 CONFLICT=()
+OCCUPIED=()
 
 for branch in "${TARGET_BRANCHES[@]}"; do
+  # The main worktree holding it is fine -- that checkout is a no-op. Any OTHER worktree is not:
+  # git refuses, and the refusal has nothing to do with the content.
+  BRANCH_WT="$(worktree_for_branch "$branch")"
+  if [[ -n "$BRANCH_WT" && "$BRANCH_WT" != "$MAIN_WORKTREE" ]]; then
+    OCCUPIED+=("$branch")
+    echo "SKIP $branch (checked out at $BRANCH_WT)"
+    continue
+  fi
+
   if ! git -C "$MAIN_WORKTREE" checkout "$branch" >/dev/null 2>&1; then
     CONFLICT+=("$branch")
     echo "CONFLICT $branch (checkout failed)"
@@ -139,6 +184,15 @@ if [[ ${#CONFLICT[@]} -gt 0 ]]; then
 else
   echo "CONFLICT (aborted): (none)"
 fi
+# Printed only when it happened, unlike the two lines above. Those two are the run's outcome and
+# are always worth stating; this one is an exceptional condition needing a different action from
+# the reader, and a permanent `(none)` would train them to stop reading the line.
+if [[ ${#OCCUPIED[@]} -gt 0 ]]; then
+  echo "Skipped (checked out elsewhere): ${OCCUPIED[*]}"
+fi
 
+# Only a real conflict fails the run. An occupied branch does not: see the header -- under this
+# plugin's workflow that is the ordinary state of every branch someone is working on, and a run
+# that fails whenever a linked worktree exists reports nothing anyone can act on.
 if [[ ${#CONFLICT[@]} -gt 0 ]]; then exit 1; fi
 exit 0

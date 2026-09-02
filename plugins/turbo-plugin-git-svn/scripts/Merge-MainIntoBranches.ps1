@@ -30,6 +30,14 @@ $ErrorActionPreference = 'Stop'
 #     mark it CONFLICT in the output, and CONTINUE to the next branch (we never leave a
 #     conflicted tree and never stop the whole run).
 #
+# A branch that some OTHER worktree has checked out is reported as its own state --
+# `SKIP <b> (checked out at <path>)` -- and NOT as a conflict. git forbids the same branch in two
+# worktrees at once, so the checkout simply cannot happen; calling that CONFLICT sent the reader
+# looking for a content clash that does not exist, while the actual fix (go to that worktree and
+# merge there, or remove it) was nowhere in the output. Under this plugin's own workflow --
+# tp-request-merge exists precisely so that work happens in isolated worktrees -- an occupied
+# branch is the ordinary case, not an edge one, so it does not fail the run either.
+#
 # Guard: if the main worktree is dirty at start we fail loudly before touching anything —
 # merging into a dirty tree would be unsafe and the checkout dance would refuse anyway.
 try {
@@ -87,8 +95,35 @@ try {
 
     $originalBranch = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Text.Trim()
 
+    # Read the worktree list ONCE, with the failure checked. Letting a git failure fall through
+    # would turn it into "no worktree has this branch", which reads exactly like the healthy
+    # answer -- and the run would then walk into the very checkout failure this lookup exists to
+    # report properly.
+    $wt = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'list', '--porcelain')
+    if ($wt.Code -ne 0) { throw "git worktree list failed (exit $($wt.Code)) in $mainWorktree" }
+    $wtLines = @($wt.Text -split "`n" | ForEach-Object { $_.Trim() })
+
+    # Which worktree, if any, has a given branch checked out. Returns the normalized absolute
+    # path, or ''. The path is normalized before it is ever compared: git reports Windows paths
+    # as `C:/...` while other sources hand back `/c/...`, and comparing those two spellings is
+    # false every single time without saying so.
+    function Get-WorktreeForBranch {
+        param([string]$Want)
+        $cur = ''
+        foreach ($line in $wtLines) {
+            if ($line -like 'worktree *') {
+                $cur = $line.Substring('worktree '.Length)
+            } elseif ($line -eq "branch refs/heads/$Want") {
+                if ($cur -ne '') { return (Get-NormalizedAbsolutePath $cur) }
+                return ''
+            }
+        }
+        return ''
+    }
+
     $merged   = @()
     $conflict = @()
+    $occupied = @()
 
     # NOTE on stderr handling (PS 5.1): git checkout/merge write progress to stderr even on
     # success (e.g. "Switched to branch 'x'"). Under EAP=Stop, redirecting that native stderr
@@ -98,6 +133,15 @@ try {
     # and gets that from Read-Git, which discards stderr WITHOUT the `2>` redirect that causes
     # the throw (issue #128).
     foreach ($branch in $targetBranches) {
+        # The main worktree holding it is fine -- that checkout is a no-op. Any OTHER worktree is
+        # not: git refuses, and the refusal has nothing to do with the content.
+        $branchWt = Get-WorktreeForBranch $branch
+        if ($branchWt -ne '' -and $branchWt -ne $mainWorktree) {
+            $occupied += $branch
+            Write-Output "SKIP $branch (checked out at $branchWt)"
+            continue
+        }
+
         & git -C $mainWorktree checkout $branch
         if ($LASTEXITCODE -ne 0) {
             $conflict += $branch
@@ -128,7 +172,16 @@ try {
     Write-Output '─── Summary ─────────────────────────────────────────────────────────'
     Write-Output ("Merged cleanly: " + $(if ($merged.Count -gt 0) { $merged -join ', ' } else { '(none)' }))
     Write-Output ("CONFLICT (aborted): " + $(if ($conflict.Count -gt 0) { $conflict -join ', ' } else { '(none)' }))
+    # Printed only when it happened, unlike the two lines above. Those two are the run's outcome
+    # and are always worth stating; this one is an exceptional condition needing a different
+    # action from the reader, and a permanent `(none)` would train them to stop reading the line.
+    if ($occupied.Count -gt 0) {
+        Write-Output ("Skipped (checked out elsewhere): " + ($occupied -join ', '))
+    }
 
+    # Only a real conflict fails the run. An occupied branch does not: see the header -- under
+    # this plugin's workflow that is the ordinary state of every branch someone is working on,
+    # and a run that fails whenever a linked worktree exists reports nothing anyone can act on.
     if ($conflict.Count -gt 0) { exit 1 }
     exit 0
 }

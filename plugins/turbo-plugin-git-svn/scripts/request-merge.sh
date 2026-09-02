@@ -26,8 +26,38 @@
 #
 #     ERROR > BRANCH_IS_BASE > BRIDGE_BRANCH > BRANCH_NOT_FOUND > BASE_NOT_FOUND
 #           > SOURCE_DIRTY > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE
-#           > NOTHING_TO_MERGE > READY            (report mode)
-#           > MERGED | CONFLICT                   (--merge mode)
+#           > NOTHING_TO_MERGE > BEHIND_BASE > READY  (report mode)
+#           > MERGED | CONFLICT                       (--merge mode)
+#
+# DELETING THE SOURCE BRANCH (--delete-branch, requires --merge)
+#   A PR host offers "Delete branch" once the merge lands, and repos can have it done for them.
+#   Without that step the branch ref simply stays, looking exactly like the branches still being
+#   worked on -- so the cost is not one stale ref, it is that after a while nobody can tell which
+#   refs mean anything. `ExitWorktree`'s `remove` does not cover it either: it belongs to the
+#   harness rather than this plugin, and the branch may well have no worktree at all (a
+#   `git checkout -b` inside an existing one is the common way to make a one-commit branch).
+#   Never the default, and never unasked: some branches are merged somewhere and still wanted
+#   (integration first, `main` later). The SKILL asks; this flag is the answer being carried out.
+#   READY and NOTHING_TO_MERGE therefore carry `worktree=yes|no`, which is what tells the SKILL
+#   whether deleting the ref is even the right question -- see the ROUTING CONTRACT above.
+#
+# THE `behind` GATE
+#   BEHIND_BASE is what a PR host means by "this branch is out of date with the base branch".
+#   It is a gate rather than a line of prose because the failure it catches is silent: the
+#   report has always printed `behind : N`, and a merge went ahead regardless, so the merged
+#   work was never once seen alongside the state of BASE it was landing on. Two sides that each
+#   build can still fail together, and nothing here would have said so -- the next person to
+#   build finds out, with it already on BASE.
+#   `--allow-behind` is the deliberate override, and it is what the SKILL passes once the user
+#   has been shown the count and said to merge anyway. Refusing outright would be worse: the
+#   user is the only judge available in a repo with no CI, and a gate with no way through just
+#   teaches people to stop using the tool.
+#
+#   CONSEQUENCE, and it is not an accident: CONFLICT is now only reachable WITH --allow-behind.
+#   A merge can only conflict if BASE moved since the branch forked -- and if BASE moved, the
+#   branch is behind, so the gate fires first. That is the right order. The advice on a conflict
+#   was always "merge BASE into the branch and resolve it there", which is exactly what the gate
+#   sends the user to do, one step earlier and without a failed merge in between.
 #
 #   --merge re-runs every check above before acting. That is the point of putting both modes
 #   in one script rather than two: the gate the user was shown and the gate that admits the
@@ -43,6 +73,8 @@ PREFIX='TP_TOKEN:'
 BRANCH=''
 BASE='main'
 DO_MERGE=0
+ALLOW_BEHIND=0
+DELETE_BRANCH=0
 # Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
 REPO_ROOT=''
 
@@ -63,6 +95,8 @@ while [[ $# -gt 0 ]]; do
     --base)      [[ $# -ge 2 ]] || { echo "Error: --base requires a value" >&2; exit 1; }; BASE="$2"; shift 2 ;;
     --base=*)    BASE="${1#--base=}"; shift ;;
     --merge)     DO_MERGE=1; shift ;;
+    --allow-behind) ALLOW_BEHIND=1; shift ;;
+    --delete-branch) DELETE_BRANCH=1; shift ;;
     --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
     --repo-root=*) REPO_ROOT="${1#--repo-root=}"; shift ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
@@ -73,6 +107,12 @@ probe_git_version
 
 if [[ -z "$BRANCH" ]]; then echo "Error: --branch is required" >&2; exit 1; fi
 if [[ -z "$BASE" ]]; then echo "Error: --base requires a non-empty value" >&2; exit 1; fi
+# Report mode is read-only and stays that way. Refusing the combination outright, rather than
+# ignoring the flag, keeps that promise checkable instead of relying on the caller's memory.
+if [[ "$DELETE_BRANCH" -eq 1 && "$DO_MERGE" -eq 0 ]]; then
+  echo "Error: --delete-branch requires --merge (report mode never writes)." >&2
+  exit 1
+fi
 
 # Validate BEFORE emitting any token (anti-forge): a malformed ref name is a hard, tokenless
 # error and never earns a routing token. `check-ref-format` is git's own validator, so this
@@ -193,6 +233,60 @@ if [[ -n "$BASE_WT" && "$BASE_WT" != "$MAIN_WORKTREE" ]]; then
   exit 0
 fi
 
+# Reported on READY / NOTHING_TO_MERGE so the SKILL knows which question to ask: a branch with a
+# worktree is `ExitWorktree`'s to remove (ref and worktree together), one without is a plain ref
+# the user may want deleted here.
+HAS_WT='no'
+[[ -n "$SOURCE_WT" ]] && HAS_WT='yes'
+
+# Delete the source branch -- only on proof that BASE really contains it. Echoes 'yes' or
+# 'no <reason-slug>'.
+#
+# The proof is `merge-base --is-ancestor` against the base actually merged into, NOT `git branch
+# -d`'s own verdict: -d judges "already merged" relative to the CURRENT HEAD, and the main
+# worktree is not necessarily parked on BASE. A branch genuinely merged into BASE is routinely
+# refused as `not fully merged` when asked from some third branch.
+# So the -D below is not "-d said no, force it anyway": -d is tried first as an independent
+# second opinion, and -D only ever runs on an ancestry proof that -d had no access to.
+try_delete_branch() {
+  # git refuses to delete a branch any worktree has checked out -- including the main one, when
+  # the run started there. Answered here rather than left to git so the reason survives.
+  if [[ -n "$SOURCE_WT" ]]; then echo 'no has-worktree'; return 0; fi
+  if ! git -C "$MAIN_WORKTREE" merge-base --is-ancestor "$BRANCH" "$BASE" >/dev/null 2>&1; then
+    echo 'no not-ancestor'; return 0
+  fi
+  if git -C "$MAIN_WORKTREE" branch -d "$BRANCH" >/dev/null 2>&1; then echo 'yes'; return 0; fi
+  if git -C "$MAIN_WORKTREE" branch -D "$BRANCH" >/dev/null 2>&1; then echo 'yes'; return 0; fi
+  echo 'no delete-failed'
+}
+
+# Fields appended to the two tokens that can report a deletion, plus the human-readable line that
+# explains a refusal. `reason=` is present only when nothing was deleted, so `deleted=yes` needs
+# no second field to be unambiguous.
+DELETED='no'
+DEL_REASON='not-requested'
+DEL_FIELDS=''
+run_delete() {
+  if [[ "$DELETE_BRANCH" -eq 1 ]]; then
+    local res
+    res="$(try_delete_branch)"
+    DELETED="${res%% *}"
+    [[ "$DELETED" == 'no' ]] && DEL_REASON="${res#no }"
+  fi
+  DEL_FIELDS="deleted=$DELETED"
+  [[ "$DELETED" == 'no' ]] && DEL_FIELDS="$DEL_FIELDS reason=$DEL_REASON"
+
+  if [[ "$DELETED" == 'yes' ]]; then
+    echo "Deleted branch '$BRANCH' (verified merged into '$BASE')."
+  elif [[ "$DELETE_BRANCH" -eq 1 ]]; then
+    case "$DEL_REASON" in
+      has-worktree)  echo "Branch '$BRANCH' was NOT deleted: it is checked out at $SOURCE_WT." ;;
+      not-ancestor)  echo "Branch '$BRANCH' was NOT deleted: '$BASE' does not contain it." ;;
+      *)             echo "Branch '$BRANCH' was NOT deleted: git refused to remove the ref." ;;
+    esac
+  fi
+}
+
 # --- The report -------------------------------------------------------------------------
 
 if ! COUNTS="$(git -C "$MAIN_WORKTREE" rev-list --left-right --count "$BASE...$BRANCH" 2>/dev/null)"; then
@@ -202,7 +296,11 @@ BEHIND="$(printf '%s' "$COUNTS" | awk '{print $1}')"
 AHEAD="$(printf '%s' "$COUNTS" | awk '{print $2}')"
 
 if [[ "$AHEAD" -eq 0 ]]; then
-  echo "${PREFIX}NOTHING_TO_MERGE branch=$BRANCH base=$BASE"
+  # Already fully in BASE, so this is the other place a deletion belongs: the branch is exactly
+  # as safe to remove as it is after a merge, and telling the user "you can clean this up" while
+  # leaving them to do it by hand is the same gap one step over.
+  run_delete
+  echo "${PREFIX}NOTHING_TO_MERGE branch=$BRANCH base=$BASE worktree=$HAS_WT $DEL_FIELDS"
   exit 0
 fi
 
@@ -231,10 +329,23 @@ fi
 echo ''
 echo "Changes vs $BASE:"
 if [[ -n "$DIFFSTAT" ]]; then echo "$DIFFSTAT"; else echo '  (no file changes)'; fi
+if [[ "$BEHIND" -gt 0 ]]; then
+  echo ''
+  echo "  NOTE: $BASE has $BEHIND commit(s) that $BRANCH does not. This work has never"
+  echo "        been built or checked alongside them."
+fi
 echo '─────────────────────────────────────────────────────────────────────'
 
+# The `behind` gate. Placed AFTER the report on purpose: the counts and the commit list are what
+# the user needs in order to answer, so they get printed either way, and only the terminal token
+# differs. See the header for why this refuses by default.
+if [[ "$BEHIND" -gt 0 && "$ALLOW_BEHIND" -eq 0 ]]; then
+  echo "${PREFIX}BEHIND_BASE branch=$BRANCH base=$BASE ahead=$AHEAD behind=$BEHIND main=$MAIN_WORKTREE"
+  exit 0
+fi
+
 if [[ "$DO_MERGE" -eq 0 ]]; then
-  echo "${PREFIX}READY branch=$BRANCH base=$BASE ahead=$AHEAD main=$MAIN_WORKTREE"
+  echo "${PREFIX}READY branch=$BRANCH base=$BASE ahead=$AHEAD behind=$BEHIND worktree=$HAS_WT main=$MAIN_WORKTREE"
   exit 0
 fi
 
@@ -262,7 +373,10 @@ if git -C "$MAIN_WORKTREE" merge --no-ff "$BRANCH" -m "Merge branch '$BRANCH' in
   restore_original
   echo ''
   echo "Merged '$BRANCH' into '$BASE' as $MERGE_SHA."
-  echo "${PREFIX}MERGED branch=$BRANCH base=$BASE commit=$MERGE_SHA"
+  # After restore_original, so the run is standing where it will finish before any ref is
+  # removed, and after the merge, so the ancestry proof inside is about the state that now exists.
+  run_delete
+  echo "${PREFIX}MERGED branch=$BRANCH base=$BASE commit=$MERGE_SHA $DEL_FIELDS"
   exit 0
 fi
 

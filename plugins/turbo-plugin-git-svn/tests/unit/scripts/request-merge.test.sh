@@ -3,11 +3,12 @@
 #
 # Script under test: scripts/request-merge.sh (git-only — no SVN, so no SKIP path).
 # Contract:
-#   request-merge.sh --branch <name> [--base <name>] [--merge] [--repo-root <path>]
+#   request-merge.sh --branch <name> [--base <name>] [--merge] [--allow-behind]
+#                    [--delete-branch] [--repo-root <path>]
 #   Emits exactly ONE 'TP_TOKEN:' line. Precedence:
 #     ERROR > BRANCH_IS_BASE > BRANCH_NOT_FOUND > BASE_NOT_FOUND > SOURCE_DIRTY
 #           > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE > NOTHING_TO_MERGE
-#           > READY  (report)  |  MERGED / CONFLICT  (--merge)
+#           > BEHIND_BASE > READY  (report)  |  MERGED / CONFLICT  (--merge)
 #
 # Every token above has a case here that actually produces it. A guard nothing can reach is
 # a guard that will not be there when it is needed, and it looks identical to one that works.
@@ -64,6 +65,15 @@ run_sut() {
 token_of() { printf '%s\n' "$1" | grep '^TP_TOKEN:' || true; }
 token_count() { printf '%s\n' "$1" | grep -c '^TP_TOKEN:' || true; }
 
+# Move `main` on one commit AFTER the branch forked, so the branch is behind by one. The file it
+# touches is unique to main, so the branch is behind WITHOUT being in conflict -- which is the
+# whole point: a merge that would succeed is exactly the one nothing else would have questioned.
+advance_main() {
+    local root="$1"
+    git -C "$root" checkout -q main >/dev/null 2>&1
+    commit_file "$root" main-only.txt 'main tip' 'chore: main advances'
+}
+
 # A peer worktree that silently failed to be created leaves an ordinary directory behind, and
 # every assertion downstream then passes for the wrong reason. Verified, not assumed.
 add_peer() {
@@ -89,8 +99,8 @@ test_report_ready_and_read_only() {
     assertEquals 'one token' 1 "$(token_count "$out")"
     # The main= path spelling is platform-dependent (git hands back `C:/…` on Windows), so the
     # assertion pins the stable fields and only requires the path to be non-empty.
-    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:READY branch=feat base=main ahead=2 main=.'
-    assertTrue 'READY token carries branch/base/ahead and a non-empty main path' $?
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:READY branch=feat base=main ahead=2 behind=0 worktree=no main=.'
+    assertTrue 'READY token carries branch/base/ahead/behind and a non-empty main path' $?
     after="$(git -C "$root" rev-parse main)"
     assertEquals 'report mode did not move main' "$before" "$after"
 }
@@ -232,7 +242,7 @@ test_nothing_to_merge_after_merging() {
     root="$(make_fixture)"
     run_sut "$root" --branch feat --merge >/dev/null
     out="$(run_sut "$root" --branch feat)"
-    assertEquals 'NOTHING_TO_MERGE' 'TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main' "$(token_of "$out")"
+    assertEquals 'NOTHING_TO_MERGE'         'TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main worktree=no deleted=no reason=not-requested'         "$(token_of "$out")"
 }
 
 # ── Case 14: --merge actually merges, and restores where it started ───────────
@@ -294,7 +304,11 @@ test_conflict_aborts_and_leaves_base_untouched() {
     git -C "$root" checkout -q main >/dev/null 2>&1
     commit_file "$root" shared.txt 'from-main' 'main side'
     before="$(git -C "$root" rev-parse main)"
-    out="$(run_sut "$root" --branch clash --merge)"; rc=$?
+    # --allow-behind is required to reach a conflict at all, and that is not a quirk of the
+    # fixture: a merge can only conflict if base moved since the branch forked, which is exactly
+    # what makes the branch behind. The gate fires first. Getting here means the user was shown
+    # the count and chose to merge anyway.
+    out="$(run_sut "$root" --branch clash --merge --allow-behind)"; rc=$?
     after="$(git -C "$root" rev-parse main)"
     assertEquals 'conflict exits 1' 1 "$rc"
     assertEquals 'CONFLICT token' 'TP_TOKEN:CONFLICT branch=clash base=main' "$(token_of "$out")"
@@ -419,7 +433,9 @@ test_git_stderr_warning_does_not_derail_conflict_abort() {
         return
     fi
 
-    out="$( cd "$root" && PATH="$shim:$PATH" bash "$SCRIPT_UNDER_TEST" --branch clash --merge 2>&1 )"; rc=$?
+    # --allow-behind for the same reason as the case above: a conflict is only reachable once the
+    # behind gate has been passed deliberately.
+    out="$( cd "$root" && PATH="$shim:$PATH" bash "$SCRIPT_UNDER_TEST" --branch clash --merge --allow-behind 2>&1 )"; rc=$?
     after="$(git -C "$root" rev-parse main)"
     assertEquals 'conflict exits 1' 1 "$rc"
     assertEquals 'CONFLICT token' 'TP_TOKEN:CONFLICT branch=clash base=main' "$(token_of "$out")"
@@ -427,6 +443,151 @@ test_git_stderr_warning_does_not_derail_conflict_abort() {
     [ ! -f "$root/.git/MERGE_HEAD" ]
     assertTrue 'no merge state left behind' $?
     assertEquals 'HEAD still on main' 'main' "$(git -C "$root" symbolic-ref --short HEAD)"
+}
+
+# ── Case 23: a branch behind base is gated, and the report is still printed ────
+# The count was always in the report and the merge went ahead regardless, so the work was never
+# once seen alongside the state of base it was landing on. The report has to survive the gate:
+# the commit list and the counts are what the user needs in order to answer.
+test_behind_base_is_gated_but_still_reports() {
+    local root out
+    root="$(make_fixture)"
+    advance_main "$root"
+    out="$(run_sut "$root" --branch feat)"
+    assertEquals 'the gate is a routing answer, not a failure' 0 $?
+    assertEquals 'one token' 1 "$(token_count "$out")"
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:BEHIND_BASE branch=feat base=main ahead=2 behind=1 main=.'
+    assertTrue 'BEHIND_BASE carries both counts' $?
+    printf '%s' "$out" | grep -q 'feat: add b'
+    assertTrue 'the commit list is still printed' $?
+    printf '%s' "$out" | grep -q 'never'
+    assertTrue 'and the report says why it matters' $?
+}
+
+# ── Case 24: --merge refuses while behind, and base does not move ──────────────
+test_merge_refuses_while_behind() {
+    local root out rc before after
+    root="$(make_fixture)"
+    advance_main "$root"
+    before="$(git -C "$root" rev-parse main)"
+    out="$(run_sut "$root" --branch feat --merge)"; rc=$?
+    after="$(git -C "$root" rev-parse main)"
+    assertEquals 'exits 0 -- refusing to merge is an answer, not an error' 0 "$rc"
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:BEHIND_BASE '
+    assertTrue '--merge is gated too, not just the report' $?
+    assertEquals 'and main did not move' "$before" "$after"
+}
+
+# ── Case 25: --allow-behind is the way through, and it merges ─────────────────
+# A gate with no way through would just teach people to stop using the tool; the user is the
+# only judge available in a repo with no CI. This is the case that keeps the door open.
+test_allow_behind_lets_the_merge_through() {
+    local root out
+    root="$(make_fixture)"
+    advance_main "$root"
+    out="$(run_sut "$root" --branch feat --allow-behind)"
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:READY branch=feat base=main ahead=2 behind=1 worktree=no main=.'
+    assertTrue 'the report says READY once the override is given' $?
+
+    out="$(run_sut "$root" --branch feat --merge --allow-behind)"
+    assertEquals 'merge exit 0' 0 $?
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:MERGED branch=feat base=main commit=.'
+    assertTrue 'and the merge happens' $?
+    git -C "$root" merge-base --is-ancestor feat main
+    assertTrue 'main really contains the branch tip' $?
+}
+
+# ── Case 26: --delete-branch removes the ref once the merge lands ─────────────
+test_delete_branch_removes_the_merged_ref() {
+    local root out
+    root="$(make_fixture)"
+    out="$(run_sut "$root" --branch feat --merge --delete-branch)"
+    assertEquals 'merge exit 0' 0 $?
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:MERGED branch=feat base=main commit=.* deleted=yes$'
+    assertTrue 'MERGED reports the deletion, with no reason field' $?
+    assertEquals 'one token' 1 "$(token_count "$out")"
+    git -C "$root" rev-parse --verify --quiet refs/heads/feat >/dev/null
+    assertFalse 'the branch ref is gone' $?
+    # The content survived the ref: deleting a branch whose work did not land is the failure
+    # this whole flag has to avoid, and the ref being gone looks identical either way.
+    printf '%s' "$out" | grep -q "2 files changed"
+    assertTrue 'the merge really carried the branch content' $?
+}
+
+# ── Case 27: without the flag, nothing is deleted ─────────────────────────────
+# Without this, Case 26 would pass just as happily if the deletion were unconditional -- which
+# is the one behaviour this must never have. Some branches are merged and still wanted.
+test_branch_survives_when_deletion_is_not_requested() {
+    local root out
+    root="$(make_fixture)"
+    out="$(run_sut "$root" --branch feat --merge)"
+    printf '%s' "$(token_of "$out")" | grep -q 'deleted=no reason=not-requested$'
+    assertTrue 'says it did not delete, and why' $?
+    git -C "$root" rev-parse --verify --quiet refs/heads/feat >/dev/null
+    assertTrue 'the branch is still there' $?
+}
+
+# ── Case 28: HEAD parked on a THIRD branch still deletes ──────────────────────
+# The reported failure: `git branch -d` judges "already merged" against the CURRENT HEAD, and
+# the main worktree is not necessarily on base. A branch genuinely merged into main is refused
+# as `not fully merged` when asked from somewhere else. This is the case that keeps the
+# `merge-base --is-ancestor` proof in place -- without it, deletion silently stops working in
+# exactly the everyday shape where the main worktree sits on some other branch.
+test_delete_works_when_head_is_on_a_third_branch() {
+    local root out
+    root="$(make_fixture)"
+    git -C "$root" checkout -qb parked >/dev/null 2>&1
+    out="$(run_sut "$root" --branch feat --merge --delete-branch)"
+    printf '%s' "$(token_of "$out")" | grep -q 'deleted=yes$'
+    assertTrue 'deleted even though HEAD is not on base' $?
+    git -C "$root" rev-parse --verify --quiet refs/heads/feat >/dev/null
+    assertFalse 'the ref really is gone' $?
+    assertEquals 'and HEAD is back where it started' 'parked' \
+        "$(git -C "$root" symbolic-ref --short HEAD)"
+}
+
+# ── Case 29: a branch with a worktree is not deleted here ─────────────────────
+# Removing the ref and removing the worktree are two different jobs, and the second one is
+# `ExitWorktree`'s. The merge must still succeed -- refusing the deletion is not a merge failure.
+test_branch_with_a_worktree_is_not_deleted() {
+    local root out
+    root="$(make_fixture)"
+    add_peer "$root" "$SB/wt" feat
+    out="$(run_sut "$root" --branch feat --merge --delete-branch)"
+    assertEquals 'the merge still succeeds' 0 $?
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:MERGED .* deleted=no reason=has-worktree$'
+    assertTrue 'says it refused, and why' $?
+    git -C "$root" rev-parse --verify --quiet refs/heads/feat >/dev/null
+    assertTrue 'the branch is still there' $?
+    git -C "$root" merge-base --is-ancestor feat main
+    assertTrue 'and main really got the merge' $?
+}
+
+# ── Case 30: --delete-branch without --merge is a hard, tokenless refusal ─────
+# Report mode is documented read-only; ignoring the flag instead would leave that promise
+# resting on the caller's memory.
+test_delete_branch_requires_merge() {
+    local root out rc
+    root="$(make_fixture)"
+    out="$(run_sut "$root" --branch feat --delete-branch)"; rc=$?
+    assertEquals 'exits 1' 1 "$rc"
+    assertEquals 'and earns no routing token' 0 "$(token_count "$out")"
+    git -C "$root" rev-parse --verify --quiet refs/heads/feat >/dev/null
+    assertTrue 'the branch was not touched' $?
+}
+
+# ── Case 31: an already-merged branch can be cleaned up the same way ──────────
+# The token said "this is safe to clean up" and then left the user to do it by hand -- the same
+# gap as after a merge, one step over.
+test_already_merged_branch_can_be_deleted() {
+    local root out
+    root="$(make_fixture)"
+    run_sut "$root" --branch feat --merge >/dev/null
+    out="$(run_sut "$root" --branch feat --merge --delete-branch)"
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main worktree=no deleted=yes$'
+    assertTrue 'NOTHING_TO_MERGE reports the deletion' $?
+    git -C "$root" rev-parse --verify --quiet refs/heads/feat >/dev/null
+    assertFalse 'the ref is gone' $?
 }
 
 # ── Case 22: every mode emits exactly one token ───────────────────────────────

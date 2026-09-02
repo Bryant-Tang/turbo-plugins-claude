@@ -305,4 +305,57 @@ Describe 'Merge-MainIntoBranches' {
             }
         }
     }
+
+    Context 'Case 7: a branch another worktree holds is SKIPPED, not called a conflict' {
+        # git forbids the same branch in two worktrees at once, so the checkout cannot happen.
+        # Reporting that as CONFLICT sent the reader hunting for a content clash that does not
+        # exist. The run must not fail over it either: under this plugin's workflow an occupied
+        # branch is the ordinary state of anything someone is working on.
+        It 'prints SKIP with the occupying path, keeps the conflict list empty, and exits 0' {
+            $sb = New-Sandbox -Tag 'mmb-7'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-MergeFixture -Root $root
+
+                # A worktree that silently failed to be created leaves an ordinary directory
+                # behind, and every assertion downstream then passes for the wrong reason.
+                $peer = [System.IO.Path]::Combine($sb, 'wt')
+                (Run-Git -Cwd $root -GitArgs @('worktree', 'add', $peer, 'test-x')) | Should -Be 0
+                [System.IO.File]::Exists([System.IO.Path]::Combine($peer, '.git')) | Should -BeTrue
+
+                $beforeX = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'test-x')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
+                $res.ExitCode | Should -Be 0
+                $res.Stdout | Should -Match '(?m)^SKIP test-x \(checked out at .+\)'
+                $res.Stdout | Should -Not -Match '(?m)^CONFLICT test-x\b'
+                $res.Stdout | Should -Match '(?m)^Skipped \(checked out elsewhere\): .*test-x'
+                $res.Stdout | Should -Match '(?m)^CONFLICT \(aborted\): \(none\)'
+
+                # State, not just the message: the occupied branch really was left alone, and the
+                # loop carried on to the branch after it.
+                (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'test-x')) | Should -Be $beforeX
+                $res.Stdout | Should -Match '(?m)^OK feature-y\b'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'Case 8: with nothing occupied, the new summary line is absent' {
+        # Without this, Case 7 would pass just as happily if the line were printed
+        # unconditionally -- and a line that is always there is a line nobody reads.
+        It 'prints no "Skipped (checked out elsewhere)" line' {
+            $sb = New-Sandbox -Tag 'mmb-8'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                New-MergeFixture -Root $root
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @()
+                $res.ExitCode | Should -Be 0
+                $res.Stdout | Should -Not -Match 'Skipped \(checked out elsewhere\)'
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
 }
