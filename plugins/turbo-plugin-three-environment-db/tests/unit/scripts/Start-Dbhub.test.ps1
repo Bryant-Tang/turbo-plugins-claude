@@ -32,7 +32,7 @@ $script:HasNode = $null -ne (Get-Command node -ErrorAction SilentlyContinue)
 BeforeAll {
     $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
     $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'start-dbhub.js')
-    $script:DbhubSpec = '@bytebase/dbhub@1.2.0'
+    $script:DbhubSpec = '@bytebase/dbhub@1.2.3'
 
     function New-Workspace {
         # GetTempPath(), not $env:TEMP: TEMP is unset under pwsh on Linux, which would make the
