@@ -35,6 +35,19 @@ merge 掉其中一個，其餘全部立刻變成衝突——而且 release-pleas
 
 **CHANGELOG 由 commit 生成**：每條 bullet = 你 commit 的**標題描述**（`type(scope): ` 後那段），**commit 寫繁中、CHANGELOG 就是繁中**；分類標題（`Added` / `Fixed` / `Changed` …）由 `release-please-config.json` 的 `changelog-sections` 依 commit type 對應。所以**寫好 commit 標題 = 寫好 CHANGELOG**。
 
+**commit body 裡的小括號必須在同一行閉合**（issue #141）。開在這一行、閉在下一行的 `(`，會讓
+release-please **整顆 commit 解析失敗**——它只在 log 印一行 `commit could not be parsed`，然後跳過：
+沒有 CHANGELOG 條目，也不計入版本級距，所以某個 plugin 在一個週期裡唯一的 `feat` / `fix` 若剛好中招，
+它會**整個不發版**，而 Release PR 看起來一切正常。
+
+原因是 release-please 用的是 `@conventional-commits/parser`（嚴格 PEG 文法），小括號在那套文法裡是
+scope 的結構符號。**方括號 `[]` 與角括號 `<>` 跨行都沒問題，只有小括號不行**——要換行就改用破折號或
+方括號。這件事**本機任何工具都驗不出來**：`commitlint` 與編輯器外掛走的是另一套寬鬆的 regex 解析器，
+同一顆 commit 在那裡完全正常。
+
+歷史上這樣掉過 **11 條** bullet。現在由 CI 的 `commit-messages-parseable` job 擋著
+（`tools/check-commit-parseable.sh`，用的是同一個解析器），所以忘了也會紅燈，不會再靜默。
+
 **初版是手寫的種子**：每個 plugin 的 `## [0.1.0]` 是手寫的乾淨初版（描述最終 ship 的狀態）；release-please 從**下一次變更**起接手，把新版本疊在 0.1.0 之上。`.release-please-manifest.json` 記錄各 plugin 現在的版本。（首次啟用步驟——merge 後替四個 plugin 各打一個 `0.1.0` tag 當基準——見 `release-please.yml` 開頭註解。）
 
 **所以**：① 不要手改 `plugin.json` 的 `version`、也不要手寫發版 CHANGELOG 區段（那兩處由 release-please 的 Release PR 維護）。② 想發版就把變更寫成清楚的 `feat:` / `fix:` commit。③ release-please 把「自上次發版以來的所有 commit」累積成一個 Release PR——等同「一批變更發一版」，不是每個 commit 發一版。④ major 仍須使用者明確同意才用 `!` / `BREAKING CHANGE`。
