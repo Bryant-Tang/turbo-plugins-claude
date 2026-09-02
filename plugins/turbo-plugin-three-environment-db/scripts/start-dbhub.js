@@ -62,7 +62,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const DBHUB_SPEC = '@bytebase/dbhub@1.2.0';
+const DBHUB_SPEC = '@bytebase/dbhub@1.2.3';
 // Forward-slash form, used only in messages so they read the same on every platform.
 const CONFIG_REL = '.turbo-plugin/dbhub.local.toml';
 

@@ -30,7 +30,7 @@ SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/start-dbhub.js"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 
 CONFIG_REL='.turbo-plugin/dbhub.local.toml'
-DBHUB_SPEC='@bytebase/dbhub@1.2.0'
+DBHUB_SPEC='@bytebase/dbhub@1.2.3'
 
 setUp() {
     WS="$(mktemp -d -t turbo-dbhub-XXXXXX)"
