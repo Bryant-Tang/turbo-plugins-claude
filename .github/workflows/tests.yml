@@ -621,6 +621,56 @@ jobs:
         shell: bash
         run: bash tools/verify-inert-files.sh
 
+  commit-messages-parseable:
+    # release-please decides CHANGELOG content with @conventional-commits/parser, a STRICT PEG
+    # grammar. A message it cannot parse is logged once and skipped -- no error, no warning, no
+    # CHANGELOG entry, and no contribution to the version bump. 11 commits in this repo's history
+    # lost their bullet that way before anyone noticed (issue #141). Nothing local catches it:
+    # commitlint and friends use the LENIENT regex parser, which accepts the same message happily.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The check needs the base commit to compute a range, so the default shallow clone
+          # will not do.
+          fetch-depth: 0
+
+      # Pinned, and pinned to what release-please actually resolves. A different version could
+      # disagree about what parses, which would make this check answer a question nobody asked.
+      - name: Install the parser release-please uses (pinned)
+        shell: bash
+        run: npm install --no-save @conventional-commits/parser@0.4.1
+
+      # Two conditional STEPS rather than a conditional job: a skipped JOB fails `tests-passed` by
+      # design, so this job must always run and report.
+      - name: Check the pull request's commits
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: bash tools/check-commit-parseable.sh "${{ github.event.pull_request.base.sha }}..HEAD"
+
+      # --allow-empty here only: a push can legitimately carry no non-merge commits, whereas a pull
+      # request always has at least one, so an empty range there means the range itself is wrong.
+      - name: Check the pushed commits
+        if: github.event_name == 'push'
+        shell: bash
+        run: bash tools/check-commit-parseable.sh --allow-empty "${{ github.event.before }}..${{ github.sha }}"
+
+      # EVERY declared trigger must reach a step that actually runs. `on:` also lists
+      # workflow_dispatch, and with only the two conditions above a manual run skipped both steps
+      # and reported success having judged nothing -- a job that is green because it did no work,
+      # which is the precise failure this whole job exists to stop. A dispatch has no "incoming"
+      # commit set, so the honest range is "whatever this ref has that main does not", and on main
+      # itself that is legitimately empty. `tools/tests/unit/check-commit-parseable.test.sh` asserts
+      # that every trigger in `on:` is covered here, so adding a trigger later cannot quietly
+      # reopen this hole.
+      - name: Check this ref's commits (manual run)
+        if: github.event_name != 'pull_request' && github.event_name != 'push'
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.event.repository.default_branch }}"
+          bash tools/check-commit-parseable.sh --allow-empty "FETCH_HEAD..HEAD"
+
   # ── tests-passed ────────────────────────────────────────────────────────────
   # The ONE check branch protection should point at. Its whole purpose is to have a name that never
   # changes.
@@ -642,7 +692,7 @@ jobs:
     # Without always(), this job is SKIPPED when an upstream job fails -- so it would stop
     # reporting at exactly the moment it matters, and a skipped required check never turns red.
     if: always()
-    needs: [discover, verify-core-identical, tools-tests, inert-files-are-inert, test-ubuntu, test-windows]
+    needs: [discover, verify-core-identical, tools-tests, inert-files-are-inert, commit-messages-parseable, test-ubuntu, test-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every test job succeeded
@@ -652,6 +702,7 @@ jobs:
           CORE: ${{ needs.verify-core-identical.result }}
           TOOLS: ${{ needs.tools-tests.result }}
           INERT: ${{ needs.inert-files-are-inert.result }}
+          COMMITMSG: ${{ needs.commit-messages-parseable.result }}
           UBUNTU: ${{ needs.test-ubuntu.result }}
           WINDOWS: ${{ needs.test-windows.result }}
         run: |
@@ -659,13 +710,14 @@ jobs:
           echo "verify-core-identical: $CORE"
           echo "tools-tests:           $TOOLS"
           echo "inert-files-are-inert: $INERT"
+          echo "commit-msgs-parseable: $COMMITMSG"
           echo "test-ubuntu:           $UBUNTU"
           echo "test-windows:          $WINDOWS"
           # `skipped` and `cancelled` fail here too, on purpose: a test job that did not run is not
           # evidence that anything passed. This repo has already been bitten by "quiet enough to
           # look green" more than once.
           failed=0
-          for r in "$DISCOVER" "$CORE" "$TOOLS" "$INERT" "$UBUNTU" "$WINDOWS"; do
+          for r in "$DISCOVER" "$CORE" "$TOOLS" "$INERT" "$COMMITMSG" "$UBUNTU" "$WINDOWS"; do
             if [ "$r" != "success" ]; then failed=1; fi
           done
           if [ "$failed" -ne 0 ]; then
