@@ -178,5 +178,46 @@ test_git_status_failure_aborts() {
     esac
 }
 
+# ── Case 9: a branch another worktree holds is SKIPPED, not reported as a conflict ─
+# git forbids the same branch in two worktrees at once, so the checkout cannot happen. Calling
+# that CONFLICT sent the reader hunting for a content clash that does not exist. The rest of the
+# run must be unaffected, and the run must not fail: under this plugin's workflow an occupied
+# branch is the ordinary state of anything someone is working on.
+test_branch_held_by_another_worktree_is_skipped_not_conflict() {
+    local root out rc before_x
+    root="$(make_merge_fixture "$SB")"
+    # A peer worktree that silently failed to be created leaves an ordinary directory behind, and
+    # every assertion downstream then passes for the wrong reason. Verified, not assumed.
+    git -C "$root" worktree add "$SB/wt" test-x >/dev/null 2>&1
+    [ -e "$SB/wt/.git" ]
+    assertTrue "fixture: '$SB/wt' is not a linked worktree -- git worktree add failed silently" $?
+    before_x="$(git -C "$root" rev-parse test-x)"
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; rc=$?
+    assertEquals 'an occupied branch does not fail the run' 0 "$rc"
+    echo "$out" | grep -qE '^SKIP test-x \(checked out at .+\)$'
+    assertTrue 'names the branch and the worktree holding it' $?
+    echo "$out" | grep -qE '^CONFLICT test-x\b'
+    assertFalse 'and never calls it a conflict' $?
+    echo "$out" | grep -qE '^Skipped \(checked out elsewhere\): .*test-x'
+    assertTrue 'the summary lists it separately from the conflicts' $?
+    echo "$out" | grep -qE '^CONFLICT \(aborted\): \(none\)$'
+    assertTrue 'the conflict summary stays empty' $?
+    assertEquals 'the occupied branch was not merged into' "$before_x" "$(git -C "$root" rev-parse test-x)"
+    echo "$out" | grep -qE '^OK feature-y$'
+    assertTrue 'the other branches still merge' $?
+}
+
+# ── Case 10: with nothing occupied, the new summary line is absent ────────────
+# Without this, Case 9 would pass just as happily if the line were printed unconditionally --
+# and a line that is always there is a line nobody reads.
+test_skipped_summary_line_is_absent_when_nothing_is_occupied() {
+    local root out
+    root="$(make_merge_fixture "$SB")"
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" 2>&1)"
+    echo "$out" | grep -qE '^Skipped \(checked out elsewhere\):'
+    assertFalse 'no Skipped line when no branch is checked out elsewhere' $?
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"
