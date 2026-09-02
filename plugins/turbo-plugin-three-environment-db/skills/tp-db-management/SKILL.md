@@ -1,7 +1,7 @@
 ---
 name: tp-db-management
-description: 'Use proactively for any database or SQL work: inspecting schema/data/objects, or preparing seed, migration or deployment SQL. Inspect read-only through the DBHub MCP server and write standardised SQL to `<sql_root>/<env>-db/<slug>/`, or to `<sql_root>/<env>-db/_modules/` under a fixed filename when the change replaces a whole stored procedure, view, function or trigger. sql_root comes from `[db] sql_root` in .turbo-plugin/config.toml and defaults to `.turbo-plugin/sql`. Do not bypass this skill by hand-writing SQL or querying another way.'
-argument-hint: 'Optional: database name 或 target environment（local-db / test-db / main-db）'
+description: 'Use proactively for any database or SQL work: inspecting schema/data/objects, or preparing seed, migration or deployment SQL. Inspect read-only through the DBHub MCP server and write standardised SQL to `<sql_root>/<env>/<slug>/`, or to `<sql_root>/<env>/_modules/` under a fixed filename when the change replaces a whole stored procedure, view, function or trigger. Both sql_root and the environment list come from `[db]` in .turbo-plugin/config.toml, defaulting to `.turbo-plugin/sql` and to local-db/test-db/main-db. Do not bypass this skill by hand-writing SQL or querying another way.'
+argument-hint: 'Optional: database name 或目標環境（取自 [db] environments）'
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbhub__execute_sql, mcp__tp-dbhub__run_sql, mcp__tp-dbhub__search_objects, mcp__tp-dbhub__list_tables, mcp__tp-dbhub__list_schemas, mcp__tp-dbhub__get_table_schema
 ---
@@ -13,7 +13,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, mcp__tp-dbh
 兩件事：
 
 1. **唯讀檢視資料庫** — 透過 `tp-dbhub` DBHub MCP server 查 schema、資料、stored procedure、function、index 等，幫助理解結構後再改 code。**只讀不寫**。
-2. **標準化 SQL 輸出** — 若工作需要任何寫入側的資料庫異動（補資料 / 改 schema / seed / backfill / migration），不直接透過 MCP 執行寫操作，而是產出標準化 `.sql` 檔，供使用者在各環境手動執行。落點有兩種:**累加型**變更落在 `<sql_root>/<env>-db/<slug>/`,**取代型**物件(stored procedure / view / function / trigger)落在 `<sql_root>/<env>-db/_modules/` 的固定檔名。判準見下方「可覆寫物件走固定檔名」。
+2. **標準化 SQL 輸出** — 若工作需要任何寫入側的資料庫異動（補資料 / 改 schema / seed / backfill / migration），不直接透過 MCP 執行寫操作，而是產出標準化 `.sql` 檔，供使用者在各環境手動執行。落點有兩種:**累加型**變更落在 `<sql_root>/<env>/<slug>/`,**取代型**物件(stored procedure / view / function / trigger)落在 `<sql_root>/<env>/_modules/` 的固定檔名。判準見下方「可覆寫物件走固定檔名」。
 
 本 skill 是從舊 dev-flow `db-management` 移植來的 **de-coupled 版本**：移除了所有 spec / work-item /
 `finish-dev` 自動歸檔等 dev-flow 耦合,累加型變更只保留**單一分組鍵** `<slug>`——**有 git 就是當前
@@ -24,26 +24,28 @@ branch 名**,沒有才問使用者。第 1 件事(唯讀檢視)完全不需要 g
 
 - MCP server 名稱：`tp-dbhub`（宣告於 `plugins/turbo-plugin-three-environment-db/.mcp.json`：用 **node** 跑 `scripts/start-dbhub.js`，它找出設定檔位置後以 npm 套件 `@bytebase/dbhub`（釘死版本）啟動，config 來自 `.turbo-plugin/dbhub.local.toml`）。**需要本機有 Node.js**。
 - 用 `tp-dbhub` 暴露的 **唯讀** MCP tool 查詢：執行查詢的 tool（execute / run SQL）、物件搜尋的 tool（search objects / list tables / get table schema 等）。實際 tool 名稱後綴可能依 DBHub 版本不同，先確認當前 session 暴露的 `tp-dbhub` tool 集再呼叫。
-- **DBHub 在本 repo 連的是 local 資料庫**，不直接連 test / production。test / main 的物件定義差異要靠使用者在目標環境跑你提供的最小唯讀查詢來確認（見下方 Fixed Constraints）。
+- **DBHub 連的是環境清單裡的第一個**（開發端那個，預設 `local-db`），不直接連後面任何一個。其餘環境的物件定義差異要靠使用者在目標環境跑你提供的最小唯讀查詢來確認（見下方 Fixed Constraints）。
 
 ## SQL 輸出落點（KTD10 — 關鍵 de-coupling）
 
 **累加型**變更（新增欄位 / 新增表 / 新增索引 / 資料修正）落在：
 
 ```
-<sql_root>/<env>-db/<slug>/<order>-<database>-<purpose>.sql
+<sql_root>/<env>/<slug>/<order>-<database>-<purpose>.sql
 ```
 
 **取代型**物件（stored procedure / view / function / trigger）走另一個落點,見「可覆寫物件走固定檔名」。
-下面這一節先講兩者共用的 `<sql_root>`,以及只有累加型才用得到的 `<slug>`。
+下面這幾節先講兩者共用的 `<sql_root>` 與 `<env>`,以及只有累加型才用得到的 `<slug>`。
 
-- `<sql_root>` = SQL 樹的根目錄，**唯一可由專案自訂的一層**。見下方「決定 `<sql_root>`」。
-- `<env>` = 目標資料庫環境，固定三選一：`local-db` / `test-db` / `main-db`（與舊 skill 同一組）。
+- `<sql_root>` = SQL 樹的根目錄。見下方「決定 `<sql_root>`」。
+- `<env>` = 目標資料庫環境的資料夾名，**取自專案設定**。見下方「決定 `<env>`」。
+  **它是完整的資料夾名,不要再加後綴** —— 預設清單是 `local-db` / `test-db` / `main-db`,
+  所以路徑就是 `<sql_root>/local-db/…`，不是 `<sql_root>/local-db-db/…`。
 - `<slug>` = 這批 SQL 屬於哪件事的分組鍵。**來源看有沒有 git,語意完全相同**——見下方「決定 `<slug>`」。
 - `<order>` = 2 位數執行順序（`01` / `02` / `03`…）。
 - `<database>` = 實際目標資料庫名。
 - `<purpose>` = 簡短用途描述，建議繁體中文（如 `補資料` / `新增欄位` / `重建索引` / `建立測試資料`）。
-- **同一個邏輯變更** 在 `local-db` / `test-db` / `main-db` 之間用 **相同 `<slug>` 子資料夾名 + 相同檔名**，方便對齊。
+- **同一個邏輯變更** 在各環境之間用 **相同 `<slug>` 子資料夾名 + 相同檔名**，方便對齊。
 
 ### 決定 `<sql_root>`
 
@@ -79,6 +81,69 @@ branch 名**,沒有才問使用者。第 1 件事(唯讀檢視)完全不需要 g
 而那會讓產出的 SQL **永遠不出現在 `git status`**——檔案在硬碟上、內容也對,只是沒有人會看到它,
 也永遠傳不到同事手上。這正是預設落點 `.turbo-plugin/sql/` 刻意不進 gitignore 的那個性質,換了地方
 就得重新確認一次。
+
+### 決定 `<env>`
+
+讀 `.turbo-plugin/config.toml` 的 `[db] environments`,那是一個字串陣列。**跟 `sql_root` 同一個檔、
+同一條理由:只讀 `config.toml`,不要去看 `config.local.toml`。** 環境清單決定的是進版控、要給全隊看的
+產物落在哪裡,不是機器差異。
+
+**沒有這個 key、或值是空陣列 → `["local-db", "test-db", "main-db"]`。** 這是預設,而且**必須跟以前
+逐字元相同** —— 沒設過這個 key 的專案不該察覺到任何差異。（新專案的 `tp-setup` 會直接把
+`["dev-db", "test-db", "main-db"]` 寫進去,所以「預設」只服務既有專案。）
+
+**清單裡的字串就是資料夾名,原樣使用。** 不要幫它加 `-db` 後綴、不要改大小寫、不要把 `/` 正規化掉。
+設 `["dev", "test", "main"]` 的專案,落點就是 `<sql_root>/dev/<slug>/`。
+
+#### 順序就是角色,沒有第二個 key 標記它
+
+清單**從開發端排到正式端**。位置是唯一的標記,所以這幾條都靠它:
+
+| 位置 | 角色 | 這份文件後面怎麼用它 |
+|---|---|---|
+| **第一個** | 你自己連得到、`tp-dbhub` 唯讀查得到的開發環境 | `SELECT OBJECT_ID(...)` 這類確認可以自己跑;只在開發環境驗證、測完回滾的腳本只落在這裡 |
+| **中間每一個** | 過版路上的環境（測試 / staging …） | 連不到,要請使用者在該環境跑最小唯讀查詢 |
+| **最後一個** | production | 連不到,而且是守門最嚴的一個:基線必須來自它自己、要驗基線 commit |
+
+**只有一個環境的清單是合法的**(那就同時是第一個與最後一個,production 的守門照樣適用)。
+**數量不限於三**：兩層、四層都可以,下面每一條規則都是「對清單裡的每一個環境各做一次」,
+不假設數量——看到「各環境」「每一個環境」就是這個意思。
+
+**排反了不會有任何錯誤訊息。** 沒有東西驗得出「這個名字聽起來像 production」,所以順序錯的後果是
+守門保護錯對象:production 被當成開發端(於是你會拿它當可以隨便查的環境),開發端被當成 production
+(於是你會為它要求基線 commit)。設定檔的註解有講,但**你讀到一個看起來可疑的順序時要說出來**
+——例如清單是 `["main-db", "test-db", "dev-db"]`,那八成是反的。
+
+#### 值不合法就停下來,不要自己修
+
+任一項不過就報錯,說出哪裡不行、要使用者改 `config.toml`:
+
+- **不是陣列**(寫成 `environments = "dev-db"` 這種單一字串)。
+- **空字串成員**,或前後有空白 / 結尾是 `.` 的成員 —— Windows 會**默默**把結尾的空白與 `.` 去掉,
+  於是設定字串跟實際資料夾名不同。
+- **含路徑分隔符（`/`、`\`）或 `..` 的成員** —— 環境是 `<sql_root>` 底下的**一層**,不是一段路徑。
+- **重複的成員** —— 兩個一樣的名字會讓「各環境各一份」變成同一個檔寫兩次,而且不會報錯。
+
+#### 設定改了、目錄還沒改名 → 停下來,這是靜默失敗的入口
+
+**開始寫檔之前,列一次 `<sql_root>` 底下實際有哪些目錄。** 出現**不在清單裡**的環境目錄時
+（例如清單已經是 `dev-db` 而磁碟上還有 `local-db/`），**停下來講出來,不要照著新名字建新目錄**。
+
+照著建的後果是:新檔案落進 `dev-db/`,舊的整棵 `local-db/` 樹原地變成孤兒 —— 檔案還在、git 也乾淨、
+沒有任何一步報錯,只是這支 skill 從此再也不會看它一眼。而「同一件事在各環境用相同 `<slug>`」這個
+對齊性質會從那一刻起悄悄失效。
+
+正確的處理是先改名再繼續,而改名有腳本代勞（連 `.sql` 檔頭裡的環境名一起改）:
+
+```
+scripts/rename-db-environment.sh <舊名> <新名>      # Linux / macOS / Git Bash
+scripts/Rename-DbEnvironment.ps1 <舊名> <新名>      # Windows
+```
+
+預設只印出會改什麼、不動任何檔案;確認無誤再加 `--apply` / `-Apply`。
+
+> 反過來,清單裡有、磁碟上還沒有的目錄**是正常的** —— 那只表示那個環境還沒有任何腳本,
+> 要寫的時候建起來就好。只有「磁碟上有、清單裡沒有」才是要停下來的那一種。
 
 ### 決定 `<slug>`
 
@@ -116,7 +181,7 @@ checkout 了一顆 commit、忘了切回去),而在那裡做的 commit 很容易
 
 1. **先列出既有的分組鍵讓使用者選**,「開一個新的」是另一個選項。
 
-   **候選要掃三個環境目錄的聯集** —— `local-db/`、`test-db/`、`main-db/` 底下**所有**既有資料夾名,
+   **候選要掃所有環境目錄的聯集** —— 環境清單裡**每一個**環境底下**所有**既有資料夾名,
    **去重**後一起列出,**不是只看這次要寫入的那一個環境**。
    **但要濾掉底線開頭的目錄** —— `_modules/` 跟 `<slug>` 是同一層的兄弟,可是它**不是分組鍵**;
    把它列進候選會讓使用者選到一個保留目錄,而那之後寫進去的一次性腳本不會有任何東西攔。
@@ -128,10 +193,11 @@ checkout 了一顆 commit、忘了切回去),而在那裡做的 commit 很容易
    它們是舊規則下建的、這支 skill 不再寫入,並建議把它改名成不以底線開頭的名字。默默濾掉的話,
    使用者只會看到候選清單裡少了一個他記得存在的名字,然後開一個新的 —— 那正是「先列既有的讓人選」
    這條規則本來要防的事。
-   > 這一點是這條規則能不能成立的關鍵。同一件事常常**跨 session、分次完成不同環境**(先 local 驗證,
-   > 之後才決定要不要上 test / main —— 下方「環境資料夾」表格與 Decision Rules 明文支援這個流程)。
-   > 只掃當前環境的話:第一次建了 `local-db/補資料/`,第二次要補 `main-db` 時 `main-db/` 底下還沒有
-   > 那個名字,候選清單是**空的**,使用者又得手打——正好回到這裡要防的問題。
+   > 這一點是這條規則能不能成立的關鍵。同一件事常常**跨 session、分次完成不同環境**(先在開發端
+   > 驗證,之後才決定要不要往後面的環境推 —— 下方「環境資料夾」表格與 Decision Rules 明文支援這個
+   > 流程)。只掃當前環境的話:第一次建了 `local-db/補資料/`,第二次要補 `main-db` 時 `main-db/` 底下
+   > 還沒有那個名字,候選清單是**空的**,使用者又得手打——正好回到這裡要防的問題。
+   > （這個例子用的是預設清單的名字;規則本身對任何清單都成立。）
 
    **不要只給一個空白輸入框。** 手打會讓同一件事變成「補會員資料」和「補會員資料v2」兩個資料夾,
    而**沒有任何東西會提醒**。既有資料夾就是這個專案的分組鍵清單,拿它當候選比任何提示都準,而且它是
@@ -179,7 +245,7 @@ feat/B 也改了 USP_XXX →  main-db/feat-B/01-<DB>-調整另一件.sql
 
 固定檔名讓「兩條分支改同一個物件」變成**同一個路徑的兩份不同內容 → git 必然衝突**,把一個資料庫層的
 靜默問題搬到 git 層變成一個吵鬧的問題。連帶拿到兩件事:回滾腳本不必再寫（`git show <tag>:<path>`
-就是前一版全文）,以及「這次要跑哪幾支」有可靠來源（`git diff --name-only <tag>..HEAD -- <sql_root>/<env>-db/`）。
+就是前一版全文）,以及「這次要跑哪幾支」有可靠來源（`git diff --name-only <tag>..HEAD -- <sql_root>/<env>/`）。
 
 ### 判準:SQL Server 有沒有 `CREATE OR ALTER`
 
@@ -212,7 +278,7 @@ feat/B 也改了 USP_XXX →  main-db/feat-B/01-<DB>-調整另一件.sql
 ### 目錄形狀
 
 ```
-<sql_root>/<env>-db/
+<sql_root>/<env>/
 ├── <slug>/<order>-<database>-<purpose>.sql
 └── _modules/<database>/{Procedures,Views,Functions,Triggers}/<schema>.<物件名>.sql
 ```
@@ -228,13 +294,13 @@ feat/B 也改了 USP_XXX →  main-db/feat-B/01-<DB>-調整另一件.sql
   = procedure / view / function / trigger = 有 `CREATE OR ALTER` 的那一組,跟上面的判準完全重合。
   **不要**改叫 `_objects`:table 也是 object,但它不在這裡面,那個名字會讓下一個人把 table 放進來。
 
-### 三個環境各一份
+### 每個環境各一份
 
-`_modules/` **跟著分三環境**,不共用一份。過版有時間差,某支 SP 上了 test 還沒上 main 是常態;只留一份
-的話那一份必然含著還沒核准上正式的改動。而且 `git show <tag>:<path>` 要能取回「正式環境當時跑的那
-一版」,單一份檔案在 tag 當下裝的是 local 的內容。
+`_modules/` **跟著環境清單分**,清單裡有幾個環境就有幾份,不共用一份。過版有時間差,某支 SP 上了測試
+環境還沒上正式是常態;只留一份的話那一份必然含著還沒核准上正式的改動。而且 `git show <tag>:<path>`
+要能取回「正式環境當時跑的那一版」,單一份檔案在 tag 當下裝的是開發端的內容。
 
-改了其中一份之後,**回報另外兩份的差異狀態**（哪幾份還沒跟上、差在哪裡）,但**不要自動複製過去**——
+改了其中一份之後,**回報其餘每一份的差異狀態**（哪幾份還沒跟上、差在哪裡）,但**不要自動複製過去**——
 自動對齊正是「把未核准的改動推上正式」那條路徑。要不要跟進、什麼時候跟進是使用者的決定。
 
 ### 按需納管,而且是單向門
@@ -256,11 +322,11 @@ feat/B 也改了 USP_XXX →  main-db/feat-B/01-<DB>-調整另一件.sql
 SELECT OBJECT_ID('<schema>.<物件名>');
 ```
 
-`local-db` 可以自己用 `tp-dbhub` 唯讀查;`test-db` / `main-db` **請使用者在該環境跑這句回傳結果**
-（就是 Fixed Constraints 說的「最小唯讀查詢」）。
+清單裡的**第一個**環境可以自己用 `tp-dbhub` 唯讀查;**其餘每一個**環境都要**請使用者在該環境跑這句
+回傳結果**（就是 Fixed Constraints 說的「最小唯讀查詢」）。
 
-**這件事是逐環境判斷的,不是逐物件。** 同一支 SP 完全可能已經上了 test、還沒上 main —— 那在 `test-db`
-是既有物件、在 `main-db` 是全新物件,兩份檔要走不同的路。
+**這件事是逐環境判斷的,不是逐物件。** 同一支 SP 完全可能已經上了測試環境、還沒上正式 —— 那它在
+測試那個環境是既有物件、在 production 那個環境是全新物件,兩份檔要走不同的路。
 
 - **回傳非 NULL（既有物件）** → 走下面「既有物件」那條,基線必須從該環境抓。
 - **回傳 NULL（全新物件）** → 走再下面「全新物件」那條,**不要**去 SSMS 抓基線:對一個不存在的物件
@@ -270,9 +336,9 @@ SELECT OBJECT_ID('<schema>.<物件名>');
 
 #### 既有物件:基線必須來自目標環境,而且要驗得到
 
-**這是整個做法最危險的一步。** DBHub 只連 local（見 Fixed Constraints）,但 `main-db/_modules/` 那份
-基線**必須是正式環境當下的全文**。拿 local 全文當基線的話,第一次全文覆寫就會把開發中、還沒核准的
-改動整批推上正式 —— **而且腳本會執行成功,沒有任何警告**。
+**這是整個做法最危險的一步。** DBHub 只連清單裡的第一個環境（見 Fixed Constraints）,但 production
+那個環境的 `_modules/` 那份基線**必須是正式環境當下的全文**。拿開發端的全文當基線的話,第一次全文
+覆寫就會把開發中、還沒核准的改動整批推上正式 —— **而且腳本會執行成功,沒有任何警告**。
 
 所以首次納管一個**既有**物件時,在**每一個**該物件已存在的環境都照這個順序,不要合併步驟:
 
@@ -308,8 +374,8 @@ SELECT OBJECT_ID('<schema>.<物件名>');
   在這個檔第一次進版控之前**取不到任何東西**。回報時要講明這一點。
 - 之後這個物件在該環境就是**既有物件**了,再改就照一般流程直接改這個固定檔。
 
-> **不要**因為「local 已經有了」就把 local 的全文當成 `main-db` 的基線。同一支 SP 在 local 是既有、
-> 在 main 是全新,是**最常見**的情況（新功能本來就先寫在 local）—— 而 `main-db` 那份走的是「全新物件」
+> **不要**因為「開發端已經有了」就把它的全文當成 production 那份的基線。同一支 SP 在開發端是既有、
+> 在正式是全新,是**最常見**的情況（新功能本來就先寫在開發端）—— 而 production 那份走的是「全新物件」
 > 這條,它的第一版就是要部署上去的內容,不是抄來的基線。這兩件事碰巧長得很像,但意義完全不同:
 > 前者是「我知道正式環境現在長什麼樣」,後者是「正式環境還沒有這個東西」。
 
@@ -334,7 +400,7 @@ SELECT OBJECT_ID('<schema>.<物件名>');
 ### 改既有欄位 / 索引之前先掃
 
 `ALTER TABLE … ALTER COLUMN`、以及同名的 `DROP INDEX` + `CREATE INDEX`,留在 `<slug>/`;但**動手之前**
-先掃一次 `<sql_root>/<env>-db/` 底下所有 `.sql`,看有沒有**別的**分組鍵動過同一個 `<表>.<欄位>` 或同一個
+先掃一次 `<sql_root>/<env>/` 底下所有 `.sql`,看有沒有**別的**分組鍵動過同一個 `<表>.<欄位>` 或同一個
 索引名。命中就**停下來讓使用者確認**兩邊的意圖能不能並存。
 
 這是**偵測不是保證**:掃不到不代表沒有（寫法或格式不同就漏了）。但它的失敗方向是「多問一次」,不是
@@ -343,10 +409,10 @@ SELECT OBJECT_ID('<schema>.<物件名>');
 ## Fixed Constraints
 
 - 本 repo 所有 DBHub MCP 存取 **皆唯讀**，**絕不** 透過 MCP tool 執行 `INSERT` / `UPDATE` / `DELETE` / `CREATE` / `ALTER` / `DROP` 等寫操作。
-- **DBHub 連線範圍 = local 資料庫（`local-db`）only**，絕不直連 test / production；test / main 的物件差異一律靠使用者在目標環境跑最小唯讀查詢確認。
-- 任何寫入側需求（資料修正 / schema 變更 / seed / backfill / migration）→ 產 `.sql` 檔到 `<sql_root>/<env>-db/<slug>/`，**不** 直接寫資料庫。
-- **不要假設 local / test / production 結構一致**：欄位、view、stored procedure、function、trigger 都可能依環境不同。
-- 若 `test-db` / `main-db` 腳本依賴某物件定義，而該定義在非 local 環境可能不同 → 先給使用者一個 **最小唯讀查詢**（最好是簡單 `SELECT`），請他在目標環境跑完回傳結果，再據此 finalize 對應 SQL。**不要** 假裝 DBHub 能檢視 test / production。
+- **DBHub 連線範圍 = 環境清單裡的第一個（開發端，預設 `local-db`）only**，絕不直連它後面的任何一個；其餘環境的物件差異一律靠使用者在該環境跑最小唯讀查詢確認。
+- 任何寫入側需求（資料修正 / schema 變更 / seed / backfill / migration）→ 產 `.sql` 檔到 `<sql_root>/<env>/<slug>/`，**不** 直接寫資料庫。
+- **不要假設各環境結構一致**：欄位、view、stored procedure、function、trigger 都可能依環境不同。
+- 若**第一個環境以外**的腳本依賴某物件定義，而該定義在那個環境可能不同 → 先給使用者一個 **最小唯讀查詢**（最好是簡單 `SELECT`），請他在目標環境跑完回傳結果，再據此 finalize 對應 SQL。**不要** 假裝 DBHub 能檢視那些環境。
 - **已發佈的 SQL 視為不可變**：已透過 `tp-push-to-svn` 推到 `remote-svn/*` 且已打過 release tag 的 `.sql`，**不得**再編輯舊檔——要修正改走**新檔**（遞增 `<order>` 的新 `.sql`）。SVN history 與 release tag 是永久紀錄，改舊檔會讓已部署環境與版控對不上。
   - **`_modules/` 底下是這條的唯一例外**,固定檔的本質就是一直改同一個檔。這條規則真正的目的（讓
     已部署環境與版控對得上）在固定檔下由別的機制達成:每一版都完整留在 git / SVN history 裡,
@@ -357,17 +423,17 @@ SELECT OBJECT_ID('<schema>.<物件名>');
   - `<slug>/` 底下的一次性檔**仍然適用原規則**,不受這個例外影響。
 - **版控 SQL 不得含敏感資料**：`<sql_root>`（進 git）裡的 `.sql` **不得**包含字面憑證、含密碼的連線字串、或超出該 schema 遷移所需的 PII。連線資訊一律走 gitignored 的 `.turbo-plugin/dbhub.local.toml`；SQL 內需要範例值時用 placeholder，不要寫真實機密 / 個資。
 
-| 環境資料夾 | 用途 |
+| 環境資料夾（位置 → 角色） | 用途 |
 |---|---|
-| `<sql_root>/local-db/<slug>/` | local 驗證、暫時測試資料、或本地驗證後會回滾的腳本 |
-| `<sql_root>/test-db/<slug>/` | 客戶測試環境部署腳本 |
-| `<sql_root>/main-db/<slug>/` | production 部署腳本 |
-| `<sql_root>/<env>-db/_modules/` | 該環境已納管的 procedure / view / function / trigger 全文（固定檔名） |
+| **第一個**（預設 `local-db`）的 `<slug>/` | 開發環境驗證、暫時測試資料、或驗證後會回滾的腳本 |
+| **中間每一個**（預設只有 `test-db`）的 `<slug>/` | 過版路上的環境部署腳本（客戶測試環境等） |
+| **最後一個**（預設 `main-db`）的 `<slug>/` | production 部署腳本 |
+| `<sql_root>/<env>/_modules/` | 該環境已納管的 procedure / view / function / trigger 全文（固定檔名） |
 
 - 環境資料夾、`<slug>` 子資料夾或 `_modules/` 底下的物件類別資料夾不存在時，先建再放腳本。
-- 純 local 驗證（測完回滾）的腳本只放 `local-db/<slug>/`。
-- 最終發佈版若 production 也要改 → 在三處 `local-db` / `test-db` / `main-db` 各備一份對齊的腳本；
-  `_modules/` 同樣三處各一份，但每一份的基線各自來自**該環境**（見「首次納管」）。
+- 純開發環境驗證（測完回滾）的腳本只放**第一個**環境的 `<slug>/`。
+- 最終發佈版若 production 也要改 → 在**每一個**環境各備一份對齊的腳本；
+  `_modules/` 同樣每個環境各一份，但每一份的基線各自來自**該環境**（見「首次納管」）。
 
 ## SQL Template
 
@@ -385,8 +451,8 @@ SELECT OBJECT_ID('<schema>.<物件名>');
 
 - 用共用模板 [assets/sql-script-template.sql](./assets/sql-script-template.sql)。
 - 把同一個版面複製進每個環境的 SQL 檔，讓 local / test / production 腳本保有相同的 header、執行順序、pre-check、main change、post-check 段落。
-- local-only 驗證腳本沿用同模板，但只放 `local-db/<slug>/` 並填好 rollback 段落。
-- production-bound 變更先建三份檔，再讓三份的註解與段落順序對齊。
+- 只在開發環境驗證的腳本沿用同模板，但只放**第一個**環境的 `<slug>/` 並填好 rollback 段落。
+- production-bound 變更先為**每個**環境各建一份檔，再讓各份的註解與段落順序對齊。
 
 ### `_modules/` 固定檔
 
@@ -403,11 +469,18 @@ SELECT OBJECT_ID('<schema>.<物件名>');
 2. 若 table / column / procedure / function / index 名稱不確定，先用 `tp-dbhub` 的物件搜尋 MCP tool。
 3. 用 `tp-dbhub` 的查詢 MCP tool **只查最小必要資料**（唯讀）。
 4. 把資料庫查到的事實轉成需要的 code 變更或實作決策。
-5. 若需要任何寫入側資料庫動作，先決定目標環境範圍：local-only 驗證 / test 部署 / 含 production 的完整發佈。
-6. 決定 `<sql_root>`，依「決定 `<sql_root>`」那一節：讀 `[db] sql_root`，沒有就用預設
-   `.turbo-plugin/sql`；有值就先驗（拒絕絕對路徑 / 跑出工作區根 / 含 `..` / 前後空白或結尾 `.`），
-   基準點是**工作區根**而不是當下目錄，再對算出來的落點跑 `git check-ignore` 確認它沒被擋掉。
-   **這一步要在建任何資料夾之前做完**——落點錯了，後面每一件事都落在錯的地方。
+5. 若需要任何寫入側資料庫動作，先決定目標環境範圍：只在開發環境驗證 / 推到中途某個環境為止 /
+   含 production 的完整發佈。
+6. **決定落點的兩個變數 `<sql_root>` 與 `<env>`,兩件都做完再建任何資料夾**——落點錯了，後面每一件
+   事都落在錯的地方。
+   - `<sql_root>`，依「決定 `<sql_root>`」那一節：讀 `[db] sql_root`，沒有就用預設
+     `.turbo-plugin/sql`；有值就先驗（拒絕絕對路徑 / 跑出工作區根 / 含 `..` / 前後空白或結尾 `.`），
+     基準點是**工作區根**而不是當下目錄，再對算出來的落點跑 `git check-ignore` 確認它沒被擋掉。
+   - `<env>` 清單，依「決定 `<env>`」那一節：讀 `[db] environments`，沒有就用預設
+     `["local-db", "test-db", "main-db"]`；驗過每個成員（是陣列、成員非空、無路徑分隔符 / `..`、
+     無前後空白或結尾 `.`、不重複）。**順序就是角色**：第一個是你查得到的開發端，最後一個是
+     production。接著列一次 `<sql_root>` 底下的實際目錄，**出現清單裡沒有的環境目錄就停下來**
+     （多半是改了設定還沒跑改名腳本），不要照著新名字建新目錄、讓舊的那棵樹變成孤兒。
 7. **先分落點,再決定分組鍵。** 逐一看這次要做的每一件變更,問一句「SQL Server 對這種物件有沒有
    `CREATE OR ALTER`」：procedure / view / function / trigger **有** → 走 `_modules/`（第 9 步起）；
    其它一切（含 `ALTER TABLE … ALTER COLUMN`）**沒有** → 走 `<slug>/`（第 8 步）。一次工作可能兩種
@@ -416,20 +489,20 @@ SELECT OBJECT_ID('<schema>.<物件名>');
    `git rev-parse --abbrev-ref HEAD` 把 `/` 換成 `-`（detached HEAD → fail loudly，請使用者先 checkout
    具名 branch；branch 名以底線開頭同樣 fail loudly）；**不在 work tree 裡**則列出既有資料夾讓使用者選
    （**濾掉底線開頭的目錄**），輸入不合法就拒絕重問。
-   - 若 SQL 只供 local 驗證且測完回滾 → 只建 `<sql_root>/local-db/<slug>/`。
-   - 若是最終發佈且 production 也要改 → 在 `local-db` / `test-db` / `main-db` 三處建對齊腳本。
+   - 若 SQL 只供開發環境驗證且測完回滾 → 只建**第一個**環境的 `<sql_root>/<env>/<slug>/`。
+   - 若是最終發佈且 production 也要改 → 在**每一個**環境各建一份對齊腳本。
    - 每個檔用 `<order>-<database>-<purpose>.sql` 命名，從
      [assets/sql-script-template.sql](./assets/sql-script-template.sql) 起手。
    - 含 `ALTER TABLE … ALTER COLUMN` 或同名 `DROP INDEX` + `CREATE INDEX` 時，**動手前先掃**
-     `<sql_root>/<env>-db/` 底下所有 `.sql`，看有沒有別的分組鍵動過同一個 `<表>.<欄位>` / 索引名；
+     `<sql_root>/<env>/` 底下所有 `.sql`，看有沒有別的分組鍵動過同一個 `<表>.<欄位>` / 索引名；
      命中就停下來讓使用者確認兩邊能不能並存。
 9. **走 `_modules/` 的部分** —— 先確認這個物件在該環境**是不是第一次納管**（`_modules/<database>/<類別>/`
    底下有沒有那個檔）。反過來也要查：要寫進 `<slug>/` 的腳本裡若出現 `ALTER PROCEDURE` /
    `ALTER VIEW` / `ALTER FUNCTION` / `ALTER TRIGGER` / `CREATE OR ALTER`，而該物件**已經納管**，
    那支腳本放錯地方了。
 10. **首次納管 —— 先分岔,再動手。** 用 `SELECT OBJECT_ID('<schema>.<物件名>')` 確認該物件**在這個環境**
-    存不存在（`local-db` 自己用 `tp-dbhub` 查；`test-db` / `main-db` 請使用者在該環境跑並回傳結果）。
-    **逐環境判斷** —— 同一支 SP 可能在 test 是既有、在 main 是全新。
+    存不存在（**第一個**環境自己用 `tp-dbhub` 查；**其餘每一個**請使用者在該環境跑並回傳結果）。
+    **逐環境判斷** —— 同一支 SP 可能在測試環境是既有、在正式是全新。
     - **既有物件**（非 NULL，每個環境各做一次，不要合併步驟）：請使用者用 SSMS「編寫指令碼為 →
       CREATE 至」從**該環境**取全文（**不可**用 `SELECT OBJECT_DEFINITION(...)`）→ 原封不動寫成基線檔
       並填好檔頭的來源環境 / 取得方式 / 取得日期 → 請使用者 commit → 跑
@@ -443,9 +516,9 @@ SELECT OBJECT_ID('<schema>.<物件名>');
     [assets/module-script-template.sql](./assets/module-script-template.sql) 的版面：`USE [DB]` + `GO`、
     `SET ANSI_NULLS ON` + `GO`、`SET QUOTED_IDENTIFIER ON` + `GO`、`CREATE OR ALTER …`（**必須是批次
     第一個陳述式**，不包 TRY/CATCH、不包交易）。**絕不**用 `DROP` + `CREATE`。
-12. 改完 `_modules/` 的其中一份，**回報另外兩個環境那兩份的差異狀態**（哪幾份還沒跟上、差在哪），
+12. 改完 `_modules/` 的其中一份，**回報其餘每一個環境那幾份的差異狀態**（哪幾份還沒跟上、差在哪），
     但**不要自動複製過去**。
-13. finalize `test-db` / `main-db` 腳本前，確認相關欄位 / view / procedure / function / trigger 在該環境是否已知相同；若不確定，給使用者最小驗證查詢並等結果。
+13. finalize **第一個環境以外**的腳本前，確認相關欄位 / view / procedure / function / trigger 在該環境是否已知相同；若不確定，給使用者最小驗證查詢並等結果。
 14. 目標環境範圍從需求不明顯時，先問再建檔。
 15. 每支腳本適當時加 `USE [DatabaseName]`，statement 依執行順序排，加足夠註解說明特殊步驟 / 回滾預期 / 環境差異。
 16. 多個邏輯變更時優先拆成多支 SQL 檔，除非步驟必須一起執行。
@@ -459,7 +532,7 @@ SELECT OBJECT_ID('<schema>.<物件名>');
   branch 名的價值不只是自動,還有**唯一**——同一件事在不同 session 一定得到同一個字串,問使用者做不到。
 - **detached HEAD 仍然 fail loudly**,不用「問名字」補救:那是使用者在 repo 裡的狀態不對,擋下來是在指出它。
   非 repo 目錄是另一回事(從來就沒有分支),那裡才問。
-- **問的時候先列既有資料夾讓人選**,而且是 `local-db` / `test-db` / `main-db` **三者的聯集去重**,
+- **問的時候先列既有資料夾讓人選**,而且是**所有環境的聯集去重**,
   不是只看當前環境——同一件事常常跨 session 分次完成不同環境,只看一個環境會讓候選是空的。
   不要只給空白輸入框;輸入含不合法字元**拒絕重問,不默默改寫**。
 - **底線開頭的目錄不是 `<slug>`**:候選清單要濾掉它們,黑名單也要拒絕底線開頭的輸入,branch 名以底線
@@ -470,17 +543,21 @@ SELECT OBJECT_ID('<schema>.<物件名>');
   —— 正是「先列既有的讓人選」要防的事。
 - **不依賴 dev-flow**：沒有 spec / work-item 概念,累加型變更的分組鍵只有 `<slug>` 一個;不做
   `finish-dev` 式自動歸檔。
-- **可自訂的只有 `<sql_root>` 這一層**:`<env>-db/<slug>/` 與 `<env>-db/_modules/` 的形狀固定。三環境
-  對齊、`<slug>` 的推導規則、以及固定檔的「同一路徑必然衝突」都是上面一整組 Decision Rules 與
-  Completion Checks 的依據,開放整段 pattern 自訂會讓它們全部失去意義。
+- **可自訂的是 `<sql_root>` 與環境清單這兩層,再往下不行**:`<env>/<slug>/` 與 `<env>/_modules/` 的
+  形狀固定。各環境對齊、`<slug>` 的推導規則、以及固定檔的「同一路徑必然衝突」都是上面一整組
+  Decision Rules 與 Completion Checks 的依據,開放整段 pattern 自訂會讓它們全部失去意義。
+- **環境清單讀設定,不要從磁碟上有哪些目錄反推**:目錄可能還沒建（那個環境還沒有腳本）,也可能是
+  改名前留下的舊目錄。設定是唯一的來源;磁碟只用來做下面那條偵測。
+- **磁碟上有、清單裡沒有的環境目錄 → 停下來**,那多半是改了設定卻還沒跑改名腳本。照著新名字建新目錄
+  不會報錯,但舊的那棵樹會就地變成這支 skill 再也不看的孤兒。反過來（清單有、磁碟還沒有）是正常的。
 - **落點判準只看「有沒有 `CREATE OR ALTER`」**,不要判斷「這會不會蓋掉別人的」。後者要拿捏,而拿捏錯
   不會報錯 —— 那只是把一個靜默失敗換成另一個。procedure / view / function / trigger 走 `_modules/`,
   其它一切走 `<slug>/`,清單就四個,沒有第五個。
 - **`ALTER TABLE … ALTER COLUMN` 留在 `<slug>/`**,不要「順手」比照 procedure 搬進 `_modules/`:table
   沒有 `CREATE OR ALTER`,固定檔只能放自製 guarded DDL,而 guard 漏一個面向就是**每次執行都永遠靜默
   跳過** —— 比它要治的病更常態。那半的風險改用「動手前先掃同一個 `<表>.<欄位>`」偵測。
-- **`_modules/` 三個環境各一份,而且每一份的基線各自來自該環境。** 拿 local 全文當 `main-db` 的基線,
-  會把還沒核准的改動整批推上正式,**而且腳本會執行成功、沒有任何警告**。這是這套做法最危險的一步。
+- **`_modules/` 每個環境各一份,而且每一份的基線各自來自該環境。** 拿開發端的全文當 production 那份的
+  基線,會把還沒核准的改動整批推上正式,**而且腳本會執行成功、沒有任何警告**。這是這套做法最危險的一步。
 - **首次納管的基線 commit 是一道可驗的門,不是建議**:寫變更之前跑 `git log --oneline -- <該檔路徑>`,
   驗不到 commit 就停。它同時是首次部署唯一的回滾來源（那個 tag 上還沒有前一版可以 `git show`）。
 - **但那道門只適用於「既有物件」。** 動手之前先用 `SELECT OBJECT_ID(...)` 分清楚,而且是**逐環境**分
@@ -500,9 +577,9 @@ SELECT OBJECT_ID('<schema>.<物件名>');
 - **SQL 目錄進版控**：產出的 SQL 是可分享、可 commit 的；不要把它跟 gitignored 的 `.turbo-plugin/worktrees/` 混淆。預設落點不在 gitignore,**換了落點就要用 `git check-ignore` 重新確認一次**。
 - 純調查（不需寫入）→ 不建 SQL 檔。
 - 需要 schema discovery → 先用 `tp-dbhub` 物件搜尋 tool 再寫廣泛 `SELECT`。
-- local 變更只放 `local-db/<slug>/`；只進 test 不進 production 放 `test-db/<slug>/`；要上 production 三處都備。
-- 明顯不是 local-only 但沒講清楚 test-db only 還是含 main-db → 先問環境矩陣再寫 SQL。
-- local 查到的結果可能與 test / production 物件定義不符 → 停止假設一致，請使用者在目標環境跑最小驗證查詢回傳結果。
+- 只在開發環境的變更只放**第一個**環境的 `<slug>/`；只推到中途某個環境就放到那個環境為止；要上 production 則**每個**環境都備。
+- 明顯不只在開發環境、但沒講清楚要推到哪一個環境為止 → 先問環境矩陣再寫 SQL。
+- 開發端查到的結果可能與後面環境的物件定義不符 → 停止假設一致，請使用者在目標環境跑最小驗證查詢回傳結果。
 - 多個資料庫要改 → 依資料庫或執行步驟拆檔。
 - 腳本依賴手動後處理 / trigger 重建 / 環境特定 review → 在 SQL 註解明寫。
 - **連不到資料庫時，先產腳本、不要停下來問**：當前 session 沒有 `tp-dbhub` MCP tool 時，**照樣把 SQL 產出來**，依據改成 repo 內既有的 `db/*.sql` 等結構定義。理由：這支 skill 的定位是「SQL 腳本撰寫」，而表結構通常在 repo 裡就有；停下來等連線會讓它在最常見的情境下直接不可用。
@@ -519,8 +596,9 @@ SELECT OBJECT_ID('<schema>.<物件名>');
 ## Completion Checks
 
 - 資料庫檢視只用了 `tp-dbhub` 的唯讀 MCP tool，**沒有** 透過 MCP 執行任何寫 SQL。
-- 任何寫入側資料庫工作都落成 `<sql_root>/<env>-db/` 底下的 `.sql` 檔（`<env>` ∈ {local-db, test-db,
-  main-db}）：累加型在 `<slug>/`，procedure / view / function / trigger 在 `_modules/`。
+- 任何寫入側資料庫工作都落成 `<sql_root>/<env>/` 底下的 `.sql` 檔（`<env>` 取自 `[db] environments`，
+  沒設就是預設的 local-db / test-db / main-db）：累加型在 `<slug>/`，procedure / view / function /
+  trigger 在 `_modules/`。
 - **落點分對了,而且是照清單分的**:`<slug>/` 底下的 `.sql` 裡**沒有** `ALTER PROCEDURE` / `ALTER VIEW` /
   `ALTER FUNCTION` / `ALTER TRIGGER` / `CREATE OR ALTER`（grep 得到就是放錯）；反過來,`_modules/`
   底下**沒有** `ALTER TABLE`、`CREATE TABLE`、`CREATE INDEX` 或資料 DML。
@@ -529,13 +607,13 @@ SELECT OBJECT_ID('<schema>.<物件名>');
   `CREATE OR ALTER` 是該批次的**第一個**陳述式；**沒有** `DROP PROCEDURE` / `DROP VIEW` / `DROP FUNCTION` /
   `DROP TRIGGER`，**沒有**把 `CREATE OR ALTER` 包進 `BEGIN TRY` 或顯式交易。
 - **首次納管前分過岔**：用 `SELECT OBJECT_ID(...)` 逐環境確認過該物件存不存在，沒有對一個**全新**物件
-  要求「從該環境抓基線」（那在 SSMS 做不到），也沒有拿 local 的版本充當 `main-db` 的基線。
+  要求「從該環境抓基線」（那在 SSMS 做不到），也沒有拿開發端的版本充當 production 那份的基線。
 - **既有物件走完了那道門**：基線檔的檔頭三欄（來源環境 / 取得方式 / 取得日期）填實且來源環境**等於
   該檔所在的環境**；`git log --oneline -- <該檔路徑>` 驗得到基線那顆 commit,而且它**先於**含變更的那顆。
 - **全新物件的檔頭三欄填的是 `N/A（全新物件,無既有基線）`**，不是留空（留空跟「忘了填」看起來一樣）；
   沒有為它硬湊一顆空的基線 commit；回報講明了**回滾是 `DROP` 不是取前一版**。
-- **`_modules/` 三個環境的份數與差異都回報過**,而且沒有自動把某一份複製到另外兩份。
-- **`<slug>/` 裡有 `ALTER COLUMN` / `DROP INDEX` 時,掃過** `<sql_root>/<env>-db/` 找同一個
+- **`_modules/` 每個環境的份數與差異都回報過**,而且沒有自動把某一份複製到其它份。
+- **`<slug>/` 裡有 `ALTER COLUMN` / `DROP INDEX` 時,掃過** `<sql_root>/<env>/` 找同一個
   `<表>.<欄位>` / 索引名；命中時停下來問過使用者。
 - **同一批交付裡同時有兩種檔時,回報講明了執行順序**（`<slug>/` 先、`_modules/` 後）。
 - **`<sql_root>` 是解析出來的,不是假設的**:`[db] sql_root` 沒設 → 落點就是 `.turbo-plugin/sql`;
@@ -545,13 +623,15 @@ SELECT OBJECT_ID('<schema>.<物件名>');
   也沒有底線開頭的分組鍵。
 - **不在 git work tree 裡**：使用者是從**既有資料夾清單**裡選的,或明確選了「開新的」；他輸入的字串
   **原封不動**成為資料夾名（沒有被默默改寫）,含不合法字元時被**拒絕並重問**過。
-- **那份候選清單涵蓋三個環境**（`local-db` / `test-db` / `main-db` 去重),不是只有這次要寫入的那一個
-  ——只看一個環境的話,「先 local 驗證、之後才補 main」這種跨 session 流程會拿到空清單；而且它**濾掉了
+- **那份候選清單涵蓋所有環境**（清單裡每一個環境去重),不是只有這次要寫入的那一個
+  ——只看一個環境的話,「先在開發端驗證、之後才補正式」這種跨 session 流程會拿到空清單；而且它**濾掉了
   底線開頭的目錄**（`_modules/` 沒有混進候選）。若濾掉的**不只** `_modules/`,那些舊的底線開頭資料夾
   **被列出來講過**（它們是這支 skill 不再寫入的孤兒,不能無聲消失）。
-- **`<sql_root>/<env>-db/` 底下不存在只差一點點的兩個資料夾**（`補會員資料` 與 `補會員資料v2`
+- **`<sql_root>/<env>/` 底下不存在只差一點點的兩個資料夾**（`補會員資料` 與 `補會員資料v2`
   這種）——若出現,代表「先列既有的讓人選」那一步被跳過了。
-- local-only 驗證腳本只在 `<sql_root>/local-db/<slug>/`；production-bound 變更三處 `local-db` / `test-db` / `main-db` 都備齊。
+- 只在開發環境驗證的腳本只在**第一個**環境的 `<sql_root>/<env>/<slug>/`；production-bound 變更**每一個**環境都備齊。
+- **`<env>` 是從 `[db] environments` 讀來的**,沒設就是預設的三個,而且**沒有**自己幫環境名加後綴；
+  寫檔前列過 `<sql_root>` 底下的實際目錄，沒有出現「磁碟上有、清單裡沒有」卻照樣建新目錄的情況。
 - `<slug>/` 產出檔遵循 [assets/sql-script-template.sql](./assets/sql-script-template.sql) 的版面，檔名遵循
   `<order>-<database>-<purpose>.sql`；`_modules/` 產出檔遵循
   [assets/module-script-template.sql](./assets/module-script-template.sql)，檔名遵循 `<schema>.<物件名>.sql`。

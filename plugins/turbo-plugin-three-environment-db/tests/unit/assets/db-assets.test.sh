@@ -200,6 +200,45 @@ test_skill_branches_on_whether_the_object_already_exists() {
     assertTrue 'the module template lets the provenance fields say N/A for a new object' $?
 }
 
+# The environment list has TWO defaults that must not drift apart: the fallback for a project
+# that never set the key (the old names, so nothing moves under an existing project's feet) and
+# the value tp-setup writes into a brand-new project (the new names). Both are stated in prose in
+# more than one file, and prose drifts silently -- a stale copy would send a project's SQL to a
+# folder no other file agrees on, with nothing to catch it.
+test_environment_defaults_agree_across_the_assets() {
+    local setup_skill="$PLUGIN_ROOT/skills/tp-setup/SKILL.md"
+
+    # Fallback for "key not set": the old names, byte for byte, in both the config template and
+    # the skill that reads it.
+    grep -q '\["local-db", "test-db", "main-db"\]' "$CONFIG_TEMPLATE"
+    assertTrue 'config template states the not-set fallback' $?
+    grep -q '\["local-db", "test-db", "main-db"\]' "$DB_SKILL"
+    assertTrue 'tp-db-management states the same not-set fallback' $?
+
+    # What tp-setup writes into a fresh project: the new names, in the template, in tp-setup and
+    # in the skill that has to agree about what a new project will look like.
+    grep -q '\["dev-db", "test-db", "main-db"\]' "$CONFIG_TEMPLATE"
+    assertTrue 'config template shows the value setup writes for a new project' $?
+    grep -q '\["dev-db", "test-db", "main-db"\]' "$setup_skill"
+    assertTrue 'tp-setup writes the new-project default' $?
+    grep -q '\["dev-db", "test-db", "main-db"\]' "$DB_SKILL"
+    assertTrue 'tp-db-management agrees on the new-project default' $?
+}
+
+# The rename script is the ONLY thing that keeps a renamed folder and its .sql headers in step,
+# so both halves of the pair have to exist and both skills have to point at them. A migration
+# nobody is told about is the same as no migration.
+test_rename_helper_is_shipped_as_a_pair_and_referenced() {
+    assertTrue 'bash rename script is shipped' \
+        "[ -s '$PLUGIN_ROOT/scripts/rename-db-environment.sh' ]"
+    assertTrue 'PowerShell rename script is shipped' \
+        "[ -s '$PLUGIN_ROOT/scripts/Rename-DbEnvironment.ps1' ]"
+    grep -q 'rename-db-environment' "$CONFIG_TEMPLATE"
+    assertTrue 'config template points at the rename script' $?
+    grep -q 'rename-db-environment' "$DB_SKILL"
+    assertTrue 'tp-db-management points at the rename script' $?
+}
+
 # _modules/ sits alongside the <slug> folders, so it lands in the "pick an existing folder"
 # candidate list unless something filters it out. Picking it is silent: one-shot scripts then
 # get written into the reserved folder and nothing objects.

@@ -6,11 +6,11 @@
 物件: <schema>.<物件名>                 例如 dbo.USP_GetMember
 物件類型: <PROCEDURE | VIEW | FUNCTION | TRIGGER>
 資料庫: <DbName>
-目標環境: <local-db | test-db | main-db>
+目標環境: <環境資料夾名，取自 config.toml 的 [db] environments，預設是 local-db | test-db | main-db>
 檔案落點: <sql_root>/<目標環境>/_modules/<DbName>/<Procedures|Views|Functions|Triggers>/<schema>.<物件名>.sql
 
-基線來源環境: <local-db | test-db | main-db | N/A（全新物件，無既有基線）>
-              ← 必須跟上面的「目標環境」是同一個。拿 local 全文當 main-db 的基線，第一次全文
+基線來源環境: <同上那組環境名之一 | N/A（全新物件，無既有基線）>
+              ← 必須跟上面的「目標環境」是同一個。拿開發端的全文當正式環境的基線，第一次全文
                 覆寫就會把開發中、還沒核准的改動整批推上正式，而且腳本會執行成功、沒有任何警告。
               ← 動手前先用 SELECT OBJECT_ID('<schema>.<物件名>') 確認該物件在「這個環境」存不存在，
                 而且要逐環境確認：同一支 SP 在 test 是既有、在 main 是全新，是新功能過版的常態。

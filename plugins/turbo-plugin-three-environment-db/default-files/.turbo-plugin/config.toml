@@ -13,18 +13,43 @@
 # 標記之間的內容由 plugin 產生,重跑 setup 時會被整段取代。不要往裡面加自己的設定
 # ——加的當下不會有任何錯誤或警告,直到某次 setup 把它無聲刪掉。自己的設定寫在標記外面。
 #
-# 例外是區塊裡本來就屬於你的那幾個 key(下面 [db] 的 sql_root 就是):setup 在取代之前
-# 會先把它們讀出來原樣寫回,所以那些 key 可以放心在區塊內修改。
+# 例外是區塊裡本來就屬於你的那幾個 key(下面 [db] 的 sql_root 與 environments 就是):
+# setup 在取代之前會先把它們讀出來原樣寫回,所以那些 key 可以放心在區塊內修改。
 
 # >>> turbo-plugin:db >>>
 [db]
 # SQL 落點的根目錄。留空 / 整行不存在 = 用預設的 .turbo-plugin/sql
 #
 # 專案本來就有自己的 SQL 慣例(db/scripts、sql、database/migrations …)時設這個,
-# 就不必為了 turbo-plugin 多開一個資料夾。底下的 <env>-db/<slug>/ 那層不變。
+# 就不必為了 turbo-plugin 多開一個資料夾。底下的 <env>/<slug>/ 那層不變。
 #
 # 寫法:相對路徑,基準是這個檔案所在的 .turbo-plugin/ 的上一層(工作區根),
 # 不是 agent 當下的目錄。不接受絕對路徑——那會讓這個進版控的檔案帶上機器路徑。
 #
 # sql_root = "db/scripts"
+
+# 資料庫環境清單。這些字串**就是** <sql_root> 底下那一層的資料夾名,原樣使用,
+# 不會再幫你加後綴。留空 / 整行不存在 = 用預設的 ["local-db", "test-db", "main-db"]。
+#
+# **順序有意義:從開發端排到正式端。** 沒有另一個 key 標記誰是誰,位置就是標記:
+#   - **第一個** = 你自己連得到、可以用 tp-dbhub 唯讀查的那個開發環境。
+#   - **最後一個** = production。那是最危險的一個,skill 對它有額外的守門
+#     (基線必須來自該環境、要驗基線 commit)。
+#   - 中間的每一個都是過版路上的環境,連不到,要請人在該環境跑唯讀查詢確認。
+# 排反了不會有任何錯誤訊息,只會讓那些守門保護錯對象——填的時候看一眼順序。
+#
+# 數量不限於三個。兩層(開發 + 正式)或四層(多一個 staging)都可以,
+# skill 的規則對每一個環境各跑一次,不假設數量。
+#
+# 預設之所以還是 local-db 而不是 dev-db:沒設過這個 key 的專案不該察覺到任何差異,
+# 落點突然改名會讓既有的 SQL 檔全部變成孤兒。新專案的 tp-setup 會直接寫入
+# ["dev-db", "test-db", "main-db"] —— dev 取代 local,因為在多數團隊裡這個環境
+# 指的是內網的開發資料庫,而不是開發者本機,跟「本機」撞名每次都要重新確認一次。
+#
+# 既有專案要改名的話有腳本代勞,它會一併改掉目錄名與 .sql 檔頭裡的環境名:
+#   scripts/rename-db-environment.sh local-db dev-db        (Linux / macOS / Git Bash)
+#   scripts/Rename-DbEnvironment.ps1 local-db dev-db        (Windows)
+# 預設只印出會改什麼、不動檔案;確認無誤再加 --apply / -Apply。
+#
+# environments = ["dev-db", "test-db", "main-db"]
 # <<< turbo-plugin:db <<<
