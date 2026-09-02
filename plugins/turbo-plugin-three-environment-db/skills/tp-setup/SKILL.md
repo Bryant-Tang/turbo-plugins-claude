@@ -194,6 +194,10 @@ setup **要寫一行未註解的 `environments`**,把這個專案屬於哪一代
 > **這一步不可以省成「一律寫新預設」。** 對既有專案那等於在他重跑一次 setup 的時候,把整棵 SQL 樹
 > 換一個名字認不出來 —— 而過程中每一步都會成功,沒有任何一個地方會叫。
 
+> **這裡跟 `tp-db-management` 在「沒有這個 key」時用的是同一個判準,兩邊必須一起改。** 不一致的話,
+> 同一個專案在「跑過 setup」與「還沒跑過 setup」兩種狀態下會把 SQL 寫到不同的地方,而那個差異
+> 沒有任何東西會提醒。`tests/unit/assets/db-assets.test.sh` 有一條檢查守著兩邊的敘述。
+
 #### Case (d) peer-mode（per-peer dbhub.local.toml）
 
 **前提**:當前非 main worktree,且 `.turbo-plugin/` marker **必須**存在。marker 不存在 → 拒跑,提示「請先在主
