@@ -2,6 +2,25 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.6.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.5.0...turbo-plugin-git-svn--v0.6.0) (2026-09-02)
+
+
+### Added
+
+* **git-svn:** tp-request-merge 補上 PR 缺的兩關——落後 base 先擋、合併後收掉來源分支 ([9f4ea7c](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/9f4ea7c13c5d29e0d5cc24eb343e439cedb20a2d)), closes [#149](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/149) [#145](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/145)
+
+
+### Fixed
+
+* **git-svn:** 分支被別的 worktree 佔用時改報「已被 checkout」,不再誤報成衝突 ([4ddb4e0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/4ddb4e0583e7871aa94ccc2b0271aef7ce162978)), closes [#150](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/150)
+* **git-svn:** 印給人看的 git 輸出關掉 core.quotePath,非 ASCII 檔名不再是八進位跳脫串 ([51511dc](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/51511dcf648c55ceb7ec53bf55cbcaba9a27cac7)), closes [#143](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/143)
+
+
+### Documentation
+
+* **git-svn:** 更正 svn rm 那則註解,那個離開碼 guard 其實是死碼 ([b547f05](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/b547f05e7a4fead824a84dd0fac046f63e14c49e))
+* **git-svn:** 記錄 svn 呼叫為何不受 [#128](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/128) 影響,以及那個安全是碰巧的 ([6bd295d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6bd295d2f02cbb410e0afad6ecfc8b315957bef3))
+
 ## [0.5.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.4.1...turbo-plugin-git-svn--v0.5.0) (2026-09-01)
 
 

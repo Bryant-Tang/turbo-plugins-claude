@@ -2,7 +2,7 @@
   "plugins/turbo-plugin-code-comment": "0.1.1",
   "plugins/turbo-plugin-dotnet-framework": "0.4.0",
   "plugins/turbo-plugin-feedback": "0.1.0",
-  "plugins/turbo-plugin-git-svn": "0.5.0",
+  "plugins/turbo-plugin-git-svn": "0.6.0",
   "plugins/turbo-plugin-knowledge-placement": "0.2.0",
   "plugins/turbo-plugin-multi-repo-workspace": "0.3.3",
   "plugins/turbo-plugin-three-environment-db": "0.6.0"
