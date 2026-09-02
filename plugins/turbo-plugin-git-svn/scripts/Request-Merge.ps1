@@ -5,6 +5,10 @@ param(
     [string]$Base = 'main',
     # Perform the merge. Omit for the read-only report.
     [switch]$Merge,
+    # Proceed even though $Base has commits $Branch does not (see the `behind` gate below).
+    [switch]$AllowBehind,
+    # Delete the source branch once $Base provably contains it. Requires -Merge.
+    [switch]$DeleteBranch,
     # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
     [string]$RepoRoot = ''
 )
@@ -22,8 +26,32 @@ $ErrorActionPreference = 'Stop'
 #
 # Emits exactly ONE terminal token line prefixed 'TP_TOKEN:'. Precedence (a total order):
 #   ERROR > BRANCH_IS_BASE > BRIDGE_BRANCH > BRANCH_NOT_FOUND > BASE_NOT_FOUND > SOURCE_DIRTY
-#         > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE > NOTHING_TO_MERGE > READY  (report mode)
+#         > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE > NOTHING_TO_MERGE > BEHIND_BASE
+#         > READY                                                       (report mode)
 #         > MERGED | CONFLICT                                           (-Merge mode)
+#
+# THE `behind` GATE
+#   BEHIND_BASE is what a PR host means by "this branch is out of date with the base branch".
+#   It is a gate rather than a line of prose because the failure it catches is silent: the report
+#   has always printed `behind : N`, and a merge went ahead regardless, so the merged work was
+#   never once seen alongside the state of $Base it was landing on. Two sides that each build can
+#   still fail together, and nothing here would have said so. -AllowBehind is the deliberate
+#   override the SKILL passes once the user has been shown the count and said to merge anyway.
+#
+#   CONSEQUENCE, and it is not an accident: CONFLICT is now only reachable WITH -AllowBehind. A
+#   merge can only conflict if $Base moved since the branch forked -- and if $Base moved, the
+#   branch is behind, so the gate fires first. That is the right order: the advice on a conflict
+#   was always "merge $Base into the branch and resolve it there", which is exactly where the
+#   gate sends the user, one step earlier and without a failed merge in between.
+#
+# DELETING THE SOURCE BRANCH (-DeleteBranch, requires -Merge)
+#   A PR host offers "Delete branch" once the merge lands. Without that step the branch ref simply
+#   stays, looking exactly like the branches still being worked on -- so the cost is not one stale
+#   ref, it is that after a while nobody can tell which refs mean anything. `ExitWorktree`'s
+#   `remove` does not cover it either: it belongs to the harness rather than this plugin, and the
+#   branch may well have no worktree at all. Never the default and never unasked -- some branches
+#   are merged somewhere and still wanted. READY and NOTHING_TO_MERGE carry `worktree=yes|no`,
+#   which is what tells the SKILL whether deleting the ref is even the right question.
 #
 # -Merge re-runs every check before acting, so the gate the user was shown and the gate that
 # admits the merge are the same code and cannot drift apart.
@@ -69,6 +97,13 @@ function Write-ErrorToken {
 
 try {
     Probe-GitVersion
+
+    # Report mode is read-only and stays that way. Refusing the combination outright, rather than
+    # ignoring the flag, keeps that promise checkable instead of relying on the caller's memory.
+    # Before $script:Validated, so this stays a hard, TOKENLESS usage error like every other one.
+    if ($DeleteBranch -and -not $Merge) {
+        throw '-DeleteBranch requires -Merge (report mode never writes).'
+    }
 
     # Validate BEFORE emitting any token (anti-forge): a malformed ref name is a hard, tokenless
     # error and never earns a routing token. check-ref-format is git's own validator, so this
@@ -201,6 +236,59 @@ try {
         exit 0
     }
 
+    # Reported on READY / NOTHING_TO_MERGE so the SKILL knows which question to ask: a branch with
+    # a worktree is `ExitWorktree`'s to remove (ref and worktree together), one without is a plain
+    # ref the user may want deleted here.
+    $hasWt = if ($sourceWt -ne '') { 'yes' } else { 'no' }
+
+    # Delete the source branch -- only on proof that $Base really contains it. Returns 'yes' or
+    # 'no <reason-slug>'.
+    #
+    # The proof is `merge-base --is-ancestor` against the base actually merged into, NOT `git
+    # branch -d`'s own verdict: -d judges "already merged" relative to the CURRENT HEAD, and the
+    # main worktree is not necessarily parked on $Base. A branch genuinely merged into $Base is
+    # routinely refused as `not fully merged` when asked from some third branch.
+    # So the -D below is not "-d said no, force it anyway": -d is tried first as an independent
+    # second opinion, and -D only ever runs on an ancestry proof that -d had no access to.
+    function Invoke-BranchDeletion {
+        # git refuses to delete a branch any worktree has checked out -- including the main one,
+        # when the run started there. Answered here rather than left to git so the reason survives.
+        if ($sourceWt -ne '') { return 'no has-worktree' }
+        if ((Read-Git -Cwd $mainWorktree -GitArgs @('merge-base', '--is-ancestor', $Branch, $Base)).Code -ne 0) {
+            return 'no not-ancestor'
+        }
+        if ((Read-Git -Cwd $mainWorktree -GitArgs @('branch', '-d', $Branch)).Code -eq 0) { return 'yes' }
+        if ((Read-Git -Cwd $mainWorktree -GitArgs @('branch', '-D', $Branch)).Code -eq 0) { return 'yes' }
+        return 'no delete-failed'
+    }
+
+    # Fields appended to the two tokens that can report a deletion, plus the human-readable line
+    # that explains a refusal. `reason=` is present only when nothing was deleted, so
+    # `deleted=yes` needs no second field to be unambiguous.
+    $script:Deleted   = 'no'
+    $script:DelReason = 'not-requested'
+    $script:DelFields = ''
+    function Invoke-DeleteStep {
+        if ($DeleteBranch) {
+            $res   = Invoke-BranchDeletion
+            $parts = @($res -split ' ')
+            $script:Deleted = $parts[0]
+            if ($script:Deleted -eq 'no') { $script:DelReason = $parts[1] }
+        }
+        $script:DelFields = "deleted=$($script:Deleted)"
+        if ($script:Deleted -eq 'no') { $script:DelFields += " reason=$($script:DelReason)" }
+
+        if ($script:Deleted -eq 'yes') {
+            Write-Output "Deleted branch '$Branch' (verified merged into '$Base')."
+        } elseif ($DeleteBranch) {
+            switch ($script:DelReason) {
+                'has-worktree' { Write-Output "Branch '$Branch' was NOT deleted: it is checked out at $sourceWt." }
+                'not-ancestor' { Write-Output "Branch '$Branch' was NOT deleted: '$Base' does not contain it." }
+                default        { Write-Output "Branch '$Branch' was NOT deleted: git refused to remove the ref." }
+            }
+        }
+    }
+
     # ── The report ────────────────────────────────────────────────────────────────────
 
     $rl = Read-Git -Cwd $mainWorktree -GitArgs @('rev-list', '--left-right', '--count', "$Base...$Branch")
@@ -213,7 +301,11 @@ try {
     $ahead  = [int]$parts[1]
 
     if ($ahead -eq 0) {
-        Write-Output "${PREFIX}NOTHING_TO_MERGE branch=$Branch base=$Base"
+        # Already fully in $Base, so this is the other place a deletion belongs: the branch is
+        # exactly as safe to remove as it is after a merge, and telling the user "you can clean
+        # this up" while leaving them to do it by hand is the same gap one step over.
+        Invoke-DeleteStep
+        Write-Output "${PREFIX}NOTHING_TO_MERGE branch=$Branch base=$Base worktree=$hasWt $($script:DelFields)"
         exit 0
     }
 
@@ -249,10 +341,23 @@ try {
     Write-Output ''
     Write-Output "Changes vs ${Base}:"
     if (-not [string]::IsNullOrWhiteSpace($diffstat)) { Write-Output $diffstat } else { Write-Output '  (no file changes)' }
+    if ($behind -gt 0) {
+        Write-Output ''
+        Write-Output "  NOTE: $Base has $behind commit(s) that $Branch does not. This work has never"
+        Write-Output '        been built or checked alongside them.'
+    }
     Write-Output '─────────────────────────────────────────────────────────────────────'
 
+    # The `behind` gate. Placed AFTER the report on purpose: the counts and the commit list are
+    # what the user needs in order to answer, so they get printed either way, and only the
+    # terminal token differs. See the header for why this refuses by default.
+    if ($behind -gt 0 -and -not $AllowBehind) {
+        Write-Output "${PREFIX}BEHIND_BASE branch=$Branch base=$Base ahead=$ahead behind=$behind main=$mainWorktree"
+        exit 0
+    }
+
     if (-not $Merge) {
-        Write-Output "${PREFIX}READY branch=$Branch base=$Base ahead=$ahead main=$mainWorktree"
+        Write-Output "${PREFIX}READY branch=$Branch base=$Base ahead=$ahead behind=$behind worktree=$hasWt main=$mainWorktree"
         exit 0
     }
 
@@ -299,7 +404,10 @@ try {
     Restore-OriginalBranch
     Write-Output ''
     Write-Output "Merged '$Branch' into '$Base' as $mergeSha."
-    Write-Output "${PREFIX}MERGED branch=$Branch base=$Base commit=$mergeSha"
+    # After Restore-OriginalBranch, so the run is standing where it will finish before any ref is
+    # removed, and after the merge, so the ancestry proof inside is about the state that now exists.
+    Invoke-DeleteStep
+    Write-Output "${PREFIX}MERGED branch=$Branch base=$Base commit=$mergeSha $($script:DelFields)"
     exit 0
 }
 catch {

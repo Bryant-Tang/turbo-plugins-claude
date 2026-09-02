@@ -3,10 +3,11 @@
 # Script under test: plugins/turbo-plugin-git-svn/scripts/Request-Merge.ps1
 #
 # Contract (identical to the .sh sibling):
-#   Request-Merge.ps1 -Branch <name> [-Base <name>] [-Merge] [-RepoRoot <path>]
+#   Request-Merge.ps1 -Branch <name> [-Base <name>] [-Merge] [-AllowBehind] [-DeleteBranch]
+#                     [-RepoRoot <path>]
 #   Emits exactly ONE 'TP_TOKEN:' line. Precedence:
 #     ERROR > BRANCH_IS_BASE > BRANCH_NOT_FOUND > BASE_NOT_FOUND > SOURCE_DIRTY
-#           > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE > NOTHING_TO_MERGE
+#           > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE > NOTHING_TO_MERGE > BEHIND_BASE
 #           > READY (report) | MERGED / CONFLICT (-Merge)
 #
 # Every token above has a case here that actually produces it. A guard nothing can reach is a
@@ -37,6 +38,15 @@ BeforeAll {
         Add-CommitFile -Root $Root -Name 'b.txt' -Content 'b' -Msg 'feat: add b'
         Add-CommitFile -Root $Root -Name 'c.txt' -Content 'c' -Msg 'feat: add c'
         $null = Run-Git -Cwd $Root -GitArgs @('checkout', 'main')
+    }
+
+    # Move `main` on one commit AFTER the branch forked, so the branch is behind by one. The file
+    # it touches is unique to main, so the branch is behind WITHOUT being in conflict -- which is
+    # the point: a merge that would have succeeded is exactly the one nothing else questioned.
+    function Advance-Main {
+        param([string]$Root)
+        $null = Run-Git -Cwd $Root -GitArgs @('checkout', 'main')
+        Add-CommitFile -Root $Root -Name 'main-only.txt' -Content 'main tip' -Msg 'chore: main advances'
     }
 
     # A peer worktree that silently failed to be created leaves an ordinary directory behind,
@@ -83,7 +93,7 @@ Describe 'Request-Merge' {
                 Get-TokenCount $res.Stdout | Should -Be 1
                 # The main= path spelling is platform-dependent; pin the stable fields and only
                 # require the path to be non-empty.
-                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main ahead=2 main=.'
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main ahead=2 behind=0 worktree=no main=.'
                 (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')) | Should -Be $before
             } finally { Remove-Sandbox -Dir $sb }
         }
@@ -307,7 +317,7 @@ Describe 'Request-Merge' {
                 New-RequestMergeFixture -Root $root
                 $null = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge')
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
-                (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main'
+                (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main worktree=no deleted=no reason=not-requested'
             } finally { Remove-Sandbox -Dir $sb }
         }
 
@@ -322,7 +332,11 @@ Describe 'Request-Merge' {
                 Add-CommitFile -Root $root -Name 'shared.txt' -Content 'from-main' -Msg 'main side'
                 $before = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')
 
-                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-Merge')
+                # -AllowBehind is required to reach a conflict at all, and that is not a quirk of
+                # the fixture: a merge can only conflict if base moved since the branch forked,
+                # which is exactly what makes the branch behind, so the gate fires first. Getting
+                # here means the user was shown the count and chose to merge anyway.
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-AllowBehind', '-Merge')
 
                 $res.ExitCode | Should -Be 1
                 (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:CONFLICT branch=clash base=main'
@@ -489,7 +503,9 @@ Describe 'Request-Merge' {
                 & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
                 [System.IO.File]::ReadAllText($probeErr) | Should -Match 'dubious ownership'
 
-                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-Merge')
+                # -AllowBehind for the same reason as the case above: a conflict is only reachable
+                # once the behind gate has been passed deliberately.
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-AllowBehind', '-Merge')
 
                 (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:CONFLICT branch=clash base=main'
                 $res.ExitCode | Should -Be 1
@@ -504,6 +520,155 @@ Describe 'Request-Merge' {
                 Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Sandbox -Dir $sb
             }
+        }
+
+        # The count was always in the report and the merge went ahead regardless, so the work was
+        # never once seen alongside the state of base it was landing on. The report has to survive
+        # the gate: the commit list and the counts are what the user needs in order to answer.
+        It 'a branch behind base is gated, and the report is still printed' {
+            $sb = New-Sandbox -Tag 'rqm-25'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                Advance-Main -Root $root
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
+                $res.ExitCode | Should -Be 0
+                Get-TokenCount $res.Stdout | Should -Be 1
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:BEHIND_BASE branch=feat base=main ahead=2 behind=1 main=.'
+                $res.Stdout | Should -Match 'feat: add b'
+                $res.Stdout | Should -Match 'never'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        It '-Merge refuses while behind, and base does not move' {
+            $sb = New-Sandbox -Tag 'rqm-26'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                Advance-Main -Root $root
+                $before = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge')
+                # Refusing to merge is an answer, not an error.
+                $res.ExitCode | Should -Be 0
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:BEHIND_BASE '
+                (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')) | Should -Be $before
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # A gate with no way through would just teach people to stop using the tool; the user is
+        # the only judge available in a repo with no CI. This keeps the door open.
+        It '-AllowBehind is the way through, and it merges' {
+            $sb = New-Sandbox -Tag 'rqm-27'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                Advance-Main -Root $root
+
+                $rep = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-AllowBehind')
+                (Get-Token $rep.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main ahead=2 behind=1 worktree=no main=.'
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-AllowBehind', '-Merge')
+                $res.ExitCode | Should -Be 0
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:MERGED branch=feat base=main commit=.'
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', 'feat', 'main')) | Should -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        It '-DeleteBranch removes the ref once the merge lands' {
+            $sb = New-Sandbox -Tag 'rqm-28'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-DeleteBranch', '-Merge')
+                $res.ExitCode | Should -Be 0
+                Get-TokenCount $res.Stdout | Should -Be 1
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:MERGED branch=feat base=main commit=.* deleted=yes$'
+                (Run-Git -Cwd $root -GitArgs @('rev-parse', '--verify', '--quiet', 'refs/heads/feat')) | Should -Not -Be 0
+                # The content survived the ref: deleting a branch whose work did not land is the
+                # failure this flag has to avoid, and a missing ref looks identical either way.
+                $res.Stdout | Should -Match '2 files changed'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # Without this, the case above would pass just as happily if the deletion were
+        # unconditional -- the one behaviour this must never have.
+        It 'leaves the branch alone when deletion is not requested' {
+            $sb = New-Sandbox -Tag 'rqm-29'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge')
+                (Get-Token $res.Stdout) | Should -Match 'deleted=no reason=not-requested$'
+                (Run-Git -Cwd $root -GitArgs @('rev-parse', '--verify', '--quiet', 'refs/heads/feat')) | Should -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # The reported failure: `git branch -d` judges "already merged" against the CURRENT HEAD,
+        # and the main worktree is not necessarily on base -- a branch genuinely merged into main
+        # is refused as `not fully merged` when asked from somewhere else. This case is what keeps
+        # the `merge-base --is-ancestor` proof in place; without it deletion silently stops working
+        # in exactly the everyday shape where the main worktree sits on some other branch.
+        It 'deletes even when HEAD is parked on a third branch' {
+            $sb = New-Sandbox -Tag 'rqm-30'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', '-b', 'parked')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-DeleteBranch', '-Merge')
+                (Get-Token $res.Stdout) | Should -Match 'deleted=yes$'
+                (Run-Git -Cwd $root -GitArgs @('rev-parse', '--verify', '--quiet', 'refs/heads/feat')) | Should -Not -Be 0
+                (Run-Git-Capture -Cwd $root -GitArgs @('symbolic-ref', '--short', 'HEAD')) | Should -Be 'parked'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # Removing the ref and removing the worktree are two different jobs, and the second is
+        # `ExitWorktree`'s. Refusing the deletion is not a merge failure.
+        It 'refuses to delete a branch that has a worktree, and still merges' {
+            $sb = New-Sandbox -Tag 'rqm-31'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                Add-PeerWorktree -Root $root -Path ([System.IO.Path]::Combine($sb, 'wt')) -Branch 'feat'
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-DeleteBranch', '-Merge')
+                $res.ExitCode | Should -Be 0
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:MERGED .* deleted=no reason=has-worktree$'
+                (Run-Git -Cwd $root -GitArgs @('rev-parse', '--verify', '--quiet', 'refs/heads/feat')) | Should -Be 0
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', 'feat', 'main')) | Should -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # Report mode is documented read-only; ignoring the flag instead would leave that promise
+        # resting on the caller's memory.
+        It '-DeleteBranch without -Merge is a hard, tokenless refusal' {
+            $sb = New-Sandbox -Tag 'rqm-32'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-DeleteBranch')
+                $res.ExitCode | Should -Be 1
+                Get-TokenCount $res.Stdout | Should -Be 0
+                (Run-Git -Cwd $root -GitArgs @('rev-parse', '--verify', '--quiet', 'refs/heads/feat')) | Should -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # The token said "this is safe to clean up" and then left the user to do it by hand --
+        # the same gap as after a merge, one step over.
+        It 'cleans up an already-merged branch too' {
+            $sb = New-Sandbox -Tag 'rqm-33'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-DeleteBranch', '-Merge')
+                (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main worktree=no deleted=yes'
+                (Run-Git -Cwd $root -GitArgs @('rev-parse', '--verify', '--quiet', 'refs/heads/feat')) | Should -Not -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
         }
 
         It 'emits exactly one token in every mode' {

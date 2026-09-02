@@ -76,8 +76,13 @@ agent 完成工作、全部 commit
 - **報告與合併是同一支腳本的兩個模式**（`--merge` 才動手），不是兩支腳本。`--merge` 會**重跑全部守門**，所以使用者看到的那道關卡與放行合併的那道關卡是同一段程式碼，不會漂移；使用者思考期間狀態變了也會被擋下來，而不是拿舊報告放行。
 - **`SOURCE_DIRTY` 是這裡最重要的守門**。分支所在的 worktree 若有未 commit 的變更，那些變更不在這次合併裡，而接下來的 `remove` 會把它們刪掉——這是整條路徑上唯一會**無聲掉東西**的地方，所以腳本一律拒跑。
 - **`remote-svn/*` 兩端都不碰。** 它出現在**目標**那端是「把工作併進橋接分支」，會污染要 commit 回 SVN 的樹（`/tp-merge-main-into-branches` 排除它也是同一個理由）；出現在**來源**那端則是 `/tp-pull-from-svn` 的工作——那支會連同修訂簿記一起維護，本 skill 只會產生一顆一樣的 merge commit 卻不更新任何狀態。兩種都直接擋下，而且是**按名字**擋，所以橋接分支還沒建起來時答案也一樣。
+- **分支落後 `<base>` 時預設擋下**（`BEHIND_BASE`），要帶 `--allow-behind` / `-AllowBehind` 才放行。`<base>` 有分支沒有的 commit，就表示**這批東西從來沒有跟 `<base>` 的最新狀態一起建置或檢查過**——兩邊各自都好、併起來壞掉，是要等下一個人建置才發現的問題，而那時它已經在 `<base>` 上了。GitHub 的 PR 把這種狀態標成 out-of-date，也可以設定成必須先更新才准 merge；這裡就是那一關。落後筆數本來就印在報告裡，但**只是資訊、照樣放行**，那個失敗是沉默的。不直接拒絕是因為沒有 CI 的專案裡唯一的裁判就是使用者，一道沒有出口的關卡只會讓人不再用這支工具。
+  - 附帶結果（刻意的）：**`CONFLICT` 現在只有帶 `--allow-behind` 才到得了**。merge 會衝突的前提就是 `<base>` 動過，而 `<base>` 動過分支就是落後的，所以落後那一關一定先觸發。這個順序是對的——衝突時的建議本來就是「把 `<base>` 併進分支、在分支上解」，而落後那一關送使用者去做的正是同一件事，只是早一步，而且中間不用先失敗一次。
 - **衝突永遠 `merge --abort`**，`<base>` 與開跑前完全一樣、不留衝突樹。建議先用 `/tp-merge-main-into-branches` 把 main 併進分支、在**分支上**解衝突。
 - **沒有 CI 就不假裝有**。腳本只報客觀事實（commit、diffstat、乾不乾淨），不做驗收把關，也不要求 agent 交出結構化的「測試通過」宣告——那只會變成一句沒人驗證的自我宣稱。判斷這批東西能不能進 main 的是使用者。
+- **合併之後會問要不要刪掉來源分支**（`--delete-branch` / `-DeleteBranch`，**預設不刪、每次問、沒有「不要再問我」的設定**）。這一步比照 GitHub PR 合併後的 **Delete branch**：缺了它，每合併一次就多留一條沒用的 ref，而它跟還在進行中的功能分支長得一模一樣，過一陣子回頭看 `git branch` 就分不出哪些還活著。`ExitWorktree` 的 `remove` 補不上這個洞——它是 harness 的工具而不是本 plugin 的，而且**來源分支不一定有 worktree**（在既有 worktree 裡 `git checkout -b` 開一條只放一顆 commit 的分支是常見做法）。所以腳本用 `worktree=yes|no` 告訴 skill 該問哪一題：有 worktree → 交給 `remove`（ref 與 worktree 一起收）；沒有 → 問要不要刪這條 ref。
+  - **刪之前的判準是 `git merge-base --is-ancestor <branch> <base>`，不是 `git branch -d` 自己的判斷。** `-d` 的「是否已合併」是相對**當前 HEAD** 的，而主 worktree 未必停在剛才那個 `<base>` 上——分支明明併進了 `<base>`，從第三條分支上問卻會得到 `not fully merged`。腳本先試 `-d` 當獨立的第二意見，只有在 ancestry 已經證明成立時才落到 `-D`；那不是「`-d` 拒絕就強刪」，而是拿 `-d` 看不到的證據去做同一件事。
+  - 不刪時會回 `deleted=no reason=<has-worktree|not-ancestor|delete-failed|not-requested>`，**合併本身不受影響**。
 - **不串 SVN**。併進 main 之後要不要 `/tp-push-to-svn` 是另一個明確決定，而且 SVN 寫入是永久的。
 
 它和 `/tp-merge-main-into-branches` 是一對：那支是下行（main → 分支），這支是上行（分支 → main）。兩支都用 `Get-MainWorktree` 自行定位，所以**在 linked worktree 裡呼叫，操作仍落在主 worktree**。
