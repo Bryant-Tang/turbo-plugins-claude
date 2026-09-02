@@ -102,19 +102,19 @@ CI 設定看出這個專案是什麼、產物長什麼樣,必要時直接讀檔�
 (別人 clone 下來少檔案、build 壞掉)比留著不管大得多。
 
 **Git Ignore — Add to `.gitignore`**
-- Source: `git status --short` entries starting with `??`
+- Source: `git -c core.quotePath=false status --short` entries starting with `??`
 - Condition: 你依判準認定它是產物 / 本機專屬 / 機密 AND not already in `.gitignore`
-- **Guard**: if the file is already git-tracked (`git ls-files` includes it) → move to Un-track instead
+- **Guard**: if the file is already git-tracked (`git -c core.quotePath=false ls-files` includes it) → move to Un-track instead
 
 **Inconsistency — SVN-tracked but git-ignored**
-- Source: `git ls-files -o -i --exclude-standard` in **each** remote worktree (different SVN branches may track different files)
+- Source: `git -c core.quotePath=false ls-files -o -i --exclude-standard` in **each** remote worktree (different SVN branches may track different files)
 - Condition: for each found file, run `svn status <file>` in that worktree — if output is blank or `M` (not `?`) the file is SVN-tracked
 - Report which worktree(s) have the inconsistency
 - These files exist in SVN but git ignores them; SVN changes won't propagate through git
 - **例外**:`.svn/` 底下的東西不是候選,那是 bridge 的管理目錄(見 §判準的硬規則)
 
 **Un-track — Tracked by both, should be un-tracked**
-- Source: `git ls-files` (git-tracked files in main worktree)
+- Source: `git -c core.quotePath=false ls-files` (git-tracked files in main worktree)
 - Condition: 你依判準認定它不該進版控 AND not already in `.gitignore`
 - 這一類要**更保守**:已經被追蹤很久的檔案,預設是「刻意進版控的」(§判準「不應該 ignore」第 3 條)。
   沒有明確理由不要提議 un-track。

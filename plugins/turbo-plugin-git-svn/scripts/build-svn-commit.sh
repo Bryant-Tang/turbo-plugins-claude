@@ -105,7 +105,7 @@ fi
 ensure_bridge_eol_faithful "$MAIN_WORKTREE" "$REMOTE_PATH"
 
 if ! git -C "$REMOTE_PATH" merge --no-ff --no-commit -m "Merge branch '$BRANCH' into $REMOTE_BRANCH" "$BRANCH" >/dev/null 2>&1; then
-  CONFLICTS="$(git -C "$REMOTE_PATH" diff --name-only --diff-filter=U)"
+  CONFLICTS="$(git -C "$REMOTE_PATH" -c core.quotePath=false diff --name-only --diff-filter=U)"
   echo "Error: merge conflict in remote worktree. Resolve the following files in '$REMOTE_NAME', then re-run, or abort with 'git -C $REMOTE_PATH merge --abort':" >&2
   echo "$CONFLICTS" >&2
   exit 1

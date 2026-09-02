@@ -505,7 +505,7 @@ try {
     & git -C $mainWorktree merge --allow-unrelated-histories -m 'chore: connect SVN bridge via turbo-plugin' $remoteBranch
     $mergeRc = $LASTEXITCODE
     if ($mergeRc -ne 0) {
-        $conflicts = (& git -C $mainWorktree diff --name-only --diff-filter=U | Out-String)
+        $conflicts = (& git -C $mainWorktree -c core.quotePath=false diff --name-only --diff-filter=U | Out-String)
         $conflictList = (@($conflicts -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ' ')
         if ($conflictList) {
             Write-Output "TP_TOKEN:MERGE_CONFLICT $conflictList"

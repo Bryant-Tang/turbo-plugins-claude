@@ -227,7 +227,7 @@ try {
             ForEach-Object { $_.TrimEnd() } |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     )
-    $df = Read-Git -Cwd $mainWorktree -GitArgs @('diff', '--stat', "$Base...$Branch")
+    $df = Read-Git -Cwd $mainWorktree -GitArgs @('-c', 'core.quotePath=false', 'diff', '--stat', "$Base...$Branch")
     if ($df.Code -ne 0) {
         Write-ErrorToken "git diff --stat failed (exit $($df.Code)) for $Base...$Branch"
         exit 1

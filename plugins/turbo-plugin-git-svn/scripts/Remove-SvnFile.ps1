@@ -199,7 +199,7 @@ try {
         & git -C $mainWorktree merge $remoteBranch --no-ff -m "Merge branch '$remoteBranch' into $Branch"
         $mergeExit = $LASTEXITCODE
         if ($mergeExit -ne 0) {
-            $conflicts = (& git -C $mainWorktree diff --name-only --diff-filter=U | Out-String).Trim()
+            $conflicts = (& git -C $mainWorktree -c core.quotePath=false diff --name-only --diff-filter=U | Out-String).Trim()
             # Read-Git, not `& git ... 2>$null | Out-Null`: under EAP=Stop a `2>` redirection makes
             # any stderr output a terminating error, so on a machine where git warns (dubious
             # ownership) the throw would land here and skip the whole rollback -- see the same

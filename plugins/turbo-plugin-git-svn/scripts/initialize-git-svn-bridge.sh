@@ -416,7 +416,7 @@ trap - ERR
 # files, space-separated) and leave the conflict in place for the agent/user -- do NOT
 # `git merge --abort` and do NOT roll back.
 if ! git -C "$MAIN_WORKTREE" merge --allow-unrelated-histories -m "chore: connect SVN bridge via turbo-plugin" "$REMOTE_BRANCH"; then
-  CONFLICTS="$(git -C "$MAIN_WORKTREE" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+  CONFLICTS="$(git -C "$MAIN_WORKTREE" -c core.quotePath=false diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
   CONFLICTS="${CONFLICTS% }"
   if [[ -n "$CONFLICTS" ]]; then
     echo "TP_TOKEN:MERGE_CONFLICT $CONFLICTS"
