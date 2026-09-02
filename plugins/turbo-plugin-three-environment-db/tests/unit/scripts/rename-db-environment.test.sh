@@ -172,6 +172,36 @@ test_updates_the_uncommented_environments_line_only() {
     assertTrue 'the commented-out line was left exactly as it was' $?
 }
 
+# Two matches separated by exactly ONE character: the first match consumes that character as its
+# right boundary, so a single pass leaves the second unmatched. This is why the substitution runs
+# twice, in the file contents AND in the config line.
+#
+# `local-db/local-db` is the shape that does it -- reachable for real when sql_root itself ends in
+# the environment name, which makes the expanded path in a "檔案落點" header read
+# `.../local-db/local-db/_modules/...`. Note that a TOML array does NOT produce this: between
+# `"local-db","local-db"` there are three characters, so the comma still serves as the second
+# match's left boundary and one pass is enough.
+test_replaces_two_names_separated_by_a_single_character() {
+    make_ws local-db
+    printf '檔案落點: <sql_root>/local-db/local-db/_modules/AppDb/X.sql\n' \
+        > "$WS/.turbo-plugin/sql/local-db/feat-x/02-adjacent.sql"
+    write_config '["local-db/local-db"]'
+
+    run_it local-db dev-db --apply >/dev/null 2>&1
+
+    grep -q 'dev-db/dev-db' "$WS/.turbo-plugin/sql/dev-db/feat-x/02-adjacent.sql"
+    assertTrue 'both names in the file content were replaced, not just the first' $?
+    grep -q 'local-db' "$WS/.turbo-plugin/sql/dev-db/feat-x/02-adjacent.sql"
+    assertFalse 'no half-renamed path left in the file' $?
+
+    grep -q 'environments = \["dev-db/dev-db"\]' "$WS/.turbo-plugin/config.toml"
+    assertTrue 'both names in the config line were replaced' $?
+    # Exactly one mention of the old name may survive: the commented-out sample line, which is
+    # not config and must not be touched.
+    assertEquals 'the sole surviving mention is the commented-out sample' 1 \
+        "$(grep -c 'local-db' "$WS/.turbo-plugin/config.toml")"
+}
+
 # Without an environments key the rename still happens, but the skill would then see a folder that
 # is not in its list and stop -- so the script has to say what to add.
 test_says_what_to_add_when_there_is_no_environments_key() {

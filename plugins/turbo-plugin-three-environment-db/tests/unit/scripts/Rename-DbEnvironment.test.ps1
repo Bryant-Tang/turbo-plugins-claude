@@ -193,6 +193,40 @@ Describe 'Rename-DbEnvironment' {
         } finally { Remove-Item -LiteralPath $ws -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    # Two matches separated by exactly ONE character: the first match consumes that character as
+    # its right boundary, so a single pass leaves the second unmatched. This is why the
+    # substitution runs twice, in the file contents AND in the config line.
+    #
+    # `local-db/local-db` is the shape that does it -- reachable for real when sql_root itself ends
+    # in the environment name, which makes the expanded path in a header read
+    # `.../local-db/local-db/_modules/...`. A TOML array does NOT produce this: between
+    # `"local-db","local-db"` there are three characters, so the comma still serves as the second
+    # match's left boundary and one pass suffices. A fixture built that way passes against the bug.
+    It 'replaces two names separated by a single character' {
+        $ws = New-Workspace
+        try {
+            Add-SqlTree -Workspace $ws -EnvName 'local-db'
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            $adjacent = [System.IO.Path]::Combine($ws, '.turbo-plugin', 'sql', 'local-db', 'feat-x', '02-adjacent.sql')
+            [System.IO.File]::WriteAllText($adjacent, "檔案落點: <sql_root>/local-db/local-db/_modules/AppDb/X.sql`n", $enc)
+            Add-Config -Workspace $ws -EnvironmentsBody '["local-db/local-db"]'
+
+            Invoke-Rename @('local-db', 'dev-db', '-Root', $ws, '-Apply') | Out-Null
+
+            $moved = [System.IO.Path]::Combine($ws, '.turbo-plugin', 'sql', 'dev-db', 'feat-x', '02-adjacent.sql')
+            $text = [System.IO.File]::ReadAllText($moved)
+            $text | Should -Match 'dev-db/dev-db'
+            $text | Should -Not -Match 'local-db'
+
+            $cfgPath = [System.IO.Path]::Combine($ws, '.turbo-plugin', 'config.toml')
+            [System.IO.File]::ReadAllText($cfgPath) | Should -Match 'environments = \["dev-db/dev-db"\]'
+
+            # Exactly one mention of the old name may survive: the commented-out sample line.
+            $remaining = @(@(Get-Content -LiteralPath $cfgPath -Encoding UTF8) | Where-Object { $_ -match 'local-db' }).Count
+            $remaining | Should -Be 1
+        } finally { Remove-Item -LiteralPath $ws -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It 'says which environments line to add when there is none' {
         $ws = New-Workspace
         try {

@@ -187,9 +187,16 @@ fi
 
 if [[ "$config_needs_update" -eq 1 ]]; then
   tmp="${CONFIG_PATH}.tp-rename-tmp"
+  # Twice, for the same reason as the content rewrite above: two adjacent matches sharing one
+  # boundary character survive a single pass. In an environments array that is `["x","x"]` with
+  # no space after the comma. The .ps1 peer does the same, and "the two behave identically" is
+  # the whole point of shipping a pair.
   sed -E "/^[[:space:]]*environments[[:space:]]*=/ s/${MATCH_RE}/\1${TO}\2/g" "$CONFIG_PATH" > "$tmp" \
     || die "failed to update $CONFIG_PATH"
-  mv -f "$tmp" "$CONFIG_PATH" || die "failed to replace $CONFIG_PATH"
+  sed -E "/^[[:space:]]*environments[[:space:]]*=/ s/${MATCH_RE}/\1${TO}\2/g" "$tmp" > "${tmp}.2" \
+    || die "failed to update $CONFIG_PATH"
+  mv -f "${tmp}.2" "$CONFIG_PATH" || die "failed to replace $CONFIG_PATH"
+  rm -f "$tmp"
 fi
 
 echo "  完成。"
