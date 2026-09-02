@@ -87,6 +87,14 @@ agent 完成工作、全部 commit
 
 它和 `/tp-merge-main-into-branches` 是一對：那支是下行（main → 分支），這支是上行（分支 → main）。兩支都用 `Get-MainWorktree` 自行定位，所以**在 linked worktree 裡呼叫，操作仍落在主 worktree**。
 
+## 分支被別的 worktree 佔用時：先找佔用它的那條 session
+
+git 不允許同一條分支同時 checkout 在兩處，所以這兩支都會遇到「動不了那條分支」：上行是 `SOURCE_DIRTY`（來源分支的 worktree 有未 commit 變更）與 `BASE_ELSEWHERE`（`<base>` 被別人佔著），下行是 `SKIP <b> (checked out at <path>)`。
+
+在這個 plugin 的常態工作方式底下，**佔用者幾乎都是另一條 Claude session 的隔離工作副本**，不是使用者手動 checkout 的。把處置直接丟回給使用者，等於讓他當傳聲筒轉達一件他自己不會做判斷的事。所以三處的指引都是：先用 `ListAgents` 找出對應那個路徑的 session、用 `SendMessage` 把要它做的事與指令原文送過去，找不到對應的 session 或它回說不方便，才回頭問使用者。
+
+判準與訊息寫法在 **`assets/occupied-worktree.md`**（兩支 SKILL 共用，只有這一份）。裡面有一條界線是硬的：**自己被權限擋下的動作，不可以改送給另一條 session 去做**——換一個執行者不會讓使用者當下的權限決定改變。同理，`SOURCE_DIRTY` 要的是那些變更被 commit 或被明確捨棄，不是找人把它們藏起來讓守門過關；而「捨棄」永遠是使用者的決定。
+
 ## 要對哪個 repo 動手（`--repo-root`）
 
 每支入口腳本都收一個可選的 `-RepoRoot <path>`（`.ps1`）／ `--repo-root <path>`（`.sh`）。
