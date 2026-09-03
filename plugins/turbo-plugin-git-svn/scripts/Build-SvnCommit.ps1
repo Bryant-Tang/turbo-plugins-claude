@@ -40,8 +40,17 @@ try {
     # warning is silently dropped on the normal push path.
     # Read-Git (issue #128): inline, a git that writes to stderr throws under EAP=Stop and kills the
     # push before this backstop can warn -- the one call whose whole job is to catch a wrong branch.
+    #
+    # The predicate is "checked out in NO worktree at all", not "the main worktree is on something
+    # else" -- same change as the pre-flight gate, and it has to be the same or the two disagree on
+    # the identical question (issue #161; the full reasoning lives in Get-PushPreflight.ps1). Under
+    # a worktree workflow the old form fired on every push and named the wrong branch while doing it.
     $currentHeadBranch = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Text.Trim()
-    if (-not [string]::IsNullOrWhiteSpace($currentHeadBranch) -and $currentHeadBranch -ne $Branch) {
+    $wt = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'list', '--porcelain')
+    if ($wt.Code -ne 0) { throw "git worktree list failed (exit $($wt.Code)) in $mainWorktree" }
+    $wtLines = @($wt.Text -split "`n" | ForEach-Object { $_.Trim() })
+    if (-not [string]::IsNullOrWhiteSpace($currentHeadBranch) -and
+        (Get-WorktreeForBranch -Want $Branch -WorktreeLines $wtLines) -eq '') {
         Write-Output "TP_TOKEN:BRANCH_MISMATCH_WARNING current=$currentHeadBranch requested=$Branch"
     }
 

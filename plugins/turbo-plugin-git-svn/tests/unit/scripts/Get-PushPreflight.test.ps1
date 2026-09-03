@@ -103,6 +103,39 @@ Describe 'Get-PushPreflight token contract' {
         }
     }
 
+    Context 'issue #161 - the predicate is "checked out anywhere", not "the main worktree is on it"' {
+        # The dead-end this fixes: developing a branch in its own worktree means the main
+        # worktree CANNOT hold it (git forbids it), so the old form warned every time -- and
+        # because mismatch outranks the bridge gate, first push could never be reached.
+        It 'does NOT warn while a LINKED worktree holds the branch, and reaches the bridge gate' -Skip:(-not $hasGit) {
+            $repo = New-GitRepo   # main worktree stays on main
+            $wt = [System.IO.Path]::Combine($script:SandboxBase, "pfwt-$([Guid]::NewGuid().ToString('N').Substring(0,8))")
+            Invoke-GitSilent $repo worktree add -q -b feat-x $wt
+
+            # Guard the fixture: a silently failed `worktree add` leaves no worktree holding
+            # feat-x, which is exactly the state the OLD code produced -- the case would then
+            # pass for the wrong reason and assert nothing.
+            (& git -C $wt rev-parse --abbrev-ref HEAD).Trim() | Should -Be 'feat-x'
+
+            # Run from INSIDE the linked worktree -- the situation from the report.
+            $r = Invoke-Preflight -WorkDir $wt -Branch 'feat-x'
+            $r.Token | Should -Not -BeLike 'TP_TOKEN:BRANCH_MISMATCH_WARNING*'
+            $r.Token | Should -BeLike 'TP_TOKEN:BRIDGE_ABSENT*requested=feat-x*target=*'
+            $r.TokenCount | Should -Be 1
+        }
+
+        # The sharp reverse. The mismatch case above uses a branch that does not exist at all,
+        # so an implementation that merely asked "does this branch exist" would pass both and
+        # still be wrong. The question is checkout, not existence.
+        It 'still warns for a branch that EXISTS but no worktree holds' -Skip:(-not $hasGit) {
+            $repo = New-GitRepo
+            Invoke-GitSilent $repo branch feat-parked
+            $r = Invoke-Preflight -WorkDir $repo -Branch 'feat-parked'
+            $r.Token | Should -BeLike 'TP_TOKEN:BRANCH_MISMATCH_WARNING*current=main*requested=feat-parked*'
+            $r.TokenCount | Should -Be 1
+        }
+    }
+
     Context 'bridge absent (current == requested, no bridge worktree)' {
         It 'emits BRIDGE_ABSENT carrying the resolved target' -Skip:(-not $hasGit) {
             $repo = New-GitRepo   # on main; no .turbo-plugin/worktrees

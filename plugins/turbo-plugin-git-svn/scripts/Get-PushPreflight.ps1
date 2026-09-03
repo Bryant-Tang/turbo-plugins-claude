@@ -14,6 +14,8 @@ $ErrorActionPreference = 'Stop'
 # Inspects git HEAD + bridge presence and emits exactly ONE terminal routing token,
 # prefixed 'TP_TOKEN:' so the SKILL can trust it (raw branch text cannot forge it).
 # Precedence: DETACHED_HEAD > BRANCH_MISMATCH_WARNING > BRIDGE_ABSENT > BRIDGE_PRESENT.
+# BRANCH_MISMATCH_WARNING fires when the requested branch is checked out in NO worktree at all
+# (not merely "the main worktree is on something else") -- see the gate itself for why.
 # The SKILL reads ONLY the TP_TOKEN: line and routes; it does NOT run git itself.
 $PREFIX = 'TP_TOKEN:'
 
@@ -58,7 +60,34 @@ try {
         exit 0
     }
 
-    if ($current -ne $Branch) {
+    # The mismatch heuristic asks "is there any sign the caller means THIS branch". It used to
+    # answer that with "is the MAIN worktree standing on it" -- which is wrong the moment a linked
+    # worktree exists, and wrong in the direction that dead-ends the workflow this plugin is built
+    # around (issue #161):
+    #
+    #   - Developing on a branch in its own worktree means git will NOT let the main worktree hold
+    #     it too. So the answer was always "no", the warning always fired, and the SKILL's advice
+    #     for it ("check the branch out in the main worktree and re-run") was IMPOSSIBLE to follow.
+    #   - Because mismatch outranks the bridge check, the first push of a new branch could never
+    #     reach BRIDGE_ABSENT -- and first push is the one step every branch must go through.
+    #   - The message was not merely blocking, it was FALSE: standing in the `dev` worktree, the
+    #     user was told "you are currently on main".
+    #
+    # Being checked out ANYWHERE -- main or linked -- is the evidence the gate was reaching for,
+    # and it costs nothing to ask for the real thing. What the gate protects is unchanged: it is a
+    # "did you mean this branch" heuristic with no functional dependency behind it. Nothing in the
+    # push path reads the main worktree's HEAD -- Build-SvnCommit merges the NAMED branch ref into
+    # the bridge worktree, and New-RemoteBridge bases the bridge branch on refs/heads/remote-svn/main
+    # (deliberately, see the comment there). The permanent SVN write is guarded by the SKILL's own
+    # confirmation of the file list and message, which is untouched.
+    #
+    # Read the list ONCE with the failure checked: letting a git failure fall through would answer
+    # "no worktree holds it", which is exactly the healthy answer for the case that must warn.
+    $wt = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'list', '--porcelain')
+    if ($wt.Code -ne 0) { throw "git worktree list failed (exit $($wt.Code)) in $mainWorktree" }
+    $wtLines = @($wt.Text -split "`n" | ForEach-Object { $_.Trim() })
+
+    if ((Get-WorktreeForBranch -Want $Branch -WorktreeLines $wtLines) -eq '') {
         Write-Output "${PREFIX}BRANCH_MISMATCH_WARNING current=$current requested=$Branch"
         exit 0
     }

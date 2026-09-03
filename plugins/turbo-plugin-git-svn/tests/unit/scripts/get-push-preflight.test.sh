@@ -7,7 +7,10 @@
 # Mirrors the scenarios pinned by the PS sibling Get-PushPreflight.test.ps1:
 #   - literal --branch HEAD          -> TP_TOKEN:DETACHED_HEAD requested=HEAD
 #   - anti-forge (embedded fake token / path traversal) -> exit 1, NO token
-#   - current != requested           -> TP_TOKEN:BRANCH_MISMATCH_WARNING current=.. requested=..
+#   - branch held by NO worktree     -> TP_TOKEN:BRANCH_MISMATCH_WARNING current=.. requested=..
+#     (issue #161: the predicate is "checked out anywhere", not "the main worktree is on it";
+#      a branch held by a LINKED worktree must fall through to the bridge gate, and a branch
+#      that merely EXISTS but is parked must still warn)
 #   - exactly ONE TP_TOKEN line
 #   - current == requested, no bridge worktree -> TP_TOKEN:BRIDGE_ABSENT requested=.. target=..
 #
@@ -125,6 +128,55 @@ test_branch_mismatch_warning() {
     case "$PF_OUT" in
         *"TP_TOKEN:BRANCH_MISMATCH_WARNING current=main requested=feat-x"*) assertTrue 'mismatch payload correct' 0 ;;
         *) fail "expected 'BRANCH_MISMATCH_WARNING current=main requested=feat-x', got: $PF_OUT" ;;
+    esac
+    assertEquals 'exactly one token' 1 "$(token_count)"
+}
+
+# ── Case 5b (issue #161): a LINKED worktree holding the branch is not a mismatch ─
+# The dead-end this fixes: developing a branch in its own worktree means the main worktree
+# CANNOT hold it (git forbids it), so the old "is the main worktree on it" form warned every
+# time -- and because mismatch outranks the bridge gate, first push could never be reached.
+test_branch_in_linked_worktree_is_not_a_mismatch() {
+    if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi
+    local repo wt; repo="$(new_git_repo)"   # main worktree stays on main
+    wt="$SB/wt-feat-x"
+    git -C "$repo" worktree add -q -b feat-x "$wt" >/dev/null 2>&1
+    # Guard the fixture: a silently failed `worktree add` leaves no worktree holding feat-x,
+    # which is precisely the state the OLD code produced -- the case would then pass for the
+    # wrong reason and assert nothing.
+    if [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" != 'feat-x' ]; then
+        fail "fixture: worktree add did not put feat-x at $wt"
+        return 1
+    fi
+
+    # Run from INSIDE the linked worktree — the situation from the report.
+    run_preflight "$wt" --branch feat-x
+    assertEquals 'exits 0' 0 "$PF_EXIT"
+    case "$PF_OUT" in
+        *"TP_TOKEN:BRANCH_MISMATCH_WARNING"*)
+            fail "must NOT warn while a linked worktree holds feat-x, got: $PF_OUT" ;;
+    esac
+    case "$PF_OUT" in
+        *"TP_TOKEN:BRIDGE_ABSENT requested=feat-x target="*) assertTrue 'reaches the bridge gate' 0 ;;
+        *) fail "expected BRIDGE_ABSENT for feat-x, got: $PF_OUT" ;;
+    esac
+    assertEquals 'exactly one token' 1 "$(token_count)"
+}
+
+# ── Case 5c: a branch that EXISTS but no worktree holds still warns ─────────────
+# The sharp reverse of 5b. Case 5 uses a branch that does not exist at all, so an
+# implementation that merely asked "does this branch exist" would pass both 5 and 5b and
+# still be wrong. The question is checkout, not existence.
+test_existing_but_parked_branch_still_warns() {
+    if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi
+    local repo; repo="$(new_git_repo)"
+    git -C "$repo" branch feat-parked >/dev/null 2>&1
+    run_preflight "$repo" --branch feat-parked
+    assertEquals 'exits 0' 0 "$PF_EXIT"
+    case "$PF_OUT" in
+        *"TP_TOKEN:BRANCH_MISMATCH_WARNING current=main requested=feat-parked"*)
+            assertTrue 'still warns for a branch nobody has checked out' 0 ;;
+        *) fail "expected BRANCH_MISMATCH_WARNING for the parked branch, got: $PF_OUT" ;;
     esac
     assertEquals 'exactly one token' 1 "$(token_count)"
 }

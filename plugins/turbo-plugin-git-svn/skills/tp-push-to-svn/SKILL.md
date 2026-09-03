@@ -36,9 +36,10 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--re
 腳本只輸出**一行**以 `TP_TOKEN:` 為前綴的終結 token——**SKILL 只認以 `TP_TOKEN:` 開頭的行**(raw branch 名內嵌的假 token 不算),且**不要自己跑 git 判斷**,完全依此 token 路由:
 
 - `TP_TOKEN:DETACHED_HEAD requested=<r>` → **拒絕**:HEAD 為 detached(或 `--branch HEAD`),沒有分支名可推導 bridge。提示使用者先 `git checkout <具名分支>` 再重跑。結束 skill,**不建任何東西**。
-- `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<c> requested=<r>` → `AskUserQuestion`:「你目前在 `<c>` branch,但要推 `<r>`。先確認沒有推錯分支?」
+- `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<c> requested=<r>` → **`<r>` 沒有被任何工作目錄打開著**(主目錄停在 `<c>`)。這是「分支名可能打錯了」的提示。`AskUserQuestion`:「要推的是 `<r>`,但目前沒有任何工作目錄停在這條分支上(主目錄停在 `<c>`)。確認沒有打錯分支名?」
   - **取消** → 結束 skill。
-  - **確認** → 請使用者切到 `<r>`(`git checkout <r>`)後重跑本 Step 0,避免誤推。
+  - **確認** → 請使用者 `git checkout <r>` 後重跑本 Step 0。走到這個 token 就表示**沒有別的工作目錄佔用 `<r>`**,所以這個 checkout 一定做得到。
+  - **在隔離 worktree 裡開發時不會走到這裡**:那條分支被它自己的 worktree 佔用,那就是「確實在弄這條分支」的證據,pre-flight 會直接往下走到 bridge 判斷。這正是首推 bootstrap 在 worktree 工作流下走得通的原因(issue #161)——**不要**因為主目錄停在別條分支就叫使用者去切主目錄,那條分支被佔用著,切不過去。
 - `TP_TOKEN:BRIDGE_ABSENT requested=<r> target=<path>` → 進入**首推 bootstrap**(見下)。
 - `TP_TOKEN:BRIDGE_PRESENT requested=<r>` → 已有 bridge,直接進 Step 1(正常 push)。
 - `TP_TOKEN:ERROR reason=<訊息>` → pre-flight 無法判定(例:worktree 路徑超過 Windows MAX_PATH)。把 `reason` 原文顯示給使用者並**結束 skill,不建任何東西**。
@@ -89,7 +90,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--re
 - remote SVN 不 up-to-date → fail loudly 提示先 `/tp-pull-from-svn`
 - merge 衝突 → 列出衝突檔,**不自動 abort**(由使用者解或手動 `git merge --abort`)
 - `PENDING_MERGE_DETECTED <remote-path>` → Script 輸出此 token 並 exit 0;SKILL 進入下方三選一 prompt
-- `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<current> requested=<requested>` → Build-SvnCommit 的 backstop(主要偵測已在 Step 0 pre-flight;此為正常 push 路徑上的二次防線),token 同以 `TP_TOKEN:` 前綴。Script 輸出此 token 並**繼續執行**;SKILL 進入下方確認 prompt
+- `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<current> requested=<requested>` → Build-SvnCommit 的 backstop(主要偵測已在 Step 0 pre-flight;此為正常 push 路徑上的二次防線),token 同以 `TP_TOKEN:` 前綴,**觸發條件與 pre-flight 完全相同**(`<requested>` 沒有被任何工作目錄打開著)。Script 輸出此 token 並**繼續執行**;SKILL 進入下方確認 prompt
 - `Error: a path in this commit uses characters your system codepage (CP<n>) cannot represent` → 這次推送裡有檔名用到**你這台機器的字碼頁裝不下的文字**(例如繁中 cp950 系統上的日文假名或 emoji)。這不是 bug,是這台主機傳不進 svn 的字元。**在 SVN 端零寫入**。用白話說明:那個檔名在這台電腦上沒辦法送進 SVN,請改檔名,或依 `/tp-setup` 的編碼說明改用 PowerShell 7+ / 開啟 Windows UTF-8 設定。**不要**照唸 codepage 代號給使用者聽,講「你目前的系統語言設定」即可
 - `TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE` → **svn commit 失敗,但本機留下半完成狀態**(merge commit 已建、新增/刪除仍排程在 bridge、pin 檔保留)。token 後面幾行是腳本印的兩條出路與還原步驟。**這個 token 與那幾行都不可原樣丟給使用者** → 進入下方「commit 失敗處理」
 
@@ -102,7 +103,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--re
 
 **BRANCH_MISMATCH_WARNING 處理** — 當 prepare 輸出含以 `TP_TOKEN:BRANCH_MISMATCH_WARNING` 開頭的行時,在繼續解析其他輸出之前,`AskUserQuestion` 詢問:
 
-> 你目前在 `<current>` branch,但要推送 `<requested>`。確認推送 `<requested>`?
+> 目前沒有任何工作目錄停在 `<requested>` 這條分支上(主目錄停在 `<current>`)。確認要推送 `<requested>`?
 
 選項:
 1. **Yes, push `<requested>`**:繼續執行 Step 3
