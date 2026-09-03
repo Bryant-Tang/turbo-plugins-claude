@@ -51,10 +51,9 @@
 # 跟「本機」那個真的存在的概念撞名,每次講到都要重新確認一次。
 #
 # 既有專案不會被動到 —— 判準是「磁碟上有沒有既有的樹」,不是「這是不是新版」。
-# 已經有一棵 local-db/ 的專案,不管跑不跑 setup 都繼續用它;要改名的話有腳本代勞,
-# 它會一併改掉目錄名與 .sql 檔頭裡的環境名。
+# 已經有一棵 local-db/ 的專案,不管跑不跑 setup 都繼續用它。
 #
-# 既有專案要改名的話有腳本代勞,它會一併改掉目錄名與 .sql 檔頭裡的環境名:
+# 要改名的話有腳本代勞,它會一併改掉目錄名與 .sql 檔頭裡的環境名:
 #   scripts/rename-db-environment.sh local-db dev-db        (Linux / macOS / Git Bash)
 #   scripts/Rename-DbEnvironment.ps1 local-db dev-db        (Windows)
 # 預設只印出會改什麼、不動檔案;確認無誤再加 --apply / -Apply。
