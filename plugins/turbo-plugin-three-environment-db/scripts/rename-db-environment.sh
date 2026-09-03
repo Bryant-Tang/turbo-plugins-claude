@@ -99,11 +99,75 @@ NEW_DIR="${SQL_ROOT}/${TO}"
 [[ -e "$NEW_DIR" ]]  && die "target already exists, refusing to merge two environments: $NEW_DIR"
 
 # Word boundaries so a rename like test -> test-db cannot turn an existing 'test-db' into
-# 'test-db-db'. The name charset above is exactly what counts as "inside a word" here.
+# 'test-db-db'. The name charset here is exactly what counts as "inside a word".
+#
+# MATCH_RE is used for DETECTION only (grep, for the dry-run report). The rewrite is done by
+# replace_bounded below, in pure bash -- because `sed` on MSYS/Git Bash opens files in text mode
+# and silently rewrites every CRLF as LF, even for a no-op expression (verified: GNU sed 4.9 on
+# Git Bash turns "aaa\r\n" into "aaa\n"; `cat` does not). That would turn a one-line rename into
+# a whole-file diff, and only on Windows -- GNU sed on Linux leaves the \r alone -- so the same
+# script would behave differently on the two platforms the pair rule exists to keep in step.
 BOUND_L='(^|[^A-Za-z0-9._-])'
 BOUND_R='([^A-Za-z0-9._-]|$)'
 FROM_RE="${FROM//./\\.}"
 MATCH_RE="${BOUND_L}${FROM_RE}${BOUND_R}"
+
+# Replace every boundary-delimited $FROM in $1 with $TO; result in $REPLY.
+#
+# Scanning left to right handles adjacency for free: after a match is taken, the scan resumes
+# AFTER it, so `local-db/local-db` (two matches sharing one separator) needs no second pass --
+# the regex approach does, because a global substitution consumes the shared boundary character.
+is_word_char() { [[ "$1" == [A-Za-z0-9._-] ]]; }
+replace_bounded() {
+  local rest="$1" out='' pre post lchar rchar
+  while [[ "$rest" == *"$FROM"* ]]; do
+    pre="${rest%%"$FROM"*}"
+    post="${rest#*"$FROM"}"
+    lchar="${pre: -1}"
+    rchar="${post:0:1}"
+    if { [[ -z "$lchar" ]] || ! is_word_char "$lchar"; } &&
+       { [[ -z "$rchar" ]] || ! is_word_char "$rchar"; }; then
+      out+="${pre}${TO}"
+    else
+      out+="${pre}${FROM}"
+    fi
+    rest="$post"
+  done
+  REPLY="${out}${rest}"
+}
+
+# Rewrite $1 in place, preserving each line's terminator exactly (CRLF stays CRLF) and preserving
+# whether the file ended with a newline at all. $2 is an optional ERE: when given, only lines
+# matching it are rewritten (that is how config.toml gets its `environments` line touched and
+# nothing else -- a commented-out sample line is not configuration).
+rewrite_file() {
+  # Separate `local` statements on purpose. `local a="$1" b="${a}x"` does NOT see the new $a:
+  # local is a command, so all of its arguments are expanded before it runs, and ${a} there
+  # resolves in the CALLER's scope. Written as one line, $tmp was built from whatever $f the
+  # caller happened to have -- which in the .sql loop is the same path by coincidence, so that
+  # half worked, and for config.toml it pointed into the directory that had just been renamed.
+  local f="$1"
+  local only="${2:-}"
+  local tmp="${f}.tp-rename-tmp"
+  local line cr trailing_newline=1
+  if [[ -s "$f" && -n "$(tail -c1 "$f")" ]]; then trailing_newline=0; fi
+  : > "$tmp" || die "failed to open $tmp"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    cr=''
+    if [[ "$line" == *$'\r' ]]; then cr=$'\r'; line="${line%$'\r'}"; fi
+    if [[ -z "$only" ]] || [[ "$line" =~ $only ]]; then
+      replace_bounded "$line"
+    else
+      REPLY="$line"
+    fi
+    printf '%s%s\n' "$REPLY" "$cr" >> "$tmp"
+  done < "$f"
+  if [[ "$trailing_newline" -eq 0 ]]; then
+    # The loop above ends every line, including a final one the original left unterminated.
+    head -c -1 "$tmp" > "${tmp}.2" && mv -f "${tmp}.2" "$tmp"
+  fi
+  mv -f "$tmp" "$f" || die "failed to replace $f"
+}
 
 mapfile -t SQL_FILES < <(find "$OLD_DIR" -type f -name '*.sql' | LC_ALL=C sort)
 
@@ -165,14 +229,7 @@ echo "  套用中..."
 for f in "${SQL_FILES[@]:-}"; do
   [[ -n "$f" ]] || continue
   grep -qE "$MATCH_RE" "$f" 2>/dev/null || continue
-  tmp="${f}.tp-rename-tmp"
-  # Twice: a single pass consumes the boundary character, so two matches sharing one separator
-  # (".../local-db/local-db/...") would leave the second behind. The second pass is a no-op
-  # whenever the first was enough.
-  sed -E "s/${MATCH_RE}/\1${TO}\2/g" "$f" > "$tmp" || die "failed to rewrite $f"
-  sed -E "s/${MATCH_RE}/\1${TO}\2/g" "$tmp" > "${tmp}.2" || die "failed to rewrite $f"
-  mv -f "${tmp}.2" "$f" || die "failed to replace $f"
-  rm -f "$tmp"
+  rewrite_file "$f"
 done
 
 moved_with_git=0
@@ -186,17 +243,7 @@ if [[ "$moved_with_git" -ne 1 ]]; then
 fi
 
 if [[ "$config_needs_update" -eq 1 ]]; then
-  tmp="${CONFIG_PATH}.tp-rename-tmp"
-  # Twice, for the same reason as the content rewrite above: two adjacent matches sharing one
-  # boundary character survive a single pass. In an environments array that is `["x","x"]` with
-  # no space after the comma. The .ps1 peer does the same, and "the two behave identically" is
-  # the whole point of shipping a pair.
-  sed -E "/^[[:space:]]*environments[[:space:]]*=/ s/${MATCH_RE}/\1${TO}\2/g" "$CONFIG_PATH" > "$tmp" \
-    || die "failed to update $CONFIG_PATH"
-  sed -E "/^[[:space:]]*environments[[:space:]]*=/ s/${MATCH_RE}/\1${TO}\2/g" "$tmp" > "${tmp}.2" \
-    || die "failed to update $CONFIG_PATH"
-  mv -f "${tmp}.2" "$CONFIG_PATH" || die "failed to replace $CONFIG_PATH"
-  rm -f "$tmp"
+  rewrite_file "$CONFIG_PATH" '^[[:space:]]*environments[[:space:]]*='
 fi
 
 echo "  完成。"

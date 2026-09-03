@@ -227,6 +227,32 @@ Describe 'Rename-DbEnvironment' {
         } finally { Remove-Item -LiteralPath $ws -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    # A one-line change must stay a one-line diff. Rewriting config.toml by splitting into lines
+    # and rejoining with "`n" flips every CRLF in the file to LF -- no data is lost, but the diff
+    # covers the whole file and the .sh peer (sed, which treats \r as line content) does not do it,
+    # so the two implementations stop agreeing on a Windows checkout.
+    It 'leaves CRLF line endings in config.toml alone' {
+        $ws = New-Workspace
+        try {
+            Add-SqlTree -Workspace $ws -EnvName 'local-db'
+            $cfgPath = [System.IO.Path]::Combine($ws, '.turbo-plugin', 'config.toml')
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            $crlf = "# >>> turbo-plugin:db >>>`r`n[db]`r`nsql_root = `".turbo-plugin/sql`"`r`nenvironments = [`"local-db`", `"test-db`"]`r`n# <<< turbo-plugin:db <<<`r`n"
+            [System.IO.File]::WriteAllText($cfgPath, $crlf, $enc)
+
+            Invoke-Rename @('local-db', 'dev-db', '-Root', $ws, '-Apply') | Out-Null
+
+            $after = [System.IO.File]::ReadAllText($cfgPath)
+            $after | Should -Match 'environments = \["dev-db", "test-db"\]'
+
+            # Every newline must still be a CRLF: as many "`r`n" as "`n".
+            $crlfCount = ([regex]::Matches($after, "`r`n")).Count
+            $lfCount = ([regex]::Matches($after, "`n")).Count
+            $crlfCount | Should -Be $lfCount -Because 'a lone LF means the file was renormalised'
+            $lfCount | Should -Be 5
+        } finally { Remove-Item -LiteralPath $ws -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It 'says which environments line to add when there is none' {
         $ws = New-Workspace
         try {

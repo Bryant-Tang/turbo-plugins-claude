@@ -202,6 +202,48 @@ test_replaces_two_names_separated_by_a_single_character() {
         "$(grep -c 'local-db' "$WS/.turbo-plugin/config.toml")"
 }
 
+# A one-line change must stay a one-line diff. The .ps1 peer used to rebuild config.toml from
+# Get-Content + a "`n" join, which flipped every CRLF in the file to LF; sed does not, because it
+# treats \r as line content. Both suites assert the same thing so the two cannot drift again.
+test_leaves_crlf_line_endings_alone() {
+    make_ws local-db
+    mkdir -p "$WS/.turbo-plugin"
+    printf '# >>> turbo-plugin:db >>>\r\n[db]\r\nsql_root = ".turbo-plugin/sql"\r\nenvironments = ["local-db", "test-db"]\r\n# <<< turbo-plugin:db <<<\r\n' \
+        > "$WS/.turbo-plugin/config.toml"
+
+    run_it local-db dev-db --apply >/dev/null 2>&1
+
+    grep -q 'environments = \["dev-db", "test-db"\]' "$WS/.turbo-plugin/config.toml"
+    assertTrue 'the environments line was still rewritten' $?
+
+    # Count the CR bytes with tr, NOT `grep -c $'\r'`. That grep reports the same count for a
+    # CRLF file and an LF-only file -- the pattern reaches grep empty, so it matches every line
+    # and the assertion becomes the tautology `line count == line count`. Measured on Git Bash:
+    # both files answered 2.
+    local total cr
+    total="$(wc -l < "$WS/.turbo-plugin/config.toml" | tr -d ' ')"
+    cr="$(tr -dc '\r' < "$WS/.turbo-plugin/config.toml" | wc -c | tr -d ' ')"
+    assertEquals 'every line still ends with CRLF' "$total" "$cr"
+}
+
+# Same property for the .sql contents, which go through the same rewrite path.
+test_leaves_crlf_line_endings_in_sql_files_alone() {
+    make_ws local-db
+    printf '/*\r\n目標環境: local-db\r\n基線來源環境: local-db\r\n*/\r\nSELECT 1;\r\n' \
+        > "$WS/.turbo-plugin/sql/local-db/feat-x/03-crlf.sql"
+
+    run_it local-db dev-db --apply >/dev/null 2>&1
+
+    local f="$WS/.turbo-plugin/sql/dev-db/feat-x/03-crlf.sql"
+    grep -q '目標環境: dev-db' "$f"
+    assertTrue 'the header was still rewritten' $?
+
+    local total cr
+    total="$(wc -l < "$f" | tr -d ' ')"
+    cr="$(tr -dc '\r' < "$f" | wc -c | tr -d ' ')"
+    assertEquals 'every line of the .sql still ends with CRLF' "$total" "$cr"
+}
+
 # Without an environments key the rename still happens, but the skill would then see a folder that
 # is not in its list and stop -- so the script has to say what to add.
 test_says_what_to_add_when_there_is_no_environments_key() {

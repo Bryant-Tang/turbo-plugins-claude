@@ -182,15 +182,23 @@ if (-not $movedWithGit) {
 }
 
 if ($configNeedsUpdate) {
-    $out = New-Object System.Collections.ArrayList
-    foreach ($line in @(Get-Content -LiteralPath $configPath -Encoding UTF8)) {
-        if ($line -match '^\s*environments\s*=') {
-            [void]$out.Add([regex]::Replace([regex]::Replace($line, $matchRe, $replaceWith), $matchRe, $replaceWith))
-        } else {
-            [void]$out.Add($line)
-        }
+    # ReadAllText + splice the one line, NOT Get-Content + rejoin. Get-Content strips the line
+    # terminators and rejoining with "`n" rewrites EVERY line of a CRLF file as LF -- a whole-file
+    # diff for a one-line change, and a behaviour the .sh peer does not share (sed treats \r as
+    # line content and leaves it alone). It also used to append a trailing newline the file may
+    # not have had.
+    #
+    # [^\r\n]* rather than .* keeps the \r outside the captured line, so the terminator is part of
+    # the untouched remainder. No MatchEvaluator: a scriptblock-as-delegate works on 5.1 but is a
+    # needless moving part when the match position is all that is needed.
+    $text = [System.IO.File]::ReadAllText($configPath, [System.Text.Encoding]::UTF8)
+    $lineMatch = [regex]::Match($text, '(?m)^[ \t]*environments[ \t]*=[^\r\n]*')
+    if ($lineMatch.Success) {
+        $oldLine = $lineMatch.Value
+        $newLine = [regex]::Replace([regex]::Replace($oldLine, $matchRe, $replaceWith), $matchRe, $replaceWith)
+        $text = $text.Remove($lineMatch.Index, $lineMatch.Length).Insert($lineMatch.Index, $newLine)
+        Write-Utf8NoBom -Path $configPath -Content $text
     }
-    Write-Utf8NoBom -Path $configPath -Content (($out -join "`n") + "`n")
 }
 
 $moveHow = if ($movedWithGit) { '是(git mv)' } else { '是(檔案系統)' }
