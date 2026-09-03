@@ -2,6 +2,31 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.7.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.6.0...turbo-plugin-git-svn--v0.7.0) (2026-09-03)
+
+
+### Added
+
+* **git-svn:** 佔用名單每一輪都要重算,不准沿用上一次 ([5bbc08e](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/5bbc08e5d8672050b68422b064697c3e94f124a2))
+* **git-svn:** 使用者說要收工時,停止跨 session 通訊 ([6711a53](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6711a534248822412808f6a8629cd519eb4e414e)), closes [#163](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/163)
+* **git-svn:** 分支被別的 worktree 佔用時,改成直接跟佔用它的 session 講 ([ae2c966](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/ae2c966f35b1f1609edaeabb4dcb21ad73510d64))
+* **git-svn:** 合併時要指名使用者核准的那個 base 狀態,不是任何 base ([9614a59](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/9614a59993073e3c5a16312b6303dd57229a385c))
+
+
+### Fixed
+
+* **git-svn:** --expect-base 的錨點改用 \z,`$` 會放行結尾的換行 ([ee4766c](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/ee4766cffd5e7d6a0b22982aaec73476990e9f70))
+* **git-svn:** 「分支被哪個 worktree 佔用」的查找從四份複本收成一份 ([e9c3980](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/e9c3980ad7901944e339a8fc31b8be2732d8165d))
+* **git-svn:** worktree-list 失敗那個測試的 shim 改用 findstr,for 迴圈版對腳本沒生效 ([cc9b3e5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/cc9b3e5c95bededadf2b58c64836d01ab0bd9f6a))
+* **git-svn:** 把上一顆 commit 誤留的突變狀態還原成真正的守門 ([8c1cd04](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/8c1cd04974a12e92f03decb4e349b0c0b6c7bb95))
+* **git-svn:** 首推守門改判「分支被誰佔用」,不再要求主 worktree 站在它上面 ([bf839fe](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/bf839fe700014466053d2d211a58dfbcf90ccd5e)), closes [#161](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/161)
+* **git-svn:** 首推的分支提示改成警告,確認過就往下走 ([9e948d5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/9e948d5affbc891071edb8004369025d8690060d))
+
+
+### Documentation
+
+* **git-svn:** README 補上首推守門與 base 狀態核准兩節 ([88b702c](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/88b702c08ed7002919f9eb0460294961a27d57a3))
+
 ## [0.6.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.5.0...turbo-plugin-git-svn--v0.6.0) (2026-09-02)
 
 
