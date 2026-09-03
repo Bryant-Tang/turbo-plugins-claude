@@ -133,6 +133,12 @@ Describe 'Get-PushPreflight token contract' {
             $r = Invoke-Preflight -WorkDir $repo -Branch 'feat-parked'
             $r.Token | Should -BeLike 'TP_TOKEN:BRANCH_MISMATCH_WARNING*current=main*requested=feat-parked*'
             $r.TokenCount | Should -Be 1
+            # ...and the warning must carry what the SKILL needs to CONTINUE after the user
+            # confirms the name. Without these, "confirm" has nowhere to go but a re-run that
+            # lands on this same token -- what made the old gate a dead end for a branch no
+            # worktree ever holds.
+            $r.Token | Should -BeLike '*bridge=absent*'
+            $r.Token | Should -BeLike '* target=*'
         }
     }
 

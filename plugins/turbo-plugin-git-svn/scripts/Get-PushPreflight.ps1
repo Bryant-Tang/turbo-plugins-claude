@@ -87,13 +87,27 @@ try {
     if ($wt.Code -ne 0) { throw "git worktree list failed (exit $($wt.Code)) in $mainWorktree" }
     $wtLines = @($wt.Text -split "`n" | ForEach-Object { $_.Trim() })
 
+    $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir
+    $bridge = if (Test-Path -LiteralPath $remote.Path -PathType Container) { 'present' } else { 'absent' }
+
+    # The warning carries the bridge state so it is a WARNING and not a dead end.
+    #
+    # "Nobody has this branch checked out" is worth saying -- it is the shape a typo'd branch name
+    # makes. It is not worth REFUSING over, and refusing was doing real damage: the only way past
+    # it was to check the branch out in the MAIN worktree, and a branch that no worktree holds is
+    # routinely the normal state for one that is never developed on directly (an integration
+    # branch that only ever receives merges). Sending the user to move the main checkout is also
+    # the one thing a background session is asked not to do -- someone else may be using it.
+    #
+    # So the SKILL gets everything it needs to continue after the user confirms the name is right,
+    # instead of having to re-run and land on the identical token. This is what the prepare-side
+    # backstop has always done (emit the warning, keep going); the two now agree.
     if ((Get-WorktreeForBranch -Want $Branch -WorktreeLines $wtLines) -eq '') {
-        Write-Output "${PREFIX}BRANCH_MISMATCH_WARNING current=$current requested=$Branch"
+        Write-Output "${PREFIX}BRANCH_MISMATCH_WARNING current=$current requested=$Branch bridge=$bridge target=$($remote.Path)"
         exit 0
     }
 
-    $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir
-    if (Test-Path -LiteralPath $remote.Path -PathType Container) {
+    if ($bridge -eq 'present') {
         Write-Output "${PREFIX}BRIDGE_PRESENT requested=$Branch"
     } else {
         Write-Output "${PREFIX}BRIDGE_ABSENT requested=$Branch target=$($remote.Path)"

@@ -179,6 +179,18 @@ test_existing_but_parked_branch_still_warns() {
         *) fail "expected BRANCH_MISMATCH_WARNING for the parked branch, got: $PF_OUT" ;;
     esac
     assertEquals 'exactly one token' 1 "$(token_count)"
+
+    # ...and the warning must carry what the SKILL needs to CONTINUE after the user confirms the
+    # name. Without these, "confirm" has nowhere to go but a re-run that lands on this same token
+    # -- which is what made the old gate a dead end for a branch no worktree ever holds.
+    case "$PF_OUT" in
+        *"bridge=absent"*) assertTrue 'warning carries the bridge state' 0 ;;
+        *) fail "expected bridge=absent on the warning, got: $PF_OUT" ;;
+    esac
+    case "$PF_OUT" in
+        *" target="*) assertTrue 'warning carries the bootstrap target' 0 ;;
+        *) fail "expected target= on the warning, got: $PF_OUT" ;;
+    esac
 }
 
 # ── Case 6: current == requested, no bridge worktree → BRIDGE_ABSENT ───────────

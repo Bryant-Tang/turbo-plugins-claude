@@ -93,14 +93,28 @@ fi
 if ! WT_LIST="$(git -C "$MAIN_WORKTREE" worktree list --porcelain 2>/dev/null)"; then
   _die_token "git worktree list failed in $MAIN_WORKTREE"
 fi
+if ! RESOLVED="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR" 2>&1)"; then _die_token "$RESOLVED"; fi
+REMOTE_PATH="${RESOLVED##*|}"
+if [[ -d "$REMOTE_PATH" ]]; then BRIDGE='present'; else BRIDGE='absent'; fi
+
+# The warning carries the bridge state so it is a WARNING and not a dead end.
+#
+# "Nobody has this branch checked out" is worth saying -- it is the shape a typo'd branch name
+# makes. It is not worth REFUSING over, and refusing was doing real damage: the only way past it
+# was to check the branch out in the MAIN worktree, and a branch that no worktree holds is
+# routinely the normal state for one that is never developed on directly (an integration branch
+# that only ever receives merges). Sending the user to move the main checkout is also the one
+# thing a background session is asked not to do -- someone else may be using it.
+#
+# So the SKILL gets everything it needs to continue after the user confirms the name is right,
+# instead of having to re-run and land on the identical token. This is what the prepare-side
+# backstop has always done (emit the warning, keep going); the two now agree.
 if [[ -z "$(worktree_for_branch "$BRANCH" "$WT_LIST")" ]]; then
-  echo "${PREFIX}BRANCH_MISMATCH_WARNING current=$CURRENT requested=$BRANCH"
+  echo "${PREFIX}BRANCH_MISMATCH_WARNING current=$CURRENT requested=$BRANCH bridge=$BRIDGE target=$REMOTE_PATH"
   exit 0
 fi
 
-if ! RESOLVED="$(resolve_remote_worktree "$BRANCH" "$WORKTREES_DIR" 2>&1)"; then _die_token "$RESOLVED"; fi
-REMOTE_PATH="${RESOLVED##*|}"
-if [[ -d "$REMOTE_PATH" ]]; then
+if [[ "$BRIDGE" == 'present' ]]; then
   echo "${PREFIX}BRIDGE_PRESENT requested=$BRANCH"
 else
   echo "${PREFIX}BRIDGE_ABSENT requested=$BRANCH target=$REMOTE_PATH"
