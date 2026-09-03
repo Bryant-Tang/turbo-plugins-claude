@@ -118,23 +118,10 @@ if ! WT_LIST="$(git -C "$MAIN_WORKTREE" worktree list --porcelain 2>/dev/null)";
   exit 1
 fi
 
-# Which worktree, if any, has a given branch checked out. Echoes the normalized absolute path,
-# or nothing. The path is normalized before it is ever compared: git reports Windows paths as
-# `C:/...` while other sources hand back `/c/...`, and comparing those two spellings is false
-# every single time without saying so.
-worktree_for_branch() {
-  local want="$1" line cur=''
-  while IFS= read -r line; do
-    case "$line" in
-      'worktree '*) cur="${line#worktree }" ;;
-      "branch refs/heads/$want")
-        [[ -n "$cur" ]] && get_normalized_absolute_path "$cur"
-        return 0
-        ;;
-    esac
-  done <<< "$WT_LIST"
-  return 0
-}
+# The lookup itself lives in lib/common.sh (worktree_for_branch), shared with request-merge.sh:
+# it carries a path-normalization step whose absence is silent, and a copy per caller is a copy
+# per silent-failure entry point. The READ stays here because the failure report is
+# script-specific.
 
 MERGED=()
 CONFLICT=()
@@ -143,7 +130,7 @@ OCCUPIED=()
 for branch in "${TARGET_BRANCHES[@]}"; do
   # The main worktree holding it is fine -- that checkout is a no-op. Any OTHER worktree is not:
   # git refuses, and the refusal has nothing to do with the content.
-  BRANCH_WT="$(worktree_for_branch "$branch")"
+  BRANCH_WT="$(worktree_for_branch "$branch" "$WT_LIST")"
   if [[ -n "$BRANCH_WT" && "$BRANCH_WT" != "$MAIN_WORKTREE" ]]; then
     OCCUPIED+=("$branch")
     echo "SKIP $branch (checked out at $BRANCH_WT)"
