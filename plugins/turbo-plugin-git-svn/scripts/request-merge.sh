@@ -24,7 +24,7 @@
 #   Emits exactly ONE terminal token line prefixed 'TP_TOKEN:'. The SKILL reads ONLY that
 #   line and routes on it; it does NOT run git itself. Precedence (a total order):
 #
-#     ERROR > BRANCH_IS_BASE > BRIDGE_BRANCH > BRANCH_NOT_FOUND > BASE_NOT_FOUND
+#     ERROR > BRANCH_IS_BASE > BRIDGE_BRANCH > BRANCH_NOT_FOUND > BASE_NOT_FOUND > BASE_MOVED
 #           > SOURCE_DIRTY > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE
 #           > NOTHING_TO_MERGE > BEHIND_BASE > READY  (report mode)
 #           > MERGED | CONFLICT                       (--merge mode)
@@ -75,6 +75,8 @@ BASE='main'
 DO_MERGE=0
 ALLOW_BEHIND=0
 DELETE_BRANCH=0
+# The <base> tip the caller's approval was given against (issue #160). Empty = not supplied.
+EXPECT_BASE=''
 # Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
 REPO_ROOT=''
 
@@ -96,6 +98,8 @@ while [[ $# -gt 0 ]]; do
     --base=*)    BASE="${1#--base=}"; shift ;;
     --merge)     DO_MERGE=1; shift ;;
     --allow-behind) ALLOW_BEHIND=1; shift ;;
+    --expect-base)   [[ $# -ge 2 ]] || { echo "Error: --expect-base requires a value" >&2; exit 1; }; EXPECT_BASE="$2"; shift 2 ;;
+    --expect-base=*) EXPECT_BASE="${1#--expect-base=}"; shift ;;
     --delete-branch) DELETE_BRANCH=1; shift ;;
     --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
     --repo-root=*) REPO_ROOT="${1#--repo-root=}"; shift ;;
@@ -111,6 +115,28 @@ if [[ -z "$BASE" ]]; then echo "Error: --base requires a non-empty value" >&2; e
 # ignoring the flag, keeps that promise checkable instead of relying on the caller's memory.
 if [[ "$DELETE_BRANCH" -eq 1 && "$DO_MERGE" -eq 0 ]]; then
   echo "Error: --delete-branch requires --merge (report mode never writes)." >&2
+  exit 1
+fi
+# --allow-behind must name the state it is waiving, not waive the rule (issue #160).
+#
+# Several sessions merge into the same <base> through the same main worktree, so <base> can move
+# while the user is looking at the report. Without --allow-behind that is caught: the branch is
+# now behind, and BEHIND_BASE refuses. WITH it, nothing looks -- and the flag is only ever set
+# because the user was shown a specific `behind=<n>` and accepted THAT. Whatever landed in the
+# meantime was never shown to anyone, which is precisely what BEHIND_BASE exists to prevent.
+#
+# So the waiver has to carry the sha it applies to. Required rather than optional exactly here:
+# optional protection is protection the caller can forget, and this is the one path with no
+# other guard behind it. Tokenless (pre-validation), same as --delete-branch without --merge.
+if [[ "$ALLOW_BEHIND" -eq 1 && "$DO_MERGE" -eq 1 && -z "$EXPECT_BASE" ]]; then
+  echo "Error: --allow-behind with --merge requires --expect-base <sha> (the base commit the user actually approved; take it from the report's base_sha=)." >&2
+  exit 1
+fi
+# --expect-base is echoed back inside a token line, so it is sanitized BEFORE any token can be
+# emitted (anti-forge, same contract as the branch names below): an embedded newline would
+# otherwise let the caller write a second, forged TP_TOKEN: line. A sha is all this ever is.
+if [[ -n "$EXPECT_BASE" && ! "$EXPECT_BASE" =~ ^[0-9a-fA-F]{4,40}$ ]]; then
+  echo "Error: --expect-base must be a hex commit sha (4-40 chars), got: '$EXPECT_BASE'" >&2
   exit 1
 fi
 
@@ -157,6 +183,31 @@ fi
 if ! git -C "$MAIN_WORKTREE" rev-parse --verify --quiet "refs/heads/$BASE" >/dev/null; then
   echo "${PREFIX}BASE_NOT_FOUND base=$BASE"
   exit 0
+fi
+
+# The <base> tip everything below is measured against. Reported on every token the SKILL can
+# come back from, so a later --merge can name the state the user actually approved.
+BASE_SHA="$(git -C "$MAIN_WORKTREE" rev-parse --short "refs/heads/$BASE")"
+
+# Compare-and-swap on <base> (issue #160). Placed here, above every other guard, because
+# everything below evaluates the branch AGAINST <base>: if <base> is not the one the report was
+# built from, the premise of the user's approval is gone and re-deriving the rest would only
+# describe a situation nobody has seen. Say the premise changed and let the report be re-run.
+#
+# The same shape as this plugin's existing push-side pin (build-svn-commit records the branch
+# HEAD at prepare time and the commit step aborts when it moved) -- the race is the same one.
+#
+# Resolve both sides to full object names rather than comparing the strings: the report hands
+# out a short sha, and a caller echoing back the full one means the same commit. An --expect-base
+# that resolves to nothing is treated as moved (fail closed) -- it cannot be the base the user
+# saw, whatever else it is.
+if [[ -n "$EXPECT_BASE" ]]; then
+  BASE_FULL="$(git -C "$MAIN_WORKTREE" rev-parse --verify --quiet "refs/heads/$BASE^{commit}")"
+  EXPECT_FULL="$(git -C "$MAIN_WORKTREE" rev-parse --verify --quiet "${EXPECT_BASE}^{commit}" 2>/dev/null || true)"
+  if [[ "$EXPECT_FULL" != "$BASE_FULL" ]]; then
+    echo "${PREFIX}BASE_MOVED base=$BASE expected=$EXPECT_BASE actual=$BASE_SHA"
+    exit 0
+  fi
 fi
 
 # Read the worktree list ONCE, with the failure checked. Reading it inside the lookup via a
@@ -287,7 +338,7 @@ if [[ "$AHEAD" -eq 0 ]]; then
   # as safe to remove as it is after a merge, and telling the user "you can clean this up" while
   # leaving them to do it by hand is the same gap one step over.
   run_delete
-  echo "${PREFIX}NOTHING_TO_MERGE branch=$BRANCH base=$BASE worktree=$HAS_WT $DEL_FIELDS"
+  echo "${PREFIX}NOTHING_TO_MERGE branch=$BRANCH base=$BASE base_sha=$BASE_SHA worktree=$HAS_WT $DEL_FIELDS"
   exit 0
 fi
 
@@ -327,12 +378,12 @@ echo '────────────────────────�
 # the user needs in order to answer, so they get printed either way, and only the terminal token
 # differs. See the header for why this refuses by default.
 if [[ "$BEHIND" -gt 0 && "$ALLOW_BEHIND" -eq 0 ]]; then
-  echo "${PREFIX}BEHIND_BASE branch=$BRANCH base=$BASE ahead=$AHEAD behind=$BEHIND main=$MAIN_WORKTREE"
+  echo "${PREFIX}BEHIND_BASE branch=$BRANCH base=$BASE base_sha=$BASE_SHA ahead=$AHEAD behind=$BEHIND main=$MAIN_WORKTREE"
   exit 0
 fi
 
 if [[ "$DO_MERGE" -eq 0 ]]; then
-  echo "${PREFIX}READY branch=$BRANCH base=$BASE ahead=$AHEAD behind=$BEHIND worktree=$HAS_WT main=$MAIN_WORKTREE"
+  echo "${PREFIX}READY branch=$BRANCH base=$BASE base_sha=$BASE_SHA ahead=$AHEAD behind=$BEHIND worktree=$HAS_WT main=$MAIN_WORKTREE"
   exit 0
 fi
 

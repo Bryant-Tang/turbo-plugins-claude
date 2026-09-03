@@ -7,6 +7,8 @@ param(
     [switch]$Merge,
     # Proceed even though $Base has commits $Branch does not (see the `behind` gate below).
     [switch]$AllowBehind,
+    # The $Base tip the caller's approval was given against (issue #160). Empty = not supplied.
+    [string]$ExpectBase = '',
     # Delete the source branch once $Base provably contains it. Requires -Merge.
     [switch]$DeleteBranch,
     # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
@@ -25,7 +27,8 @@ $ErrorActionPreference = 'Stop'
 # script supplies it -- a read-only report by default, the merge itself only under -Merge.
 #
 # Emits exactly ONE terminal token line prefixed 'TP_TOKEN:'. Precedence (a total order):
-#   ERROR > BRANCH_IS_BASE > BRIDGE_BRANCH > BRANCH_NOT_FOUND > BASE_NOT_FOUND > SOURCE_DIRTY
+#   ERROR > BRANCH_IS_BASE > BRIDGE_BRANCH > BRANCH_NOT_FOUND > BASE_NOT_FOUND > BASE_MOVED
+#         > SOURCE_DIRTY
 #         > MAIN_DIRTY > MAIN_DETACHED > BASE_ELSEWHERE > NOTHING_TO_MERGE > BEHIND_BASE
 #         > READY                                                       (report mode)
 #         > MERGED | CONFLICT                                           (-Merge mode)
@@ -105,6 +108,28 @@ try {
         throw '-DeleteBranch requires -Merge (report mode never writes).'
     }
 
+    # -AllowBehind must name the state it is waiving, not waive the rule (issue #160).
+    #
+    # Several sessions merge into the same $Base through the same main worktree, so $Base can move
+    # while the user is looking at the report. Without -AllowBehind that is caught: the branch is
+    # now behind, and BEHIND_BASE refuses. WITH it, nothing looks -- and the flag is only ever set
+    # because the user was shown a specific `behind=<n>` and accepted THAT. Whatever landed in the
+    # meantime was never shown to anyone, which is precisely what BEHIND_BASE exists to prevent.
+    #
+    # So the waiver has to carry the sha it applies to. Required rather than optional exactly here:
+    # optional protection is protection the caller can forget, and this is the one path with no
+    # other guard behind it. Tokenless, like every other usage error.
+    if ($AllowBehind -and $Merge -and [string]::IsNullOrWhiteSpace($ExpectBase)) {
+        throw '-AllowBehind with -Merge requires -ExpectBase <sha> (the base commit the user actually approved; take it from the report''s base_sha=).'
+    }
+
+    # -ExpectBase is echoed back inside a token line, so it is sanitized BEFORE any token can be
+    # emitted (anti-forge, same contract as the branch names below): an embedded newline would
+    # otherwise let the caller write a second, forged TP_TOKEN: line. A sha is all this ever is.
+    if (-not [string]::IsNullOrWhiteSpace($ExpectBase) -and $ExpectBase -notmatch '^[0-9a-fA-F]{4,40}$') {
+        throw "-ExpectBase must be a hex commit sha (4-40 chars), got: '$ExpectBase'"
+    }
+
     # Validate BEFORE emitting any token (anti-forge): a malformed ref name is a hard, tokenless
     # error and never earns a routing token. check-ref-format is git's own validator, so this
     # tracks git's rules rather than a hand-rolled pattern. Refnames cannot contain ':' at all,
@@ -160,6 +185,32 @@ try {
     if ((Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--verify', '--quiet', "refs/heads/$Base")).Code -ne 0) {
         Write-Output "${PREFIX}BASE_NOT_FOUND base=$Base"
         exit 0
+    }
+
+    # The $Base tip everything below is measured against. Reported on every token the SKILL can
+    # come back from, so a later -Merge can name the state the user actually approved.
+    $baseSha = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--short', "refs/heads/$Base")).Text.Trim()
+
+    # Compare-and-swap on $Base (issue #160). Placed here, above every other guard, because
+    # everything below evaluates the branch AGAINST $Base: if $Base is not the one the report was
+    # built from, the premise of the user's approval is gone and re-deriving the rest would only
+    # describe a situation nobody has seen. Say the premise changed and let the report be re-run.
+    #
+    # The same shape as this plugin's existing push-side pin (Build-SvnCommit records the branch
+    # HEAD at prepare time and the commit step aborts when it moved) -- the race is the same one.
+    #
+    # Resolve both sides to full object names rather than comparing the strings: the report hands
+    # out a short sha, and a caller echoing back the full one means the same commit. An -ExpectBase
+    # that resolves to nothing is treated as moved (fail closed) -- it cannot be the base the user
+    # saw, whatever else it is.
+    if (-not [string]::IsNullOrWhiteSpace($ExpectBase)) {
+        $baseFull   = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--verify', '--quiet', "refs/heads/$Base^{commit}")).Text.Trim()
+        $expectRead = Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--verify', '--quiet', "$ExpectBase^{commit}")
+        $expectFull = if ($expectRead.Code -eq 0) { $expectRead.Text.Trim() } else { '' }
+        if ($expectFull -ne $baseFull) {
+            Write-Output "${PREFIX}BASE_MOVED base=$Base expected=$ExpectBase actual=$baseSha"
+            exit 0
+        }
     }
 
     # Read the worktree list ONCE, with the failure checked. Letting a git failure fall through
@@ -292,7 +343,7 @@ try {
         # exactly as safe to remove as it is after a merge, and telling the user "you can clean
         # this up" while leaving them to do it by hand is the same gap one step over.
         Invoke-DeleteStep
-        Write-Output "${PREFIX}NOTHING_TO_MERGE branch=$Branch base=$Base worktree=$hasWt $($script:DelFields)"
+        Write-Output "${PREFIX}NOTHING_TO_MERGE branch=$Branch base=$Base base_sha=$baseSha worktree=$hasWt $($script:DelFields)"
         exit 0
     }
 
@@ -339,12 +390,12 @@ try {
     # what the user needs in order to answer, so they get printed either way, and only the
     # terminal token differs. See the header for why this refuses by default.
     if ($behind -gt 0 -and -not $AllowBehind) {
-        Write-Output "${PREFIX}BEHIND_BASE branch=$Branch base=$Base ahead=$ahead behind=$behind main=$mainWorktree"
+        Write-Output "${PREFIX}BEHIND_BASE branch=$Branch base=$Base base_sha=$baseSha ahead=$ahead behind=$behind main=$mainWorktree"
         exit 0
     }
 
     if (-not $Merge) {
-        Write-Output "${PREFIX}READY branch=$Branch base=$Base ahead=$ahead behind=$behind worktree=$hasWt main=$mainWorktree"
+        Write-Output "${PREFIX}READY branch=$Branch base=$Base base_sha=$baseSha ahead=$ahead behind=$behind worktree=$hasWt main=$mainWorktree"
         exit 0
     }
 

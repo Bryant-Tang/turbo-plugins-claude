@@ -39,15 +39,16 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 
 `--base` 省略時預設 `main`。腳本會印出報告,並以**一行** `TP_TOKEN:` 結尾。**SKILL 只認以 `TP_TOKEN:` 開頭的行,且不要自己跑 git 判斷**,完全依此 token 路由:
 
-- `TP_TOKEN:READY branch=<b> base=<base> ahead=<n> behind=<n> worktree=<yes|no> main=<path>` → 進 Step 2。`worktree=` 說的是**來源分支有沒有自己的 worktree**,Step 2 要用它決定收尾怎麼問。
-- `TP_TOKEN:BEHIND_BASE branch=<b> base=<base> ahead=<n> behind=<n> main=<path>` → **停下,先問**。`<base>` 有 `<n>` 顆 commit 不在 `<b>` 裡——**這批東西從來沒有跟 `<base>` 的最新狀態一起建置或檢查過**。GitHub 的 PR 把這種狀態標成 out-of-date,也可以設定成必須先更新才准 merge;這裡就是那一關。用 `AskUserQuestion` 讓使用者二選一:
+- `TP_TOKEN:READY branch=<b> base=<base> base_sha=<sha> ahead=<n> behind=<n> worktree=<yes|no> main=<path>` → 進 Step 2。**`base_sha=` 要記住**,Step 3 要原樣帶回去。`worktree=` 說的是**來源分支有沒有自己的 worktree**,Step 2 要用它決定收尾怎麼問。
+- `TP_TOKEN:BEHIND_BASE branch=<b> base=<base> base_sha=<sha> ahead=<n> behind=<n> main=<path>` → **停下,先問**。`<base>` 有 `<n>` 顆 commit 不在 `<b>` 裡——**這批東西從來沒有跟 `<base>` 的最新狀態一起建置或檢查過**。GitHub 的 PR 把這種狀態標成 out-of-date,也可以設定成必須先更新才准 merge;這裡就是那一關。用 `AskUserQuestion` 讓使用者二選一:
   - **先同步再合併(建議)**:`<base>` 是 `main` 時叫 `/tp-merge-main-into-branches --branch <b>` 把 main 併進該分支(若它回報該分支被別的 worktree 佔用,照那支的指示處理——那條路徑會請佔用它的 session 自己併);`<base>` **不是** `main` 時那支幫不上忙(它固定只併 `main`),請使用者自己在分支上 `git merge --no-ff <base>`。完成後**從 Step 1 重跑**。
-  - **仍然直接合併**:回 Step 1 帶上 `--allow-behind` / `-AllowBehind` 重跑,拿到 `READY` 之後照常進 Step 2;**Step 3 也要一路帶著那個旗標**,否則會再被擋一次。
+  - **仍然直接合併**:回 Step 1 帶上 `--allow-behind` / `-AllowBehind` 重跑,拿到 `READY` 之後照常進 Step 2;**Step 3 也要一路帶著那個旗標**,否則會再被擋一次。而帶了那個旗標的合併**必須同時帶 `--expect-base` / `-ExpectBase`**(值就是報告那行的 `base_sha=`),不帶會被直接拒跑——使用者核准的是**那一個** `<base>` 狀態,不是任何 `<base>`。
 - `TP_TOKEN:SOURCE_DIRTY path=<p>` → **停下**。`<p>` 那個 worktree 有未 commit 的變更。這是本 skill 最重要的一道守門:那些變更**不在**這次合併裡,而合併後的 `remove` 會把它們一起刪掉。要先讓那些變更 commit(或被明確捨棄)才能重跑——`<p>` 多半是另一條 Claude session 的工作副本,**先讀 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`,照它的判準直接跟那條 session 說**,對不上或它回不方便才回頭問使用者。**「捨棄」永遠是使用者的決定**,不要自己跟別的 session 敲定。
 - `TP_TOKEN:MAIN_DIRTY path=<p>` → **停下**。主 worktree 有未 commit 的變更,請先 commit / stash 再重跑。
 - `TP_TOKEN:MAIN_DETACHED path=<p>` → **停下**。主 worktree 是 detached HEAD,合併後沒有分支可以回去。請使用者先 `git checkout <分支>`。
 - `TP_TOKEN:BASE_ELSEWHERE base=<base> path=<p>` → **停下**。`<base>` 被 `<p>` 這個 worktree 佔用,git 不允許同一分支同時 checkout 在兩處。`<p>` 多半是另一條 Claude session 的工作副本,**先讀 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`,照它的判準直接跟那條 session 說**(這裡要它做的是把 `<base>` 讓出來——切到別的分支,或收掉那個 worktree);對不上或它回不方便才回頭問使用者。
-- `TP_TOKEN:NOTHING_TO_MERGE branch=<b> base=<base> worktree=<yes|no> deleted=<yes|no> [reason=<slug>]` → 沒有東西要合併(已經合併過,或這條分支沒有新 commit)。這條分支現在就可以安全清掉,而「清掉」是誰的事由 `worktree=` 決定:`yes` → 建議 `ExitWorktree` 的 `remove`(連 worktree 一起收);`no` → 照 Step 4 第 3 點問使用者要不要刪掉這條分支(要刪就用 Step 3 的指令加 `--delete-branch` / `-DeleteBranch` 跑一次,`--merge` 一起帶——這時腳本不會 merge 任何東西,只做刪除)。**不要自己跑 `git branch -d`。**
+- `TP_TOKEN:BASE_MOVED base=<base> expected=<sha> actual=<sha>` → **停下,重看一次報告**。在使用者思考的這段時間裡,`<base>` 被別人推進了(多半是另一條 session 完成了它自己的合併),所以他核准的那份報告已經不成立——領先落後筆數、commit 清單、diffstat 全都是舊的。**不要自己改帶新的 `base_sha` 重跑合併**,那等於替使用者核准一份他沒看過的東西。回 **Step 1 重新產生報告**,讓他看過現在的狀態再決定。
+- `TP_TOKEN:NOTHING_TO_MERGE branch=<b> base=<base> base_sha=<sha> worktree=<yes|no> deleted=<yes|no> [reason=<slug>]` → 沒有東西要合併(已經合併過,或這條分支沒有新 commit)。這條分支現在就可以安全清掉,而「清掉」是誰的事由 `worktree=` 決定:`yes` → 建議 `ExitWorktree` 的 `remove`(連 worktree 一起收);`no` → 照 Step 4 第 3 點問使用者要不要刪掉這條分支(要刪就用 Step 3 的指令加 `--delete-branch` / `-DeleteBranch` 跑一次,`--merge` 一起帶——這時腳本不會 merge 任何東西,只做刪除)。**不要自己跑 `git branch -d`。**
 - `TP_TOKEN:BRANCH_NOT_FOUND branch=<b>` / `TP_TOKEN:BASE_NOT_FOUND base=<base>` → 名字打錯或分支不存在,請使用者確認後重跑。
 - `TP_TOKEN:BRANCH_IS_BASE branch=<b>` → 來源與目標同一條,無意義,結束。
 - `TP_TOKEN:BRIDGE_BRANCH name=<n>` → **停下**。`<n>` 是 `remote-svn/*` SVN 橋接分支,本 skill 兩端都不碰它。
@@ -70,20 +71,21 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 
 ### Step 3 — 執行合併
 
-同一組參數再跑一次,加上 `-Merge` / `--merge`(Step 1 若用了 `--allow-behind`,這裡**也要帶**;Step 2 使用者同意刪分支才加 `-DeleteBranch` / `--delete-branch`):
+同一組參數再跑一次,加上 `-Merge` / `--merge`,並把 Step 1 報告那行的 `base_sha=` 原樣帶回來當 `--expect-base` / `-ExpectBase`(Step 1 若用了 `--allow-behind`,這裡**也要帶**,而且那時 `--expect-base` 是**必要的**;Step 2 使用者同意刪分支才加 `-DeleteBranch` / `--delete-branch`):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Request-Merge.ps1" -Branch <name> [-Base <name>] [-RepoRoot <path>] [-AllowBehind] [-DeleteBranch] -Merge
+powershell -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/Request-Merge.ps1" -Branch <name> [-Base <name>] [-RepoRoot <path>] -ExpectBase <base_sha> [-AllowBehind] [-DeleteBranch] -Merge
 ```
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <name>] [--repo-root <path>] [--allow-behind] [--delete-branch] --merge
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <name>] [--repo-root <path>] --expect-base <base_sha> [--allow-behind] [--delete-branch] --merge
 ```
 
-`--merge` 會**重跑 Step 1 的每一道守門**再動手,所以使用者思考期間如果狀態變了(例如又有人動了那個 worktree),這裡會擋下來而不是拿舊報告放行。依 token 路由:
+`--merge` 會**重跑 Step 1 的每一道守門**再動手,所以使用者思考期間如果狀態變了(例如又有人動了那個 worktree、或別的 session 把它的工作併進了 `<base>`),這裡會擋下來而不是拿舊報告放行。依 token 路由:
 
 - `TP_TOKEN:MERGED branch=<b> base=<base> commit=<sha> deleted=<yes|no> [reason=<slug>]` → 成功。進 Step 4;`deleted=` / `reason=` 決定 Step 4 第 3 點怎麼講。
 - `TP_TOKEN:CONFLICT branch=<b> base=<base>` → 有衝突,腳本已 `git merge --abort`,**`<base>` 與開跑前完全一樣、沒有留下衝突狀態**。建議使用者先跑 `/tp-merge-main-into-branches --branch <b>` 把 main 併進該分支、在**分支上**解衝突,再重跑本 skill(在分支上解衝突比在 main 上解安全)。
   - 走到這個 token 一定是因為**帶了 `--allow-behind`**:會衝突就表示 `<base>` 動過,而 `<base>` 動過分支就是落後的,`BEHIND_BASE` 那一關會先擋。也就是說使用者已經被問過一次、選了直接合併——現在的建議就是那時的另一個選項,直接給步驟就好。
+- `TP_TOKEN:BASE_MOVED base=<base> expected=<sha> actual=<sha>` → **沒有合併**。`<base>` 在使用者思考的這段時間裡被別人推進了,所以他核准的那份報告已經不成立。照 Step 1 對這個 token 的處理:回 Step 1 重新產生報告,讓他看過現在的狀態再決定。**不要自己換上新的 sha 重跑。**
 - 任何 Step 1 的守門 token → 照 Step 1 的處理方式,並告訴使用者**沒有合併**。
 
 ### Step 4 — 收尾
@@ -112,6 +114,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - **`remote-svn/*` 兩端都不碰**。腳本會直接以 `BRIDGE_BRANCH` 擋下,不管它出現在來源還是目標。要從 SVN 拉更新請用 `/tp-pull-from-svn`。
 - **刪來源分支預設不刪、每次都問**。沒有「以後不用再問我」的設定,而且那是刻意的:有些分支合併之後還要繼續用(先併進整合分支驗測、之後才單獨併進 `main`),而刪分支不可逆。同意才帶 `--delete-branch`,而且**永遠由腳本刪**——它會用 `git merge-base --is-ancestor <branch> <base>` 對**這次真正併入的 base** 驗證,`git branch -d` 自己那套是相對當前 HEAD 判斷的,分支明明併進了另一條也可能回 `not fully merged`。你自己下 `git branch -d` / `-D` 就繞過了那個驗證。
 - **落後 `<base>` 預設擋下,不要自己加 `--allow-behind` 繞過**。那個旗標是**使用者看過落後筆數之後親口說「還是要併」**才帶的;由你自作主張帶上,等於把這一關整個拿掉,而它擋的正是「兩邊各自都好、併起來壞掉」這種要等下一個人建置才發現的問題。**優先建議先同步**。
+- **合併時一定要帶 `--expect-base`,而且值只能來自剛才那份報告**。同一個主 worktree 上可能有好幾條 session 在往 `<base>` 合併,所以使用者思考的期間 `<base>` 會動;帶著報告那顆 sha 去合併,等於問一句「他核准的還是這個狀態嗎」。對不上就回 `BASE_MOVED`、什麼都不做。**不要為了讓它過而換上新的 sha**——那不是解決衝突,那是替使用者核准一份他沒看過的東西。沒帶 `--allow-behind` 時漏帶還有 `BEHIND_BASE` 接著;帶了 `--allow-behind` 就沒有第二道了,所以那時腳本直接要求它。
 - **衝突在分支上解,不在 `<base>` 上解**。腳本永遠 `merge --abort`,不會留下衝突樹要人收拾。
 - **不串 SVN**。合併進 main 之後要不要推 SVN 是另一個決定,而且 SVN 寫入是永久的。
 - **沒有 CI 就不要假裝有**。腳本不做驗收把關,也不要求 agent 提交結構化的「測試通過」宣告——那只會變成一句沒人驗證的自我宣稱。客觀事實由腳本提供,判斷交給使用者。
@@ -137,6 +140,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - **Delete branch(有 worktree)**:分支被 peer worktree 佔用時帶 `--delete-branch` → `deleted=no reason=has-worktree`,**合併照樣成功**、分支還在(該用 `ExitWorktree` 的 `remove`)。
 - **Delete without merge**:只給 `--delete-branch` 不給 `--merge` → exit 1 且**完全沒有** `TP_TOKEN:` 行(報告模式永遠唯讀)。
 - **Behind base**:`<base>` 有分支沒有的 commit → `BEHIND_BASE`(報告照樣印,只是不放行);同一次呼叫加上 `--allow-behind` → 回到 `READY`;`--merge` 沒帶那個旗標時**不會合併**、`<base>` 不動。
+- **Base moved**:報告拿到 `READY` 之後,別的 session 把工作併進 `<base>`,再帶著舊的 `base_sha` 跑 `--merge` → `BASE_MOVED`,`<base>` 不動、沒有合併;帶當下正確的 sha → 照常合併(確認這道守門不是無條件拒絕)。
+- **Blank cheque**:`--merge --allow-behind` 不帶 `--expect-base` → exit 1 且**完全沒有** `TP_TOKEN:` 行。
 - **Detached / base elsewhere**:主 worktree detached、或 `main` 被別的 worktree 佔用 → 各自的 token,不合併。
 - **Bridge branch**:`remote-svn/*` 出現在來源或目標任一端 → `BRIDGE_BRANCH`,不合併;名字只是相似(如 `remote-svn-ish`)則**不受影響**。
 - **不存在的分支 / 不合法的分支名**:前者 `BRANCH_NOT_FOUND`;後者 exit 1 且**完全沒有** `TP_TOKEN:` 行。

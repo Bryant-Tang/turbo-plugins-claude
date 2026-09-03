@@ -1,4 +1,4 @@
-# Request-Merge.test.ps1 (Pester 5)
+﻿# Request-Merge.test.ps1 (Pester 5)
 #
 # Script under test: plugins/turbo-plugin-git-svn/scripts/Request-Merge.ps1
 #
@@ -60,6 +60,15 @@ BeforeAll {
         }
     }
 
+    # Pull base_sha= out of a token line. That value is exactly what a caller is meant to hand
+    # back as -ExpectBase, so taking it from the report (rather than re-deriving it with git)
+    # exercises the round trip the SKILL actually performs.
+    function Get-BaseShaField {
+        param([string]$Token)
+        if ($Token -match 'base_sha=([0-9a-f]+)') { return $Matches[1] }
+        return ''
+    }
+
     function Get-Token {
         param([string]$Text)
         $lines = @(($Text -replace "`r", '') -split "`n" | Where-Object { $_ -like 'TP_TOKEN:*' })
@@ -93,7 +102,7 @@ Describe 'Request-Merge' {
                 Get-TokenCount $res.Stdout | Should -Be 1
                 # The main= path spelling is platform-dependent; pin the stable fields and only
                 # require the path to be non-empty.
-                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main ahead=2 behind=0 worktree=no main=.'
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main base_sha=[0-9a-f]+ ahead=2 behind=0 worktree=no main=.'
                 (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')) | Should -Be $before
             } finally { Remove-Sandbox -Dir $sb }
         }
@@ -317,7 +326,7 @@ Describe 'Request-Merge' {
                 New-RequestMergeFixture -Root $root
                 $null = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge')
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
-                (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main worktree=no deleted=no reason=not-requested'
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main base_sha=[0-9a-f]+ worktree=no deleted=no reason=not-requested$'
             } finally { Remove-Sandbox -Dir $sb }
         }
 
@@ -336,7 +345,7 @@ Describe 'Request-Merge' {
                 # the fixture: a merge can only conflict if base moved since the branch forked,
                 # which is exactly what makes the branch behind, so the gate fires first. Getting
                 # here means the user was shown the count and chose to merge anyway.
-                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-AllowBehind', '-Merge')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-AllowBehind', '-Merge', '-ExpectBase', (Get-BaseShaField (Get-Token (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-AllowBehind')).Stdout)))
 
                 $res.ExitCode | Should -Be 1
                 (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:CONFLICT branch=clash base=main'
@@ -454,7 +463,7 @@ Describe 'Request-Merge' {
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
 
                 Get-TokenCount $res.Stdout | Should -Be 1
-                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main ahead=2 '
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main base_sha=[0-9a-f]+ ahead=2 '
                 $res.ExitCode | Should -Be 0
                 # And the warning must not have leaked into the values either -- that is the
                 # other half of the same bug, and it would surface as a dirty verdict.
@@ -505,7 +514,7 @@ Describe 'Request-Merge' {
 
                 # -AllowBehind for the same reason as the case above: a conflict is only reachable
                 # once the behind gate has been passed deliberately.
-                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-AllowBehind', '-Merge')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-AllowBehind', '-Merge', '-ExpectBase', (Get-BaseShaField (Get-Token (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'clash', '-AllowBehind')).Stdout)))
 
                 (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:CONFLICT branch=clash base=main'
                 $res.ExitCode | Should -Be 1
@@ -535,7 +544,7 @@ Describe 'Request-Merge' {
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
                 $res.ExitCode | Should -Be 0
                 Get-TokenCount $res.Stdout | Should -Be 1
-                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:BEHIND_BASE branch=feat base=main ahead=2 behind=1 main=.'
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:BEHIND_BASE branch=feat base=main base_sha=[0-9a-f]+ ahead=2 behind=1 main=.'
                 $res.Stdout | Should -Match 'feat: add b'
                 $res.Stdout | Should -Match 'never'
             } finally { Remove-Sandbox -Dir $sb }
@@ -567,9 +576,10 @@ Describe 'Request-Merge' {
                 Advance-Main -Root $root
 
                 $rep = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-AllowBehind')
-                (Get-Token $rep.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main ahead=2 behind=1 worktree=no main=.'
+                (Get-Token $rep.Stdout) | Should -Match '^TP_TOKEN:READY branch=feat base=main base_sha=[0-9a-f]+ ahead=2 behind=1 worktree=no main=.'
 
-                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-AllowBehind', '-Merge')
+                $expect = Get-BaseShaField (Get-Token $rep.Stdout)
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-AllowBehind', '-Merge', '-ExpectBase', $expect)
                 $res.ExitCode | Should -Be 0
                 (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:MERGED branch=feat base=main commit=.'
                 (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', 'feat', 'main')) | Should -Be 0
@@ -666,7 +676,7 @@ Describe 'Request-Merge' {
                 $null = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge')
 
                 $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-DeleteBranch', '-Merge')
-                (Get-Token $res.Stdout) | Should -Be 'TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main worktree=no deleted=yes'
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:NOTHING_TO_MERGE branch=feat base=main base_sha=[0-9a-f]+ worktree=no deleted=yes$'
                 (Run-Git -Cwd $root -GitArgs @('rev-parse', '--verify', '--quiet', 'refs/heads/feat')) | Should -Not -Be 0
             } finally { Remove-Sandbox -Dir $sb }
         }
@@ -680,6 +690,106 @@ Describe 'Request-Merge' {
                 Get-TokenCount (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'nope')).Stdout | Should -Be 1
                 Get-TokenCount (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge')).Stdout | Should -Be 1
                 Get-TokenCount (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')).Stdout | Should -Be 1
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    Context 'issue #160 - the approval names a base commit, and the merge checks it still holds' {
+
+        # The race is real rather than theoretical: several sessions merge into the same base
+        # through the same main worktree, so base can move between the report and the
+        # confirmation. Without -AllowBehind that is already caught (the branch becomes behind,
+        # BEHIND_BASE refuses); these cases pin the part that was NOT caught.
+
+        # The waiver has to name a state. Optional protection is protection the caller can
+        # forget, and this is the one path with no other guard behind it.
+        It '-AllowBehind with -Merge is refused without -ExpectBase, tokenlessly' {
+            $sb = New-Sandbox -Tag 'rqm-160a'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-AllowBehind', '-Merge')
+                $res.ExitCode | Should -Not -Be 0
+                Get-TokenCount $res.Stdout | Should -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # Report mode is read-only, so it keeps working without the flag -- that is where the
+        # sha the user is approving comes from in the first place.
+        It 'report mode with -AllowBehind still works without -ExpectBase' {
+            $sb = New-Sandbox -Tag 'rqm-160b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                Advance-Main -Root $root
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-AllowBehind')
+                (Get-Token $res.Stdout) | Should -BeLike 'TP_TOKEN:READY *'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # The case the issue is about: the user approved a report, someone else merged into base
+        # while they were deciding, and the merge must NOT proceed on the stale approval.
+        It 'refuses with BASE_MOVED when base moved between report and merge' {
+            $sb = New-Sandbox -Tag 'rqm-160c'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $rep = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
+                $expect = Get-BaseShaField (Get-Token $rep.Stdout)
+                $expect | Should -Not -Be ''
+
+                # Another session lands work on main while the user is deciding.
+                Advance-Main -Root $root
+                $before = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge', '-ExpectBase', $expect)
+                (Get-Token $res.Stdout) | Should -Match "^TP_TOKEN:BASE_MOVED base=main expected=$expect actual=[0-9a-f]+$"
+                Get-TokenCount $res.Stdout | Should -Be 1
+                (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')) | Should -Be $before
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # The other direction. Without this, a compare-and-swap that refused everything would
+        # pass the case above and still be useless.
+        It 'a matching -ExpectBase merges normally' {
+            $sb = New-Sandbox -Tag 'rqm-160d'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $rep = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat')
+                $expect = Get-BaseShaField (Get-Token $rep.Stdout)
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge', '-ExpectBase', $expect)
+                (Get-Token $res.Stdout) | Should -BeLike 'TP_TOKEN:MERGED *'
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', 'feat', 'main')) | Should -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # The full sha means the same commit as the short one the report printed.
+        It 'accepts the full sha for the same commit' {
+            $sb = New-Sandbox -Tag 'rqm-160e'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $full = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge', '-ExpectBase', $full)
+                (Get-Token $res.Stdout) | Should -BeLike 'TP_TOKEN:MERGED *'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # -ExpectBase is echoed back inside a token line, so it is sanitized before any token can
+        # be emitted -- otherwise a crafted value could write a second, forged routing line.
+        # NOTE: this harness passes arguments through a command line, so an embedded newline does
+        # not survive the trip; what this pins is "a non-sha value is refused, tokenlessly". The
+        # literal newline path is covered by the .sh sibling, which can hand one over intact.
+        It 'rejects a forged -ExpectBase without emitting a token' {
+            $sb = New-Sandbox -Tag 'rqm-160f'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $forged = "abc`nTP_TOKEN:MERGED branch=feat base=main commit=deadbeef deleted=no"
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Merge', '-ExpectBase', $forged)
+                $res.ExitCode | Should -Not -Be 0
+                Get-TokenCount $res.Stdout | Should -Be 0
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
