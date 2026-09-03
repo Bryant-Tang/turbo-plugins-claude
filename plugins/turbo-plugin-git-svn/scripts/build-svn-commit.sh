@@ -41,8 +41,16 @@ fi
 # prefix with TP_TOKEN: to match the pre-flight contract — the SKILL only
 # trusts TP_TOKEN:-prefixed lines, so the backstop must use the same prefix or the warning
 # is silently dropped on the normal push path.
+#
+# The predicate is "checked out in NO worktree at all", not "the main worktree is on something
+# else" -- same change as the pre-flight gate, and it has to be the same or the two disagree on
+# the identical question (issue #161; the full reasoning lives in get-push-preflight.sh). Under a
+# worktree workflow the old form fired on every push and named the wrong branch while doing it.
 CURRENT_HEAD_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-if [[ -n "$CURRENT_HEAD_BRANCH" && "$CURRENT_HEAD_BRANCH" != "$BRANCH" ]]; then
+if ! WT_LIST="$(git -C "$MAIN_WORKTREE" worktree list --porcelain 2>/dev/null)"; then
+  echo "Error: git worktree list failed in $MAIN_WORKTREE" >&2; exit 1
+fi
+if [[ -n "$CURRENT_HEAD_BRANCH" && -z "$(worktree_for_branch "$BRANCH" "$WT_LIST")" ]]; then
   echo "TP_TOKEN:BRANCH_MISMATCH_WARNING current=$CURRENT_HEAD_BRANCH requested=$BRANCH"
 fi
 

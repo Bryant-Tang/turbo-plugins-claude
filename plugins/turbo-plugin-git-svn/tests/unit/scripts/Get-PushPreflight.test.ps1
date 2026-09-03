@@ -1,4 +1,4 @@
-# Get-PushPreflight.test.ps1 (Pester 5)
+﻿# Get-PushPreflight.test.ps1 (Pester 5)
 #
 # Script: plugins/turbo-plugin-git-svn/scripts/Get-PushPreflight.ps1
 # Token contract: emits exactly ONE terminal token prefixed 'TP_TOKEN:'.
@@ -100,6 +100,122 @@ Describe 'Get-PushPreflight token contract' {
             $repo = New-GitRepo
             $r = Invoke-Preflight -WorkDir $repo -Branch 'feat-x'
             $r.TokenCount | Should -Be 1
+        }
+    }
+
+    Context 'issue #161 - the predicate is "checked out anywhere", not "the main worktree is on it"' {
+        # The dead-end this fixes: developing a branch in its own worktree means the main
+        # worktree CANNOT hold it (git forbids it), so the old form warned every time -- and
+        # because mismatch outranks the bridge gate, first push could never be reached.
+        It 'does NOT warn while a LINKED worktree holds the branch, and reaches the bridge gate' -Skip:(-not $hasGit) {
+            $repo = New-GitRepo   # main worktree stays on main
+            $wt = [System.IO.Path]::Combine($script:SandboxBase, "pfwt-$([Guid]::NewGuid().ToString('N').Substring(0,8))")
+            Invoke-GitSilent $repo worktree add -q -b feat-x $wt
+
+            # Guard the fixture: a silently failed `worktree add` leaves no worktree holding
+            # feat-x, which is exactly the state the OLD code produced -- the case would then
+            # pass for the wrong reason and assert nothing.
+            (& git -C $wt rev-parse --abbrev-ref HEAD).Trim() | Should -Be 'feat-x'
+
+            # Run from INSIDE the linked worktree -- the situation from the report.
+            $r = Invoke-Preflight -WorkDir $wt -Branch 'feat-x'
+            $r.Token | Should -Not -BeLike 'TP_TOKEN:BRANCH_MISMATCH_WARNING*'
+            $r.Token | Should -BeLike 'TP_TOKEN:BRIDGE_ABSENT*requested=feat-x*target=*'
+            $r.TokenCount | Should -Be 1
+        }
+
+        # The sharp reverse. The mismatch case above uses a branch that does not exist at all,
+        # so an implementation that merely asked "does this branch exist" would pass both and
+        # still be wrong. The question is checkout, not existence.
+        It 'still warns for a branch that EXISTS but no worktree holds' -Skip:(-not $hasGit) {
+            $repo = New-GitRepo
+            Invoke-GitSilent $repo branch feat-parked
+            $r = Invoke-Preflight -WorkDir $repo -Branch 'feat-parked'
+            $r.Token | Should -BeLike 'TP_TOKEN:BRANCH_MISMATCH_WARNING*current=main*requested=feat-parked*'
+            $r.TokenCount | Should -Be 1
+            # ...and the warning must carry what the SKILL needs to CONTINUE after the user
+            # confirms the name. Without these, "confirm" has nowhere to go but a re-run that
+            # lands on this same token -- what made the old gate a dead end for a branch no
+            # worktree ever holds.
+            $r.Token | Should -BeLike '*bridge=absent*'
+            $r.Token | Should -BeLike '* target=*'
+        }
+    }
+
+    Context 'a failing git worktree list must not read as "nobody holds it"' {
+
+        # This is the whole reason the read is checked. The unchecked form answers "no worktree
+        # holds this branch", which is byte-for-byte the healthy answer for the case that must
+        # warn -- so the failure would be invisible. Only a shim can produce it.
+        #
+        # The shim fails while STILL printing a plausible listing. That shape matters: a failure
+        # that also empties stdout is already caught downstream by Get-WorktreeForBranch's "empty
+        # list" refusal, so a silent shim passes even with this script's exit-code check deleted
+        # -- a green that proves nothing (observed before this was sharpened). The listing
+        # deliberately omits feat-x, so an unchecked read reaches a MISMATCH verdict.
+        It 'emits TP_TOKEN:ERROR rather than inventing a mismatch verdict' -Skip:(-not $hasGit) {
+            $repo = New-GitRepo
+            $shimDir = [System.IO.Path]::Combine($script:SandboxBase, "pfshim-$([Guid]::NewGuid().ToString('N').Substring(0,8))")
+            $savedPath = $env:PATH
+            try {
+                $realGit = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+                $null = New-Item -ItemType Directory -Path $shimDir -Force
+                # Match on the WHOLE argument string with findstr, not a `for` loop over %*: the
+                # script calls `git -C <dir> worktree list`, so the subcommand is not in first
+                # position, and a shim keyed on %1 never fires at all. The `for` form did fire
+                # under `cmd /c` but NOT under PowerShell's `& git ...` (which is what Read-Git
+                # uses), so the case failed on CI while its own precondition looked satisfied --
+                # hence the second probe below, in the shape that actually matters.
+                [System.IO.File]::WriteAllLines(
+                    [System.IO.Path]::Combine($shimDir, 'git.cmd'),
+                    @(
+                        '@echo off',
+                        'echo %* | findstr /C:"worktree list" >nul',
+                        'if not errorlevel 1 (',
+                        '  echo worktree /tmp/decoy',
+                        '  echo HEAD 0000000000000000000000000000000000000000',
+                        '  echo branch refs/heads/main',
+                        '  echo.',
+                        '  echo fatal: simulated worktree list failure 1>&2',
+                        '  exit /b 1',
+                        ')',
+                        ('"' + $realGit + '" %*')
+                    ),
+                    [System.Text.Encoding]::ASCII)
+
+                $env:PATH = $shimDir + ';' + $savedPath
+
+                # Precondition: prove the shim fires for the SHAPE the script uses, and stays out
+                # of the way otherwise. A shim that never loads produces a pass meaning nothing.
+                $probeErr = [System.IO.Path]::Combine($shimDir, 'probe.err')
+                & cmd.exe /c "git -C `"$repo`" worktree list --porcelain 2> `"$probeErr`"" | Out-Null
+                if ([System.IO.File]::ReadAllText($probeErr) -notmatch 'simulated worktree list failure') {
+                    Set-ItResult -Skipped -Because 'the git shim did not take effect on this platform'
+                    return
+                }
+                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
+                $LASTEXITCODE | Should -Be 0
+
+                # ...and again in the shape the script actually uses (PowerShell's `& git`,
+                # via Read-Git). The previous shim satisfied the cmd probe while leaving this
+                # one untouched, which is exactly how a green precondition hid a dead shim.
+                $eap = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                $null = & git -C $repo worktree list --porcelain 2>$null
+                $ampExit = $LASTEXITCODE
+                $ErrorActionPreference = $eap
+                $ampExit | Should -Be 1
+
+                $r = Invoke-Preflight -WorkDir $repo -Branch 'feat-x'
+                # Pin WHICH guard answered: the reason must name the failed read, not a
+                # downstream symptom of it.
+                $r.Token | Should -BeLike 'TP_TOKEN:ERROR*worktree list failed*'
+                $r.Token | Should -Not -BeLike '*BRANCH_MISMATCH_WARNING*'
+                $r.TokenCount | Should -Be 1
+            } finally {
+                $env:PATH = $savedPath
+                Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

@@ -55,7 +55,7 @@ allowed-tools: Bash, Read, ListAgents, SendMessage
 - **Exclude filter**:目標 = 所有本地分支中**既不是 `main`、也不是 `remote-svn/*`** 的分支。`remote-svn/*` 是 SVN 橋接分支,**絕不**動。
 - **衝突處理**:某分支 merge 衝突時,對該分支 `git merge --abort` 還原乾淨、標記 `CONFLICT`、**繼續下一支**;不中斷整個 run,也不留下衝突狀態。
 - **「被別的 worktree 佔用」不是衝突**:那是 git 不允許同一分支同時 checkout 在兩處,跟內容無關,所以走 `SKIP <b> (checked out at <path>)`、獨立列在 summary、**且不讓整個 run 失敗**(隔離 worktree 是本 plugin 的常態工作方式,一有 linked worktree 就 exit 1 等於天天在報錯)。轉述時務必帶上那個路徑——正確處置在那裡,不在 diff 裡。
-- **被佔用的分支先找佔用它的那條 session,不要一律把工作推回給使用者**。判準與訊息寫法在 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`(與 `tp-request-merge` 共用同一份)。**界線在那份檔案裡,一定要照著**:自己被權限擋下的動作,不可以改送給另一條 session 去做。
+- **被佔用的分支先找佔用它的那條 session,不要一律把工作推回給使用者**。判準與訊息寫法在 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`(與 `tp-request-merge` 共用同一份)。**界線在那份檔案裡,一定要照著**:自己被權限擋下的動作,不可以改送給另一條 session 去做;**使用者說要收工 / 暫停時也要停止跨 session 通訊**——peer 之間的往返會出現在他畫面上,即使收件人不是他。
 - **每一輪都重跑本 skill、重列 `ListAgents`,不要沿用上一輪的名單**。`main` 每動一次就要再同步一輪,而每一輪之間都可能有新的 session 開起來。憑上一輪的印象只通知同一批 session,漏掉的那條**不會報錯**——它只是繼續在舊的 `main` 上開發,要等到它自己要合併時才看得出來。不傳 `--branch` 時腳本會列出全部分支,**讓它列**。
 - **Dirty main worktree → 拒跑**:開跑前若 main worktree 有未 commit 變更,script 直接報錯退出、不動任何分支(避免 merge 進髒樹)。
 - **還原原分支**:全部跑完後 `checkout` 回開跑時所在的分支。
