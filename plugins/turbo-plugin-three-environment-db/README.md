@@ -7,11 +7,11 @@
 - **`tp-setup`** skill — 設定入口:先跑共用 base 段（建 `.turbo-plugin/` + concern-neutral 共用檔），再做 db concern（部署 `dbhub.example.toml` 範本、提示複製填 `dbhub.local.toml`、寫 `config.toml` 的 `db` 標記區塊、peer-mode 處理 per-peer `dbhub.local.toml`）。無 git repo 時**照樣完成**（見下方）。`tp-db-management` 靠 skill 自身 description 讓 agent 主動觸發（`conventions.md` 機制已退役）。
 - **`tp-db-management`** skill — DB 相關開發雜務（SQL 腳本撰寫等），附兩份模板
   （`assets/sql-script-template.sql` 與 `assets/module-script-template.sql`）。
-  產出的 SQL 落在 `<sql_root>/<env>-db/<slug>/`，`<slug>` **有 git 就是當前 branch 名**（行為與
+  產出的 SQL 落在 `<sql_root>/<env>/<slug>/`，`<slug>` **有 git 就是當前 branch 名**（行為與
   先前相同、不會問你）；**沒有 git 才問**，而且是列出既有資料夾讓你選，不是給一個空白輸入框——
   手打會讓同一件事散進兩個名字相近的資料夾，而沒有任何東西會提醒。
 - **可覆寫物件走固定檔名** — stored procedure / view / function / trigger 不落在 `<slug>/`，改落在
-  `<sql_root>/<env>-db/_modules/<db>/{Procedures,Views,Functions,Triggers}/<schema>.<物件名>.sql`。
+  `<sql_root>/<env>/_modules/<db>/{Procedures,Views,Functions,Triggers}/<schema>.<物件名>.sql`。
   用 branch 當分組鍵對「加欄位」「補資料」這種**累加型**動作是對的，但對「一改就是整個物件被取代」
   的東西會靜默出事：兩條分支各改同一支 SP，會是兩個**不同路徑**的新增檔——git 合併零衝突、兩支腳本
   都執行成功（`ALTER PROCEDURE` 覆寫既有 SP 完全合法）、沒有任何錯誤訊息，而**先跑的那份改動就沒了**。
@@ -22,10 +22,34 @@
 - **SQL 落點的根目錄可自訂** — `.turbo-plugin/config.toml` 的 `[db] sql_root`。專案本來就有自己的
   慣例（`db/scripts`、`sql`、`database/migrations` …）時設它，就不必為了 turbo-plugin 多開一個
   `.turbo-plugin/sql/`。**沒設就是原本的 `.turbo-plugin/sql`，逐字元相同**，既有專案不受影響。
-  只有根目錄可換，底下的 `<env>-db/<slug>/` 不變。相對路徑的基準是**工作區根**（`config.toml` 那一層），
+  底下的 `<slug>/` 那層不變。相對路徑的基準是**工作區根**（`config.toml` 那一層），
   **不接受絕對路徑**——那會讓一個進版控的檔案帶上機器路徑。換了落點時 skill 會先跑 `git check-ignore`
   確認新位置沒有被專案既有的 ignore 規則擋掉；被擋掉的話產出的 SQL 永遠不會出現在 `git status`，
   而那個失敗是完全靜默的。
+- **環境名稱與數量也可自訂** — `.turbo-plugin/config.toml` 的 `[db] environments`，一個字串陣列，
+  裡面的字串**就是** `<sql_root>` 底下那一層的資料夾名（原樣使用，不會再幫你加後綴）。
+  **順序就是角色**：從開發端排到正式端——第一個是 `tp-dbhub` 連得到、可以自己唯讀查的那個，
+  最後一個是 production（守門最嚴的一個）。數量**不限於三個**，兩層或多一層 staging 都可以，
+  skill 的規則都是「對每一個環境各做一次」。
+
+  **`dev-db` 取代了 `local-db`。** 新專案跑 `tp-setup` 會寫入 `["dev-db", "test-db", "main-db"]`。
+  改這個字是因為在多數 .NET / SQL Server 團隊裡，這個環境指的是**內網的開發資料庫**，不是開發者
+  本機——而本機那個概念是真的另外存在的（本機 IIS Express 站台、本機 worktree、本機設定覆蓋層），
+  兩者撞在同一個詞上，每次講到 local 都要先確認是哪一個。
+
+  **既有專案不會被動到，判準是「磁碟上有沒有既有的樹」**——不是「跑沒跑過新版 setup」。沒設這個 key
+  時，`<sql_root>` 底下已經有 `local-db/` 之類的舊名目錄就沿用舊的那一組（不然舊的整棵樹會變孤兒），
+  一個環境目錄都沒有才用 `["dev-db", "test-db", "main-db"]`。`tp-setup` 寫入這個 key 時用的是同一個
+  判準，所以**跑不跑 setup 都會得到一樣的落點**。要改名的話有腳本代勞，它連 `.sql` 檔頭裡的環境名
+  一起改（那些檔頭是判斷「這份基線來自哪個環境」的唯一線索，只改目錄名等於讓每個檔都在宣稱一件錯的事）:
+
+  ```
+  scripts/rename-db-environment.sh local-db dev-db        # Linux / macOS / Git Bash
+  scripts/Rename-DbEnvironment.ps1 local-db dev-db        # Windows
+  ```
+
+  **預設是 dry run**，只印出會改什麼；確認無誤再加 `--apply` / `-Apply`。目標名稱已經存在時會停下來
+  拒絕合併兩個環境。
 - **`tp-dbhub`** MCP server（`.mcp.json`）— 經 [DBHub](https://github.com/bytebase/dbhub) 連 SQL Server，讓 agent 能查詢資料庫。
   設定檔的位置由 `scripts/start-dbhub.js` 解析：**工作區根**的 `.turbo-plugin/dbhub.local.toml` 優先；沒有的話往下掃**直屬子資料夾**，剛好一個就用它；
   好幾個就停下來把它們列出來，請你在工作區根放一份指明要用哪個。找不到時**乾淨結束並說明原因**（exit 0，不會讓 MCP server 看起來像掛掉）。
@@ -82,7 +106,7 @@
 > `.turbo-plugin/` 為四個 turbo-plugin 共用的專案根設定目錄；本 plugin 的 `tp-setup` 先跑共用 base 段建立 concern-neutral 共用檔（用標記區塊),再只寫自己的 db 相關檔,不覆蓋其它 plugin 的區塊。**無 git repo 時照樣完成 setup**:它寫的東西**沒有一樣需要 git**。dbhub 本身跟版控沒有關係(不讀 branch、
 不寫 repo,產出本來就 gitignored),而 `tp-db-management` 在這裡**兩半都能用**——唯讀查詢只需要 dbhub
 MCP server(正是 setup 設定好的東西),產出 SQL 也照常,只是落點
-`<sql_root>/<env>-db/<slug>/` 的 `<slug>` 會**問你**要用哪個,而不是像在 repo 裡直接拿當前
+`<sql_root>/<env>/<slug>/` 的 `<slug>` 會**問你**要用哪個,而不是像在 repo 裡直接拿當前
 branch 名。
 
 所以在非 repo 目錄——**多專案工作區的根正是這種形狀,而且正是最需要那份設定的地方**——setup 照常部署
@@ -120,6 +144,9 @@ commit。
 
 - `tests/Invoke-ScriptTests.ps1`（Windows PowerShell 5.1）/ `tests/invoke-script-tests.sh`（bash）。
 - SessionStart hook 行為測試：`tests/unit/scripts/hooks/`（non-git / dbhub 警示 / no-marker 靜默 / 未用 db 的 gate no-op 各情境）。
+- 環境改名腳本測試：`tests/unit/scripts/{Rename-DbEnvironment.test.ps1,rename-db-environment.test.sh}`
+  （dry run 不動任何東西 / 目錄與檔頭都改到 / 拒絕合併既有目標 / **詞邊界**——把 `test` 改名成
+  `test-db` 不會把既有的 `test-db` 變成 `test-db-db`）。
 
 ## License
 
