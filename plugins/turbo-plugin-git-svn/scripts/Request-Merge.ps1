@@ -172,29 +172,16 @@ try {
     }
     $wtLines = @($wt.Text -split "`n" | ForEach-Object { $_.Trim() })
 
-    # Which worktree, if any, has a given branch checked out. Returns the normalized absolute
-    # path, or ''. The path is normalized before it is ever compared: git reports Windows paths
-    # as `C:/...` while other sources hand back `/c/...`, and comparing those two spellings is
-    # false every single time without saying so.
-    function Get-WorktreeForBranch {
-        param([string]$Want)
-        $cur = ''
-        foreach ($line in $wtLines) {
-            if ($line -like 'worktree *') {
-                $cur = $line.Substring('worktree '.Length)
-            } elseif ($line -eq "branch refs/heads/$Want") {
-                if ($cur -ne '') { return (Get-NormalizedAbsolutePath $cur) }
-                return ''
-            }
-        }
-        return ''
-    }
+    # The lookup itself lives in lib/Common.ps1 (Get-WorktreeForBranch), shared with
+    # Merge-MainIntoBranches.ps1: it carries a path-normalization step whose absence is silent,
+    # and a copy per caller is a copy per silent-failure entry point. The READ stays here because
+    # the failure report is script-specific -- this one has to be a TP_TOKEN line.
 
     # The work must be fully committed. This is the guard that matters most for the case this
     # script exists for: the caller is about to merge and then let `remove` delete the branch and
     # its worktree. Anything still uncommitted there is not in the merge and does not survive the
     # removal -- and nothing else in the sequence would have said so.
-    $sourceWt = Get-WorktreeForBranch $Branch
+    $sourceWt = Get-WorktreeForBranch -Want $Branch -WorktreeLines $wtLines
     if ($sourceWt -ne '') {
         $src = Read-Git -Cwd $sourceWt -GitArgs @('status', '--porcelain')
         if ($src.Code -ne 0) {
@@ -230,7 +217,7 @@ try {
     # The merge happens on $Base in the main worktree, so $Base has to be checkout-able there.
     # git forbids the same branch in two worktrees at once, so if $Base lives in some other
     # worktree the checkout would fail partway through. Say so up front instead.
-    $baseWt = Get-WorktreeForBranch $Base
+    $baseWt = Get-WorktreeForBranch -Want $Base -WorktreeLines $wtLines
     if ($baseWt -ne '' -and $baseWt -ne $mainWorktree) {
         Write-Output "${PREFIX}BASE_ELSEWHERE base=$Base path=$baseWt"
         exit 0

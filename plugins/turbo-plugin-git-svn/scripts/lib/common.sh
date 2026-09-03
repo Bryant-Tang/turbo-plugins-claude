@@ -105,6 +105,44 @@ get_worktrees_dir() {
   echo "$main_worktree/.turbo-plugin/worktrees"
 }
 
+# Which worktree, if any, has branch $1 checked out. Echoes the normalized absolute path of
+# that worktree, or nothing. $2 is the output of `git worktree list --porcelain`.
+#
+# TWO SILENT-FAILURE DIRECTIONS THIS FUNCTION EXISTS TO CLOSE. Both of them produce "no
+# worktree has this branch", which is byte-for-byte the healthy answer -- so neither one is
+# visible at the call site:
+#
+#   1. PATH SPELLING. git reports Windows paths as `C:/...` while other sources hand back
+#      `/c/...`, and comparing those two spellings is false every single time without saying
+#      so. Hence get_normalized_absolute_path before the path is ever returned for comparison.
+#   2. AN UNCHECKED WORKTREE LIST. The listing is taken as an argument rather than read here,
+#      so each caller keeps the read-once-and-check-the-exit-code shape its own error reporting
+#      needs (a TP_TOKEN:ERROR line in request-merge.sh, a plain stderr message in
+#      merge-main-into-branches.sh). A healthy `--porcelain` listing always contains at least
+#      the main worktree, so an empty $2 means the caller handed over a failed or unchecked
+#      read -- refuse loudly rather than answer "nobody has it".
+#
+# Why here and not in core.sh: core.sh is copied byte-identical into every plugin (enforced by
+# tools/verify-core-identical.sh), and no other plugin parses `git worktree list` at all. Same
+# reasoning as the earlier move of get_worktrees_dir out of universal core.
+worktree_for_branch() {
+  local want="$1" wt_list="${2:-}" line cur=''
+  if [[ -z "$wt_list" ]]; then
+    echo "Error: worktree_for_branch: empty worktree list (a checked 'git worktree list --porcelain' always lists at least the main worktree)." >&2
+    return 1
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      'worktree '*) cur="${line#worktree }" ;;
+      "branch refs/heads/$want")
+        [[ -n "$cur" ]] && get_normalized_absolute_path "$cur"
+        return 0
+        ;;
+    esac
+  done <<< "$wt_list"
+  return 0
+}
+
 # Guarantee `.svn/` is excluded from git for THIS repository, independent of any .gitignore.
 #
 # Every bridge worktree is simultaneously a git worktree and an svn working copy, and every script

@@ -3,7 +3,7 @@ name: tp-request-merge
 description: 'The stand-in for a pull request in a repo with no git remote: report what a working branch would merge into main, get the user to confirm, then merge it in the main worktree. Suggest it when work on an isolated/peer worktree branch is finished, but it writes to main, so NEVER merge without explicit confirmation.'
 argument-hint: '--branch <name> [--base <name>]'
 user-invocable: true
-allowed-tools: Bash, Read, AskUserQuestion
+allowed-tools: Bash, Read, AskUserQuestion, ListAgents, SendMessage
 ---
 
 # tp-request-merge
@@ -41,12 +41,12 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 
 - `TP_TOKEN:READY branch=<b> base=<base> ahead=<n> behind=<n> worktree=<yes|no> main=<path>` → 進 Step 2。`worktree=` 說的是**來源分支有沒有自己的 worktree**,Step 2 要用它決定收尾怎麼問。
 - `TP_TOKEN:BEHIND_BASE branch=<b> base=<base> ahead=<n> behind=<n> main=<path>` → **停下,先問**。`<base>` 有 `<n>` 顆 commit 不在 `<b>` 裡——**這批東西從來沒有跟 `<base>` 的最新狀態一起建置或檢查過**。GitHub 的 PR 把這種狀態標成 out-of-date,也可以設定成必須先更新才准 merge;這裡就是那一關。用 `AskUserQuestion` 讓使用者二選一:
-  - **先同步再合併(建議)**:`<base>` 是 `main` 時叫 `/tp-merge-main-into-branches --branch <b>` 把 main 併進該分支(若它回報該分支被別的 worktree 佔用,照那支的指示到那個 worktree 裡做);`<base>` **不是** `main` 時那支幫不上忙(它固定只併 `main`),請使用者自己在分支上 `git merge --no-ff <base>`。完成後**從 Step 1 重跑**。
+  - **先同步再合併(建議)**:`<base>` 是 `main` 時叫 `/tp-merge-main-into-branches --branch <b>` 把 main 併進該分支(若它回報該分支被別的 worktree 佔用,照那支的指示處理——那條路徑會請佔用它的 session 自己併);`<base>` **不是** `main` 時那支幫不上忙(它固定只併 `main`),請使用者自己在分支上 `git merge --no-ff <base>`。完成後**從 Step 1 重跑**。
   - **仍然直接合併**:回 Step 1 帶上 `--allow-behind` / `-AllowBehind` 重跑,拿到 `READY` 之後照常進 Step 2;**Step 3 也要一路帶著那個旗標**,否則會再被擋一次。
-- `TP_TOKEN:SOURCE_DIRTY path=<p>` → **停下**。`<p>` 那個 worktree 有未 commit 的變更。這是本 skill 最重要的一道守門:那些變更**不在**這次合併裡,而合併後的 `remove` 會把它們一起刪掉。請使用者先 commit(或明確捨棄)再重跑。
+- `TP_TOKEN:SOURCE_DIRTY path=<p>` → **停下**。`<p>` 那個 worktree 有未 commit 的變更。這是本 skill 最重要的一道守門:那些變更**不在**這次合併裡,而合併後的 `remove` 會把它們一起刪掉。要先讓那些變更 commit(或被明確捨棄)才能重跑——`<p>` 多半是另一條 Claude session 的工作副本,**先讀 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`,照它的判準直接跟那條 session 說**,對不上或它回不方便才回頭問使用者。**「捨棄」永遠是使用者的決定**,不要自己跟別的 session 敲定。
 - `TP_TOKEN:MAIN_DIRTY path=<p>` → **停下**。主 worktree 有未 commit 的變更,請先 commit / stash 再重跑。
 - `TP_TOKEN:MAIN_DETACHED path=<p>` → **停下**。主 worktree 是 detached HEAD,合併後沒有分支可以回去。請使用者先 `git checkout <分支>`。
-- `TP_TOKEN:BASE_ELSEWHERE base=<base> path=<p>` → **停下**。`<base>` 被 `<p>` 這個 worktree 佔用,git 不允許同一分支同時 checkout 在兩處。請先處理那個 worktree。
+- `TP_TOKEN:BASE_ELSEWHERE base=<base> path=<p>` → **停下**。`<base>` 被 `<p>` 這個 worktree 佔用,git 不允許同一分支同時 checkout 在兩處。`<p>` 多半是另一條 Claude session 的工作副本,**先讀 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`,照它的判準直接跟那條 session 說**(這裡要它做的是把 `<base>` 讓出來——切到別的分支,或收掉那個 worktree);對不上或它回不方便才回頭問使用者。
 - `TP_TOKEN:NOTHING_TO_MERGE branch=<b> base=<base> worktree=<yes|no> deleted=<yes|no> [reason=<slug>]` → 沒有東西要合併(已經合併過,或這條分支沒有新 commit)。這條分支現在就可以安全清掉,而「清掉」是誰的事由 `worktree=` 決定:`yes` → 建議 `ExitWorktree` 的 `remove`(連 worktree 一起收);`no` → 照 Step 4 第 3 點問使用者要不要刪掉這條分支(要刪就用 Step 3 的指令加 `--delete-branch` / `-DeleteBranch` 跑一次,`--merge` 一起帶——這時腳本不會 merge 任何東西,只做刪除)。**不要自己跑 `git branch -d`。**
 - `TP_TOKEN:BRANCH_NOT_FOUND branch=<b>` / `TP_TOKEN:BASE_NOT_FOUND base=<base>` → 名字打錯或分支不存在,請使用者確認後重跑。
 - `TP_TOKEN:BRANCH_IS_BASE branch=<b>` → 來源與目標同一條,無意義,結束。
@@ -108,6 +108,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - **合併是寫入 main,一定要明確確認**。可以在「隔離 worktree 的工作完成、要收尾」時**主動建議**這支,但**絕不**在沒有使用者確認的情況下跑 `--merge`。
 - **報告與合併是同一支腳本的兩個模式,不是兩支腳本**。`--merge` 會重跑全部守門,所以使用者看到的那道關卡與放行合併的那道關卡是**同一段程式碼**,不會漂移。不要為了省一次呼叫而跳過 Step 1 直接跑 `--merge`。
 - **`SOURCE_DIRTY` 一律停下,不要建議繞過**。那條分支的 worktree 還有沒 commit 的東西時,合併會少帶,而接下來的 `remove` 會把少帶的部分刪掉——這是這條路徑上唯一會**無聲掉東西**的地方。
+- **被別的 worktree 卡住時,先找佔用它的那條 session,不要一律把工作推回給使用者**。判準與訊息寫法在 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`(`SOURCE_DIRTY` 與 `BASE_ELSEWHERE` 共用同一份)。**界線在那份檔案裡,一定要照著**:自己被權限擋下的動作,不可以改送給另一條 session 去做;守門要的東西也不能靠別的 session 繞過。
 - **`remote-svn/*` 兩端都不碰**。腳本會直接以 `BRIDGE_BRANCH` 擋下,不管它出現在來源還是目標。要從 SVN 拉更新請用 `/tp-pull-from-svn`。
 - **刪來源分支預設不刪、每次都問**。沒有「以後不用再問我」的設定,而且那是刻意的:有些分支合併之後還要繼續用(先併進整合分支驗測、之後才單獨併進 `main`),而刪分支不可逆。同意才帶 `--delete-branch`,而且**永遠由腳本刪**——它會用 `git merge-base --is-ancestor <branch> <base>` 對**這次真正併入的 base** 驗證,`git branch -d` 自己那套是相對當前 HEAD 判斷的,分支明明併進了另一條也可能回 `not fully merged`。你自己下 `git branch -d` / `-D` 就繞過了那個驗證。
 - **落後 `<base>` 預設擋下,不要自己加 `--allow-behind` 繞過**。那個旗標是**使用者看過落後筆數之後親口說「還是要併」**才帶的;由你自作主張帶上,等於把這一關整個拿掉,而它擋的正是「兩邊各自都好、併起來壞掉」這種要等下一個人建置才發現的問題。**優先建議先同步**。

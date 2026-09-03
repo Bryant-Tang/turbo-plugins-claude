@@ -207,6 +207,49 @@ function Get-WorktreesDir {
     return [System.IO.Path]::Combine($MainWorktree, '.turbo-plugin', 'worktrees')
 }
 
+# Which worktree, if any, has branch -Want checked out. Returns the normalized absolute path of
+# that worktree, or ''. -WorktreeLines is the trimmed output of `git worktree list --porcelain`.
+#
+# TWO SILENT-FAILURE DIRECTIONS THIS FUNCTION EXISTS TO CLOSE. Both of them produce "no worktree
+# has this branch", which is byte-for-byte the healthy answer -- so neither one is visible at the
+# call site:
+#
+#   1. PATH SPELLING. git reports Windows paths as `C:/...` while other sources hand back
+#      `/c/...`, and comparing those two spellings is false every single time without saying so.
+#      Hence Get-NormalizedAbsolutePath before the path is ever returned for comparison.
+#   2. AN UNCHECKED WORKTREE LIST. The listing is taken as a parameter rather than read here, so
+#      each caller keeps the read-once-and-check-the-exit-code shape its own error reporting
+#      needs (a TP_TOKEN:ERROR line in Request-Merge.ps1, a throw in Merge-MainIntoBranches.ps1).
+#      A healthy --porcelain listing always contains at least the main worktree, so an empty
+#      -WorktreeLines means the caller handed over a failed or unchecked read -- throw rather
+#      than answer "nobody has it".
+#
+# Why here and not in Core.ps1: Core.ps1 is copied byte-identical into every plugin (enforced by
+# tools/verify-core-identical.sh), and no other plugin parses `git worktree list` at all. Same
+# reasoning as the earlier move of Get-WorktreesDir out of universal Core.
+function Get-WorktreeForBranch {
+    param(
+        [Parameter(Mandatory = $true)][string]$Want,
+        # AllowEmptyString is load-bearing, not decoration: callers build this by splitting the
+        # command output on newlines, so the trailing element is ALWAYS ''. A Mandatory [string[]]
+        # rejects empty elements, which would make every real call a ParameterBindingException.
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$WorktreeLines
+    )
+    if (@($WorktreeLines | Where-Object { $_ -ne '' }).Count -eq 0) {
+        throw "Get-WorktreeForBranch: empty worktree list (a checked 'git worktree list --porcelain' always lists at least the main worktree)."
+    }
+    $cur = ''
+    foreach ($line in $WorktreeLines) {
+        if ($line -like 'worktree *') {
+            $cur = $line.Substring('worktree '.Length)
+        } elseif ($line -eq "branch refs/heads/$Want") {
+            if ($cur -ne '') { return (Get-NormalizedAbsolutePath $cur) }
+            return ''
+        }
+    }
+    return ''
+}
+
 
 # Validate a branch name for remote-svn worktree mapping (allowlist).
 # Throws with a sanitization message on rejection. 'main' is the canonical trust

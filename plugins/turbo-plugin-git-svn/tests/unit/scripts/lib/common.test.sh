@@ -16,6 +16,7 @@
 #   - resolve_repo_path            — relative / ./relative / absolute / Git-Bash / empty
 #   - resolve_remote_worktree      — main / test-<n> / unsupported
 #   - get_worktrees_dir            — explicit main → nested container
+#   - worktree_for_branch          — main / linked worktree / not checked out / empty list refused
 #   - write_utf8_no_bom            — CJK no-BOM byte-equal to canonical UTF-8 (R6)
 #   - read_turbo_plugin_config     — flat mode + section/key sentinel + top-level key
 #   - resolve_config_value         — config merge chain + config.local.toml override
@@ -446,6 +447,114 @@ test_get_worktrees_dir_explicit() {
     out="$(get_worktrees_dir "$main" 2>/dev/null || true)"
     assertEquals 'explicit main → <main>/.turbo-plugin/worktrees' \
         "$main/.turbo-plugin/worktrees" "$out"
+}
+
+# ─── worktree_for_branch — the lookup shared by request-merge / merge-main ────
+#
+# The oracle for the normalization step is deliberately ANOTHER function's output, never a
+# second copy of the same string surgery: `git worktree list --porcelain` prints Windows paths
+# as `C:/...` while get_main_worktree returns `c:/...`, and merge-main-into-branches.sh compares
+# the two directly. Dropping the normalization makes that comparison false forever without a
+# word of complaint, so asserting equality against get_main_worktree is what actually catches it.
+test_worktree_for_branch_main_matches_get_main_worktree() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-wfb-XXXXXX)"
+    (
+        cd "$tmp" || exit 99
+        git init -q -b main >/dev/null 2>&1
+        git config user.email 'test@turbo-plugin'
+        git config user.name 'turbo-plugin-test'
+        git commit -q --allow-empty -m 'init' >/dev/null 2>&1
+
+        wt_list="$(git worktree list --porcelain 2>/dev/null)"
+        got="$(worktree_for_branch main "$wt_list" 2>/dev/null || true)"
+        want="$(get_main_worktree 2>/dev/null || true)"
+
+        if [[ -n "$want" && "$got" == "$want" ]]; then
+            exit 0
+        fi
+        echo "worktree_for_branch='$got' get_main_worktree='$want'" >&2
+        exit 1
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'the branch in the main worktree resolves to the same spelling get_main_worktree gives' 0 "$rc"
+}
+
+test_worktree_for_branch_linked_worktree() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-wfbl-XXXXXX)"
+    (
+        cd "$tmp" || exit 99
+        mkdir main
+        cd main || exit 99
+        git init -q -b main >/dev/null 2>&1
+        git config user.email 'test@turbo-plugin'
+        git config user.name 'turbo-plugin-test'
+        git commit -q --allow-empty -m 'init' >/dev/null 2>&1
+        git worktree add -q -b feat/lw ../linked >/dev/null 2>&1
+
+        wt_list="$(git worktree list --porcelain 2>/dev/null)"
+        got="$(worktree_for_branch feat/lw "$wt_list" 2>/dev/null || true)"
+        main_wt="$(get_main_worktree 2>/dev/null || true)"
+
+        if [[ -z "$got" ]]; then
+            echo "expected a path for feat/lw, got nothing" >&2
+            exit 1
+        fi
+        # Must be a DIFFERENT worktree than main -- that inequality is the whole basis of the
+        # "checked out elsewhere" decision -- and the path must really be that branch's checkout.
+        if [[ "$got" == "$main_wt" ]]; then
+            echo "feat/lw resolved to the main worktree '$main_wt'" >&2
+            exit 1
+        fi
+        here="$(git -C "$got" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        if [[ "$here" != 'feat/lw' ]]; then
+            echo "'$got' has '$here' checked out, expected feat/lw" >&2
+            exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'a branch held by a linked worktree resolves to that worktree' 0 "$rc"
+}
+
+# The other direction. Without this, a lookup that answered "some worktree has it" for every
+# branch would pass every case above.
+test_worktree_for_branch_absent_is_empty() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-wfba-XXXXXX)"
+    (
+        cd "$tmp" || exit 99
+        git init -q -b main >/dev/null 2>&1
+        git config user.email 'test@turbo-plugin'
+        git config user.name 'turbo-plugin-test'
+        git commit -q --allow-empty -m 'init' >/dev/null 2>&1
+        git branch feat/parked >/dev/null 2>&1
+
+        wt_list="$(git worktree list --porcelain 2>/dev/null)"
+        got="$(worktree_for_branch feat/parked "$wt_list" 2>/dev/null || true)"
+        if [[ -z "$got" ]]; then
+            exit 0
+        fi
+        echo "expected nothing for a branch with no worktree, got '$got'" >&2
+        exit 1
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'a branch no worktree holds resolves to nothing' 0 "$rc"
+}
+
+# An empty listing can only mean the caller handed over a failed or unchecked read: a healthy
+# `--porcelain` run always names at least the main worktree. Answering "nobody has it" there is
+# indistinguishable from the healthy answer, which is the failure this refusal exists to prevent.
+test_worktree_for_branch_empty_list_fails_loudly() {
+    local out rc
+    out="$(worktree_for_branch main '' 2>/dev/null)"
+    rc=$?
+    assertNotEquals 'an empty worktree list must not be answered' 0 "$rc"
+    assertEquals 'and must not emit a path' '' "$out"
 }
 
 # ─── write_utf8_no_bom — CJK no-BOM byte-equal to canonical UTF-8 (R6) ────────
