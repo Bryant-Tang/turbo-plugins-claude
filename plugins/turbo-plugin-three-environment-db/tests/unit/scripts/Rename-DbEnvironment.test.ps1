@@ -253,6 +253,29 @@ Describe 'Rename-DbEnvironment' {
         } finally { Remove-Item -LiteralPath $ws -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    # Both directions: a file without a trailing newline must not gain one, and one with it must
+    # keep it. Only the second is the common case, which is why the first needs a test.
+    It 'preserves whether a file ended with a newline' {
+        $ws = New-Workspace
+        try {
+            Add-SqlTree -Workspace $ws -EnvName 'local-db'
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            $dir = [System.IO.Path]::Combine($ws, '.turbo-plugin', 'sql', 'local-db', 'feat-x')
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($dir, '04-no-eol.sql'), '目標環境: local-db', $enc)
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($dir, '05-eol.sql'), "目標環境: local-db`n", $enc)
+
+            Invoke-Rename @('local-db', 'dev-db', '-Root', $ws, '-Apply') | Out-Null
+
+            $moved = [System.IO.Path]::Combine($ws, '.turbo-plugin', 'sql', 'dev-db', 'feat-x')
+            $noEol = [System.IO.File]::ReadAllText([System.IO.Path]::Combine($moved, '04-no-eol.sql'))
+            $withEol = [System.IO.File]::ReadAllText([System.IO.Path]::Combine($moved, '05-eol.sql'))
+
+            $noEol | Should -Match '目標環境: dev-db'
+            $noEol.EndsWith("`n") | Should -BeFalse -Because 'the file did not end with a newline before'
+            $withEol.EndsWith("`n") | Should -BeTrue -Because 'the file did end with a newline before'
+        } finally { Remove-Item -LiteralPath $ws -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It 'says which environments line to add when there is none' {
         $ws = New-Workspace
         try {

@@ -149,9 +149,15 @@ rewrite_file() {
   local f="$1"
   local only="${2:-}"
   local tmp="${f}.tp-rename-tmp"
-  local line cr trailing_newline=1
+  local line cr first=1 trailing_newline=1
   if [[ -s "$f" && -n "$(tail -c1 "$f")" ]]; then trailing_newline=0; fi
   : > "$tmp" || die "failed to open $tmp"
+  # Newlines go BEFORE each line except the first, so a file that did not end with one never
+  # grows one and nothing has to be trimmed afterwards. The obvious alternative -- terminate
+  # every line, then chop the last byte with `head -c -1` -- takes a GNU-only flag (BSD/macOS
+  # head does not accept a negative count) and fails SILENTLY: `&&` short-circuits, the untrimmed
+  # temp file is moved into place anyway, and the file quietly gains a trailing newline. macOS is
+  # a supported target with no CI runner, so that would be a platform difference nothing catches.
   while IFS= read -r line || [[ -n "$line" ]]; do
     cr=''
     if [[ "$line" == *$'\r' ]]; then cr=$'\r'; line="${line%$'\r'}"; fi
@@ -160,12 +166,15 @@ rewrite_file() {
     else
       REPLY="$line"
     fi
-    printf '%s%s\n' "$REPLY" "$cr" >> "$tmp"
+    if [[ "$first" -eq 1 ]]; then
+      first=0
+      printf '%s%s' "$REPLY" "$cr" >> "$tmp"
+    else
+      printf '\n%s%s' "$REPLY" "$cr" >> "$tmp"
+    fi
   done < "$f"
-  if [[ "$trailing_newline" -eq 0 ]]; then
-    # The loop above ends every line, including a final one the original left unterminated.
-    head -c -1 "$tmp" > "${tmp}.2" && mv -f "${tmp}.2" "$tmp"
-  fi
+  # Only now, and only if the original had one.
+  if [[ "$trailing_newline" -eq 1 && "$first" -eq 0 ]]; then printf '\n' >> "$tmp"; fi
   mv -f "$tmp" "$f" || die "failed to replace $f"
 }
 

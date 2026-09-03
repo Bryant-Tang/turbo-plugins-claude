@@ -244,6 +244,29 @@ test_leaves_crlf_line_endings_in_sql_files_alone() {
     assertEquals 'every line of the .sql still ends with CRLF' "$total" "$cr"
 }
 
+# A file that does not end with a newline must not grow one -- and one that does must keep it.
+# Both directions, because the rewrite has to reproduce the original either way and only one of
+# them is the common case.
+test_preserves_whether_the_file_ended_with_a_newline() {
+    make_ws local-db
+    # No trailing newline.
+    printf '目標環境: local-db' > "$WS/.turbo-plugin/sql/local-db/feat-x/04-no-eol.sql"
+    # With one.
+    printf '目標環境: local-db\n' > "$WS/.turbo-plugin/sql/local-db/feat-x/05-eol.sql"
+
+    run_it local-db dev-db --apply >/dev/null 2>&1
+
+    local without with
+    without="$(tail -c1 "$WS/.turbo-plugin/sql/dev-db/feat-x/04-no-eol.sql")"
+    assertNotEquals 'a file without a trailing newline did not gain one' '' "$without"
+
+    with="$(tail -c1 "$WS/.turbo-plugin/sql/dev-db/feat-x/05-eol.sql")"
+    assertEquals 'a file with a trailing newline kept it' '' "$with"
+
+    grep -q '目標環境: dev-db' "$WS/.turbo-plugin/sql/dev-db/feat-x/04-no-eol.sql"
+    assertTrue 'the unterminated file was still rewritten' $?
+}
+
 # Without an environments key the rename still happens, but the skill would then see a folder that
 # is not in its list and stop -- so the script has to say what to add.
 test_says_what_to_add_when_there_is_no_environments_key() {
