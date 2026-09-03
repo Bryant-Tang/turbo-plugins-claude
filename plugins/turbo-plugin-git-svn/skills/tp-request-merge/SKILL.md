@@ -110,7 +110,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - **合併是寫入 main,一定要明確確認**。可以在「隔離 worktree 的工作完成、要收尾」時**主動建議**這支,但**絕不**在沒有使用者確認的情況下跑 `--merge`。
 - **報告與合併是同一支腳本的兩個模式,不是兩支腳本**。`--merge` 會重跑全部守門,所以使用者看到的那道關卡與放行合併的那道關卡是**同一段程式碼**,不會漂移。不要為了省一次呼叫而跳過 Step 1 直接跑 `--merge`。
 - **`SOURCE_DIRTY` 一律停下,不要建議繞過**。那條分支的 worktree 還有沒 commit 的東西時,合併會少帶,而接下來的 `remove` 會把少帶的部分刪掉——這是這條路徑上唯一會**無聲掉東西**的地方。
-- **被別的 worktree 卡住時,先找佔用它的那條 session,不要一律把工作推回給使用者**。判準與訊息寫法在 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`(`SOURCE_DIRTY` 與 `BASE_ELSEWHERE` 共用同一份)。**界線在那份檔案裡,一定要照著**:自己被權限擋下的動作,不可以改送給另一條 session 去做;守門要的東西也不能靠別的 session 繞過。
+- **被別的 worktree 卡住時,先找佔用它的那條 session,不要一律把工作推回給使用者**。判準與訊息寫法在 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`(`SOURCE_DIRTY` 與 `BASE_ELSEWHERE` 共用同一份)。**界線在那份檔案裡,一定要照著**:自己被權限擋下的動作,不可以改送給另一條 session 去做;守門要的東西也不能靠別的 session 繞過。**還有一條同樣重要的:使用者說要收工 / 暫停時就停止跨 session 通訊**——peer 之間的往返會出現在他畫面上,即使收件人不是他。
 - **`remote-svn/*` 兩端都不碰**。腳本會直接以 `BRIDGE_BRANCH` 擋下,不管它出現在來源還是目標。要從 SVN 拉更新請用 `/tp-pull-from-svn`。
 - **刪來源分支預設不刪、每次都問**。沒有「以後不用再問我」的設定,而且那是刻意的:有些分支合併之後還要繼續用(先併進整合分支驗測、之後才單獨併進 `main`),而刪分支不可逆。同意才帶 `--delete-branch`,而且**永遠由腳本刪**——它會用 `git merge-base --is-ancestor <branch> <base>` 對**這次真正併入的 base** 驗證,`git branch -d` 自己那套是相對當前 HEAD 判斷的,分支明明併進了另一條也可能回 `not fully merged`。你自己下 `git branch -d` / `-D` 就繞過了那個驗證。
 - **落後 `<base>` 預設擋下,不要自己加 `--allow-behind` 繞過**。那個旗標是**使用者看過落後筆數之後親口說「還是要併」**才帶的;由你自作主張帶上,等於把這一關整個拿掉,而它擋的正是「兩邊各自都好、併起來壞掉」這種要等下一個人建置才發現的問題。**優先建議先同步**。
