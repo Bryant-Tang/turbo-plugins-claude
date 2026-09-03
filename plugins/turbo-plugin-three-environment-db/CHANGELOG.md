@@ -2,6 +2,28 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.7.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.6.0...turbo-plugin-three-environment-db--v0.7.0) (2026-09-03)
+
+
+### Added
+
+* **db:** 新增資料庫環境改名腳本,連 .sql 檔頭裡的環境名一起改 ([9aa0cc0](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/9aa0cc0cb9fd89d4aa466735e0292c0fbaa89031))
+* **db:** 環境名稱與數量改由 config.toml 決定,新專案預設 dev-db 取代 local-db ([8b32876](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/8b32876c74766fe25d4eaa04ad5eed33dc7bc19e)), closes [#156](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/156)
+
+
+### Fixed
+
+* **db:** dbhub 釘住的版本從 1.2.0 升到 1.2.3 ([2d57665](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/2d57665dcb6b0021590e38eaceb8e31e69bb21e9))
+* **db:** 改名腳本不再把整份檔案的 CRLF 換成 LF,兩支的行尾行為改成一致 ([1867d32](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/1867d3290bb074b91798e9c3faba2a0388ed1cd1))
+* **db:** 改名腳本的 config 那一行也跑兩次替換,補上 .sh 與 .ps1 的行為分歧 ([d9da89c](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9da89c33182226834638bb210d756ebb34f7940))
+* **db:** 沒設 environments 時改看磁碟現況決定,別讓還沒有 SQL 樹的專案被推去建 local-db ([7348246](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7348246d6fb9aa9a02602714b47afaaeb38d9249))
+* **db:** 結尾換行改成「不要多產生」而不是事後砍掉,移除一個 GNU-only 的相依 ([d8e80a8](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d8e80a80d2f29183dac6f7c88f7be5a68904fde9))
+
+
+### Documentation
+
+* **db:** 拿掉 config.toml 註解裡重複兩次的「改名有腳本代勞」 ([11a703b](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/11a703bf6b9b1008c10d1bdcc31b761fad48e7fb))
+
 ## [0.6.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.5.0...turbo-plugin-three-environment-db--v0.6.0) (2026-09-01)
 
 
