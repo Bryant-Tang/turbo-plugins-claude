@@ -84,7 +84,7 @@ try {
     # Read the list ONCE with the failure checked: letting a git failure fall through would answer
     # "no worktree holds it", which is exactly the healthy answer for the case that must warn.
     $wt = Read-Git -Cwd $mainWorktree -GitArgs @('worktree', 'list', '--porcelain')
-    # mutated
+    if ($wt.Code -ne 0) { throw "git worktree list failed (exit $($wt.Code)) in $mainWorktree" }
     $wtLines = @($wt.Text -split "`n" | ForEach-Object { $_.Trim() })
 
     $remote = Resolve-RemoteWorktree -BranchName $Branch -WorktreesDir $worktreesDir
