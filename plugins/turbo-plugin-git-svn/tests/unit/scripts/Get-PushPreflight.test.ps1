@@ -160,32 +160,28 @@ Describe 'Get-PushPreflight token contract' {
             try {
                 $realGit = (Get-Command git -CommandType Application | Select-Object -First 1).Source
                 $null = New-Item -ItemType Directory -Path $shimDir -Force
-                # Scan the WHOLE argument list: the script calls `git -C <dir> worktree list`, so
-                # the subcommand is not in first position. A shim keyed on %1 never fires, and the
-                # case then passes for the wrong reason.
+                # Match on the WHOLE argument string with findstr, not a `for` loop over %*: the
+                # script calls `git -C <dir> worktree list`, so the subcommand is not in first
+                # position, and a shim keyed on %1 never fires at all. The `for` form did fire
+                # under `cmd /c` but NOT under PowerShell's `& git ...` (which is what Read-Git
+                # uses), so the case failed on CI while its own precondition looked satisfied --
+                # hence the second probe below, in the shape that actually matters.
                 [System.IO.File]::WriteAllLines(
                     [System.IO.Path]::Combine($shimDir, 'git.cmd'),
                     @(
                         '@echo off',
-                        'set _prev=',
-                        'for %%a in (%*) do (',
-                        '  if "!_prev!"=="worktree" if "%%a"=="list" (',
-                        '    echo worktree /tmp/decoy',
-                        '    echo HEAD 0000000000000000000000000000000000000000',
-                        '    echo branch refs/heads/main',
-                        '    echo.',
-                        '    echo fatal: simulated worktree list failure 1>&2',
-                        '    exit /b 1',
-                        '  )',
-                        '  set _prev=%%a',
+                        'echo %* | findstr /C:"worktree list" >nul',
+                        'if not errorlevel 1 (',
+                        '  echo worktree /tmp/decoy',
+                        '  echo HEAD 0000000000000000000000000000000000000000',
+                        '  echo branch refs/heads/main',
+                        '  echo.',
+                        '  echo fatal: simulated worktree list failure 1>&2',
+                        '  exit /b 1',
                         ')',
                         ('"' + $realGit + '" %*')
                     ),
                     [System.Text.Encoding]::ASCII)
-                # setlocal enabledelayedexpansion has to wrap the loop for !_prev! to work.
-                $lines = [System.IO.File]::ReadAllLines([System.IO.Path]::Combine($shimDir, 'git.cmd'))
-                $lines = @($lines[0], 'setlocal enabledelayedexpansion') + $lines[1..($lines.Count - 1)]
-                [System.IO.File]::WriteAllLines([System.IO.Path]::Combine($shimDir, 'git.cmd'), $lines, [System.Text.Encoding]::ASCII)
 
                 $env:PATH = $shimDir + ';' + $savedPath
 
@@ -199,6 +195,16 @@ Describe 'Get-PushPreflight token contract' {
                 }
                 & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
                 $LASTEXITCODE | Should -Be 0
+
+                # ...and again in the shape the script actually uses (PowerShell's `& git`,
+                # via Read-Git). The previous shim satisfied the cmd probe while leaving this
+                # one untouched, which is exactly how a green precondition hid a dead shim.
+                $eap = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                $null = & git -C $repo worktree list --porcelain 2>$null
+                $ampExit = $LASTEXITCODE
+                $ErrorActionPreference = $eap
+                $ampExit | Should -Be 1
 
                 $r = Invoke-Preflight -WorkDir $repo -Branch 'feat-x'
                 # Pin WHICH guard answered: the reason must name the failed read, not a
