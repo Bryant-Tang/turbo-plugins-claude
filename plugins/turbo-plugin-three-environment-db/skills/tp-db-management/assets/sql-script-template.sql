@@ -2,13 +2,14 @@
 用途: <請填寫這支 SQL 的目的>
 分組鍵（branch）: <當前 git branch 名，斜線換成短橫，如 feature-x>
 資料庫: <DbName1 | DbName2 | ...>
-目標環境: <local-db | test-db | main-db>
+目標環境: <環境資料夾名，取自 config.toml 的 [db] environments，預設是 local-db | test-db | main-db>
 執行順序: <01 | 02 | 03>
 檔名: <例如 01-AppDb-新增欄位.sql>
 是否需要回滾: <是 | 否>
 SQL Server 版本需求: 2012+（本模板使用 THROW 語法）
 對應環境檔案（<sql_root> 預設是 .turbo-plugin/sql，由 config.toml 的 [db] sql_root 決定；
-填進實際產出的檔案時請換成真正的路徑，不要留佔位符）:
+環境資料夾名由同一個檔的 [db] environments 決定，預設是下面這三個。
+填進實際產出的檔案時請換成真正的路徑，環境有幾個就列幾行，不要留佔位符）:
 - <sql_root>/local-db/<slug>/<file-name>.sql
 - <sql_root>/test-db/<slug>/<file-name>.sql
 - <sql_root>/main-db/<slug>/<file-name>.sql
