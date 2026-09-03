@@ -126,7 +126,14 @@ try {
     # -ExpectBase is echoed back inside a token line, so it is sanitized BEFORE any token can be
     # emitted (anti-forge, same contract as the branch names below): an embedded newline would
     # otherwise let the caller write a second, forged TP_TOKEN: line. A sha is all this ever is.
-    if (-not [string]::IsNullOrWhiteSpace($ExpectBase) -and $ExpectBase -notmatch '^[0-9a-fA-F]{4,40}$') {
+    #
+    # `\z`, NOT `$`. In .NET regex `$` also matches immediately BEFORE a trailing newline, so
+    # `^[0-9a-fA-F]{4,40}$` accepts "abc123`n" -- which then goes straight into the token line and
+    # splits it in two, breaking the one-token contract the SKILL routes on. `\z` is end of string,
+    # full stop. The .sh sibling's POSIX ERE `$` already means end-of-string, so this is also what
+    # keeps the two implementations answering the same question (verified: "abc123`n" matches the
+    # `$` form and not the `\z` form).
+    if (-not [string]::IsNullOrWhiteSpace($ExpectBase) -and $ExpectBase -notmatch '^[0-9a-fA-F]{4,40}\z') {
         throw "-ExpectBase must be a hex commit sha (4-40 chars), got: '$ExpectBase'"
     }
 

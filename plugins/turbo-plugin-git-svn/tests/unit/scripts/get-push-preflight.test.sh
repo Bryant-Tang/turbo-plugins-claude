@@ -193,6 +193,70 @@ test_existing_but_parked_branch_still_warns() {
     esac
 }
 
+# ── Case 5d: a failing `git worktree list` must NOT read as "nobody holds it" ─────
+#
+# This is the whole reason the read is checked. The unchecked form answers "no worktree holds
+# this branch", which is byte-for-byte the healthy answer for the case that must warn -- so the
+# failure would be invisible. Only a shim can produce it, and the shim is probed first: one that
+# never resolves yields a pass that means nothing.
+test_worktree_list_failure_is_fail_closed() {
+    if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi
+    local repo shim real_git probe
+    repo="$(new_git_repo)"
+    real_git="$(command -v git)"
+    shim="$SB/shim-wtfail"
+    mkdir -p "$shim"
+    # Scan the WHOLE argument list, not $1/$2: the script calls `git -C <dir> worktree list`,
+    # so the subcommand is not in first position. A shim keyed on $1 silently never fires --
+    # and the case then passes for the wrong reason (this exact mistake was made here first).
+    # The shim fails while STILL printing a plausible listing on stdout. That shape matters:
+    # a failure that also empties stdout is already caught downstream by worktree_for_branch's
+    # "empty list" refusal, so a shim that prints nothing would pass even with this script's own
+    # exit-code check deleted -- a green that proves nothing (observed before this was sharpened).
+    # Only the exit-code check catches "git failed but said something", and the listing below
+    # deliberately does NOT mention feat-x, so an unchecked read reaches a MISMATCH verdict.
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'prev=""\n'
+        printf 'for a in "$@"; do\n'
+        printf '  if [ "$prev" = "worktree" ] && [ "$a" = "list" ]; then\n'
+        printf '    echo "worktree /tmp/decoy"\n'
+        printf '    echo "HEAD 0000000000000000000000000000000000000000"\n'
+        printf '    echo "branch refs/heads/main"\n'
+        printf '    echo ""\n'
+        printf '    echo "fatal: simulated worktree list failure" >&2\n'
+        printf '    exit 1\n'
+        printf '  fi\n'
+        printf '  prev="$a"\n'
+        printf 'done\n'
+        printf 'exec "%s" "$@"\n' "$real_git"
+    } > "$shim/git"
+    chmod +x "$shim/git"
+
+    # Probe with the SAME argument shape the script uses. Probing `git worktree list` directly
+    # would have validated a shim that never fires on `git -C <dir> worktree list`.
+    probe="$( cd "$repo" && PATH="$shim:$PATH" git -C "$repo" worktree list --porcelain 2>&1 )"
+    if ! printf '%s' "$probe" | grep -q 'simulated worktree list failure'; then
+        echo "SKIP: the git shim did not take effect on this platform"
+        startSkipping
+        return 0
+    fi
+
+    PF_STDOUT="$( cd "$repo" && PATH="$shim:$PATH" bash "$SCRIPT_UNDER_TEST" --branch feat-x 2>/dev/null )"
+    PF_EXIT=$?
+    assertNotEquals 'a failed worktree list is not a routing answer' 0 "$PF_EXIT"
+    case "$PF_STDOUT" in
+        *"TP_TOKEN:ERROR"*"worktree list failed"*)
+            assertTrue 'says ERROR, and names the failed read rather than a downstream symptom' 0 ;;
+        *) fail "expected TP_TOKEN:ERROR naming the worktree list failure, got: $PF_STDOUT" ;;
+    esac
+    # The dangerous outcome is specifically this one: silently deciding nobody holds the branch.
+    case "$PF_STDOUT" in
+        *"BRANCH_MISMATCH_WARNING"*) fail "a git failure must not become a mismatch verdict: $PF_STDOUT" ;;
+    esac
+    assertEquals 'exactly one token' 1 "$(token_count)"
+}
+
 # ── Case 6: current == requested, no bridge worktree → BRIDGE_ABSENT ───────────
 test_bridge_absent() {
     if [ "$HAS_GIT" -ne 1 ]; then startSkipping; return 0; fi

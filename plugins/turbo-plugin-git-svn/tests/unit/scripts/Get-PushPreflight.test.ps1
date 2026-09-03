@@ -1,4 +1,4 @@
-# Get-PushPreflight.test.ps1 (Pester 5)
+﻿# Get-PushPreflight.test.ps1 (Pester 5)
 #
 # Script: plugins/turbo-plugin-git-svn/scripts/Get-PushPreflight.ps1
 # Token contract: emits exactly ONE terminal token prefixed 'TP_TOKEN:'.
@@ -139,6 +139,77 @@ Describe 'Get-PushPreflight token contract' {
             # worktree ever holds.
             $r.Token | Should -BeLike '*bridge=absent*'
             $r.Token | Should -BeLike '* target=*'
+        }
+    }
+
+    Context 'a failing git worktree list must not read as "nobody holds it"' {
+
+        # This is the whole reason the read is checked. The unchecked form answers "no worktree
+        # holds this branch", which is byte-for-byte the healthy answer for the case that must
+        # warn -- so the failure would be invisible. Only a shim can produce it.
+        #
+        # The shim fails while STILL printing a plausible listing. That shape matters: a failure
+        # that also empties stdout is already caught downstream by Get-WorktreeForBranch's "empty
+        # list" refusal, so a silent shim passes even with this script's exit-code check deleted
+        # -- a green that proves nothing (observed before this was sharpened). The listing
+        # deliberately omits feat-x, so an unchecked read reaches a MISMATCH verdict.
+        It 'emits TP_TOKEN:ERROR rather than inventing a mismatch verdict' -Skip:(-not $hasGit) {
+            $repo = New-GitRepo
+            $shimDir = [System.IO.Path]::Combine($script:SandboxBase, "pfshim-$([Guid]::NewGuid().ToString('N').Substring(0,8))")
+            $savedPath = $env:PATH
+            try {
+                $realGit = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+                $null = New-Item -ItemType Directory -Path $shimDir -Force
+                # Scan the WHOLE argument list: the script calls `git -C <dir> worktree list`, so
+                # the subcommand is not in first position. A shim keyed on %1 never fires, and the
+                # case then passes for the wrong reason.
+                [System.IO.File]::WriteAllLines(
+                    [System.IO.Path]::Combine($shimDir, 'git.cmd'),
+                    @(
+                        '@echo off',
+                        'set _prev=',
+                        'for %%a in (%*) do (',
+                        '  if "!_prev!"=="worktree" if "%%a"=="list" (',
+                        '    echo worktree /tmp/decoy',
+                        '    echo HEAD 0000000000000000000000000000000000000000',
+                        '    echo branch refs/heads/main',
+                        '    echo.',
+                        '    echo fatal: simulated worktree list failure 1>&2',
+                        '    exit /b 1',
+                        '  )',
+                        '  set _prev=%%a',
+                        ')',
+                        ('"' + $realGit + '" %*')
+                    ),
+                    [System.Text.Encoding]::ASCII)
+                # setlocal enabledelayedexpansion has to wrap the loop for !_prev! to work.
+                $lines = [System.IO.File]::ReadAllLines([System.IO.Path]::Combine($shimDir, 'git.cmd'))
+                $lines = @($lines[0], 'setlocal enabledelayedexpansion') + $lines[1..($lines.Count - 1)]
+                [System.IO.File]::WriteAllLines([System.IO.Path]::Combine($shimDir, 'git.cmd'), $lines, [System.Text.Encoding]::ASCII)
+
+                $env:PATH = $shimDir + ';' + $savedPath
+
+                # Precondition: prove the shim fires for the SHAPE the script uses, and stays out
+                # of the way otherwise. A shim that never loads produces a pass meaning nothing.
+                $probeErr = [System.IO.Path]::Combine($shimDir, 'probe.err')
+                & cmd.exe /c "git -C `"$repo`" worktree list --porcelain 2> `"$probeErr`"" | Out-Null
+                if ([System.IO.File]::ReadAllText($probeErr) -notmatch 'simulated worktree list failure') {
+                    Set-ItResult -Skipped -Because 'the git shim did not take effect on this platform'
+                    return
+                }
+                & cmd.exe /c "git --version 2> `"$probeErr`"" | Out-Null
+                $LASTEXITCODE | Should -Be 0
+
+                $r = Invoke-Preflight -WorkDir $repo -Branch 'feat-x'
+                # Pin WHICH guard answered: the reason must name the failed read, not a
+                # downstream symptom of it.
+                $r.Token | Should -BeLike 'TP_TOKEN:ERROR*worktree list failed*'
+                $r.Token | Should -Not -BeLike '*BRANCH_MISMATCH_WARNING*'
+                $r.TokenCount | Should -Be 1
+            } finally {
+                $env:PATH = $savedPath
+                Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

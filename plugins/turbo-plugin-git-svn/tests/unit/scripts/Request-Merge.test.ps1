@@ -776,6 +776,30 @@ Describe 'Request-Merge' {
             } finally { Remove-Sandbox -Dir $sb }
         }
 
+        # The anchor case, and the reason this one cannot go through the -File harness: in .NET
+        # regex `$` ALSO matches just before a trailing newline, so "abc123<LF>" satisfies
+        # `^[0-9a-fA-F]{4,40}$` and lands inside the token line, splitting it in two. The value is
+        # therefore built INSIDE the child process, where no command-line transport can strip it.
+        It 'refuses a value with a trailing newline (.NET $ would have let it through)' {
+            $sb = New-Sandbox -Tag 'rqm-160g'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $outFile = [System.IO.Path]::Combine($sb, 'out.txt')
+                $cmd = "Set-Location -LiteralPath '$root'; " +
+                       "& '$($script:ScriptUnderTest)' -Branch feat -Merge " +
+                       "-ExpectBase ('abc123' + [char]10) *> '$outFile'"
+                & powershell -NoProfile -ExecutionPolicy Bypass -Command $cmd | Out-Null
+                $out = if (Test-Path -LiteralPath $outFile) { [System.IO.File]::ReadAllText($outFile) } else { '' }
+
+                # The contract is one well-formed token line, or none at all. A value carrying a
+                # newline must never reach the output; a BASE_MOVED line missing its actual= half
+                # is exactly the breakage this guards.
+                Get-TokenCount $out | Should -Be 0
+                $out | Should -Not -Match 'BASE_MOVED'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
         # -ExpectBase is echoed back inside a token line, so it is sanitized before any token can
         # be emitted -- otherwise a crafted value could write a second, forged routing line.
         # NOTE: this harness passes arguments through a command line, so an embedded newline does
