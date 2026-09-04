@@ -119,10 +119,10 @@ trap _rollback_bridge ERR
 
 git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$BASE_REF"
 git -C "$MAIN_WORKTREE" worktree add --no-checkout "$REMOTE_PATH" "$REMOTE_BRANCH"
-# Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order matters:
-# with core.autocrlf still true, `worktree add` would write CRLF and the files on disk would no
-# longer match their blobs -- and for a bridge whose SVN side does not carry them yet, that turns
-# a harmless "phantom M" into a real diff the drift check would report.
+# Clear any pin left behind by 0.7.x BEFORE anything materialises files, so this bridge matters:
+# written the same way every other working copy is. The old pin forced LF here because SVN,
+# carrying no svn:eol-style, stored whatever bytes it was handed; SVN normalises on commit now,
+# so a bridge that behaved differently from the user own worktrees would be a pure surprise.
 ensure_bridge_eol_platform_native "$MAIN_WORKTREE" "$REMOTE_PATH"
 # --no-checkout leaves the index EMPTY, so populate explicitly; now the bytes on disk are the
 # bytes git stores.

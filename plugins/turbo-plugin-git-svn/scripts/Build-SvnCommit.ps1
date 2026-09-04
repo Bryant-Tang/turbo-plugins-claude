@@ -125,9 +125,9 @@ try {
     # NativeCommandError and the user would lose the conflicting-file list entirely.
     $ea3 = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
-    # Bridges created before this pin exists still carry the inherited core.autocrlf, and THIS
-    # is the step that actually writes CRLF out: the merge checks the changed files out into the
-    # bridge, and `svn commit` ships whatever landed. Pinning here (idempotent) fixes those too.
+    # Bridges created under 0.7.x still carry the old LF pin in their per-worktree config, and
+    # this is the step that materialises files into the bridge: the merge checks the changed
+    # files out. Clearing it here (idempotent) is what stops those bridges staying on the old.
     Set-BridgeEolPlatformNative -MainWorktree $mainWorktree -Bridge $remote.Path
     & git -C $remote.Path merge --no-ff --no-commit -m $mergeMsg $Branch 2>$null | Out-Null
     $mergeExit = $LASTEXITCODE

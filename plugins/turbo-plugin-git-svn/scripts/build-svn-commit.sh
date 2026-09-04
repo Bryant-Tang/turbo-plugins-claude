@@ -107,9 +107,9 @@ if [[ -z "$SVN_BODY" ]]; then
   exit 1
 fi
 
-# Bridges created before this pin exists still carry the inherited core.autocrlf, and THIS is
+# Bridges created under 0.7.x still carry the old LF pin in their per-worktree config, and is
 # the step that actually writes CRLF out: the merge checks the changed files out into the
-# bridge, and `svn commit` ships whatever landed. Pinning here (idempotent) fixes those too.
+# files out. Clearing it here (idempotent) is what stops those bridges staying on the old.
 ensure_bridge_eol_platform_native "$MAIN_WORKTREE" "$REMOTE_PATH"
 
 if ! git -C "$REMOTE_PATH" merge --no-ff --no-commit -m "Merge branch '$BRANCH' into $REMOTE_BRANCH" "$BRANCH" >/dev/null 2>&1; then

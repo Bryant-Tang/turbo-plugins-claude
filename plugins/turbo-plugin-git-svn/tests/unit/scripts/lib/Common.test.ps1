@@ -1723,6 +1723,11 @@ Describe 'Get-SvnEolCandidate' {
             $null = New-Item -ItemType Directory -Path $sub -Force
             [System.IO.File]::WriteAllText((Join-Path $sub 'spaced.txt'), "x`ny`n", $enc)
 
+            # A CJK filename, built from code points rather than written literally so this file
+            # keeps no encoding dependency of its own. U+6587 U+6863 spell "document".
+            $script:CjkName = ([char]0x6587).ToString() + ([char]0x6863).ToString() + '.txt'
+            [System.IO.File]::WriteAllText((Join-Path $dir $script:CjkName), "p`nq`n", $enc)
+
             Invoke-GitSilent $dir add -A
             Invoke-GitSilent $dir commit -q -m seed
             return $dir
@@ -1741,6 +1746,22 @@ Describe 'Get-SvnEolCandidate' {
             $got | Should -Contain 'pure-lf.txt'
             $got | Should -Contain 'pure-crlf.txt'
             $got | Should -Contain 'noeol.txt'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    # Without `-c core.quotePath=false`, git returns a non-ASCII path C-quoted and octal-escaped --
+    # `"\346\226\207\346\241\243.txt"` as literal ASCII, not the filename. Nothing errors; the
+    # string just travels on to `svn propset` as a path that does not exist. On this plugin, whose
+    # subject is SVN on Windows, CJK filenames are the common case rather than an edge one.
+    It 'returns a non-ASCII path as the real filename, not C-quoted' {
+        $dir = New-EolClassFixture 'eolcjk'
+        try {
+            $got = @(Get-SvnEolCandidate -Worktree $dir)
+            # The escaped spelling must NOT appear: its presence is the bug itself.
+            ($got -join '|') | Should -Not -Match '\\346'
+            $got | Should -Contain $script:CjkName
         } finally {
             Remove-IsolatedRepoRoot $dir
         }

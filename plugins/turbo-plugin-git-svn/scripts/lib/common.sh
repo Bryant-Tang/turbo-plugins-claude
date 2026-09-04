@@ -231,7 +231,12 @@ ensure_bridge_eol_platform_native() {
 # skipped 30 files" is exactly the kind of thing that is discovered months later.
 classify_svn_eol_paths() {
   local worktree="$1"
-  git -C "$worktree" ls-files --eol | awk -F'\t' '
+  # core.quotePath=false, as every other path-printing git call in this plugin does. With git's
+  # default, a non-ASCII path comes back C-quoted and octal-escaped -- `"\346\226\207.txt"` as
+  # LITERAL ASCII, not the filename. Nothing errors: that string flows on to `svn propset` as a
+  # path that does not exist. On a plugin whose whole point is SVN on Windows with CJK filenames,
+  # that is the common case, not an edge one.
+  git -C "$worktree" -c core.quotePath=false ls-files --eol | awk -F'\t' '
     {
       # Field 1 is the fixed-width status block; pull the w/ value out of it.
       if (match($1, /w\/[^ ]+/)) {

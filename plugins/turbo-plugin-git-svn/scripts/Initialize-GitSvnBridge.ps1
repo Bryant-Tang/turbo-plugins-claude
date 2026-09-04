@@ -300,10 +300,10 @@ try {
         # ---- step 7: build the EMPTY bridge worktree (orphan branch, empty index + working tree). ----
         & git -C $mainWorktree worktree add --detach --no-checkout $remoteWorktreePath
         if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
-        # Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order
-        # matters: with core.autocrlf still true, the checkout writes CRLF and the files on disk
-        # no longer match their blobs -- and for a bridge whose SVN side does not carry them yet,
-        # that turns a harmless "phantom M" into a real diff the drift check would report.
+        # Clear any pin left behind by 0.7.x BEFORE anything materialises files, so this bridge
+        # gets written the same way every other working copy is. The old pin forced LF here
+        # because SVN, carrying no svn:eol-style, stored whatever bytes it was handed; SVN now
+        # normalises on commit, so a differing bridge would be a surprise with no purpose left.
         Set-BridgeEolPlatformNative -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
 
         & git -C $remoteWorktreePath checkout --orphan $remoteBranch

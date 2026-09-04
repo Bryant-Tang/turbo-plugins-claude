@@ -1645,6 +1645,10 @@ make_eol_class_fixture() {
     printf 'noeol'       > "$root/noeol.txt"        || return 1
     mkdir -p "$root/sub dir" || return 1
     printf 'x\ny\n'      > "$root/sub dir/spaced.txt" || return 1
+    # A CJK filename, built from octal escapes rather than written literally so this file has no
+    # encoding dependency of its own. U+6587 U+6863 -- the two characters spell "document".
+    CJK_NAME="$(printf '\346\226\207\346\241\243').txt"
+    printf 'p\nq\n'      > "$root/$CJK_NAME" || return 1
     git -C "$root" add -A >/dev/null 2>&1 || return 1
     git -C "$root" commit -qm seed >/dev/null 2>&1 || return 1
 }
@@ -1685,6 +1689,34 @@ test_eol_candidates_exclude_binary_and_mixed() {
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
     assertEquals 'binary and mixed-ending files are excluded, consistent text is not' 0 "$rc"
+}
+
+# Without `-c core.quotePath=false`, git returns a non-ASCII path C-quoted and octal-escaped --
+# `"\346\226\207\346\241\243.txt"` as literal ASCII, not the filename. Nothing errors; the string
+# just travels on to `svn propset` as a path that does not exist. On this plugin, whose subject is
+# SVN on Windows, CJK filenames are the common case rather than an edge one.
+test_eol_candidates_keep_non_ascii_paths_intact() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolcjk-XXXXXX)"
+    (
+        make_eol_class_fixture "$tmp" || exit 98
+        out="$(list_svn_eol_candidates "$tmp")" || exit 97
+        want="$(printf '\346\226\207\346\241\243').txt"
+
+        # The escaped spelling must NOT appear: its presence is the bug, and it is what a
+        # quotePath-enabled git hands back.
+        case "$out" in
+            *'\346'*) echo "path came back octal-escaped: $out" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *"$want"*) exit 0 ;;
+        esac
+        echo "expected the CJK path intact; got: $out" >&2
+        exit 1
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'a non-ASCII path is returned as the real filename, not C-quoted' 0 "$rc"
 }
 
 test_eol_candidates_keep_paths_with_spaces() {

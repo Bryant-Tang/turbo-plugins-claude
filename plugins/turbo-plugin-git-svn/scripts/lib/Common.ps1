@@ -209,7 +209,12 @@ function Set-BridgeEolPlatformNative {
 function Get-SvnEolClassification {
     param([Parameter(Mandatory = $true)][string]$Worktree)
 
-    $result = Read-Git -Cwd $Worktree -GitArgs @('ls-files', '--eol')
+    # core.quotePath=false, as every other path-printing git call in this plugin does. With git's
+    # default, a non-ASCII path comes back C-quoted and octal-escaped -- `"\346\226\207.txt"` as
+    # LITERAL ASCII, not the filename. Nothing errors: that string flows on to `svn propset` as a
+    # path that does not exist. On a plugin whose whole point is SVN on Windows with CJK filenames,
+    # that is the common case, not an edge one.
+    $result = Read-Git -Cwd $Worktree -GitArgs @('-c', 'core.quotePath=false', 'ls-files', '--eol')
     if ($result.Code -ne 0) {
         throw "Could not classify line endings in '$Worktree' (git ls-files --eol failed)."
     }
