@@ -243,6 +243,67 @@ list_svn_eol_candidates() {
     }'
 }
 
+# Put svn:eol-style=native on the text files in a changeset that do not already carry it.
+#
+# This is what lets the bridge stop being pinned to LF. SVN normalises a file's line endings to LF
+# when it stores it, but ONLY for files carrying svn:eol-style; without the property it stores the
+# working-copy bytes verbatim. So a bridge that follows the platform -- CRLF on Windows, which is
+# the whole point of the model -- would push CRLF into SVN for any file that has no property yet.
+# Setting it here, BEFORE the commit, means svn does the normalising for us at commit time.
+#
+# Doing it per changeset rather than per tree is what makes a "have we migrated yet?" flag
+# unnecessary: whatever this push touches is correct afterwards regardless of what the rest of the
+# tree looks like, so an unmigrated repository degrades file by file instead of all at once.
+#
+# Setting a property to the value it already has is not a change as far as svn is concerned, so
+# this is idempotent and adds nothing to the commit for files that are already correct.
+#
+# $1: bridge worktree path. Remaining args: changeset paths, relative to that worktree.
+# Echoes how many files it set the property on. Non-zero on svn/git failure.
+apply_svn_eol_style() {
+  local bridge="$1"; shift
+  [ "$#" -gt 0 ] || { echo 0; return 0; }
+
+  local cand chg both rc=0
+  cand="$(mktemp)"; chg="$(mktemp)"; both="$(mktemp)"
+
+  # Both sides are normalised to forward slashes before they meet. svn reports Windows paths with
+  # backslashes while git always reports forward ones, and a separator mismatch here would not
+  # error -- every path would simply fail to match and the whole step would do nothing, silently.
+  if ! list_svn_eol_candidates "$bridge" | tr '\\' '/' | LC_ALL=C sort -u > "$cand"; then
+    rm -f "$cand" "$chg" "$both"; return 1
+  fi
+  printf '%s\n' "$@" | tr '\\' '/' | LC_ALL=C sort -u > "$chg"
+
+  # LC_ALL=C on both sorts and on comm: comm silently produces garbage if its inputs were ordered
+  # under a different collation than the one it compares with.
+  LC_ALL=C comm -12 "$cand" "$chg" > "$both"
+
+  local -a targets=()
+  local p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    # svn_target: a filename containing '@' is legal but makes svn read the tail as a peg revision.
+    targets+=("$(svn_target "$p")")
+  done < "$both"
+
+  if [ "${#targets[@]}" -gt 0 ]; then
+    local tf; tf="$(mktemp)"
+    # write_svn_targets_file, not a plain redirect: it writes in the ANSI codepage svn reads paths
+    # back in, which is what keeps non-ASCII filenames addressable (issue #35).
+    if write_svn_targets_file "$tf" "${targets[@]}"; then
+      ( cd "$bridge" && svn propset svn:eol-style native --quiet --targets "$tf" ) || rc=1
+    else
+      rc=1
+    fi
+    rm -f "$tf"
+  fi
+
+  echo "${#targets[@]}"
+  rm -f "$cand" "$chg" "$both"
+  return "$rc"
+}
+
 # Validate a branch name for remote-svn worktree mapping (allowlist).
 # Returns 0 if OK, else prints the reason to stderr and returns 1. 'main' is the
 # canonical trust anchor and always passes; other casings of 'main' are rejected so

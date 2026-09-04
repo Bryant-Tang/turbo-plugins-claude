@@ -233,6 +233,72 @@ function Get-SvnEolCandidate {
     return , $paths.ToArray()
 }
 
+# Put svn:eol-style=native on the text files in a changeset that do not already carry it.
+#
+# This is what lets the bridge stop being pinned to LF. SVN normalises a file's line endings to LF
+# when it stores it, but ONLY for files carrying svn:eol-style; without the property it stores the
+# working-copy bytes verbatim. So a bridge that follows the platform -- CRLF on Windows, which is
+# the whole point of the model -- would push CRLF into SVN for any file that has no property yet.
+# Setting it here, BEFORE the commit, means svn does the normalising for us at commit time.
+#
+# Doing it per changeset rather than per tree is what makes a "have we migrated yet?" flag
+# unnecessary: whatever this push touches is correct afterwards regardless of what the rest of the
+# tree looks like, so an unmigrated repository degrades file by file instead of all at once.
+#
+# Setting a property to the value it already has is not a change as far as svn is concerned, so
+# this is idempotent and adds nothing to the commit for files that are already correct.
+#
+# Returns the number of files it addressed.
+function Set-SvnEolStyle {
+    param(
+        [Parameter(Mandatory = $true)][string]$Bridge,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Path
+    )
+
+    if ($Path.Count -eq 0) { return 0 }
+
+    # Both sides are normalised to forward slashes before they meet. svn reports Windows paths with
+    # backslashes while git always reports forward ones, and a separator mismatch here would not
+    # error -- every path would simply fail to match and the whole step would do nothing, silently.
+    $candidates = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($c in @(Get-SvnEolCandidate -Worktree $Bridge)) {
+        $null = $candidates.Add(($c -replace '\\', '/'))
+    }
+
+    $targets = New-Object System.Collections.Generic.List[string]
+    foreach ($p in $Path) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        $norm = $p -replace '\\', '/'
+        if ($candidates.Contains($norm)) {
+            # ConvertTo-SvnTarget: a filename containing '@' is legal but makes svn read the tail
+            # as a peg revision.
+            $targets.Add((ConvertTo-SvnTarget -Path $norm))
+        }
+    }
+
+    if ($targets.Count -gt 0) {
+        $targetsFile = [System.IO.Path]::GetTempFileName()
+        try {
+            # Write-SvnTargetsFile, not a plain write: it uses the encoding svn reads paths back
+            # in, which is what keeps non-ASCII filenames addressable (issue #35).
+            Write-SvnTargetsFile -Path $targetsFile -Targets $targets.ToArray()
+            Push-Location -LiteralPath $Bridge
+            try {
+                & svn propset svn:eol-style native --quiet --targets $targetsFile
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Could not set svn:eol-style on $($targets.Count) file(s) in '$Bridge'."
+                }
+            } finally {
+                Pop-Location
+            }
+        } finally {
+            Remove-Item -LiteralPath $targetsFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    return $targets.Count
+}
+
 function Set-SvnGitExcluded {
     param([Parameter(Mandatory = $true)][string]$MainWorktree)
 

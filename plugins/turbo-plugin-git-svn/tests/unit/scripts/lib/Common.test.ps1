@@ -1752,3 +1752,101 @@ Describe 'Get-SvnEolCandidate' {
         }
     }
 }
+
+# ─── Set-SvnEolStyle — the property lands on text, and only on text ──────────────────────────
+# Exercised against a real SVN working copy that is also a git worktree, because that pairing IS
+# the bridge and every interesting failure lives in the seam between the two tools.
+Describe 'Set-SvnEolStyle' {
+
+    BeforeAll {
+        $script:EolSvnReady = $false
+        if ((Get-Command svn -ErrorAction SilentlyContinue) -and (Get-Command svnadmin -ErrorAction SilentlyContinue)) {
+            $script:EolSvnReady = $true
+        }
+
+        function New-SvnGitPair {
+            param([string]$Tag = 'eolapply')
+            $dir = New-IsolatedRepoRoot $Tag
+            $repo = Join-Path $dir 'repo'
+            $wc = Join-Path $dir 'wc'
+            & svnadmin create $repo 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'svnadmin create failed' }
+            # file:/// needs the forward-slash spelling of the Windows path.
+            $url = 'file:///' + ($repo -replace '\\', '/')
+            & svn --non-interactive checkout -q $url $wc 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
+
+            Invoke-GitSilent $wc init -q -b main
+            Invoke-GitSilent $wc config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $wc config user.name 'turbo-plugin-test'
+            Invoke-GitSilent $wc config core.autocrlf false
+
+            # Byte-exact writes: Set-Content would impose its own newline handling and the mixed
+            # fixture would stop being mixed.
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $wc 'text.txt'), "a`nb`n", $enc)
+            [System.IO.File]::WriteAllText((Join-Path $wc 'mixed.txt'), "a`r`nb`n", $enc)
+            [System.IO.File]::WriteAllBytes((Join-Path $wc 'blob.bin'), [byte[]](97, 0, 98, 0))
+
+            Invoke-GitSilent $wc add -A
+            Invoke-GitSilent $wc commit -q -m seed
+            & svn --non-interactive add -q (Join-Path $wc 'text.txt') (Join-Path $wc 'mixed.txt') (Join-Path $wc 'blob.bin') 2>$null | Out-Null
+            return @{ Dir = $dir; Wc = $wc }
+        }
+
+        function Get-EolProp {
+            param([string]$File)
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $v = (& svn --non-interactive propget svn:eol-style $File 2>$null | Out-String) } catch { $v = '' } finally { $ErrorActionPreference = $old }
+            return "$v".Trim()
+        }
+    }
+
+    It 'sets the property on the text file and on neither the mixed nor the binary one' {
+        # Set-ItResult inside the It, never -Skip:, because -Skip: is evaluated during Pester's
+        # DISCOVERY phase where a flag set in BeforeAll is still $null.
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
+        $pair = New-SvnGitPair 'eolapply'
+        try {
+            $n = Set-SvnEolStyle -Bridge $pair.Wc -Path @('text.txt', 'mixed.txt', 'blob.bin')
+            (Get-EolProp (Join-Path $pair.Wc 'text.txt')) | Should -Be 'native'
+            # A binary carrying svn:eol-style comes back corrupted; a mixed-ending file makes
+            # `svn commit` fail atomically. Neither may be touched.
+            (Get-EolProp (Join-Path $pair.Wc 'mixed.txt')) | Should -BeNullOrEmpty
+            (Get-EolProp (Join-Path $pair.Wc 'blob.bin')) | Should -BeNullOrEmpty
+            $n | Should -Be 1
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $pair.Dir
+        }
+    }
+
+    It 'records no second property change when called twice' {
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
+        $pair = New-SvnGitPair 'eolidem2'
+        try {
+            $null = Set-SvnEolStyle -Bridge $pair.Wc -Path @('text.txt')
+            & svn --non-interactive commit -q -m 'first' $pair.Wc 2>$null | Out-Null
+            $null = Set-SvnEolStyle -Bridge $pair.Wc -Path @('text.txt')
+            # Status of the FILE, not of the working copy: a bare `svn status` also reports the
+            # unversioned .git directory as '?', which the real bridge hides behind svn:ignore=.git
+            # but a bare fixture does not.
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $st = (& svn --non-interactive status (Join-Path $pair.Wc 'text.txt') 2>$null | Out-String) } finally { $ErrorActionPreference = $old }
+            "$st".Trim() | Should -BeNullOrEmpty
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $pair.Dir
+        }
+    }
+
+    It 'does nothing, and calls no svn, for an empty path list' {
+        Set-SvnEolStyle -Bridge $PSScriptRoot -Path @() | Should -Be 0
+    }
+}

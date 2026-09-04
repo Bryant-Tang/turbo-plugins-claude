@@ -1692,5 +1692,99 @@ test_eol_candidates_keep_paths_with_spaces() {
     assertEquals 'a path containing a space survives intact' 0 "$rc"
 }
 
+# ─── apply_svn_eol_style — the property lands on text, and only on text ──────────────────────
+# Exercised against a real SVN working copy that is also a git worktree, because that pairing IS
+# the bridge and every interesting failure lives in the seam between the two tools. SKIPs without
+# svn, per the repo's "run what you can" rule.
+test_apply_svn_eol_style_sets_text_only() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolapply-XXXXXX)"
+    (
+        repo="$tmp/repo"
+        wc="$tmp/wc"
+        svnadmin create "$repo" >/dev/null 2>&1 || exit 98
+        # svn.exe cannot read an MSYS /tmp path; it needs the Windows spelling.
+        url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
+        svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
+
+        git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
+        git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
+        git -C "$wc" config user.name 'turbo-plugin-test' || exit 98
+        git -C "$wc" config core.autocrlf false || exit 98
+
+        printf 'a\nb\n'     > "$wc/text.txt"
+        printf 'a\r\nb\n'   > "$wc/mixed.txt"
+        printf 'a\0b\0'     > "$wc/blob.bin"
+        git -C "$wc" add -A >/dev/null 2>&1 || exit 98
+        git -C "$wc" commit -qm seed >/dev/null 2>&1 || exit 98
+
+        svn --non-interactive add -q "$wc/text.txt" "$wc/mixed.txt" "$wc/blob.bin" >/dev/null 2>&1 || exit 98
+
+        n="$(apply_svn_eol_style "$wc" 'text.txt' 'mixed.txt' 'blob.bin')" || exit 97
+
+        got_text="$(svn --non-interactive propget svn:eol-style "$wc/text.txt" 2>/dev/null | tr -d '\r\n')"
+        got_mixed="$(svn --non-interactive propget svn:eol-style "$wc/mixed.txt" 2>/dev/null | tr -d '\r\n')"
+        got_blob="$(svn --non-interactive propget svn:eol-style "$wc/blob.bin" 2>/dev/null | tr -d '\r\n')"
+
+        if [ "$got_text" != 'native' ]; then
+            echo "text.txt should have native, got '$got_text'" >&2; exit 1
+        fi
+        if [ -n "$got_mixed" ]; then
+            echo "mixed.txt must stay unset (svn would refuse to commit it), got '$got_mixed'" >&2; exit 1
+        fi
+        if [ -n "$got_blob" ]; then
+            echo "blob.bin must stay unset (eol translation corrupts binaries), got '$got_blob'" >&2; exit 1
+        fi
+        if [ "$n" != '1' ]; then
+            echo "expected a reported count of 1, got '$n'" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'svn:eol-style lands on the text file and on neither the mixed nor the binary one' 0 "$rc"
+}
+
+# A second call must not turn into a second property change: svn treats setting a property to the
+# value it already holds as a no-op, and this test is what keeps that assumption honest.
+test_apply_svn_eol_style_is_idempotent() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolidem2-XXXXXX)"
+    (
+        repo="$tmp/repo"
+        wc="$tmp/wc"
+        svnadmin create "$repo" >/dev/null 2>&1 || exit 98
+        url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
+        svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
+        git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
+        git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
+        git -C "$wc" config user.name 'turbo-plugin-test' || exit 98
+        printf 'a\nb\n' > "$wc/text.txt"
+        git -C "$wc" add -A >/dev/null 2>&1 || exit 98
+        git -C "$wc" commit -qm seed >/dev/null 2>&1 || exit 98
+        svn --non-interactive add -q "$wc/text.txt" >/dev/null 2>&1 || exit 98
+
+        apply_svn_eol_style "$wc" 'text.txt' >/dev/null || exit 97
+        svn --non-interactive commit -q -m 'first' "$wc" >/dev/null 2>&1 || exit 97
+        apply_svn_eol_style "$wc" 'text.txt' >/dev/null || exit 97
+
+        # Status of the FILE, not of the working copy: a bare `svn status` also reports the
+        # unversioned .git directory as '?', which the real bridge hides behind svn:ignore=.git
+        # but a bare fixture does not. Asking about the file is both precise and immune to that.
+        st="$(svn --non-interactive status "$wc/text.txt" 2>/dev/null | tr -d '\r\n')"
+        if [ -n "$st" ]; then
+            echo "second call recorded a change on text.txt: [$st]" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'calling it twice records no second property change' 0 "$rc"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"
