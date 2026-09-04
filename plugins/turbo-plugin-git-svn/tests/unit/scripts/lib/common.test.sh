@@ -20,7 +20,9 @@
 #   - write_utf8_no_bom            — CJK no-BOM byte-equal to canonical UTF-8 (R6)
 #   - read_turbo_plugin_config     — flat mode + section/key sentinel + top-level key
 #   - resolve_config_value         — config merge chain + config.local.toml override
-#   - ensure_bridge_eol_faithful   — byte-faithful under `* text=auto` / scoped / idempotent (#164)
+#   - ensure_bridge_eol_mode — legacy pin removed / clean no-op / scoped (#164, #167)
+#   - list_svn_eol_candidates      — binary and mixed-ending files excluded (#167)
+#   - apply_svn_eol_style          — svn:eol-style lands on text only, idempotent (#167)
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
@@ -1516,12 +1518,12 @@ test_every_svn_calling_script_sources_the_shim() {
     assertTrue "expected several svn-invoking scripts, found $invoking" "[ '$invoking' -ge 6 ]"
 }
 
-# ─── ensure_bridge_eol_faithful — the pin must survive `.gitattributes` (issue #164) ─────────
+# ─── ensure_bridge_eol_mode — the bridge stops being pinned (#164, #167) ──────────
 # Build a repo whose blobs are LF, whose attributes mark everything text, and whose checkout is
-# configured to write CRLF. `core.eol` is pinned to `crlf` rather than left at its `native`
-# default on purpose: `native` is CRLF only on Windows, so leaving it would make this case pass
-# for free on Linux -- reporting green on the half of CI that never exercised the bug.
-# Echoes $1 = repo root of a fixture ready for ensure_bridge_eol_faithful; non-zero on failure.
+# configured to write CRLF. `core.eol` is set to `crlf` rather than left at its `native` default
+# on purpose: `native` is CRLF only on Windows, so relying on it would make these cases pass for
+# free on Linux -- reporting green on the half of CI that never exercised anything.
+# $1 = repo root to build the fixture in; non-zero on failure.
 make_eol_fixture() {
     local root="$1"
     git -C "$root" init -q -b main >/dev/null 2>&1 || return 1
@@ -1545,71 +1547,350 @@ count_cr_bytes() {
     tr -dc '\r' < "$1" | wc -c | tr -d ' '
 }
 
-test_bridge_eol_faithful_defeats_text_auto() {
+# Mode 1: SVN carries no svn:eol-style, so `svn update` writes the stored bytes verbatim (LF) and
+# git has to be pinned to match. Unpinned, core.autocrlf=true would make git expect CRLF and read
+# the whole tree as modified -- which is what took out 21 pull-path tests when this function was
+# briefly made unconditional.
+test_bridge_eol_pins_lf_when_svn_declares_nothing() {
     local tmp rc
-    tmp="$(mktemp -d -t turbo-eolpin-XXXXXX)"
+    tmp="$(mktemp -d -t turbo-common-eolpin-XXXXXX)"
     (
         make_eol_fixture "$tmp" || exit 98
-        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
+        ensure_bridge_eol_mode "$tmp" "$tmp/bridge" || exit 97
 
-        # The pin only bites when git next writes the file, so force a fresh checkout.
+        # The mode only bites when git next writes the file, so force a fresh checkout. The repo's
+        # own core.eol is crlf, so LF here can only come from the pin.
         rm -f "$tmp/bridge/f.txt"
         git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
-
         cr="$(count_cr_bytes "$tmp/bridge/f.txt")"
         if [ "$cr" -ne 0 ]; then
-            echo "bridge checkout wrote $cr CR bytes but the blob is pure LF" >&2
-            exit 1
+            echo "bridge was not pinned to LF: $cr CR bytes" >&2; exit 1
         fi
         exit 0
     )
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
-    assertEquals 'bridge checkout is byte-faithful to the blob even under `* text=auto`' 0 "$rc"
+    assertEquals 'with nothing declared on the SVN side the bridge is pinned to LF' 0 "$rc"
 }
 
-# The docstring promises the pin is scoped to the bridge. If it ever leaked to the shared config
-# it would silently rewrite the user's own working copy, which is not this function's business.
-test_bridge_eol_faithful_leaves_main_worktree_alone() {
+# Mode 2: the tree declares svn:eol-style through the root svn:auto-props the migration writes, so
+# `svn update` starts writing platform endings and the pin has to go. It UNSETS rather than merely
+# not setting: a bridge pinned before the migration would otherwise stay on the old mode forever.
+test_bridge_eol_unpins_once_svn_declares_eol_style() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
     local tmp rc
-    tmp="$(mktemp -d -t turbo-eolscope-XXXXXX)"
+    tmp="$(mktemp -d -t turbo-common-eolunpin-XXXXXX)"
     (
         make_eol_fixture "$tmp" || exit 98
-        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
 
-        rm -f "$tmp/f.txt"
-        git -C "$tmp" checkout -- f.txt >/dev/null 2>&1 || exit 96
+        # Make the bridge a real SVN working copy and declare eol-style the way the migration
+        # does. propget reads the working-copy value, so no commit is needed for detection.
+        svnadmin create "$tmp/svnrepo" >/dev/null 2>&1 || exit 98
+        url="file:///$(cygpath -m "$tmp/svnrepo" 2>/dev/null || echo "$tmp/svnrepo")"
+        svn --non-interactive checkout -q --force "$url" "$tmp/bridge" >/dev/null 2>&1 || exit 98
+        ( cd "$tmp/bridge" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
 
-        cr="$(count_cr_bytes "$tmp/f.txt")"
-        # 3 lines of CRLF -- the main worktree keeps whatever the user configured.
+        # Pin it first, then prove the pin was actually in force -- otherwise "CRLF afterwards"
+        # could equally mean the pin never worked here and the test would pass having done nothing.
+        git -C "$tmp" config extensions.worktreeConfig true || exit 98
+        git -C "$tmp/bridge" config --worktree core.autocrlf false || exit 98
+        git -C "$tmp/bridge" config --worktree core.eol lf || exit 98
+        rm -f "$tmp/bridge/f.txt"
+        git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
+        pinned="$(count_cr_bytes "$tmp/bridge/f.txt")"
+        if [ "$pinned" -ne 0 ]; then
+            echo "fixture: the pin was not in force (got $pinned CR bytes)" >&2; exit 1
+        fi
+
+        ensure_bridge_eol_mode "$tmp" "$tmp/bridge" || exit 97
+
+        rm -f "$tmp/bridge/f.txt"
+        git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
+        cr="$(count_cr_bytes "$tmp/bridge/f.txt")"
+        # 3 CRLF lines: the bridge now follows the repo's own setting, like any other worktree.
         if [ "$cr" -ne 3 ]; then
-            echo "main worktree wrote $cr CR bytes; expected 3 (its own core.eol=crlf)" >&2
-            exit 1
+            echo "bridge is still pinned: $cr CR bytes, expected 3" >&2; exit 1
         fi
         exit 0
     )
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
-    assertEquals 'the pin does not reach outside the bridge worktree' 0 "$rc"
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'once svn:eol-style is declared the pin is removed' 0 "$rc"
 }
 
-test_bridge_eol_faithful_is_idempotent() {
+# Whichever mode it picks is scoped to the bridge; the settings the user chose for the repository
+# are none of this function's business.
+test_bridge_eol_leaves_repo_settings_alone() {
     local tmp rc
-    tmp="$(mktemp -d -t turbo-eolidem-XXXXXX)"
+    tmp="$(mktemp -d -t turbo-common-eolscope-XXXXXX)"
     (
         make_eol_fixture "$tmp" || exit 98
-        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
-        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 95
-        eol="$(git -C "$tmp/bridge" config --worktree core.eol 2>/dev/null || true)"
-        if [ "$eol" != 'lf' ]; then
-            echo "expected core.eol=lf on the bridge worktree, got '$eol'" >&2
-            exit 1
+        ensure_bridge_eol_mode "$tmp" "$tmp/bridge" || exit 97
+        eol="$(git -C "$tmp" config --get core.eol 2>/dev/null || true)"
+        if [ "$eol" != 'crlf' ]; then
+            echo "the repository's own core.eol was changed to '$eol'" >&2; exit 1
+        fi
+        autocrlf="$(git -C "$tmp" config --get core.autocrlf 2>/dev/null || true)"
+        if [ "$autocrlf" != 'false' ]; then
+            echo "the repository's own core.autocrlf was changed to '$autocrlf'" >&2; exit 1
         fi
         exit 0
     )
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
-    assertEquals 'calling the pin twice succeeds and leaves core.eol=lf' 0 "$rc"
+    assertEquals "the repository's own EOL settings are left alone" 0 "$rc"
+}
+
+# ─── list_svn_eol_candidates — who may carry svn:eol-style ───────────────────────────────────
+# The two exclusions are the point of the function, and both are silent when wrong: a binary that
+# gets svn:eol-style comes back corrupted, and a mixed-ending file makes `svn commit` fail
+# atomically -- taking a whole 20k-file migration down with it.
+make_eol_class_fixture() {
+    local root="$1"
+    git -C "$root" init -q -b main >/dev/null 2>&1 || return 1
+    git -C "$root" config user.email 'test@turbo-plugin' || return 1
+    git -C "$root" config user.name 'turbo-plugin-test' || return 1
+    # core.autocrlf is pinned so the fixture's on-disk endings are the ones written here, not
+    # whatever the host's Git for Windows default would rewrite them to.
+    git -C "$root" config core.autocrlf false || return 1
+    printf 'a\nb\n'      > "$root/pure-lf.txt"      || return 1
+    printf 'a\r\nb\r\n'  > "$root/pure-crlf.txt"    || return 1
+    printf 'a\r\nb\n'    > "$root/mixed.txt"        || return 1
+    printf 'a\0b\0'      > "$root/binary.bin"       || return 1
+    printf 'noeol'       > "$root/noeol.txt"        || return 1
+    mkdir -p "$root/sub dir" || return 1
+    printf 'x\ny\n'      > "$root/sub dir/spaced.txt" || return 1
+    # A CJK filename, built from octal escapes rather than written literally so this file has no
+    # encoding dependency of its own. U+6587 U+6863 -- the two characters spell "document".
+    CJK_NAME="$(printf '\346\226\207\346\241\243').txt"
+    printf 'p\nq\n'      > "$root/$CJK_NAME" || return 1
+    git -C "$root" add -A >/dev/null 2>&1 || return 1
+    git -C "$root" commit -qm seed >/dev/null 2>&1 || return 1
+}
+
+test_eol_candidates_exclude_binary_and_mixed() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolcand-XXXXXX)"
+    (
+        make_eol_class_fixture "$tmp" || exit 98
+        out="$(list_svn_eol_candidates "$tmp")" || exit 97
+
+        # Floor first: a silently-empty listing would satisfy every "not present" assertion below
+        # and report green while testing nothing.
+        n="$(printf '%s\n' "$out" | grep -c .)"
+        if [ "$n" -lt 4 ]; then
+            echo "expected at least 4 candidates, got $n: $out" >&2; exit 1
+        fi
+        case "$out" in
+            *binary.bin*) echo "binary.bin must not be a candidate" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *mixed.txt*) echo "mixed.txt must not be a candidate" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *pure-lf.txt*) : ;;
+            *) echo "pure-lf.txt should be a candidate; got: $out" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *pure-crlf.txt*) : ;;
+            *) echo "pure-crlf.txt should be a candidate; got: $out" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *noeol.txt*) : ;;
+            *) echo "noeol.txt should be a candidate; got: $out" >&2; exit 1 ;;
+        esac
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'binary and mixed-ending files are excluded, consistent text is not' 0 "$rc"
+}
+
+# Without `-c core.quotePath=false`, git returns a non-ASCII path C-quoted and octal-escaped --
+# `"\346\226\207\346\241\243.txt"` as literal ASCII, not the filename. Nothing errors; the string
+# just travels on to `svn propset` as a path that does not exist. On this plugin, whose subject is
+# SVN on Windows, CJK filenames are the common case rather than an edge one.
+test_eol_candidates_keep_non_ascii_paths_intact() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolcjk-XXXXXX)"
+    (
+        make_eol_class_fixture "$tmp" || exit 98
+        out="$(list_svn_eol_candidates "$tmp")" || exit 97
+        want="$(printf '\346\226\207\346\241\243').txt"
+
+        # The escaped spelling must NOT appear: its presence is the bug, and it is what a
+        # quotePath-enabled git hands back.
+        case "$out" in
+            *'\346'*) echo "path came back octal-escaped: $out" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *"$want"*) exit 0 ;;
+        esac
+        echo "expected the CJK path intact; got: $out" >&2
+        exit 1
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'a non-ASCII path is returned as the real filename, not C-quoted' 0 "$rc"
+}
+
+test_eol_candidates_keep_paths_with_spaces() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolspace-XXXXXX)"
+    (
+        make_eol_class_fixture "$tmp" || exit 98
+        out="$(list_svn_eol_candidates "$tmp")" || exit 97
+        # git prints `i/... w/... attr/...<TAB><path>`; splitting on whitespace instead of the tab
+        # would truncate this path at the space and hand svn a target that does not exist.
+        case "$out" in
+            *"sub dir/spaced.txt"*) exit 0 ;;
+        esac
+        echo "expected the spaced path intact; got: $out" >&2
+        exit 1
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'a path containing a space survives intact' 0 "$rc"
+}
+
+# ─── apply_svn_eol_style — the property lands on text, and only on text ──────────────────────
+# Exercised against a real SVN working copy that is also a git worktree, because that pairing IS
+# the bridge and every interesting failure lives in the seam between the two tools. SKIPs without
+# svn, per the repo's "run what you can" rule.
+test_apply_svn_eol_style_sets_text_only() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolapply-XXXXXX)"
+    (
+        repo="$tmp/repo"
+        wc="$tmp/wc"
+        svnadmin create "$repo" >/dev/null 2>&1 || exit 98
+        # svn.exe cannot read an MSYS /tmp path; it needs the Windows spelling.
+        url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
+        svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
+        # The tree has to declare eol-style before the push path will mark anything: one signal
+        # governs both that decision and the bridge's git mode, so that they cannot disagree.
+        ( cd "$wc" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
+
+        git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
+        git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
+        git -C "$wc" config user.name 'turbo-plugin-test' || exit 98
+        git -C "$wc" config core.autocrlf false || exit 98
+
+        printf 'a\nb\n'     > "$wc/text.txt"
+        printf 'a\r\nb\n'   > "$wc/mixed.txt"
+        printf 'a\0b\0'     > "$wc/blob.bin"
+        git -C "$wc" add -A >/dev/null 2>&1 || exit 98
+        git -C "$wc" commit -qm seed >/dev/null 2>&1 || exit 98
+
+        svn --non-interactive add -q "$wc/text.txt" "$wc/mixed.txt" "$wc/blob.bin" >/dev/null 2>&1 || exit 98
+
+        n="$(apply_svn_eol_style "$wc" 'text.txt' 'mixed.txt' 'blob.bin')" || exit 97
+
+        got_text="$(svn --non-interactive propget svn:eol-style "$wc/text.txt" 2>/dev/null | tr -d '\r\n')"
+        got_mixed="$(svn --non-interactive propget svn:eol-style "$wc/mixed.txt" 2>/dev/null | tr -d '\r\n')"
+        got_blob="$(svn --non-interactive propget svn:eol-style "$wc/blob.bin" 2>/dev/null | tr -d '\r\n')"
+
+        if [ "$got_text" != 'native' ]; then
+            echo "text.txt should have native, got '$got_text'" >&2; exit 1
+        fi
+        if [ -n "$got_mixed" ]; then
+            echo "mixed.txt must stay unset (svn would refuse to commit it), got '$got_mixed'" >&2; exit 1
+        fi
+        if [ -n "$got_blob" ]; then
+            echo "blob.bin must stay unset (eol translation corrupts binaries), got '$got_blob'" >&2; exit 1
+        fi
+        if [ "$n" != '1' ]; then
+            echo "expected a reported count of 1, got '$n'" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'svn:eol-style lands on the text file and on neither the mixed nor the binary one' 0 "$rc"
+}
+
+# The gate. Marking individual files in a tree that has not been migrated is not a harmless head
+# start: svn starts writing platform endings for exactly those files while the bridge's git side
+# is still pinned to LF for everything else, and the bridge goes permanently dirty. That is not a
+# hypothetical -- it took out 21 pull-path tests before the two decisions were put on one signal.
+test_apply_svn_eol_style_does_nothing_before_the_tree_declares() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolgate-XXXXXX)"
+    (
+        repo="$tmp/repo"
+        wc="$tmp/wc"
+        svnadmin create "$repo" >/dev/null 2>&1 || exit 98
+        url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
+        svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
+        # Deliberately NO svn:auto-props here -- that is the whole point of the case.
+        git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
+        git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
+        git -C "$wc" config user.name 'turbo-plugin-test' || exit 98
+        printf 'a\nb\n' > "$wc/text.txt"
+        git -C "$wc" add -A >/dev/null 2>&1 || exit 98
+        git -C "$wc" commit -qm seed >/dev/null 2>&1 || exit 98
+        svn --non-interactive add -q "$wc/text.txt" >/dev/null 2>&1 || exit 98
+
+        n="$(apply_svn_eol_style "$wc" 'text.txt')" || exit 97
+        if [ "$n" != '0' ]; then
+            echo "expected 0 files marked before the tree declares, got '$n'" >&2; exit 1
+        fi
+        got="$(svn --non-interactive propget svn:eol-style "$wc/text.txt" 2>/dev/null | tr -d '\r\n')"
+        if [ -n "$got" ]; then
+            echo "the property was set anyway: '$got'" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'nothing is marked until the tree itself declares svn:eol-style' 0 "$rc"
+}
+
+# A second call must not turn into a second property change: svn treats setting a property to the
+# value it already holds as a no-op, and this test is what keeps that assumption honest.
+test_apply_svn_eol_style_is_idempotent() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolidem2-XXXXXX)"
+    (
+        repo="$tmp/repo"
+        wc="$tmp/wc"
+        svnadmin create "$repo" >/dev/null 2>&1 || exit 98
+        url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
+        svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
+        # The tree has to declare eol-style before the push path will mark anything: one signal
+        # governs both that decision and the bridge's git mode, so that they cannot disagree.
+        ( cd "$wc" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
+        git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
+        git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
+        git -C "$wc" config user.name 'turbo-plugin-test' || exit 98
+        printf 'a\nb\n' > "$wc/text.txt"
+        git -C "$wc" add -A >/dev/null 2>&1 || exit 98
+        git -C "$wc" commit -qm seed >/dev/null 2>&1 || exit 98
+        svn --non-interactive add -q "$wc/text.txt" >/dev/null 2>&1 || exit 98
+
+        apply_svn_eol_style "$wc" 'text.txt' >/dev/null || exit 97
+        svn --non-interactive commit -q -m 'first' "$wc" >/dev/null 2>&1 || exit 97
+        apply_svn_eol_style "$wc" 'text.txt' >/dev/null || exit 97
+
+        # Status of the FILE, not of the working copy: a bare `svn status` also reports the
+        # unversioned .git directory as '?', which the real bridge hides behind svn:ignore=.git
+        # but a bare fixture does not. Asking about the file is both precise and immune to that.
+        st="$(svn --non-interactive status "$wc/text.txt" 2>/dev/null | tr -d '\r\n')"
+        if [ -n "$st" ]; then
+            echo "second call recorded a change on text.txt: [$st]" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'calling it twice records no second property change' 0 "$rc"
 }
 
 # shellcheck disable=SC1090

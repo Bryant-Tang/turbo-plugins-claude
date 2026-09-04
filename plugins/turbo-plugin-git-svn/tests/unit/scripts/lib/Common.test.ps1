@@ -1592,15 +1592,18 @@ Describe 'svn shim injects --non-interactive (issue #137)' {
     }
 }
 
-# ─── Set-BridgeEolFaithful — the pin must survive .gitattributes (issue #164) ────────────────
-# `core.autocrlf=false` closes only ONE of git's two checkout-rewrite paths. When .gitattributes
-# marks a file text, `core.eol` decides instead -- and its default `native` is CRLF on Windows.
-# The fixture pins repo-level core.eol to `crlf` rather than relying on that default, so the case
-# reproduces identically on Linux: `native` there is already LF, and the bug would hide behind a
-# green result on half of CI.
-Describe 'Set-BridgeEolFaithful' {
+# ─── Set-BridgeEolMode — the bridge follows whichever mode the SVN side is in (#164, #167) ───
+# The fixture sets repo-level core.eol to `crlf` rather than relying on the `native` default, so
+# these cases behave identically on Linux: `native` there is already LF, and a test that leaned on
+# it would pass for free on half of CI.
+Describe 'Set-BridgeEolMode' {
 
     BeforeAll {
+        $script:EolSvnReady = $false
+        if ((Get-Command svn -ErrorAction SilentlyContinue) -and (Get-Command svnadmin -ErrorAction SilentlyContinue)) {
+            $script:EolSvnReady = $true
+        }
+
         function New-EolFixture {
             param([string]$Tag = 'eolpin')
             $dir = New-IsolatedRepoRoot $Tag
@@ -1641,12 +1644,16 @@ Describe 'Set-BridgeEolFaithful' {
         }
     }
 
-    It 'keeps the bridge checkout byte-faithful to the blob even under a text=auto attribute' {
+    # Mode 1: SVN carries no svn:eol-style, so `svn update` writes the stored bytes verbatim (LF)
+    # and git has to be pinned to match. Unpinned, core.autocrlf=true would make git expect CRLF
+    # and read the whole tree as modified.
+    It 'pins the bridge to LF while the SVN side declares nothing' {
         $dir = New-EolFixture 'eolpin'
         try {
             $bridge = Join-Path $dir 'bridge'
-            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
-            # The pin only bites when git next writes the file, so force a fresh checkout.
+            Set-BridgeEolMode -MainWorktree $dir -Bridge $bridge
+            # The mode only bites when git next writes the file. The repo's own core.eol is crlf,
+            # so LF here can only come from the pin.
             Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
             Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 0
         } finally {
@@ -1654,26 +1661,282 @@ Describe 'Set-BridgeEolFaithful' {
         }
     }
 
-    It 'does not reach outside the bridge worktree' {
-        $dir = New-EolFixture 'eolscope'
+    # Mode 2: the tree declares svn:eol-style through the root svn:auto-props the migration writes,
+    # so `svn update` starts writing platform endings and the pin has to go. It UNSETS rather than
+    # merely not setting: a bridge pinned before the migration would otherwise stay on the old mode.
+    It 'removes the pin once the SVN side declares svn:eol-style' {
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
+        $dir = New-EolFixture 'eolunpin'
         try {
-            Set-BridgeEolFaithful -MainWorktree $dir -Bridge (Join-Path $dir 'bridge')
-            Reset-FileFromIndex -WorktreeDir $dir -Name 'f.txt'
-            # 3 CRLF lines: the user's own worktree keeps the EOL handling they configured.
-            Measure-CrBytes (Join-Path $dir 'f.txt') | Should -Be 3
+            $bridge = Join-Path $dir 'bridge'
+            $svnrepo = Join-Path $dir 'svnrepo'
+            & svnadmin create $svnrepo 2>$null | Out-Null
+            $url = 'file:///' + ($svnrepo -replace '\\', '/')
+            & svn --non-interactive checkout -q --force $url $bridge 2>$null | Out-Null
+            Push-Location -LiteralPath $bridge
+            try {
+                # propget reads the working-copy value, so no commit is needed for detection.
+                & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+            } finally {
+                Pop-Location
+            }
+
+            # Pin it first and prove the pin was in force -- otherwise "CRLF afterwards" could
+            # equally mean the pin never worked here and the test would pass having done nothing.
+            Invoke-GitSilent $dir config extensions.worktreeConfig true
+            Invoke-GitSilent $bridge config --worktree core.autocrlf false
+            Invoke-GitSilent $bridge config --worktree core.eol lf
+            Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
+            Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 0
+
+            Set-BridgeEolMode -MainWorktree $dir -Bridge $bridge
+
+            Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
+            # 3 CRLF lines: the bridge now follows the repo's own setting, like any other worktree.
+            Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 3
         } finally {
             Remove-IsolatedRepoRoot $dir
         }
     }
 
-    It 'is idempotent and leaves core.eol pinned to lf on the bridge' {
-        $dir = New-EolFixture 'eolidem'
+    It "leaves the repository's own EOL settings alone" {
+        $dir = New-EolFixture 'eolscope'
         try {
             $bridge = Join-Path $dir 'bridge'
-            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
-            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
-            $eol = (& git -C $bridge config --worktree core.eol 2>$null)
-            "$eol".Trim() | Should -Be 'lf'
+            Set-BridgeEolMode -MainWorktree $dir -Bridge $bridge
+            (Read-Git -Cwd $dir -GitArgs @('config', '--get', 'core.eol')).Text.Trim() | Should -Be 'crlf'
+            (Read-Git -Cwd $dir -GitArgs @('config', '--get', 'core.autocrlf')).Text.Trim() | Should -Be 'false'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+}
+
+# ─── Get-SvnEolCandidate — who may carry svn:eol-style ───────────────────────────────────────
+# The two exclusions are the point of the function, and both fail silently when wrong: a binary
+# that gets svn:eol-style comes back corrupted, and a mixed-ending file makes `svn commit` fail
+# atomically -- taking a whole 20k-file migration down with it.
+Describe 'Get-SvnEolCandidate' {
+
+    BeforeAll {
+        function New-EolClassFixture {
+            param([string]$Tag = 'eolcand')
+            $dir = New-IsolatedRepoRoot $Tag
+            Invoke-GitSilent $dir init -q -b main
+            Invoke-GitSilent $dir config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $dir config user.name 'turbo-plugin-test'
+            # Pinned so the fixture's on-disk endings are the ones written here, not whatever the
+            # host's Git for Windows default would rewrite them to.
+            Invoke-GitSilent $dir config core.autocrlf false
+
+            # Byte-exact writes: Set-Content would apply its own newline handling and the mixed
+            # and CRLF fixtures would stop being what they claim to be.
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'pure-lf.txt'),   "a`nb`n", $enc)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'pure-crlf.txt'), "a`r`nb`r`n", $enc)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'mixed.txt'),     "a`r`nb`n", $enc)
+            [System.IO.File]::WriteAllBytes((Join-Path $dir 'binary.bin'), [byte[]](97, 0, 98, 0))
+            [System.IO.File]::WriteAllText((Join-Path $dir 'noeol.txt'),     'noeol', $enc)
+            $sub = Join-Path $dir 'sub dir'
+            $null = New-Item -ItemType Directory -Path $sub -Force
+            [System.IO.File]::WriteAllText((Join-Path $sub 'spaced.txt'), "x`ny`n", $enc)
+
+            # A CJK filename, built from code points rather than written literally so this file
+            # keeps no encoding dependency of its own. U+6587 U+6863 spell "document".
+            $script:CjkName = ([char]0x6587).ToString() + ([char]0x6863).ToString() + '.txt'
+            [System.IO.File]::WriteAllText((Join-Path $dir $script:CjkName), "p`nq`n", $enc)
+
+            Invoke-GitSilent $dir add -A
+            Invoke-GitSilent $dir commit -q -m seed
+            return $dir
+        }
+    }
+
+    It 'excludes binary and mixed-ending files, keeps consistent text' {
+        $dir = New-EolClassFixture 'eolcand'
+        try {
+            $got = @(Get-SvnEolCandidate -Worktree $dir)
+            # Floor first: a silently-empty listing satisfies every "should not contain" assertion
+            # below and would report green while testing nothing.
+            $got.Count | Should -BeGreaterOrEqual 4
+            $got | Should -Not -Contain 'binary.bin'
+            $got | Should -Not -Contain 'mixed.txt'
+            $got | Should -Contain 'pure-lf.txt'
+            $got | Should -Contain 'pure-crlf.txt'
+            $got | Should -Contain 'noeol.txt'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    # Without `-c core.quotePath=false`, git returns a non-ASCII path C-quoted and octal-escaped --
+    # `"\346\226\207\346\241\243.txt"` as literal ASCII, not the filename. Nothing errors; the
+    # string just travels on to `svn propset` as a path that does not exist. On this plugin, whose
+    # subject is SVN on Windows, CJK filenames are the common case rather than an edge one.
+    It 'returns a non-ASCII path as the real filename, not C-quoted' {
+        $dir = New-EolClassFixture 'eolcjk'
+        try {
+            $got = @(Get-SvnEolCandidate -Worktree $dir)
+            # The escaped spelling must NOT appear: its presence is the bug itself.
+            ($got -join '|') | Should -Not -Match '\\346'
+            $got | Should -Contain $script:CjkName
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'keeps a path containing a space intact' {
+        $dir = New-EolClassFixture 'eolspace'
+        try {
+            # git prints `i/... w/... attr/...<TAB><path>`; splitting on whitespace instead of the
+            # tab would truncate this path at the space and hand svn a target that does not exist.
+            @(Get-SvnEolCandidate -Worktree $dir) | Should -Contain 'sub dir/spaced.txt'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'fails loudly when the path is not a git worktree' {
+        $dir = New-IsolatedRepoRoot 'eolnogit'
+        try {
+            { Get-SvnEolCandidate -Worktree $dir } | Should -Throw
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+}
+
+# ─── Set-SvnEolStyle — the property lands on text, and only on text ──────────────────────────
+# Exercised against a real SVN working copy that is also a git worktree, because that pairing IS
+# the bridge and every interesting failure lives in the seam between the two tools.
+Describe 'Set-SvnEolStyle' {
+
+    BeforeAll {
+        $script:EolSvnReady = $false
+        if ((Get-Command svn -ErrorAction SilentlyContinue) -and (Get-Command svnadmin -ErrorAction SilentlyContinue)) {
+            $script:EolSvnReady = $true
+        }
+
+        function New-SvnGitPair {
+            param([string]$Tag = 'eolapply')
+            $dir = New-IsolatedRepoRoot $Tag
+            $repo = Join-Path $dir 'repo'
+            $wc = Join-Path $dir 'wc'
+            & svnadmin create $repo 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'svnadmin create failed' }
+            # file:/// needs the forward-slash spelling of the Windows path.
+            $url = 'file:///' + ($repo -replace '\\', '/')
+            & svn --non-interactive checkout -q $url $wc 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
+            # The tree has to declare eol-style before the push path will mark anything: one
+            # signal governs both that decision and the bridge's git mode, so they cannot disagree.
+            Push-Location -LiteralPath $wc
+            try { & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null } finally { Pop-Location }
+
+            Invoke-GitSilent $wc init -q -b main
+            Invoke-GitSilent $wc config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $wc config user.name 'turbo-plugin-test'
+            Invoke-GitSilent $wc config core.autocrlf false
+
+            # Byte-exact writes: Set-Content would impose its own newline handling and the mixed
+            # fixture would stop being mixed.
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $wc 'text.txt'), "a`nb`n", $enc)
+            [System.IO.File]::WriteAllText((Join-Path $wc 'mixed.txt'), "a`r`nb`n", $enc)
+            [System.IO.File]::WriteAllBytes((Join-Path $wc 'blob.bin'), [byte[]](97, 0, 98, 0))
+
+            Invoke-GitSilent $wc add -A
+            Invoke-GitSilent $wc commit -q -m seed
+            & svn --non-interactive add -q (Join-Path $wc 'text.txt') (Join-Path $wc 'mixed.txt') (Join-Path $wc 'blob.bin') 2>$null | Out-Null
+            return @{ Dir = $dir; Wc = $wc }
+        }
+
+        function Get-EolProp {
+            param([string]$File)
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $v = (& svn --non-interactive propget svn:eol-style $File 2>$null | Out-String) } catch { $v = '' } finally { $ErrorActionPreference = $old }
+            return "$v".Trim()
+        }
+    }
+
+    It 'sets the property on the text file and on neither the mixed nor the binary one' {
+        # Set-ItResult inside the It, never -Skip:, because -Skip: is evaluated during Pester's
+        # DISCOVERY phase where a flag set in BeforeAll is still $null.
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
+        $pair = New-SvnGitPair 'eolapply'
+        try {
+            $n = Set-SvnEolStyle -Bridge $pair.Wc -Path @('text.txt', 'mixed.txt', 'blob.bin')
+            (Get-EolProp (Join-Path $pair.Wc 'text.txt')) | Should -Be 'native'
+            # A binary carrying svn:eol-style comes back corrupted; a mixed-ending file makes
+            # `svn commit` fail atomically. Neither may be touched.
+            (Get-EolProp (Join-Path $pair.Wc 'mixed.txt')) | Should -BeNullOrEmpty
+            (Get-EolProp (Join-Path $pair.Wc 'blob.bin')) | Should -BeNullOrEmpty
+            $n | Should -Be 1
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $pair.Dir
+        }
+    }
+
+    It 'records no second property change when called twice' {
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
+        $pair = New-SvnGitPair 'eolidem2'
+        try {
+            $null = Set-SvnEolStyle -Bridge $pair.Wc -Path @('text.txt')
+            & svn --non-interactive commit -q -m 'first' $pair.Wc 2>$null | Out-Null
+            $null = Set-SvnEolStyle -Bridge $pair.Wc -Path @('text.txt')
+            # Status of the FILE, not of the working copy: a bare `svn status` also reports the
+            # unversioned .git directory as '?', which the real bridge hides behind svn:ignore=.git
+            # but a bare fixture does not.
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $st = (& svn --non-interactive status (Join-Path $pair.Wc 'text.txt') 2>$null | Out-String) } finally { $ErrorActionPreference = $old }
+            "$st".Trim() | Should -BeNullOrEmpty
+        } finally {
+            Remove-IsolatedRepoRoot -Dir $pair.Dir
+        }
+    }
+
+    It 'does nothing, and calls no svn, for an empty path list' {
+        Set-SvnEolStyle -Bridge $PSScriptRoot -Path @() | Should -Be 0
+    }
+
+    # The gate. Marking individual files in a tree that has not been migrated is not a harmless
+    # head start: svn starts writing platform endings for exactly those files while the bridge's
+    # git side is still pinned to LF for everything else, and the bridge goes permanently dirty.
+    It 'marks nothing until the tree itself declares svn:eol-style' {
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
+        $dir = New-IsolatedRepoRoot 'eolgate'
+        try {
+            $repo = Join-Path $dir 'repo'
+            $wc = Join-Path $dir 'wc'
+            & svnadmin create $repo 2>$null | Out-Null
+            $url = 'file:///' + ($repo -replace '\\', '/')
+            & svn --non-interactive checkout -q $url $wc 2>$null | Out-Null
+            # Deliberately NO svn:auto-props here -- that is the whole point of the case.
+            Invoke-GitSilent $wc init -q -b main
+            Invoke-GitSilent $wc config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $wc config user.name 'turbo-plugin-test'
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $wc 'text.txt'), "a`nb`n", $enc)
+            Invoke-GitSilent $wc add -A
+            Invoke-GitSilent $wc commit -q -m seed
+            & svn --non-interactive add -q (Join-Path $wc 'text.txt') 2>$null | Out-Null
+
+            Set-SvnEolStyle -Bridge $wc -Path @('text.txt') | Should -Be 0
+            (Get-EolProp (Join-Path $wc 'text.txt')) | Should -BeNullOrEmpty
         } finally {
             Remove-IsolatedRepoRoot $dir
         }

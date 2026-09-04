@@ -242,6 +242,33 @@ set +e
     exit 0
   fi
 
+  # Every text file in this changeset must carry svn:eol-style before the commit, because that
+  # property is the only reason SVN normalises line endings on the way in. Without it svn stores
+  # the working copy's bytes verbatim -- and this bridge deliberately follows the platform, so on
+  # Windows those bytes are CRLF. Setting it here is what lets the bridge stop being pinned to LF
+  # while SVN still ends up holding LF, the same division of labour git has with GitHub.
+  #
+  # Deletions are excluded: there is no working file left to translate.
+  EOL_SCOPE=()
+  for entry in ${COMMIT_DISPLAY[@]+"${COMMIT_DISPLAY[@]}"}; do
+    entry_status="${entry%%$'\t'*}"
+    entry_path="${entry#*$'\t'}"
+    [[ "$entry_status" == 'D' ]] && continue
+    [[ -n "$entry_path" ]] && EOL_SCOPE+=("$entry_path")
+  done
+  if [[ ${#EOL_SCOPE[@]} -gt 0 ]]; then
+    # Aborts the push rather than committing anyway: pushing CRLF into a repository that stores
+    # LF is precisely the silent corruption this whole mechanism exists to prevent, and it is not
+    # visible afterwards in either tool.
+    if ! EOL_MARKED="$(apply_svn_eol_style "$REMOTE_PATH" "${EOL_SCOPE[@]}")"; then
+      echo 'Error: could not set svn:eol-style on the files being committed; aborting (pins retained for retry).' >&2
+      exit 1
+    fi
+    if [[ "$EOL_MARKED" != '0' ]]; then
+      echo "Marked $EOL_MARKED file(s) with svn:eol-style=native."
+    fi
+  fi
+
   # U4/KTD5: fold the tp:last-aligned-rev advance into THIS content commit. Set the property on the
   # branch root and add '.' as a --depth empty target so ONLY its property rides along (no recursion
   # into descendants, no separate property revision). Explicit file targets still commit regardless

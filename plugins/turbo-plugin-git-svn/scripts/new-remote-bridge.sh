@@ -119,11 +119,11 @@ trap _rollback_bridge ERR
 
 git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$BASE_REF"
 git -C "$MAIN_WORKTREE" worktree add --no-checkout "$REMOTE_PATH" "$REMOTE_BRANCH"
-# Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order matters:
-# with core.autocrlf still true, `worktree add` would write CRLF and the files on disk would no
-# longer match their blobs -- and for a bridge whose SVN side does not carry them yet, that turns
-# a harmless "phantom M" into a real diff the drift check would report.
-ensure_bridge_eol_faithful "$MAIN_WORKTREE" "$REMOTE_PATH"
+# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN matters:
+# rather than assuming: with no svn:eol-style there yet svn writes LF, so git must be pinned
+# to match -- otherwise core.autocrlf=true has the checkout write CRLF and every guard that
+# asks whether the bridge is clean fires at once. The mode flips after /tp-init-svn-eol-style.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 # --no-checkout leaves the index EMPTY, so populate explicitly; now the bytes on disk are the
 # bytes git stores.
 git -C "$REMOTE_PATH" reset --hard --quiet

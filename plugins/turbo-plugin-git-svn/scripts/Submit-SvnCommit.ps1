@@ -245,6 +245,25 @@ try {
             Write-Output "No changes to commit to SVN (all pending changes are git-ignored)"
             $noCommit = $true
         } else {
+            # Every text file in this changeset must carry svn:eol-style before the commit, because
+            # that property is the only reason SVN normalises line endings on the way in. Without it
+            # svn stores the working copy's bytes verbatim -- and this bridge deliberately follows
+            # the platform, so on Windows those bytes are CRLF. Setting it here is what lets the
+            # bridge stop being pinned to LF while SVN still ends up holding LF, the same division
+            # of labour git has with GitHub.
+            #
+            # Deletions are excluded: there is no working file left to translate.
+            $eolScope = @($commitDisplay | Where-Object { $_.Status -ne 'D' } | ForEach-Object { $_.Path })
+            if ($eolScope.Count -gt 0) {
+                # Throws rather than committing anyway: pushing CRLF into a repository that stores
+                # LF is precisely the silent corruption this mechanism exists to prevent, and it is
+                # not visible afterwards in either tool.
+                $eolMarked = Set-SvnEolStyle -Bridge $remote.Path -Path $eolScope
+                if ($eolMarked -gt 0) {
+                    Write-Output "Marked $eolMarked file(s) with svn:eol-style=native."
+                }
+            }
+
             # U4/KTD5: fold the tp:last-aligned-rev advance into THIS content commit. Set the property
             # on the branch root and add '.' as a --depth empty target so ONLY its property rides along
             # (no recursion, no separate property revision). Explicit file targets still commit under
