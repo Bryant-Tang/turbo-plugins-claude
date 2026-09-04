@@ -257,11 +257,11 @@ trap _rollback ERR
 # ancestor on main and was verified non-empty above.
 git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$FORK_COMMIT"
 git -C "$MAIN_WORKTREE" worktree add --no-checkout "$REMOTE_PATH" "$REMOTE_BRANCH"
-# Clear any pin left behind by 0.7.x BEFORE anything materialises files, so this bridge matters:
-# written the same way every other working copy is. The old pin forced LF here because SVN,
-# carrying no svn:eol-style, stored whatever bytes it was handed; SVN normalises on commit now,
-# so a bridge that behaved differently from the user own worktrees would be a pure surprise.
-ensure_bridge_eol_platform_native "$MAIN_WORKTREE" "$REMOTE_PATH"
+# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN matters:
+# rather than assuming: with no svn:eol-style there yet svn writes LF, so git must be pinned
+# to match -- otherwise core.autocrlf=true has the checkout write CRLF and every guard that
+# asks whether the bridge is clean fires at once. The mode flips after /tp-init-svn-eol-style.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 git -C "$REMOTE_PATH" reset --hard --quiet
 # EMPTY the worktree (keep the .git pointer) so the plain `svn checkout` below yields the EXACT SVN
 # branch tree. `git add -A` then records precisely the branch's delta from trunk (adds/mods/deletes)

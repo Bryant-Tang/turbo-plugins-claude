@@ -1592,13 +1592,18 @@ Describe 'svn shim injects --non-interactive (issue #137)' {
     }
 }
 
-# ─── Set-BridgeEolPlatformNative — the bridge stops being pinned (#164, #167) ────────────────
+# ─── Set-BridgeEolMode — the bridge follows whichever mode the SVN side is in (#164, #167) ───
 # The fixture sets repo-level core.eol to `crlf` rather than relying on the `native` default, so
 # these cases behave identically on Linux: `native` there is already LF, and a test that leaned on
 # it would pass for free on half of CI.
-Describe 'Set-BridgeEolPlatformNative' {
+Describe 'Set-BridgeEolMode' {
 
     BeforeAll {
+        $script:EolSvnReady = $false
+        if ((Get-Command svn -ErrorAction SilentlyContinue) -and (Get-Command svnadmin -ErrorAction SilentlyContinue)) {
+            $script:EolSvnReady = $true
+        }
+
         function New-EolFixture {
             param([string]$Tag = 'eolpin')
             $dir = New-IsolatedRepoRoot $Tag
@@ -1639,22 +1644,55 @@ Describe 'Set-BridgeEolPlatformNative' {
         }
     }
 
-    # The upgrade path is the case that matters. A bridge created under 0.7.x carries the old pin
-    # in its per-worktree config, so "stop setting it" would not be enough: those bridges would
-    # stay on the old behaviour forever while newly created ones moved on, silently.
-    It 'removes a pin left behind by 0.7.x so the bridge follows the repo again' {
+    # Mode 1: SVN carries no svn:eol-style, so `svn update` writes the stored bytes verbatim (LF)
+    # and git has to be pinned to match. Unpinned, core.autocrlf=true would make git expect CRLF
+    # and read the whole tree as modified.
+    It 'pins the bridge to LF while the SVN side declares nothing' {
+        $dir = New-EolFixture 'eolpin'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            Set-BridgeEolMode -MainWorktree $dir -Bridge $bridge
+            # The mode only bites when git next writes the file. The repo's own core.eol is crlf,
+            # so LF here can only come from the pin.
+            Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
+            Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 0
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    # Mode 2: the tree declares svn:eol-style through the root svn:auto-props the migration writes,
+    # so `svn update` starts writing platform endings and the pin has to go. It UNSETS rather than
+    # merely not setting: a bridge pinned before the migration would otherwise stay on the old mode.
+    It 'removes the pin once the SVN side declares svn:eol-style' {
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
         $dir = New-EolFixture 'eolunpin'
         try {
             $bridge = Join-Path $dir 'bridge'
-            # Recreate exactly what 0.7.x wrote, then prove it is actually in force BEFORE removing
-            # it. Without that step, "CRLF afterwards" could equally mean the pin never worked here.
+            $svnrepo = Join-Path $dir 'svnrepo'
+            & svnadmin create $svnrepo 2>$null | Out-Null
+            $url = 'file:///' + ($svnrepo -replace '\\', '/')
+            & svn --non-interactive checkout -q --force $url $bridge 2>$null | Out-Null
+            Push-Location -LiteralPath $bridge
+            try {
+                # propget reads the working-copy value, so no commit is needed for detection.
+                & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+            } finally {
+                Pop-Location
+            }
+
+            # Pin it first and prove the pin was in force -- otherwise "CRLF afterwards" could
+            # equally mean the pin never worked here and the test would pass having done nothing.
             Invoke-GitSilent $dir config extensions.worktreeConfig true
             Invoke-GitSilent $bridge config --worktree core.autocrlf false
             Invoke-GitSilent $bridge config --worktree core.eol lf
             Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
             Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 0
 
-            Set-BridgeEolPlatformNative -MainWorktree $dir -Bridge $bridge
+            Set-BridgeEolMode -MainWorktree $dir -Bridge $bridge
 
             Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
             # 3 CRLF lines: the bridge now follows the repo's own setting, like any other worktree.
@@ -1664,30 +1702,13 @@ Describe 'Set-BridgeEolPlatformNative' {
         }
     }
 
-    # A bridge that never carried the pin must not acquire a repo-wide extension it has no use
-    # for, and `git config --unset` on an absent key exits 5 -- not a failure.
-    It 'is a clean no-op, twice over, when no pin is present' {
-        $dir = New-EolFixture 'eolnoop'
-        try {
-            $bridge = Join-Path $dir 'bridge'
-            Set-BridgeEolPlatformNative -MainWorktree $dir -Bridge $bridge
-            Set-BridgeEolPlatformNative -MainWorktree $dir -Bridge $bridge
-            $ext = (Read-Git -Cwd $dir -GitArgs @('config', '--get', 'extensions.worktreeConfig')).Text.Trim()
-            $ext | Should -BeNullOrEmpty
-        } finally {
-            Remove-IsolatedRepoRoot $dir
-        }
-    }
-
-    It "leaves the repository's own core.eol alone" {
+    It "leaves the repository's own EOL settings alone" {
         $dir = New-EolFixture 'eolscope'
         try {
             $bridge = Join-Path $dir 'bridge'
-            Invoke-GitSilent $dir config extensions.worktreeConfig true
-            Invoke-GitSilent $bridge config --worktree core.eol lf
-            Set-BridgeEolPlatformNative -MainWorktree $dir -Bridge $bridge
-            $eol = (Read-Git -Cwd $dir -GitArgs @('config', '--get', 'core.eol')).Text.Trim()
-            $eol | Should -Be 'crlf'
+            Set-BridgeEolMode -MainWorktree $dir -Bridge $bridge
+            (Read-Git -Cwd $dir -GitArgs @('config', '--get', 'core.eol')).Text.Trim() | Should -Be 'crlf'
+            (Read-Git -Cwd $dir -GitArgs @('config', '--get', 'core.autocrlf')).Text.Trim() | Should -Be 'false'
         } finally {
             Remove-IsolatedRepoRoot $dir
         }
@@ -1810,6 +1831,10 @@ Describe 'Set-SvnEolStyle' {
             $url = 'file:///' + ($repo -replace '\\', '/')
             & svn --non-interactive checkout -q $url $wc 2>$null | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
+            # The tree has to declare eol-style before the push path will mark anything: one
+            # signal governs both that decision and the bridge's git mode, so they cannot disagree.
+            Push-Location -LiteralPath $wc
+            try { & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null } finally { Pop-Location }
 
             Invoke-GitSilent $wc init -q -b main
             Invoke-GitSilent $wc config user.email 'test@turbo-plugin'
@@ -1883,5 +1908,37 @@ Describe 'Set-SvnEolStyle' {
 
     It 'does nothing, and calls no svn, for an empty path list' {
         Set-SvnEolStyle -Bridge $PSScriptRoot -Path @() | Should -Be 0
+    }
+
+    # The gate. Marking individual files in a tree that has not been migrated is not a harmless
+    # head start: svn starts writing platform endings for exactly those files while the bridge's
+    # git side is still pinned to LF for everything else, and the bridge goes permanently dirty.
+    It 'marks nothing until the tree itself declares svn:eol-style' {
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
+        $dir = New-IsolatedRepoRoot 'eolgate'
+        try {
+            $repo = Join-Path $dir 'repo'
+            $wc = Join-Path $dir 'wc'
+            & svnadmin create $repo 2>$null | Out-Null
+            $url = 'file:///' + ($repo -replace '\\', '/')
+            & svn --non-interactive checkout -q $url $wc 2>$null | Out-Null
+            # Deliberately NO svn:auto-props here -- that is the whole point of the case.
+            Invoke-GitSilent $wc init -q -b main
+            Invoke-GitSilent $wc config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $wc config user.name 'turbo-plugin-test'
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $wc 'text.txt'), "a`nb`n", $enc)
+            Invoke-GitSilent $wc add -A
+            Invoke-GitSilent $wc commit -q -m seed
+            & svn --non-interactive add -q (Join-Path $wc 'text.txt') 2>$null | Out-Null
+
+            Set-SvnEolStyle -Bridge $wc -Path @('text.txt') | Should -Be 0
+            (Get-EolProp (Join-Path $wc 'text.txt')) | Should -BeNullOrEmpty
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
     }
 }

@@ -255,11 +255,11 @@ try {
 
         & git -C $mainWorktree worktree add --no-checkout $remoteWorktreePath $remoteBranch
         if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
-        # Clear any pin left behind by 0.7.x BEFORE anything materialises files, so this bridge
-        # gets written the same way every other working copy is. The old pin forced LF here
-        # because SVN, carrying no svn:eol-style, stored whatever bytes it was handed; SVN now
-        # normalises on commit, so a differing bridge would be a surprise with no purpose left.
-        Set-BridgeEolPlatformNative -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
+        # Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN
+        # tree rather than assuming: with no svn:eol-style there yet svn writes LF, so git must
+        # be pinned to match -- otherwise core.autocrlf=true has the checkout write CRLF and
+        # every guard asking whether the bridge is clean fires at once.
+        Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
         # --no-checkout leaves the index EMPTY, so populate explicitly; now the bytes on disk
         # are the bytes git stores.
         & git -C $remoteWorktreePath reset --hard --quiet

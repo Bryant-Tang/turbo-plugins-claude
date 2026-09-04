@@ -125,10 +125,10 @@ try {
     # NativeCommandError and the user would lose the conflicting-file list entirely.
     $ea3 = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
-    # Bridges created under 0.7.x still carry the old LF pin in their per-worktree config, and
-    # this is the step that materialises files into the bridge: the merge checks the changed
-    # files out. Clearing it here (idempotent) is what stops those bridges staying on the old.
-    Set-BridgeEolPlatformNative -MainWorktree $mainWorktree -Bridge $remote.Path
+    # Re-assert the bridge EOL mode: this is the step that materialises files into the bridge,
+    # and the mode may have changed since the bridge was created -- /tp-init-svn-eol-style moves
+    # a repository from "git pins LF" to "svn normalises, git follows". Idempotent either way.
+    Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $remote.Path
     & git -C $remote.Path merge --no-ff --no-commit -m $mergeMsg $Branch 2>$null | Out-Null
     $mergeExit = $LASTEXITCODE
     $ErrorActionPreference = $ea3

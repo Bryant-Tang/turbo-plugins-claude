@@ -167,38 +167,76 @@ ensure_svn_git_excluded() {
   fi
 }
 
-# Let the bridge follow the platform, exactly like the main checkout and any ordinary worktree.
+# Does this SVN tree hand line-ending normalisation to SVN?
 #
-# THIS REPLACES A PIN THAT USED TO DO THE OPPOSITE, and the reversal is deliberate. Through 0.7.x
-# the bridge was pinned to LF because SVN, with no svn:eol-style anywhere, stored whatever bytes it
-# was handed: a bridge following the platform would have written CRLF into a repository whose other
-# files were LF, invisibly, since afterwards git reports clean (it normalises on read) and svn
-# reports clean (it committed exactly what was on disk). Issues #164 and #167 are that story.
+# ONE signal, read by everything that needs the answer -- the bridge's git config mode AND the push
+# path's decision to write the property. Two decisions on two different signals is what broke the
+# pull path once already: the push path was marking individual files while this answered "no"
+# because only `/tp-init-svn-eol-style` writes the root property, so svn started emitting CRLF for
+# those files while git was still pinned to LF and the bridge went permanently dirty.
 #
-# Now that the push path puts svn:eol-style=native on the text files it commits, the normalising
-# happens on SVN's side -- so SVN holds LF and every working copy holds its own platform's endings,
-# which is precisely the arrangement git already has with GitHub. Once SVN does that job, a bridge
-# that behaves differently from every other working copy the user has is just a surprise with no
-# remaining purpose.
+# The root svn:auto-props the migration writes is the signal because it is a property OF THE TREE:
+# it is what makes the whole tree's future files consistent, and it is what other SVN clients obey
+# too. Per-file properties cannot answer the question -- a tree is half-migrated the moment you
+# look at it that way.
 #
-# It UNSETS rather than merely not setting: a bridge created under 0.7.x still carries the old pin
-# in its per-worktree config, and leaving it there would keep those bridges silently on the old
-# behaviour forever while new ones moved on. Scoped to the bridge, so the user's own worktrees are
-# untouched either way. Idempotent.
+# Returns 0 when declared. A bridge that is not an SVN working copy yet -- this runs right after
+# `git worktree add --no-checkout`, before the svn checkout -- answers no, the safe direction.
+svn_tree_declares_eol_style() {
+  local bridge="$1" autoprops=''
+  [ -d "$bridge/.svn" ] || return 1
+  autoprops="$(cd "$bridge" && svn propget svn:auto-props --show-inherited-props '.' 2>/dev/null || true)"
+  case "$autoprops" in
+    *svn:eol-style*) return 0 ;;
+  esac
+  return 1
+}
+
+# Put the bridge's EOL handling in whichever of the two modes matches the SVN side.
+#
+# The bridge is the one directory written by BOTH tools, so its git config has to agree with what
+# svn puts on disk. Which endings svn writes depends on whether the tree carries svn:eol-style,
+# and the two states need opposite settings:
+#
+#   SVN has no eol-style   -> `svn update` writes the stored bytes verbatim, i.e. LF. git must be
+#                             pinned to LF, or `core.autocrlf=true` (the Git for Windows SYSTEM
+#                             default) makes it expect CRLF and report the entire tree as modified.
+#   SVN has eol-style      -> `svn update` writes the platform's endings, CRLF on Windows. The pin
+#                             must go, or git expects LF and reports the entire tree as modified.
+#
+# Neither failure is subtle once it happens -- every guard that asks "is this bridge clean?" fires
+# at once -- but picking the mode from ambient assumptions rather than from the tree is how you get
+# there. So it is read from the tree, every time.
+#
+# The LF pin is what 0.7.x did unconditionally, and it was right for a repository with no
+# svn:eol-style anywhere: a bridge following the platform would have written CRLF into a repository
+# whose other files were LF, invisibly, since afterwards git reports clean (it normalises on read)
+# and svn reports clean (it committed exactly what was on disk). Issues #164 and #167 are that
+# story. `/tp-init-svn-eol-style` is what moves a repository to the other mode.
+#
+# Scoped to the bridge via per-worktree config, so the user's own worktrees are untouched in either
+# mode. Idempotent.
 #
 # $1: main worktree path. $2: bridge worktree path.
-ensure_bridge_eol_platform_native() {
+ensure_bridge_eol_mode() {
   local main_worktree="$1" bridge="$2"
-  # Nothing to undo unless per-worktree config was ever enabled -- and if it was not, the pin
-  # cannot exist. Checked rather than enabled, so a repository that never carried the pin is not
-  # given a repo-wide extension it has no use for.
-  local ext
-  ext="$(git -C "$main_worktree" config --get extensions.worktreeConfig 2>/dev/null || true)"
-  [ "$ext" = 'true' ] || return 0
-  # `--unset` on a key that is not set exits 5. That is the ordinary case for a bridge created
-  # after this change, so it must not be read as a failure.
-  git -C "$bridge" config --worktree --unset core.autocrlf >/dev/null 2>&1 || true
-  git -C "$bridge" config --worktree --unset core.eol >/dev/null 2>&1 || true
+
+  local declared=0
+  if svn_tree_declares_eol_style "$bridge"; then declared=1; fi
+
+  # extensions.worktreeConfig is repo-wide and must be on before --worktree writes are honoured.
+  # Enabling it is non-destructive: existing config stays in the shared file.
+  git -C "$main_worktree" config extensions.worktreeConfig true || return 1
+
+  if [ "$declared" -eq 1 ]; then
+    # `--unset` on a key that is not set exits 5, which is the ordinary case for a bridge that
+    # was never pinned.
+    git -C "$bridge" config --worktree --unset core.autocrlf >/dev/null 2>&1 || true
+    git -C "$bridge" config --worktree --unset core.eol >/dev/null 2>&1 || true
+  else
+    git -C "$bridge" config --worktree core.autocrlf false || return 1
+    git -C "$bridge" config --worktree core.eol lf || return 1
+  fi
   return 0
 }
 
@@ -281,6 +319,13 @@ list_svn_eol_candidates() {
 apply_svn_eol_style() {
   local bridge="$1"; shift
   [ "$#" -gt 0 ] || { echo 0; return 0; }
+
+  # Only once the TREE has been switched over. Marking individual files in a tree that has not is
+  # not a harmless head start: svn immediately starts writing platform endings for exactly those
+  # files while the bridge's git side is still pinned to LF for the rest, and the bridge goes
+  # permanently dirty. A repository is in one mode or the other, and `/tp-init-svn-eol-style` is
+  # the thing that moves it.
+  if ! svn_tree_declares_eol_style "$bridge"; then echo 0; return 0; fi
 
   local cand chg both rc=0
   cand="$(mktemp)"; chg="$(mktemp)"; both="$(mktemp)"

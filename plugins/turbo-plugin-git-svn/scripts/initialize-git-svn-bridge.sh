@@ -292,11 +292,11 @@ trap _rollback ERR
 
 # ---- step 7: build the EMPTY bridge worktree (orphan branch, empty index + working tree). ----
 git -C "$MAIN_WORKTREE" worktree add --detach --no-checkout "$REMOTE_PATH"
-# Clear any pin left behind by 0.7.x BEFORE anything materialises files, so this bridge matters:
-# written the same way every other working copy is. The old pin forced LF here because SVN,
-# carrying no svn:eol-style, stored whatever bytes it was handed; SVN normalises on commit now,
-# so a bridge that behaved differently from the user own worktrees would be a pure surprise.
-ensure_bridge_eol_platform_native "$MAIN_WORKTREE" "$REMOTE_PATH"
+# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN matters:
+# rather than assuming: with no svn:eol-style there yet svn writes LF, so git must be pinned
+# to match -- otherwise core.autocrlf=true has the checkout write CRLF and every guard that
+# asks whether the bridge is clean fires at once. The mode flips after /tp-init-svn-eol-style.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 git -C "$REMOTE_PATH" checkout --orphan "$REMOTE_BRANCH"
 # Clear the index. Tolerate "pathspec '.' did not match" when the index is already empty.
 git -C "$REMOTE_PATH" rm -rf --cached . >/dev/null 2>&1 || true

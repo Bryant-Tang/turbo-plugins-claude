@@ -20,7 +20,7 @@
 #   - write_utf8_no_bom            — CJK no-BOM byte-equal to canonical UTF-8 (R6)
 #   - read_turbo_plugin_config     — flat mode + section/key sentinel + top-level key
 #   - resolve_config_value         — config merge chain + config.local.toml override
-#   - ensure_bridge_eol_platform_native — legacy pin removed / clean no-op / scoped (#164, #167)
+#   - ensure_bridge_eol_mode — legacy pin removed / clean no-op / scoped (#164, #167)
 #   - list_svn_eol_candidates      — binary and mixed-ending files excluded (#167)
 #   - apply_svn_eol_style          — svn:eol-style lands on text only, idempotent (#167)
 
@@ -1518,7 +1518,7 @@ test_every_svn_calling_script_sources_the_shim() {
     assertTrue "expected several svn-invoking scripts, found $invoking" "[ '$invoking' -ge 6 ]"
 }
 
-# ─── ensure_bridge_eol_platform_native — the bridge stops being pinned (#164, #167) ──────────
+# ─── ensure_bridge_eol_mode — the bridge stops being pinned (#164, #167) ──────────
 # Build a repo whose blobs are LF, whose attributes mark everything text, and whose checkout is
 # configured to write CRLF. `core.eol` is set to `crlf` rather than left at its `native` default
 # on purpose: `native` is CRLF only on Windows, so relying on it would make these cases pass for
@@ -1547,18 +1547,51 @@ count_cr_bytes() {
     tr -dc '\r' < "$1" | wc -c | tr -d ' '
 }
 
-# The upgrade path is the case that matters. A bridge created under 0.7.x carries the old pin in
-# its per-worktree config, so "stop setting it" would not be enough: those bridges would stay on
-# the old behaviour forever while newly created ones moved on, and nothing anywhere would say so.
-test_bridge_eol_removes_a_legacy_pin() {
+# Mode 1: SVN carries no svn:eol-style, so `svn update` writes the stored bytes verbatim (LF) and
+# git has to be pinned to match. Unpinned, core.autocrlf=true would make git expect CRLF and read
+# the whole tree as modified -- which is what took out 21 pull-path tests when this function was
+# briefly made unconditional.
+test_bridge_eol_pins_lf_when_svn_declares_nothing() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolpin-XXXXXX)"
+    (
+        make_eol_fixture "$tmp" || exit 98
+        ensure_bridge_eol_mode "$tmp" "$tmp/bridge" || exit 97
+
+        # The mode only bites when git next writes the file, so force a fresh checkout. The repo's
+        # own core.eol is crlf, so LF here can only come from the pin.
+        rm -f "$tmp/bridge/f.txt"
+        git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
+        cr="$(count_cr_bytes "$tmp/bridge/f.txt")"
+        if [ "$cr" -ne 0 ]; then
+            echo "bridge was not pinned to LF: $cr CR bytes" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'with nothing declared on the SVN side the bridge is pinned to LF' 0 "$rc"
+}
+
+# Mode 2: the tree declares svn:eol-style through the root svn:auto-props the migration writes, so
+# `svn update` starts writing platform endings and the pin has to go. It UNSETS rather than merely
+# not setting: a bridge pinned before the migration would otherwise stay on the old mode forever.
+test_bridge_eol_unpins_once_svn_declares_eol_style() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
     local tmp rc
     tmp="$(mktemp -d -t turbo-common-eolunpin-XXXXXX)"
     (
         make_eol_fixture "$tmp" || exit 98
 
-        # Recreate exactly what 0.7.x wrote, then prove it is actually in force BEFORE removing
-        # it. Without that step, "CRLF afterwards" could equally mean the pin never worked here
-        # and the test would pass without the removal doing anything.
+        # Make the bridge a real SVN working copy and declare eol-style the way the migration
+        # does. propget reads the working-copy value, so no commit is needed for detection.
+        svnadmin create "$tmp/svnrepo" >/dev/null 2>&1 || exit 98
+        url="file:///$(cygpath -m "$tmp/svnrepo" 2>/dev/null || echo "$tmp/svnrepo")"
+        svn --non-interactive checkout -q --force "$url" "$tmp/bridge" >/dev/null 2>&1 || exit 98
+        ( cd "$tmp/bridge" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
+
+        # Pin it first, then prove the pin was actually in force -- otherwise "CRLF afterwards"
+        # could equally mean the pin never worked here and the test would pass having done nothing.
         git -C "$tmp" config extensions.worktreeConfig true || exit 98
         git -C "$tmp/bridge" config --worktree core.autocrlf false || exit 98
         git -C "$tmp/bridge" config --worktree core.eol lf || exit 98
@@ -1566,10 +1599,10 @@ test_bridge_eol_removes_a_legacy_pin() {
         git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
         pinned="$(count_cr_bytes "$tmp/bridge/f.txt")"
         if [ "$pinned" -ne 0 ]; then
-            echo "fixture: the legacy pin was not in force (got $pinned CR bytes)" >&2; exit 1
+            echo "fixture: the pin was not in force (got $pinned CR bytes)" >&2; exit 1
         fi
 
-        ensure_bridge_eol_platform_native "$tmp" "$tmp/bridge" || exit 97
+        ensure_bridge_eol_mode "$tmp" "$tmp/bridge" || exit 97
 
         rm -f "$tmp/bridge/f.txt"
         git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
@@ -1582,48 +1615,31 @@ test_bridge_eol_removes_a_legacy_pin() {
     )
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
-    assertEquals 'a bridge pinned by 0.7.x goes back to following the repo settings' 0 "$rc"
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'once svn:eol-style is declared the pin is removed' 0 "$rc"
 }
 
-# A bridge that never carried the pin must not acquire a repo-wide extension it has no use for,
-# and `git config --unset` on an absent key exits 5 -- which must not be read as a failure.
-test_bridge_eol_no_pin_is_a_clean_no_op() {
-    local tmp rc
-    tmp="$(mktemp -d -t turbo-common-eolnoop-XXXXXX)"
-    (
-        make_eol_fixture "$tmp" || exit 98
-        ensure_bridge_eol_platform_native "$tmp" "$tmp/bridge" || exit 97
-        ensure_bridge_eol_platform_native "$tmp" "$tmp/bridge" || exit 95
-        ext="$(git -C "$tmp" config --get extensions.worktreeConfig 2>/dev/null || true)"
-        if [ -n "$ext" ]; then
-            echo "extensions.worktreeConfig should not have been enabled, got '$ext'" >&2; exit 1
-        fi
-        exit 0
-    )
-    rc=$?
-    rm -rf "$tmp" 2>/dev/null || true
-    assertEquals 'with no pin present it succeeds twice and enables nothing' 0 "$rc"
-}
-
-# Removing the pin is scoped to the bridge; the settings the user chose for the repository are
-# none of this function's business.
+# Whichever mode it picks is scoped to the bridge; the settings the user chose for the repository
+# are none of this function's business.
 test_bridge_eol_leaves_repo_settings_alone() {
     local tmp rc
     tmp="$(mktemp -d -t turbo-common-eolscope-XXXXXX)"
     (
         make_eol_fixture "$tmp" || exit 98
-        git -C "$tmp" config extensions.worktreeConfig true || exit 98
-        git -C "$tmp/bridge" config --worktree core.eol lf || exit 98
-        ensure_bridge_eol_platform_native "$tmp" "$tmp/bridge" || exit 97
+        ensure_bridge_eol_mode "$tmp" "$tmp/bridge" || exit 97
         eol="$(git -C "$tmp" config --get core.eol 2>/dev/null || true)"
         if [ "$eol" != 'crlf' ]; then
             echo "the repository's own core.eol was changed to '$eol'" >&2; exit 1
+        fi
+        autocrlf="$(git -C "$tmp" config --get core.autocrlf 2>/dev/null || true)"
+        if [ "$autocrlf" != 'false' ]; then
+            echo "the repository's own core.autocrlf was changed to '$autocrlf'" >&2; exit 1
         fi
         exit 0
     )
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
-    assertEquals "the repository's own core.eol is left alone" 0 "$rc"
+    assertEquals "the repository's own EOL settings are left alone" 0 "$rc"
 }
 
 # ─── list_svn_eol_candidates — who may carry svn:eol-style ───────────────────────────────────
@@ -1753,6 +1769,9 @@ test_apply_svn_eol_style_sets_text_only() {
         # svn.exe cannot read an MSYS /tmp path; it needs the Windows spelling.
         url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
         svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
+        # The tree has to declare eol-style before the push path will mark anything: one signal
+        # governs both that decision and the bridge's git mode, so that they cannot disagree.
+        ( cd "$wc" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
 
         git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
         git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
@@ -1793,6 +1812,45 @@ test_apply_svn_eol_style_sets_text_only() {
     assertEquals 'svn:eol-style lands on the text file and on neither the mixed nor the binary one' 0 "$rc"
 }
 
+# The gate. Marking individual files in a tree that has not been migrated is not a harmless head
+# start: svn starts writing platform endings for exactly those files while the bridge's git side
+# is still pinned to LF for everything else, and the bridge goes permanently dirty. That is not a
+# hypothetical -- it took out 21 pull-path tests before the two decisions were put on one signal.
+test_apply_svn_eol_style_does_nothing_before_the_tree_declares() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolgate-XXXXXX)"
+    (
+        repo="$tmp/repo"
+        wc="$tmp/wc"
+        svnadmin create "$repo" >/dev/null 2>&1 || exit 98
+        url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
+        svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
+        # Deliberately NO svn:auto-props here -- that is the whole point of the case.
+        git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
+        git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
+        git -C "$wc" config user.name 'turbo-plugin-test' || exit 98
+        printf 'a\nb\n' > "$wc/text.txt"
+        git -C "$wc" add -A >/dev/null 2>&1 || exit 98
+        git -C "$wc" commit -qm seed >/dev/null 2>&1 || exit 98
+        svn --non-interactive add -q "$wc/text.txt" >/dev/null 2>&1 || exit 98
+
+        n="$(apply_svn_eol_style "$wc" 'text.txt')" || exit 97
+        if [ "$n" != '0' ]; then
+            echo "expected 0 files marked before the tree declares, got '$n'" >&2; exit 1
+        fi
+        got="$(svn --non-interactive propget svn:eol-style "$wc/text.txt" 2>/dev/null | tr -d '\r\n')"
+        if [ -n "$got" ]; then
+            echo "the property was set anyway: '$got'" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'nothing is marked until the tree itself declares svn:eol-style' 0 "$rc"
+}
+
 # A second call must not turn into a second property change: svn treats setting a property to the
 # value it already holds as a no-op, and this test is what keeps that assumption honest.
 test_apply_svn_eol_style_is_idempotent() {
@@ -1805,6 +1863,9 @@ test_apply_svn_eol_style_is_idempotent() {
         svnadmin create "$repo" >/dev/null 2>&1 || exit 98
         url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
         svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
+        # The tree has to declare eol-style before the push path will mark anything: one signal
+        # governs both that decision and the bridge's git mode, so that they cannot disagree.
+        ( cd "$wc" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
         git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
         git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
         git -C "$wc" config user.name 'turbo-plugin-test' || exit 98

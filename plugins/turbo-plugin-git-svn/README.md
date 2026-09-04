@@ -135,7 +135,8 @@ bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用
 ## 行尾：SVN 存 LF，工作副本依平台
 
 分工跟 git + GitHub 完全一樣，只是把 GitHub 換成 SVN：**SVN 儲存 LF，每一份工作副本拿自己
-平台的行尾**。bridge 沒有例外——它跟主 checkout、其它一般 worktree 一樣依平台而定。
+平台的行尾**。跑過 `/tp-init-svn-eol-style` 之後 bridge 也沒有例外——它跟主 checkout、其它
+一般 worktree 一樣依平台而定。
 
 讓這件事成立的是 **`svn:eol-style=native`**。SVN 只會替**帶有這個屬性的檔案**在儲存時把行尾
 正規化成 LF；沒有屬性時它原樣存工作副本的位元組。`native` 不會讓 SVN 用 CRLF 儲存——它只在
@@ -146,12 +147,13 @@ bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用
 | 沒有屬性 | 你推什麼就是什麼 | 同左（原樣取） |
 | `svn:eol-style=native` | **LF** | **CRLF** |
 
-**推送時會自動補屬性**：`/tp-push-to-svn` 在 commit 之前，替變更集裡的文字檔補上
-`svn:eol-style=native`。所以不需要任何「遷移了沒有」的旗標——這次推送碰到的東西事後一定
-正確，未遷移的 repo 是**逐檔收斂**。
+**整個 repo 只會處於兩種模式之一，`/tp-init-svn-eol-style` 是唯一把它從一種移到另一種的
+動作**（見上方 Skills 表）。它會寫入 SVN 且不可逆，所以一律先 `--preview`。
 
-**既有的檔案要跑一次 `/tp-init-svn-eol-style`**（見上方 Skills 表）。它會寫入 SVN 且不可逆，
-所以一律先 `--preview`。
+跑過之後，`/tp-push-to-svn` 會在 commit 之前替變更集裡的文字檔補上 `svn:eol-style=native`，
+所以之後新增的檔案自動保持一致。**在那之前它什麼都不會標記**——這不是保守，是必要：只標記
+一部分檔案會讓 SVN 開始對「那些」檔案寫平台行尾，而 bridge 的 git 側仍為其餘檔案釘在 LF，
+兩邊打架、bridge 永久顯示為已修改。這件事實際發生過，讓 21 條拉取路徑測試同時掛掉。
 
 **兩類檔案永遠不會被標記**：
 
@@ -162,10 +164,22 @@ bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用
 判準用 `git ls-files --eol`，也就是 **git 自己的判斷**——在這個流程裡 git 本來就是內容的
 源頭。而且它一個指令掃完整棵樹：逐檔探測內容在兩萬檔的樹上，是「幾秒」與「幾十分鐘」的差別。
 
-> **0.7.x 之前的行為相反**：那時 bridge 被釘成 LF（`core.autocrlf=false` + `core.eol=lf`），
-> 因為 SVN 那側沒有任何 `svn:eol-style`，一個依平台的 bridge 會把 CRLF 無聲地推進去。現在
-> 正規化的工作由 SVN 做，那個釘選就沒有存在的理由了，並且會被**主動移除**——只是「不再設定」
-> 的話，0.7.x 建立的 bridge 會永遠停在舊行為，而新建的往前走。
+### bridge 的兩種模式（會自己切換，不需要你管）
+
+bridge 是**唯一一個被兩套工具同時寫入**的目錄，所以它的 git 設定必須跟 svn 寫出來的東西一致。
+而 svn 寫出什麼取決於樹上有沒有 `svn:eol-style`——**兩種狀態需要相反的設定**：
+
+| SVN 樹的狀態 | `svn update` 寫出 | bridge 的 git 設定 |
+|---|---|---|
+| 沒有 `svn:eol-style`（遷移前） | LF（原樣） | **釘成 LF**（`core.autocrlf=false` + `core.eol=lf`） |
+| 有 `svn:eol-style`（遷移後） | 平台行尾（Windows 上 CRLF） | **移除釘選**，跟著平台走 |
+
+弄反的後果不隱晦——整棵樹會被 git 判定為已修改，每一道「bridge 乾淨嗎」的守門同時開火。但
+**用環境假設去猜、而不是去讀樹的狀態**，就會弄反。所以這件事每次都從樹上讀，不從假設推。
+
+> 0.7.x 一律釘成 LF，那對一個沒有任何 `svn:eol-style` 的 repo 是對的。`/tp-init-svn-eol-style`
+> 是把 repo 從一種模式移到另一種的那個動作;之後每次呼叫都會自動切到正確的模式，包含**主動
+> 移除**遷移前留下的釘選——只是「不再設定」的話，舊 bridge 會永遠停在舊模式。
 
 ## SVN 路徑被改名時（`svn move` 過的資料夾）
 

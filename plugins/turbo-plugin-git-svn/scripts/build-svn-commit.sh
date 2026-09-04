@@ -107,10 +107,10 @@ if [[ -z "$SVN_BODY" ]]; then
   exit 1
 fi
 
-# Bridges created under 0.7.x still carry the old LF pin in their per-worktree config, and is
+# Re-assert the bridge EOL mode: this is the step that materialises files into the bridge, is
 # the step that actually writes CRLF out: the merge checks the changed files out into the
-# files out. Clearing it here (idempotent) is what stops those bridges staying on the old.
-ensure_bridge_eol_platform_native "$MAIN_WORKTREE" "$REMOTE_PATH"
+# a repository from "git pins LF" to "svn normalises, git follows". Idempotent either way.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 
 if ! git -C "$REMOTE_PATH" merge --no-ff --no-commit -m "Merge branch '$BRANCH' into $REMOTE_BRANCH" "$BRANCH" >/dev/null 2>&1; then
   CONFLICTS="$(git -C "$REMOTE_PATH" -c core.quotePath=false diff --name-only --diff-filter=U)"

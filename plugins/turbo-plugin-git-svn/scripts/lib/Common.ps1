@@ -145,40 +145,91 @@ $script:TpGranularityThreshold = 5
 #
 # Written to info/exclude rather than a .gitignore so it holds whatever content SVN carries, and to
 # the COMMON git dir because git does not read a linked worktree's own info/exclude. Idempotent.
-# Let the bridge follow the platform, exactly like the main checkout and any ordinary worktree.
+# Does this SVN tree hand line-ending normalisation to SVN?
 #
-# THIS REPLACES A PIN THAT USED TO DO THE OPPOSITE, and the reversal is deliberate. Through 0.7.x
-# the bridge was pinned to LF because SVN, with no svn:eol-style anywhere, stored whatever bytes it
-# was handed: a bridge following the platform would have written CRLF into a repository whose other
-# files were LF, invisibly, since afterwards git reports clean (it normalises on read) and svn
-# reports clean (it committed exactly what was on disk). Issues #164 and #167 are that story.
+# ONE signal, read by everything that needs the answer -- the bridge's git config mode AND the push
+# path's decision to write the property. Two decisions on two different signals is what broke the
+# pull path once already: the push path was marking individual files while this answered "no"
+# because only `/tp-init-svn-eol-style` writes the root property, so svn started emitting CRLF for
+# those files while git was still pinned to LF and the bridge went permanently dirty.
 #
-# Now that the push path puts svn:eol-style=native on the text files it commits, the normalising
-# happens on SVN's side -- so SVN holds LF and every working copy holds its own platform's endings,
-# which is precisely the arrangement git already has with GitHub. Once SVN does that job, a bridge
-# that behaves differently from every other working copy the user has is just a surprise with no
-# remaining purpose.
+# The root svn:auto-props the migration writes is the signal because it is a property OF THE TREE:
+# it is what makes the whole tree's future files consistent, and it is what other SVN clients obey
+# too. Per-file properties cannot answer the question -- a tree is half-migrated the moment you
+# look at it that way.
 #
-# It UNSETS rather than merely not setting: a bridge created under 0.7.x still carries the old pin
-# in its per-worktree config, and leaving it there would keep those bridges silently on the old
-# behaviour forever while new ones moved on. Scoped to the bridge, so the user's own worktrees are
-# untouched either way. Idempotent.
-function Set-BridgeEolPlatformNative {
+# A bridge that is not an SVN working copy yet -- this runs right after `git worktree add
+# --no-checkout`, before the svn checkout -- answers no, which is the safe direction.
+function Test-SvnTreeDeclaresEolStyle {
+    param([Parameter(Mandatory = $true)][string]$Bridge)
+
+    if (-not (Test-Path -LiteralPath ([System.IO.Path]::Combine($Bridge, '.svn')))) { return $false }
+
+    Push-Location -LiteralPath $Bridge
+    try {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $autoProps = (& svn propget svn:auto-props --show-inherited-props '.' 2>$null | Out-String)
+        } catch {
+            $autoProps = ''
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+        return ("$autoProps" -match 'svn:eol-style')
+    } finally {
+        Pop-Location
+    }
+}
+
+# Put the bridge's EOL handling in whichever of the two modes matches the SVN side.
+#
+# The bridge is the one directory written by BOTH tools, so its git config has to agree with what
+# svn puts on disk. Which endings svn writes depends on whether the tree carries svn:eol-style,
+# and the two states need opposite settings:
+#
+#   SVN has no eol-style   -> `svn update` writes the stored bytes verbatim, i.e. LF. git must be
+#                             pinned to LF, or `core.autocrlf=true` (the Git for Windows SYSTEM
+#                             default) makes it expect CRLF and report the entire tree as modified.
+#   SVN has eol-style      -> `svn update` writes the platform's endings, CRLF on Windows. The pin
+#                             must go, or git expects LF and reports the entire tree as modified.
+#
+# Neither failure is subtle once it happens -- every guard that asks "is this bridge clean?" fires
+# at once -- but picking the mode from ambient assumptions rather than from the tree is how you get
+# there. So it is read from the tree, every time.
+#
+# The LF pin is what 0.7.x did unconditionally, and it was right for a repository with no
+# svn:eol-style anywhere: a bridge following the platform would have written CRLF into a repository
+# whose other files were LF, invisibly, since afterwards git reports clean (it normalises on read)
+# and svn reports clean (it committed exactly what was on disk). Issues #164 and #167 are that
+# story. `/tp-init-svn-eol-style` is what moves a repository to the other mode.
+#
+# Scoped to the bridge via per-worktree config, so the user's own worktrees are untouched in either
+# mode. Idempotent.
+function Set-BridgeEolMode {
     param(
         [Parameter(Mandatory = $true)][string]$MainWorktree,
         [Parameter(Mandatory = $true)][string]$Bridge
     )
-    # Nothing to undo unless per-worktree config was ever enabled -- and if it was not, the pin
-    # cannot exist. Checked rather than enabled, so a repository that never carried the pin is not
-    # given a repo-wide extension it has no use for.
-    $ext = (Read-Git -Cwd $MainWorktree -GitArgs @('config', '--get', 'extensions.worktreeConfig')).Text.Trim()
-    if ($ext -ne 'true') { return }
 
-    # `--unset` on a key that is not set exits 5. That is the ordinary case for a bridge created
-    # after this change, so Read-Git is used to swallow it rather than letting EAP=Stop turn a
-    # normal outcome into a thrown error.
-    $null = Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--unset', 'core.autocrlf')
-    $null = Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--unset', 'core.eol')
+    $declared = Test-SvnTreeDeclaresEolStyle -Bridge $Bridge
+
+    # extensions.worktreeConfig is repo-wide and must be on before --worktree writes are honoured.
+    # Enabling it is non-destructive: existing config stays in the shared file.
+    & git -C $MainWorktree config extensions.worktreeConfig true
+    if ($LASTEXITCODE -ne 0) { throw 'Could not enable extensions.worktreeConfig.' }
+
+    if ($declared) {
+        # `--unset` on a key that is not set exits 5, the ordinary case for a bridge never pinned;
+        # Read-Git swallows it rather than letting EAP=Stop turn a normal outcome into a throw.
+        $null = Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--unset', 'core.autocrlf')
+        $null = Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--unset', 'core.eol')
+    } else {
+        & git -C $Bridge config --worktree core.autocrlf false
+        if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.autocrlf=false on the bridge worktree.' }
+        & git -C $Bridge config --worktree core.eol lf
+        if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.eol=lf on the bridge worktree.' }
+    }
 }
 
 # Which working-copy paths may carry svn:eol-style, decided by git's own EOL classification.
@@ -241,17 +292,23 @@ function Get-SvnEolClassification {
             $rows.Add([pscustomobject]@{ Bucket = $bucket; Path = $path })
         }
     }
-    # Leading comma: returning an array bare lets PowerShell unwrap it, so an empty tree would
-    # come back as $null and a one-file tree as a bare object.
-    return , $rows.ToArray()
+    # Returned BARE, with no leading comma, and every caller wraps the call in @(). The `, $arr`
+    # idiom protects a direct assignment from unwrapping, but it breaks @(): the array arrives as
+    # a single pipeline item, so @() yields an array containing one array. Worse than a wrong
+    # count -- `Where-Object { $_.Bucket -eq 'x' }` against that single object member-enumerates
+    # and passes EVERYTHING through, so the binary and mixed files came back as candidates.
+    return $rows.ToArray()
 }
 
 # The candidates alone, as repo-relative paths. A thin filter over the classifier above so the
 # rule for what may carry the property lives in exactly one place.
 function Get-SvnEolCandidate {
     param([Parameter(Mandatory = $true)][string]$Worktree)
-    $paths = @(Get-SvnEolClassification -Worktree $Worktree | Where-Object { $_.Bucket -eq 'candidate' } | ForEach-Object { $_.Path })
-    return , $paths
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($row in @(Get-SvnEolClassification -Worktree $Worktree)) {
+        if ($row.Bucket -eq 'candidate') { $paths.Add($row.Path) }
+    }
+    return $paths.ToArray()
 }
 
 # Put svn:eol-style=native on the text files in a changeset that do not already carry it.
@@ -277,6 +334,13 @@ function Set-SvnEolStyle {
     )
 
     if ($Path.Count -eq 0) { return 0 }
+
+    # Only once the TREE has been switched over. Marking individual files in a tree that has not
+    # is not a harmless head start: svn immediately starts writing platform endings for exactly
+    # those files while the bridge's git side is still pinned to LF for the rest, and the bridge
+    # goes permanently dirty. A repository is in one mode or the other, and
+    # `/tp-init-svn-eol-style` is the thing that moves it.
+    if (-not (Test-SvnTreeDeclaresEolStyle -Bridge $Bridge)) { return 0 }
 
     # Both sides are normalised to forward slashes before they meet. svn reports Windows paths with
     # backslashes while git always reports forward ones, and a separator mismatch here would not
