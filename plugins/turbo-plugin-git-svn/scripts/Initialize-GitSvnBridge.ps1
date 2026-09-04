@@ -304,7 +304,7 @@ try {
         # matters: with core.autocrlf still true, the checkout writes CRLF and the files on disk
         # no longer match their blobs -- and for a bridge whose SVN side does not carry them yet,
         # that turns a harmless "phantom M" into a real diff the drift check would report.
-        Set-BridgeEolFaithful -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
+        Set-BridgeEolPlatformNative -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
 
         & git -C $remoteWorktreePath checkout --orphan $remoteBranch
         if ($LASTEXITCODE -ne 0) { throw "git checkout --orphan $remoteBranch failed" }

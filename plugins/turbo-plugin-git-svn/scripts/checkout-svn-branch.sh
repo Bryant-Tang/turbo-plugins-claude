@@ -261,7 +261,7 @@ git -C "$MAIN_WORKTREE" worktree add --no-checkout "$REMOTE_PATH" "$REMOTE_BRANC
 # with core.autocrlf still true, `worktree add` would write CRLF and the files on disk would no
 # longer match their blobs -- and for a bridge whose SVN side does not carry them yet, that turns
 # a harmless "phantom M" into a real diff the drift check would report.
-ensure_bridge_eol_faithful "$MAIN_WORKTREE" "$REMOTE_PATH"
+ensure_bridge_eol_platform_native "$MAIN_WORKTREE" "$REMOTE_PATH"
 git -C "$REMOTE_PATH" reset --hard --quiet
 # EMPTY the worktree (keep the .git pointer) so the plain `svn checkout` below yields the EXACT SVN
 # branch tree. `git add -A` then records precisely the branch's delta from trunk (adds/mods/deletes)

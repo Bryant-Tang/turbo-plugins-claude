@@ -20,7 +20,9 @@
 #   - write_utf8_no_bom            — CJK no-BOM byte-equal to canonical UTF-8 (R6)
 #   - read_turbo_plugin_config     — flat mode + section/key sentinel + top-level key
 #   - resolve_config_value         — config merge chain + config.local.toml override
-#   - ensure_bridge_eol_faithful   — byte-faithful under `* text=auto` / scoped / idempotent (#164)
+#   - ensure_bridge_eol_platform_native — legacy pin removed / clean no-op / scoped (#164, #167)
+#   - list_svn_eol_candidates      — binary and mixed-ending files excluded (#167)
+#   - apply_svn_eol_style          — svn:eol-style lands on text only, idempotent (#167)
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
@@ -1516,12 +1518,12 @@ test_every_svn_calling_script_sources_the_shim() {
     assertTrue "expected several svn-invoking scripts, found $invoking" "[ '$invoking' -ge 6 ]"
 }
 
-# ─── ensure_bridge_eol_faithful — the pin must survive `.gitattributes` (issue #164) ─────────
+# ─── ensure_bridge_eol_platform_native — the bridge stops being pinned (#164, #167) ──────────
 # Build a repo whose blobs are LF, whose attributes mark everything text, and whose checkout is
-# configured to write CRLF. `core.eol` is pinned to `crlf` rather than left at its `native`
-# default on purpose: `native` is CRLF only on Windows, so leaving it would make this case pass
-# for free on Linux -- reporting green on the half of CI that never exercised the bug.
-# Echoes $1 = repo root of a fixture ready for ensure_bridge_eol_faithful; non-zero on failure.
+# configured to write CRLF. `core.eol` is set to `crlf` rather than left at its `native` default
+# on purpose: `native` is CRLF only on Windows, so relying on it would make these cases pass for
+# free on Linux -- reporting green on the half of CI that never exercised anything.
+# $1 = repo root to build the fixture in; non-zero on failure.
 make_eol_fixture() {
     local root="$1"
     git -C "$root" init -q -b main >/dev/null 2>&1 || return 1
@@ -1545,71 +1547,83 @@ count_cr_bytes() {
     tr -dc '\r' < "$1" | wc -c | tr -d ' '
 }
 
-test_bridge_eol_faithful_defeats_text_auto() {
+# The upgrade path is the case that matters. A bridge created under 0.7.x carries the old pin in
+# its per-worktree config, so "stop setting it" would not be enough: those bridges would stay on
+# the old behaviour forever while newly created ones moved on, and nothing anywhere would say so.
+test_bridge_eol_removes_a_legacy_pin() {
     local tmp rc
-    tmp="$(mktemp -d -t turbo-eolpin-XXXXXX)"
+    tmp="$(mktemp -d -t turbo-common-eolunpin-XXXXXX)"
     (
         make_eol_fixture "$tmp" || exit 98
-        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
 
-        # The pin only bites when git next writes the file, so force a fresh checkout.
+        # Recreate exactly what 0.7.x wrote, then prove it is actually in force BEFORE removing
+        # it. Without that step, "CRLF afterwards" could equally mean the pin never worked here
+        # and the test would pass without the removal doing anything.
+        git -C "$tmp" config extensions.worktreeConfig true || exit 98
+        git -C "$tmp/bridge" config --worktree core.autocrlf false || exit 98
+        git -C "$tmp/bridge" config --worktree core.eol lf || exit 98
         rm -f "$tmp/bridge/f.txt"
         git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
+        pinned="$(count_cr_bytes "$tmp/bridge/f.txt")"
+        if [ "$pinned" -ne 0 ]; then
+            echo "fixture: the legacy pin was not in force (got $pinned CR bytes)" >&2; exit 1
+        fi
 
+        ensure_bridge_eol_platform_native "$tmp" "$tmp/bridge" || exit 97
+
+        rm -f "$tmp/bridge/f.txt"
+        git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
         cr="$(count_cr_bytes "$tmp/bridge/f.txt")"
-        if [ "$cr" -ne 0 ]; then
-            echo "bridge checkout wrote $cr CR bytes but the blob is pure LF" >&2
-            exit 1
-        fi
-        exit 0
-    )
-    rc=$?
-    rm -rf "$tmp" 2>/dev/null || true
-    assertEquals 'bridge checkout is byte-faithful to the blob even under `* text=auto`' 0 "$rc"
-}
-
-# The docstring promises the pin is scoped to the bridge. If it ever leaked to the shared config
-# it would silently rewrite the user's own working copy, which is not this function's business.
-test_bridge_eol_faithful_leaves_main_worktree_alone() {
-    local tmp rc
-    tmp="$(mktemp -d -t turbo-eolscope-XXXXXX)"
-    (
-        make_eol_fixture "$tmp" || exit 98
-        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
-
-        rm -f "$tmp/f.txt"
-        git -C "$tmp" checkout -- f.txt >/dev/null 2>&1 || exit 96
-
-        cr="$(count_cr_bytes "$tmp/f.txt")"
-        # 3 lines of CRLF -- the main worktree keeps whatever the user configured.
+        # 3 CRLF lines: the bridge now follows the repo's own setting, like any other worktree.
         if [ "$cr" -ne 3 ]; then
-            echo "main worktree wrote $cr CR bytes; expected 3 (its own core.eol=crlf)" >&2
-            exit 1
+            echo "bridge is still pinned: $cr CR bytes, expected 3" >&2; exit 1
         fi
         exit 0
     )
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
-    assertEquals 'the pin does not reach outside the bridge worktree' 0 "$rc"
+    assertEquals 'a bridge pinned by 0.7.x goes back to following the repo settings' 0 "$rc"
 }
 
-test_bridge_eol_faithful_is_idempotent() {
+# A bridge that never carried the pin must not acquire a repo-wide extension it has no use for,
+# and `git config --unset` on an absent key exits 5 -- which must not be read as a failure.
+test_bridge_eol_no_pin_is_a_clean_no_op() {
     local tmp rc
-    tmp="$(mktemp -d -t turbo-eolidem-XXXXXX)"
+    tmp="$(mktemp -d -t turbo-common-eolnoop-XXXXXX)"
     (
         make_eol_fixture "$tmp" || exit 98
-        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
-        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 95
-        eol="$(git -C "$tmp/bridge" config --worktree core.eol 2>/dev/null || true)"
-        if [ "$eol" != 'lf' ]; then
-            echo "expected core.eol=lf on the bridge worktree, got '$eol'" >&2
-            exit 1
+        ensure_bridge_eol_platform_native "$tmp" "$tmp/bridge" || exit 97
+        ensure_bridge_eol_platform_native "$tmp" "$tmp/bridge" || exit 95
+        ext="$(git -C "$tmp" config --get extensions.worktreeConfig 2>/dev/null || true)"
+        if [ -n "$ext" ]; then
+            echo "extensions.worktreeConfig should not have been enabled, got '$ext'" >&2; exit 1
         fi
         exit 0
     )
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
-    assertEquals 'calling the pin twice succeeds and leaves core.eol=lf' 0 "$rc"
+    assertEquals 'with no pin present it succeeds twice and enables nothing' 0 "$rc"
+}
+
+# Removing the pin is scoped to the bridge; the settings the user chose for the repository are
+# none of this function's business.
+test_bridge_eol_leaves_repo_settings_alone() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolscope-XXXXXX)"
+    (
+        make_eol_fixture "$tmp" || exit 98
+        git -C "$tmp" config extensions.worktreeConfig true || exit 98
+        git -C "$tmp/bridge" config --worktree core.eol lf || exit 98
+        ensure_bridge_eol_platform_native "$tmp" "$tmp/bridge" || exit 97
+        eol="$(git -C "$tmp" config --get core.eol 2>/dev/null || true)"
+        if [ "$eol" != 'crlf' ]; then
+            echo "the repository's own core.eol was changed to '$eol'" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals "the repository's own core.eol is left alone" 0 "$rc"
 }
 
 # ─── list_svn_eol_candidates — who may carry svn:eol-style ───────────────────────────────────

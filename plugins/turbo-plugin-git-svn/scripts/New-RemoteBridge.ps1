@@ -106,7 +106,7 @@ try {
         # matters: with core.autocrlf still true, the checkout writes CRLF and the files on disk
         # no longer match their blobs -- and for a bridge whose SVN side does not carry them yet,
         # that turns a harmless "phantom M" into a real diff the drift check would report.
-        Set-BridgeEolFaithful -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
+        Set-BridgeEolPlatformNative -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
         # --no-checkout leaves the index EMPTY, so populate explicitly; now the bytes on disk
         # are the bytes git stores.
         & git -C $remoteWorktreePath reset --hard --quiet

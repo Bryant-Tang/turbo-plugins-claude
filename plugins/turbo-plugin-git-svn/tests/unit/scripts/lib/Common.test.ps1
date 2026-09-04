@@ -1592,13 +1592,11 @@ Describe 'svn shim injects --non-interactive (issue #137)' {
     }
 }
 
-# ─── Set-BridgeEolFaithful — the pin must survive .gitattributes (issue #164) ────────────────
-# `core.autocrlf=false` closes only ONE of git's two checkout-rewrite paths. When .gitattributes
-# marks a file text, `core.eol` decides instead -- and its default `native` is CRLF on Windows.
-# The fixture pins repo-level core.eol to `crlf` rather than relying on that default, so the case
-# reproduces identically on Linux: `native` there is already LF, and the bug would hide behind a
-# green result on half of CI.
-Describe 'Set-BridgeEolFaithful' {
+# ─── Set-BridgeEolPlatformNative — the bridge stops being pinned (#164, #167) ────────────────
+# The fixture sets repo-level core.eol to `crlf` rather than relying on the `native` default, so
+# these cases behave identically on Linux: `native` there is already LF, and a test that leaned on
+# it would pass for free on half of CI.
+Describe 'Set-BridgeEolPlatformNative' {
 
     BeforeAll {
         function New-EolFixture {
@@ -1641,39 +1639,55 @@ Describe 'Set-BridgeEolFaithful' {
         }
     }
 
-    It 'keeps the bridge checkout byte-faithful to the blob even under a text=auto attribute' {
-        $dir = New-EolFixture 'eolpin'
+    # The upgrade path is the case that matters. A bridge created under 0.7.x carries the old pin
+    # in its per-worktree config, so "stop setting it" would not be enough: those bridges would
+    # stay on the old behaviour forever while newly created ones moved on, silently.
+    It 'removes a pin left behind by 0.7.x so the bridge follows the repo again' {
+        $dir = New-EolFixture 'eolunpin'
         try {
             $bridge = Join-Path $dir 'bridge'
-            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
-            # The pin only bites when git next writes the file, so force a fresh checkout.
+            # Recreate exactly what 0.7.x wrote, then prove it is actually in force BEFORE removing
+            # it. Without that step, "CRLF afterwards" could equally mean the pin never worked here.
+            Invoke-GitSilent $dir config extensions.worktreeConfig true
+            Invoke-GitSilent $bridge config --worktree core.autocrlf false
+            Invoke-GitSilent $bridge config --worktree core.eol lf
             Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
             Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 0
+
+            Set-BridgeEolPlatformNative -MainWorktree $dir -Bridge $bridge
+
+            Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
+            # 3 CRLF lines: the bridge now follows the repo's own setting, like any other worktree.
+            Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 3
         } finally {
             Remove-IsolatedRepoRoot $dir
         }
     }
 
-    It 'does not reach outside the bridge worktree' {
-        $dir = New-EolFixture 'eolscope'
-        try {
-            Set-BridgeEolFaithful -MainWorktree $dir -Bridge (Join-Path $dir 'bridge')
-            Reset-FileFromIndex -WorktreeDir $dir -Name 'f.txt'
-            # 3 CRLF lines: the user's own worktree keeps the EOL handling they configured.
-            Measure-CrBytes (Join-Path $dir 'f.txt') | Should -Be 3
-        } finally {
-            Remove-IsolatedRepoRoot $dir
-        }
-    }
-
-    It 'is idempotent and leaves core.eol pinned to lf on the bridge' {
-        $dir = New-EolFixture 'eolidem'
+    # A bridge that never carried the pin must not acquire a repo-wide extension it has no use
+    # for, and `git config --unset` on an absent key exits 5 -- not a failure.
+    It 'is a clean no-op, twice over, when no pin is present' {
+        $dir = New-EolFixture 'eolnoop'
         try {
             $bridge = Join-Path $dir 'bridge'
-            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
-            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
-            $eol = (& git -C $bridge config --worktree core.eol 2>$null)
-            "$eol".Trim() | Should -Be 'lf'
+            Set-BridgeEolPlatformNative -MainWorktree $dir -Bridge $bridge
+            Set-BridgeEolPlatformNative -MainWorktree $dir -Bridge $bridge
+            $ext = (Read-Git -Cwd $dir -GitArgs @('config', '--get', 'extensions.worktreeConfig')).Text.Trim()
+            $ext | Should -BeNullOrEmpty
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It "leaves the repository's own core.eol alone" {
+        $dir = New-EolFixture 'eolscope'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            Invoke-GitSilent $dir config extensions.worktreeConfig true
+            Invoke-GitSilent $bridge config --worktree core.eol lf
+            Set-BridgeEolPlatformNative -MainWorktree $dir -Bridge $bridge
+            $eol = (Read-Git -Cwd $dir -GitArgs @('config', '--get', 'core.eol')).Text.Trim()
+            $eol | Should -Be 'crlf'
         } finally {
             Remove-IsolatedRepoRoot $dir
         }

@@ -167,42 +167,39 @@ ensure_svn_git_excluded() {
   fi
 }
 
-# Make a bridge worktree byte-faithful to what git stores.
+# Let the bridge follow the platform, exactly like the main checkout and any ordinary worktree.
 #
-# `core.autocrlf=true` is the SYSTEM-level default in Git for Windows -- not global, not local, so
-# it is on for essentially every Windows user and invisible in `git config --global --list`. Under
-# it EVERY checkout inside the bridge rewrites LF blobs as CRLF on disk: `git worktree add` at
-# creation, and later every `git merge` the push path runs there. `svn commit` then ships those
-# CRLF bytes to SVN.
+# THIS REPLACES A PIN THAT USED TO DO THE OPPOSITE, and the reversal is deliberate. Through 0.7.x
+# the bridge was pinned to LF because SVN, with no svn:eol-style anywhere, stored whatever bytes it
+# was handed: a bridge following the platform would have written CRLF into a repository whose other
+# files were LF, invisibly, since afterwards git reports clean (it normalises on read) and svn
+# reports clean (it committed exactly what was on disk). Issues #164 and #167 are that story.
 #
-# Nothing warns. Afterwards git reports clean (it normalises on read) and svn reports clean (it
-# committed exactly what was on disk). Observed 2026-08-03: a push of two edited files landed both
-# on SVN with CRLF while every untouched file stayed LF -- so a teammate's next diff shows those
-# two files rewritten end to end, blame destroyed, with nothing in either tool to point at.
+# Now that the push path puts svn:eol-style=native on the text files it commits, the normalising
+# happens on SVN's side -- so SVN holds LF and every working copy holds its own platform's endings,
+# which is precisely the arrangement git already has with GitHub. Once SVN does that job, a bridge
+# that behaves differently from every other working copy the user has is just a surprise with no
+# remaining purpose.
 #
-# `core.autocrlf=false` alone is NOT enough, and the gap is silent (issue #164). Git has TWO
-# checkout-rewrite paths: autocrlf guesses which files are text, and `.gitattributes` marking a
-# file text (`* text=auto` is the common spelling) hands the decision to `core.eol` instead --
-# whose default is `native`, i.e. CRLF on Windows. Turning autocrlf off does not disable that
-# second path, it ACTIVATES it. So a repo that adopts `* text=auto` gets CRLF written into the
-# bridge again, and this function stops doing what its name says with nothing to point at.
-# Measured 2026-09-03 on a repo that normalised 408 .sql files to LF: blob LF, bridge disk CRLF,
-# SVN CRLF, while files never re-checked-out since the .gitattributes landed stayed LF -- two
-# line endings in one repo, spreading one file at a time. `git status` showed 415 changes against
-# `svn status`'s 6; the other 409 were pure-EOL phantom Ms.
-#
-# A bridge exists to carry content between git and SVN unchanged, so it must not transform it.
-# Both paths are therefore pinned. Scoped to the bridge worktree via git's per-worktree config,
-# leaving the user's own worktree exactly as they configured it. Idempotent.
+# It UNSETS rather than merely not setting: a bridge created under 0.7.x still carries the old pin
+# in its per-worktree config, and leaving it there would keep those bridges silently on the old
+# behaviour forever while new ones moved on. Scoped to the bridge, so the user's own worktrees are
+# untouched either way. Idempotent.
 #
 # $1: main worktree path. $2: bridge worktree path.
-ensure_bridge_eol_faithful() {
+ensure_bridge_eol_platform_native() {
   local main_worktree="$1" bridge="$2"
-  # extensions.worktreeConfig is repo-wide and must be on before --worktree writes are honoured.
-  # Enabling it is non-destructive: existing config stays in the shared file.
-  git -C "$main_worktree" config extensions.worktreeConfig true || return 1
-  git -C "$bridge" config --worktree core.autocrlf false || return 1
-  git -C "$bridge" config --worktree core.eol lf || return 1
+  # Nothing to undo unless per-worktree config was ever enabled -- and if it was not, the pin
+  # cannot exist. Checked rather than enabled, so a repository that never carried the pin is not
+  # given a repo-wide extension it has no use for.
+  local ext
+  ext="$(git -C "$main_worktree" config --get extensions.worktreeConfig 2>/dev/null || true)"
+  [ "$ext" = 'true' ] || return 0
+  # `--unset` on a key that is not set exits 5. That is the ordinary case for a bridge created
+  # after this change, so it must not be read as a failure.
+  git -C "$bridge" config --worktree --unset core.autocrlf >/dev/null 2>&1 || true
+  git -C "$bridge" config --worktree --unset core.eol >/dev/null 2>&1 || true
+  return 0
 }
 
 # Which working-copy paths may carry svn:eol-style, decided by git's own EOL classification.
