@@ -201,7 +201,12 @@ function Set-BridgeEolPlatformNative {
 # The WORKING-COPY column is the one that decides: svn commits the bytes on disk, so that is what
 # it will accept or reject. `none` is included -- a file with no line endings has nothing to
 # translate, and excluding it would leave a permanent hole in the tree's coverage.
-function Get-SvnEolCandidate {
+# Echoes one object per tracked file with Bucket ('candidate', 'binary' or 'mixed') and Path.
+#
+# The excluded buckets are reported rather than silently dropped because the migration has to TELL
+# the user which files it is leaving behind: a mixed-ending file is excluded permanently, and
+# "we quietly skipped 30 files" is exactly the kind of thing discovered months later.
+function Get-SvnEolClassification {
     param([Parameter(Mandatory = $true)][string]$Worktree)
 
     $result = Read-Git -Cwd $Worktree -GitArgs @('ls-files', '--eol')
@@ -209,7 +214,7 @@ function Get-SvnEolCandidate {
         throw "Could not classify line endings in '$Worktree' (git ls-files --eol failed)."
     }
 
-    $paths = New-Object System.Collections.Generic.List[string]
+    $rows = New-Object System.Collections.Generic.List[psobject]
     foreach ($line in ($result.Text -split "`r?`n")) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         # Split on the FIRST tab only: the status block never contains one, and a path may.
@@ -217,14 +222,31 @@ function Get-SvnEolCandidate {
         if ($tab -lt 0) { continue }
         $status = $line.Substring(0, $tab)
         $path = $line.Substring($tab + 1)
-        if ($status -match 'w/(\S+)') {
-            $eol = $Matches[1]
-            if ($eol -eq 'lf' -or $eol -eq 'crlf' -or $eol -eq 'none') { $paths.Add($path) }
+        if ($status -notmatch 'w/(\S+)') { continue }
+        $eol = $Matches[1]
+        $bucket = switch ($eol) {
+            'lf'    { 'candidate' }
+            'crlf'  { 'candidate' }
+            'none'  { 'candidate' }
+            '-text' { 'binary' }
+            'mixed' { 'mixed' }
+            default { $null }
+        }
+        if ($null -ne $bucket) {
+            $rows.Add([pscustomobject]@{ Bucket = $bucket; Path = $path })
         }
     }
     # Leading comma: returning an array bare lets PowerShell unwrap it, so an empty tree would
-    # come back as $null and a one-file tree as a bare string whose .Count is its length.
-    return , $paths.ToArray()
+    # come back as $null and a one-file tree as a bare object.
+    return , $rows.ToArray()
+}
+
+# The candidates alone, as repo-relative paths. A thin filter over the classifier above so the
+# rule for what may carry the property lives in exactly one place.
+function Get-SvnEolCandidate {
+    param([Parameter(Mandatory = $true)][string]$Worktree)
+    $paths = @(Get-SvnEolClassification -Worktree $Worktree | Where-Object { $_.Bucket -eq 'candidate' } | ForEach-Object { $_.Path })
+    return , $paths
 }
 
 # Put svn:eol-style=native on the text files in a changeset that do not already carry it.

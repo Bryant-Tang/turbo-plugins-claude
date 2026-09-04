@@ -37,7 +37,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 probe_git_version
-assert_svn_version
 
 if [[ -z "$BRANCH" ]]; then BRANCH='main'; fi
 
