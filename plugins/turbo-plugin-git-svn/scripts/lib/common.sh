@@ -223,21 +223,37 @@ ensure_bridge_eol_platform_native() {
 # it will accept or reject. `none` is included -- a file with no line endings has nothing to
 # translate, and excluding it would leave a permanent hole in the tree's coverage.
 #
-# $1: worktree path. Echoes one repo-relative path per line. Non-zero only if git itself fails.
-list_svn_eol_candidates() {
+# $1: worktree path. Echoes `<bucket><TAB><path>` per tracked file, where bucket is one of
+# `candidate`, `binary` or `mixed`. Non-zero only if git itself fails.
+#
+# The buckets are reported rather than silently dropped because the migration has to TELL the user
+# which files it is leaving behind: a mixed-ending file is excluded permanently, and "we quietly
+# skipped 30 files" is exactly the kind of thing that is discovered months later.
+classify_svn_eol_paths() {
   local worktree="$1"
   git -C "$worktree" ls-files --eol | awk -F'\t' '
     {
       # Field 1 is the fixed-width status block; pull the w/ value out of it.
       if (match($1, /w\/[^ ]+/)) {
         eol = substr($1, RSTART + 2, RLENGTH - 2)
-        if (eol == "lf" || eol == "crlf" || eol == "none") {
+        bucket = ""
+        if (eol == "lf" || eol == "crlf" || eol == "none") { bucket = "candidate" }
+        else if (eol == "-text") { bucket = "binary" }
+        else if (eol == "mixed") { bucket = "mixed" }
+        if (bucket != "") {
           # Everything after the first tab is the path -- paths may contain spaces.
           sub(/^[^\t]*\t/, "")
-          print
+          print bucket "\t" $0
         }
       }
     }'
+}
+
+# The candidates alone, one repo-relative path per line. A thin filter over the classifier above
+# so the rule for what may carry the property lives in exactly one place.
+# $1: worktree path.
+list_svn_eol_candidates() {
+  classify_svn_eol_paths "$1" | awk -F'\t' '$1 == "candidate" { sub(/^[^\t]*\t/, ""); print }'
 }
 
 # Put svn:eol-style=native on the text files in a changeset that do not already carry it.
