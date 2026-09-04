@@ -1679,3 +1679,76 @@ Describe 'Set-BridgeEolFaithful' {
         }
     }
 }
+
+# ─── Get-SvnEolCandidate — who may carry svn:eol-style ───────────────────────────────────────
+# The two exclusions are the point of the function, and both fail silently when wrong: a binary
+# that gets svn:eol-style comes back corrupted, and a mixed-ending file makes `svn commit` fail
+# atomically -- taking a whole 20k-file migration down with it.
+Describe 'Get-SvnEolCandidate' {
+
+    BeforeAll {
+        function New-EolClassFixture {
+            param([string]$Tag = 'eolcand')
+            $dir = New-IsolatedRepoRoot $Tag
+            Invoke-GitSilent $dir init -q -b main
+            Invoke-GitSilent $dir config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $dir config user.name 'turbo-plugin-test'
+            # Pinned so the fixture's on-disk endings are the ones written here, not whatever the
+            # host's Git for Windows default would rewrite them to.
+            Invoke-GitSilent $dir config core.autocrlf false
+
+            # Byte-exact writes: Set-Content would apply its own newline handling and the mixed
+            # and CRLF fixtures would stop being what they claim to be.
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'pure-lf.txt'),   "a`nb`n", $enc)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'pure-crlf.txt'), "a`r`nb`r`n", $enc)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'mixed.txt'),     "a`r`nb`n", $enc)
+            [System.IO.File]::WriteAllBytes((Join-Path $dir 'binary.bin'), [byte[]](97, 0, 98, 0))
+            [System.IO.File]::WriteAllText((Join-Path $dir 'noeol.txt'),     'noeol', $enc)
+            $sub = Join-Path $dir 'sub dir'
+            $null = New-Item -ItemType Directory -Path $sub -Force
+            [System.IO.File]::WriteAllText((Join-Path $sub 'spaced.txt'), "x`ny`n", $enc)
+
+            Invoke-GitSilent $dir add -A
+            Invoke-GitSilent $dir commit -q -m seed
+            return $dir
+        }
+    }
+
+    It 'excludes binary and mixed-ending files, keeps consistent text' {
+        $dir = New-EolClassFixture 'eolcand'
+        try {
+            $got = @(Get-SvnEolCandidate -Worktree $dir)
+            # Floor first: a silently-empty listing satisfies every "should not contain" assertion
+            # below and would report green while testing nothing.
+            $got.Count | Should -BeGreaterOrEqual 4
+            $got | Should -Not -Contain 'binary.bin'
+            $got | Should -Not -Contain 'mixed.txt'
+            $got | Should -Contain 'pure-lf.txt'
+            $got | Should -Contain 'pure-crlf.txt'
+            $got | Should -Contain 'noeol.txt'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'keeps a path containing a space intact' {
+        $dir = New-EolClassFixture 'eolspace'
+        try {
+            # git prints `i/... w/... attr/...<TAB><path>`; splitting on whitespace instead of the
+            # tab would truncate this path at the space and hand svn a target that does not exist.
+            @(Get-SvnEolCandidate -Worktree $dir) | Should -Contain 'sub dir/spaced.txt'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'fails loudly when the path is not a git worktree' {
+        $dir = New-IsolatedRepoRoot 'eolnogit'
+        try {
+            { Get-SvnEolCandidate -Worktree $dir } | Should -Throw
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+}

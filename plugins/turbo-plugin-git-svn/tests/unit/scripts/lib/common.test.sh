@@ -1612,5 +1612,85 @@ test_bridge_eol_faithful_is_idempotent() {
     assertEquals 'calling the pin twice succeeds and leaves core.eol=lf' 0 "$rc"
 }
 
+# ─── list_svn_eol_candidates — who may carry svn:eol-style ───────────────────────────────────
+# The two exclusions are the point of the function, and both are silent when wrong: a binary that
+# gets svn:eol-style comes back corrupted, and a mixed-ending file makes `svn commit` fail
+# atomically -- taking a whole 20k-file migration down with it.
+make_eol_class_fixture() {
+    local root="$1"
+    git -C "$root" init -q -b main >/dev/null 2>&1 || return 1
+    git -C "$root" config user.email 'test@turbo-plugin' || return 1
+    git -C "$root" config user.name 'turbo-plugin-test' || return 1
+    # core.autocrlf is pinned so the fixture's on-disk endings are the ones written here, not
+    # whatever the host's Git for Windows default would rewrite them to.
+    git -C "$root" config core.autocrlf false || return 1
+    printf 'a\nb\n'      > "$root/pure-lf.txt"      || return 1
+    printf 'a\r\nb\r\n'  > "$root/pure-crlf.txt"    || return 1
+    printf 'a\r\nb\n'    > "$root/mixed.txt"        || return 1
+    printf 'a\0b\0'      > "$root/binary.bin"       || return 1
+    printf 'noeol'       > "$root/noeol.txt"        || return 1
+    mkdir -p "$root/sub dir" || return 1
+    printf 'x\ny\n'      > "$root/sub dir/spaced.txt" || return 1
+    git -C "$root" add -A >/dev/null 2>&1 || return 1
+    git -C "$root" commit -qm seed >/dev/null 2>&1 || return 1
+}
+
+test_eol_candidates_exclude_binary_and_mixed() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolcand-XXXXXX)"
+    (
+        make_eol_class_fixture "$tmp" || exit 98
+        out="$(list_svn_eol_candidates "$tmp")" || exit 97
+
+        # Floor first: a silently-empty listing would satisfy every "not present" assertion below
+        # and report green while testing nothing.
+        n="$(printf '%s\n' "$out" | grep -c .)"
+        if [ "$n" -lt 4 ]; then
+            echo "expected at least 4 candidates, got $n: $out" >&2; exit 1
+        fi
+        case "$out" in
+            *binary.bin*) echo "binary.bin must not be a candidate" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *mixed.txt*) echo "mixed.txt must not be a candidate" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *pure-lf.txt*) : ;;
+            *) echo "pure-lf.txt should be a candidate; got: $out" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *pure-crlf.txt*) : ;;
+            *) echo "pure-crlf.txt should be a candidate; got: $out" >&2; exit 1 ;;
+        esac
+        case "$out" in
+            *noeol.txt*) : ;;
+            *) echo "noeol.txt should be a candidate; got: $out" >&2; exit 1 ;;
+        esac
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'binary and mixed-ending files are excluded, consistent text is not' 0 "$rc"
+}
+
+test_eol_candidates_keep_paths_with_spaces() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolspace-XXXXXX)"
+    (
+        make_eol_class_fixture "$tmp" || exit 98
+        out="$(list_svn_eol_candidates "$tmp")" || exit 97
+        # git prints `i/... w/... attr/...<TAB><path>`; splitting on whitespace instead of the tab
+        # would truncate this path at the space and hand svn a target that does not exist.
+        case "$out" in
+            *"sub dir/spaced.txt"*) exit 0 ;;
+        esac
+        echo "expected the spaced path intact; got: $out" >&2
+        exit 1
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'a path containing a space survives intact' 0 "$rc"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

@@ -187,6 +187,52 @@ function Set-BridgeEolFaithful {
     if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.eol=lf on the bridge worktree.' }
 }
 
+# Which working-copy paths may carry svn:eol-style, decided by git's own EOL classification.
+#
+# `svn:eol-style=native` is what makes SVN behave the way GitHub does: the repository stores LF,
+# and every working copy gets its platform's endings. Setting it on the wrong file is not a
+# cosmetic mistake, so this picks the candidates rather than letting a caller guess:
+#
+#   - a BINARY file must never carry it -- svn would translate bytes that are not line endings
+#   - a file with MIXED endings must never carry it -- svn refuses to commit such a file once
+#     eol-style is set (E135000). A commit is atomic, so one overlooked mixed file fails the
+#     whole batch; on a 20k-file tree that has to be known up front, not discovered halfway.
+#
+# `git ls-files --eol` answers both for the ENTIRE tree in one process, which is why it is used
+# instead of a per-file content probe: on a tree this size, spawning processes per file is the
+# difference between seconds and tens of minutes on Windows. Its output is
+# `i/<index> w/<worktree> attr/<attrs><TAB><path>`, where the eol values are `lf`, `crlf`,
+# `mixed`, `none` (no line endings at all) and `-text` (binary by git's heuristic).
+#
+# The WORKING-COPY column is the one that decides: svn commits the bytes on disk, so that is what
+# it will accept or reject. `none` is included -- a file with no line endings has nothing to
+# translate, and excluding it would leave a permanent hole in the tree's coverage.
+function Get-SvnEolCandidate {
+    param([Parameter(Mandatory = $true)][string]$Worktree)
+
+    $result = Read-Git -Cwd $Worktree -GitArgs @('ls-files', '--eol')
+    if ($result.Code -ne 0) {
+        throw "Could not classify line endings in '$Worktree' (git ls-files --eol failed)."
+    }
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($result.Text -split "`r?`n")) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        # Split on the FIRST tab only: the status block never contains one, and a path may.
+        $tab = $line.IndexOf("`t")
+        if ($tab -lt 0) { continue }
+        $status = $line.Substring(0, $tab)
+        $path = $line.Substring($tab + 1)
+        if ($status -match 'w/(\S+)') {
+            $eol = $Matches[1]
+            if ($eol -eq 'lf' -or $eol -eq 'crlf' -or $eol -eq 'none') { $paths.Add($path) }
+        }
+    }
+    # Leading comma: returning an array bare lets PowerShell unwrap it, so an empty tree would
+    # come back as $null and a one-file tree as a bare string whose .Count is its length.
+    return , $paths.ToArray()
+}
+
 function Set-SvnGitExcluded {
     param([Parameter(Mandatory = $true)][string]$MainWorktree)
 

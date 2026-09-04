@@ -205,6 +205,44 @@ ensure_bridge_eol_faithful() {
   git -C "$bridge" config --worktree core.eol lf || return 1
 }
 
+# Which working-copy paths may carry svn:eol-style, decided by git's own EOL classification.
+#
+# `svn:eol-style=native` is what makes SVN behave the way GitHub does: the repository stores LF,
+# and every working copy gets its platform's endings. Setting it on the wrong file is not a
+# cosmetic mistake, so this picks the candidates rather than letting a caller guess:
+#
+#   - a BINARY file must never carry it -- svn would translate bytes that are not line endings
+#   - a file with MIXED endings must never carry it -- svn refuses to commit such a file once
+#     eol-style is set (E135000). A commit is atomic, so one overlooked mixed file fails the
+#     whole batch; on a 20k-file tree that has to be known up front, not discovered halfway.
+#
+# `git ls-files --eol` answers both for the ENTIRE tree in one process, which is why it is used
+# instead of a per-file content probe: on a tree this size, two spawned processes per file is the
+# difference between seconds and tens of minutes on Windows. Its output is
+# `i/<index> w/<worktree> attr/<attrs><TAB><path>`, where the eol values are `lf`, `crlf`,
+# `mixed`, `none` (no line endings at all) and `-text` (binary by git's heuristic).
+#
+# The WORKING-COPY column is the one that decides: svn commits the bytes on disk, so that is what
+# it will accept or reject. `none` is included -- a file with no line endings has nothing to
+# translate, and excluding it would leave a permanent hole in the tree's coverage.
+#
+# $1: worktree path. Echoes one repo-relative path per line. Non-zero only if git itself fails.
+list_svn_eol_candidates() {
+  local worktree="$1"
+  git -C "$worktree" ls-files --eol | awk -F'\t' '
+    {
+      # Field 1 is the fixed-width status block; pull the w/ value out of it.
+      if (match($1, /w\/[^ ]+/)) {
+        eol = substr($1, RSTART + 2, RLENGTH - 2)
+        if (eol == "lf" || eol == "crlf" || eol == "none") {
+          # Everything after the first tab is the path -- paths may contain spaces.
+          sub(/^[^\t]*\t/, "")
+          print
+        }
+      }
+    }'
+}
+
 # Validate a branch name for remote-svn worktree mapping (allowlist).
 # Returns 0 if OK, else prints the reason to stderr and returns 1. 'main' is the
 # canonical trust anchor and always passes; other casings of 'main' are rejected so
