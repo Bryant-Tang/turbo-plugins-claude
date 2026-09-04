@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.7.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.7.0...turbo-plugin-git-svn--v0.7.1) (2026-09-04)
+
+
+### Fixed
+
+* **git-svn:** bridge 行尾釘選補上 core.eol,repo 有 text=auto 時不再寫出 CRLF ([3514d4d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3514d4df853106e39ae46459d12611365ab02c4b)), closes [#164](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/164)
+
 ## [0.7.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.6.0...turbo-plugin-git-svn--v0.7.0) (2026-09-03)
 
 
