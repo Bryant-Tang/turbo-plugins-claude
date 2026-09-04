@@ -95,19 +95,16 @@ fi
 # Both sides come from `svn status --xml` (UTF-8, "<sc>\t<path>" lines, written by
 # build-svn-commit.sh) so the comparison is encoding-clean and free of the previous
 # CRLF/column-offset fragility.
-SNAPSHOT_PATHS="$(cut -f2- "$SVN_STATUS_FILE")"
 # Capture-first so an svn failure propagates (svn_status_xml returns non-zero on `svn status`
-# failure); a process-substitution in the while-redirect would otherwise swallow that exit code.
+# failure); feeding svn_status_drift_paths straight from a process substitution would otherwise
+# swallow that exit code.
 CURRENT_XML="$(svn_status_xml "$REMOTE_PATH")" || { echo "Error: svn status failed (drift check). Re-run /tp-push-to-svn." >&2; exit 1; }
-DRIFTED_FILES=''
-while IFS=$'\t' read -r _sc filepath; do
-  [[ -z "$filepath" ]] && continue
-  if ! printf '%s\n' "$SNAPSHOT_PATHS" | grep -qxF "$filepath" 2>/dev/null; then
-    DRIFTED_FILES="${DRIFTED_FILES}${filepath} "
-  fi
-done <<< "$CURRENT_XML"
-if [[ -n "${DRIFTED_FILES// /}" ]]; then
-  echo "Error: Remote worktree changed since prepare — file(s) appeared: ${DRIFTED_FILES}. Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to recompute." >&2
+# One awk pass per side (see svn_status_drift_paths): the former per-path `grep -qxF` over a
+# piped snapshot mis-read every early hit as a miss on any repo whose snapshot outgrew the pipe
+# buffer, so large pushes were blocked by a drift report listing files that had not moved (#170).
+DRIFTED_FILES="$(printf '%s\n' "$CURRENT_XML" | svn_status_drift_paths "$SVN_STATUS_FILE")"
+if [[ -n "$DRIFTED_FILES" ]]; then
+  echo "Error: Remote worktree changed since prepare — file(s) appeared: ${DRIFTED_FILES//$'\n'/ }. Abort the merge with 'git -C $REMOTE_PATH merge --abort' and rerun /tp-push-to-svn to recompute." >&2
   exit 1
 fi
 
