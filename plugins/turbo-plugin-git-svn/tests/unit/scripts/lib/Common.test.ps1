@@ -1591,3 +1591,91 @@ Describe 'svn shim injects --non-interactive (issue #137)' {
         $script:ShimCaptured | Should -Match 'example\.invalid'
     }
 }
+
+# ─── Set-BridgeEolFaithful — the pin must survive .gitattributes (issue #164) ────────────────
+# `core.autocrlf=false` closes only ONE of git's two checkout-rewrite paths. When .gitattributes
+# marks a file text, `core.eol` decides instead -- and its default `native` is CRLF on Windows.
+# The fixture pins repo-level core.eol to `crlf` rather than relying on that default, so the case
+# reproduces identically on Linux: `native` there is already LF, and the bug would hide behind a
+# green result on half of CI.
+Describe 'Set-BridgeEolFaithful' {
+
+    BeforeAll {
+        function New-EolFixture {
+            param([string]$Tag = 'eolpin')
+            $dir = New-IsolatedRepoRoot $Tag
+            Invoke-GitSilent $dir init -q -b main
+            Invoke-GitSilent $dir config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $dir config user.name 'turbo-plugin-test'
+            Write-Utf8NoBom -Path (Join-Path $dir '.gitattributes') -Content "* text=auto`n"
+            Write-Utf8NoBom -Path (Join-Path $dir 'f.txt') -Content "a`nb`nc`n"
+            Invoke-GitSilent $dir add -A
+            Invoke-GitSilent $dir commit -q -m 'seed'
+            Invoke-GitSilent $dir config core.autocrlf false
+            Invoke-GitSilent $dir config core.eol crlf
+            $bridge = Join-Path $dir 'bridge'
+            Invoke-GitSilent $dir worktree add -q $bridge -b bridge
+            # Fixture guard: a worktree that failed to be created leaves a plain directory (or
+            # nothing) behind, and every assertion below would then measure the wrong tree while
+            # still reporting green.
+            if (-not (Test-Path -LiteralPath (Join-Path $bridge '.git'))) {
+                throw "fixture: bridge worktree was not created at $bridge"
+            }
+            return $dir
+        }
+
+        # Count CR BYTES. Line-based counting answers the same number for a CRLF file and an LF
+        # file of equal length, so asserting on it would be an identity rather than a test.
+        function Measure-CrBytes {
+            param([string]$Path)
+            $bytes = [System.IO.File]::ReadAllBytes($Path)
+            # @() forces an array: a single-element pipeline result would expose the byte's own
+            # properties instead of a count.
+            return @($bytes | Where-Object { $_ -eq 13 }).Count
+        }
+
+        function Reset-FileFromIndex {
+            param([string]$WorktreeDir, [string]$Name)
+            Remove-Item -LiteralPath (Join-Path $WorktreeDir $Name) -Force
+            Invoke-GitSilent $WorktreeDir checkout -- $Name
+        }
+    }
+
+    It 'keeps the bridge checkout byte-faithful to the blob even under a text=auto attribute' {
+        $dir = New-EolFixture 'eolpin'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
+            # The pin only bites when git next writes the file, so force a fresh checkout.
+            Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
+            Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 0
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'does not reach outside the bridge worktree' {
+        $dir = New-EolFixture 'eolscope'
+        try {
+            Set-BridgeEolFaithful -MainWorktree $dir -Bridge (Join-Path $dir 'bridge')
+            Reset-FileFromIndex -WorktreeDir $dir -Name 'f.txt'
+            # 3 CRLF lines: the user's own worktree keeps the EOL handling they configured.
+            Measure-CrBytes (Join-Path $dir 'f.txt') | Should -Be 3
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'is idempotent and leaves core.eol pinned to lf on the bridge' {
+        $dir = New-EolFixture 'eolidem'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
+            Set-BridgeEolFaithful -MainWorktree $dir -Bridge $bridge
+            $eol = (& git -C $bridge config --worktree core.eol 2>$null)
+            "$eol".Trim() | Should -Be 'lf'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+}

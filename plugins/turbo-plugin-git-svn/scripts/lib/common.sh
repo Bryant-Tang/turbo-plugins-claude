@@ -180,9 +180,20 @@ ensure_svn_git_excluded() {
 # on SVN with CRLF while every untouched file stayed LF -- so a teammate's next diff shows those
 # two files rewritten end to end, blame destroyed, with nothing in either tool to point at.
 #
+# `core.autocrlf=false` alone is NOT enough, and the gap is silent (issue #164). Git has TWO
+# checkout-rewrite paths: autocrlf guesses which files are text, and `.gitattributes` marking a
+# file text (`* text=auto` is the common spelling) hands the decision to `core.eol` instead --
+# whose default is `native`, i.e. CRLF on Windows. Turning autocrlf off does not disable that
+# second path, it ACTIVATES it. So a repo that adopts `* text=auto` gets CRLF written into the
+# bridge again, and this function stops doing what its name says with nothing to point at.
+# Measured 2026-09-03 on a repo that normalised 408 .sql files to LF: blob LF, bridge disk CRLF,
+# SVN CRLF, while files never re-checked-out since the .gitattributes landed stayed LF -- two
+# line endings in one repo, spreading one file at a time. `git status` showed 415 changes against
+# `svn status`'s 6; the other 409 were pure-EOL phantom Ms.
+#
 # A bridge exists to carry content between git and SVN unchanged, so it must not transform it.
-# Scoped to the bridge worktree via git's per-worktree config, leaving the user's own worktree
-# exactly as they configured it. Idempotent.
+# Both paths are therefore pinned. Scoped to the bridge worktree via git's per-worktree config,
+# leaving the user's own worktree exactly as they configured it. Idempotent.
 #
 # $1: main worktree path. $2: bridge worktree path.
 ensure_bridge_eol_faithful() {
@@ -191,6 +202,7 @@ ensure_bridge_eol_faithful() {
   # Enabling it is non-destructive: existing config stays in the shared file.
   git -C "$main_worktree" config extensions.worktreeConfig true || return 1
   git -C "$bridge" config --worktree core.autocrlf false || return 1
+  git -C "$bridge" config --worktree core.eol lf || return 1
 }
 
 # Validate a branch name for remote-svn worktree mapping (allowlist).

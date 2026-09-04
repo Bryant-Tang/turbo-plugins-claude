@@ -158,9 +158,20 @@ $script:TpGranularityThreshold = 5
 # on SVN with CRLF while every untouched file stayed LF -- so a teammate's next diff shows those
 # two files rewritten end to end, blame destroyed, with nothing in either tool to point at.
 #
+# `core.autocrlf=false` alone is NOT enough, and the gap is silent (issue #164). Git has TWO
+# checkout-rewrite paths: autocrlf guesses which files are text, and `.gitattributes` marking a
+# file text (`* text=auto` is the common spelling) hands the decision to `core.eol` instead --
+# whose default is `native`, i.e. CRLF on Windows. Turning autocrlf off does not disable that
+# second path, it ACTIVATES it. So a repo that adopts `* text=auto` gets CRLF written into the
+# bridge again, and this function stops doing what its name says with nothing to point at.
+# Measured 2026-09-03 on a repo that normalised 408 .sql files to LF: blob LF, bridge disk CRLF,
+# SVN CRLF, while files never re-checked-out since the .gitattributes landed stayed LF -- two
+# line endings in one repo, spreading one file at a time. `git status` showed 415 changes against
+# `svn status`'s 6; the other 409 were pure-EOL phantom Ms.
+#
 # A bridge exists to carry content between git and SVN unchanged, so it must not transform it.
-# Scoped to the bridge worktree via git's per-worktree config, leaving the user's own worktree
-# exactly as they configured it. Idempotent.
+# Both paths are therefore pinned. Scoped to the bridge worktree via git's per-worktree config,
+# leaving the user's own worktree exactly as they configured it. Idempotent.
 function Set-BridgeEolFaithful {
     param(
         [Parameter(Mandatory = $true)][string]$MainWorktree,
@@ -172,6 +183,8 @@ function Set-BridgeEolFaithful {
     if ($LASTEXITCODE -ne 0) { throw 'Could not enable extensions.worktreeConfig.' }
     & git -C $Bridge config --worktree core.autocrlf false
     if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.autocrlf=false on the bridge worktree.' }
+    & git -C $Bridge config --worktree core.eol lf
+    if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.eol=lf on the bridge worktree.' }
 }
 
 function Set-SvnGitExcluded {

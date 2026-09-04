@@ -20,6 +20,7 @@
 #   - write_utf8_no_bom            — CJK no-BOM byte-equal to canonical UTF-8 (R6)
 #   - read_turbo_plugin_config     — flat mode + section/key sentinel + top-level key
 #   - resolve_config_value         — config merge chain + config.local.toml override
+#   - ensure_bridge_eol_faithful   — byte-faithful under `* text=auto` / scoped / idempotent (#164)
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
@@ -1513,6 +1514,102 @@ test_every_svn_calling_script_sources_the_shim() {
     # reports green -- the exact failure mode it exists to prevent.
     assertTrue "expected to scan many scripts, scanned $scanned" "[ '$scanned' -ge 20 ]"
     assertTrue "expected several svn-invoking scripts, found $invoking" "[ '$invoking' -ge 6 ]"
+}
+
+# ─── ensure_bridge_eol_faithful — the pin must survive `.gitattributes` (issue #164) ─────────
+# Build a repo whose blobs are LF, whose attributes mark everything text, and whose checkout is
+# configured to write CRLF. `core.eol` is pinned to `crlf` rather than left at its `native`
+# default on purpose: `native` is CRLF only on Windows, so leaving it would make this case pass
+# for free on Linux -- reporting green on the half of CI that never exercised the bug.
+# Echoes $1 = repo root of a fixture ready for ensure_bridge_eol_faithful; non-zero on failure.
+make_eol_fixture() {
+    local root="$1"
+    git -C "$root" init -q -b main >/dev/null 2>&1 || return 1
+    git -C "$root" config user.email 'test@turbo-plugin' || return 1
+    git -C "$root" config user.name 'turbo-plugin-test' || return 1
+    printf '* text=auto\n' > "$root/.gitattributes" || return 1
+    printf 'a\nb\nc\n' > "$root/f.txt" || return 1
+    git -C "$root" add -A >/dev/null 2>&1 || return 1
+    git -C "$root" commit -qm 'seed' >/dev/null 2>&1 || return 1
+    git -C "$root" config core.autocrlf false || return 1
+    git -C "$root" config core.eol crlf || return 1
+    # Fixture guard: a worktree that silently failed to be created would leave a plain directory
+    # behind, and every assertion below would then measure the wrong tree while still passing.
+    git -C "$root" worktree add -q "$root/bridge" -b bridge >/dev/null 2>&1 || return 1
+    [ -e "$root/bridge/.git" ] || return 1
+}
+
+# Count CR BYTES, not lines. `grep -c $'\r'` answers the same number for a CRLF file and an LF
+# file of equal length, so asserting on it is an identity, not a test.
+count_cr_bytes() {
+    tr -dc '\r' < "$1" | wc -c | tr -d ' '
+}
+
+test_bridge_eol_faithful_defeats_text_auto() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolpin-XXXXXX)"
+    (
+        make_eol_fixture "$tmp" || exit 98
+        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
+
+        # The pin only bites when git next writes the file, so force a fresh checkout.
+        rm -f "$tmp/bridge/f.txt"
+        git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
+
+        cr="$(count_cr_bytes "$tmp/bridge/f.txt")"
+        if [ "$cr" -ne 0 ]; then
+            echo "bridge checkout wrote $cr CR bytes but the blob is pure LF" >&2
+            exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'bridge checkout is byte-faithful to the blob even under `* text=auto`' 0 "$rc"
+}
+
+# The docstring promises the pin is scoped to the bridge. If it ever leaked to the shared config
+# it would silently rewrite the user's own working copy, which is not this function's business.
+test_bridge_eol_faithful_leaves_main_worktree_alone() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolscope-XXXXXX)"
+    (
+        make_eol_fixture "$tmp" || exit 98
+        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
+
+        rm -f "$tmp/f.txt"
+        git -C "$tmp" checkout -- f.txt >/dev/null 2>&1 || exit 96
+
+        cr="$(count_cr_bytes "$tmp/f.txt")"
+        # 3 lines of CRLF -- the main worktree keeps whatever the user configured.
+        if [ "$cr" -ne 3 ]; then
+            echo "main worktree wrote $cr CR bytes; expected 3 (its own core.eol=crlf)" >&2
+            exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'the pin does not reach outside the bridge worktree' 0 "$rc"
+}
+
+test_bridge_eol_faithful_is_idempotent() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolidem-XXXXXX)"
+    (
+        make_eol_fixture "$tmp" || exit 98
+        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 97
+        ensure_bridge_eol_faithful "$tmp" "$tmp/bridge" || exit 95
+        eol="$(git -C "$tmp/bridge" config --worktree core.eol 2>/dev/null || true)"
+        if [ "$eol" != 'lf' ]; then
+            echo "expected core.eol=lf on the bridge worktree, got '$eol'" >&2
+            exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    assertEquals 'calling the pin twice succeeds and leaves core.eol=lf' 0 "$rc"
 }
 
 # shellcheck disable=SC1090
