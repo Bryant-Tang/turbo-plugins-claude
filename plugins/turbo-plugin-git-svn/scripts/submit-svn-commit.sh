@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/common.sh"   # provides svn_status_xml (UTF-8/entity-safe svn status parser)
+                                     # and svn_status_drift_paths (snapshot-vs-current set difference)
 
 BRANCH=''
 # U9: the agent supplies ONLY the title. The body is read from the pin file written by
