@@ -1612,5 +1612,80 @@ test_bridge_eol_faithful_is_idempotent() {
     assertEquals 'calling the pin twice succeeds and leaves core.eol=lf' 0 "$rc"
 }
 
+# ── issue #170: svn_status_drift_paths ────────────────────────────────────────────────────────
+# The drift check submit-svn-commit.sh runs before `svn commit` used to ask, once per current
+# path, `printf '%s\n' "$SNAPSHOT" | grep -qxF "$path"`. Under `pipefail` -- which core.sh sets --
+# that is wrong in one direction: `grep -q` exits the instant it matches, the still-writing
+# `printf` takes SIGPIPE, the pipeline reports 141, and `if !` reads the HIT as a MISS. It only
+# bites once the snapshot outgrows the pipe buffer, so small repos never showed it while a
+# 1203-entry (~110KB) one mis-flagged 1165 paths as "appeared" and could never push.
+#
+# Hence the two deliberate choices below: an oversized fixture (a small one passes either way),
+# and an explicit `set -o pipefail` in each case, because oneTimeSetUp relaxes it for shUnit2's
+# sake -- without it the regression would not reproduce even against the old code.
+
+# $1 = file to write, $2 = entry count. Paths are long enough that the listing clears a 64KB
+# pipe buffer well before the last entry.
+make_status_fixture() {
+    awk -v n="$2" 'BEGIN {
+        for (i = 1; i <= n; i++)
+            printf "M\tsrc/main/resources/config/generated/module-%05d/settings-fragment-%05d.xml\n", i, i
+    }' > "$1"
+}
+
+# Mirrors submit-svn-commit.sh exactly: the current listing arrives through a pipe.
+drift_paths_via_pipe() {
+    # $1 = snapshot file, $2 = current listing (as one string)
+    set -o pipefail
+    printf '%s\n' "$2" | svn_status_drift_paths "$1"
+}
+
+test_status_drift_is_silent_when_a_large_worktree_is_unchanged() {
+    local tmp bytes current out rc
+    tmp="$(mktemp -d -t turbo-drift-XXXXXX)"
+    make_status_fixture "$tmp/snapshot" 1200
+    bytes="$(wc -c < "$tmp/snapshot" | tr -d '[:space:]')"
+    current="$(cat "$tmp/snapshot")"
+    out="$(drift_paths_via_pipe "$tmp/snapshot" "$current")"; rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+
+    assertTrue "fixture must exceed a 64KB pipe buffer to reproduce #170 (got $bytes bytes)" \
+        "[ $bytes -gt 65536 ]"
+    assertEquals 'comparing a listing with itself exits 0' 0 "$rc"
+    assertEquals 'an unchanged 1200-entry worktree reports no drift' '' "$out"
+}
+
+test_status_drift_still_reports_real_arrivals_at_scale() {
+    local tmp current out rc
+    tmp="$(mktemp -d -t turbo-drift-XXXXXX)"
+    make_status_fixture "$tmp/snapshot" 1200
+    # Two genuine arrivals, and one snapshot entry that has since gone away -- drift is
+    # "appeared", so the disappearance must stay unreported.
+    current="$(sed '1d' "$tmp/snapshot")
+?	docs/notes-added-after-prepare.md
+?	build/output-added-after-prepare.log"
+    out="$(drift_paths_via_pipe "$tmp/snapshot" "$current")"; rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+
+    assertEquals 'drift detection exits 0' 0 "$rc"
+    assertEquals 'exactly the two new paths, in the current listing order' \
+        'docs/notes-added-after-prepare.md
+build/output-added-after-prepare.log' "$out"
+}
+
+test_status_drift_compares_non_ascii_paths_byte_wise() {
+    local tmp current out
+    tmp="$(mktemp -d -t turbo-drift-XXXXXX)"
+    make_status_fixture "$tmp/snapshot" 1200
+    printf 'M\t文件/既有的設定檔.xml\n' >> "$tmp/snapshot"
+    # The pinned CJK path is unchanged; only the second one is new.
+    current="$(cat "$tmp/snapshot")
+?	文件/新增的報表.xml"
+    out="$(drift_paths_via_pipe "$tmp/snapshot" "$current")"
+    rm -rf "$tmp" 2>/dev/null || true
+
+    assertEquals 'a pinned CJK path is not mistaken for an arrival' '文件/新增的報表.xml' "$out"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

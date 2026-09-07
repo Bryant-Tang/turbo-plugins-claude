@@ -430,6 +430,44 @@ svn_status_xml() {
   done
 }
 
+# Set difference over two `svn_status_xml` outputs: print every path present in the
+# CURRENT listing (stdin) but absent from the SNAPSHOT listing (file $1), one per
+# line, in the CURRENT listing's own order. Both sides are "<sc>\t<path>" lines.
+#
+# Why a single awk pass and not `grep -qxF` per path (issue #170): the previous
+# `printf '%s\n' "$SNAPSHOT" | grep -qxF "$path"` was WRONG under `pipefail`, which
+# core.sh sets. `grep -q` exits the instant it matches, so on a snapshot larger than
+# the pipe buffer (~64KB) the still-writing `printf` takes SIGPIPE, the pipeline
+# reports 141, and `if !` reads a HIT as a MISS. Every early-matching path is then
+# reported as "appeared" -- a repo with 1203 entries (~110KB) mis-flagged 1165 of
+# them and could never push, while small repos, whose snapshot fits the buffer
+# entirely, never showed the bug at all. Nothing here exits early, so no SIGPIPE.
+#
+# It also drops the old O(n x snapshot) rescan -- that same repo pushed ~132MB
+# through the pipe to answer 1203 membership questions -- to one pass over each side.
+#
+# LC_ALL=C so index/substr split on the literal tab byte: UTF-8 never encodes a tab
+# as a trailing byte of a multibyte char, so CJK paths pass through untouched and
+# comparison stays byte-wise, matching the `grep -F` semantics it replaces.
+svn_status_drift_paths() {
+  local snapshot_file="$1"
+  LC_ALL=C awk '
+    FNR == NR {
+      i = index($0, "\t")
+      # A snapshot line with no tab has no path column; keep the whole line as the
+      # key (what the previous `cut -f2-` did) rather than dropping it.
+      snap[i ? substr($0, i + 1) : $0] = 1
+      next
+    }
+    {
+      i = index($0, "\t")
+      if (i == 0) next
+      p = substr($0, i + 1)
+      if (p != "" && !(p in snap)) print p
+    }
+  ' "$snapshot_file" -
+}
+
 # Format `svn log --xml` (read on stdin) into a boxed plain-text report: every
 # revision is wrapped by a fixed 50-char '═' double rule (which also separates
 # adjacent revisions), and a 49-char '─' single rule fences the header / message
