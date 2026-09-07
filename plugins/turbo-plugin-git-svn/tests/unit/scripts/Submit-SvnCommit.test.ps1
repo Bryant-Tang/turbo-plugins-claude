@@ -510,4 +510,90 @@ Describe 'Submit-SvnCommit' {
             $script:EolProp2 | Should -BeNullOrEmpty
         }
     }
+
+    # The failure path, which is the whole reason the marking step aborts instead of warning.
+    # Pushing CRLF into a repository that stores LF is silent afterwards -- git reports clean
+    # because it normalises on read, svn reports clean because it committed exactly what was on
+    # disk -- so before the commit is the only moment anything can be done about it.
+    #
+    # The property write is made to fail with a PATH shim that refuses exactly the call carrying
+    # `svn:eol-style` and delegates everything else to the real svn. Breaking every svn call would
+    # prove nothing: the push would die earlier and the assertions would pass for the wrong reason.
+    # That is not hypothetical -- the bash twin did exactly that on the first attempt, because an
+    # unquoted path split at a space, and only mutation testing surfaced it.
+    Context 'EOL: the push aborts when the property cannot be set' {
+        BeforeAll {
+            $script:EolSb3 = $null; $script:EolAbortRc = 0
+            $script:EolRevBefore = 'a'; $script:EolRevAfter = 'b'; $script:EolShimOk = $false
+            $eolSvnOk3 = $false
+            try { $null = (& svn --version --quiet 2>$null); $eolSvnOk3 = ($LASTEXITCODE -eq 0) } catch { $eolSvnOk3 = $false }
+            $realSvn = (Get-Command svn -ErrorAction SilentlyContinue).Source
+
+            if ($eolSvnOk3 -and $realSvn) {
+                $script:EolSb3 = New-Sandbox -Tag 'ptsc-eol3'
+                $fx3 = New-FeatureBridge -Sandbox $script:EolSb3
+                if ($fx3) {
+                    $bridge3 = [System.IO.Path]::Combine($fx3.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                    Push-Location $bridge3
+                    try {
+                        & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+                        & svn --non-interactive commit -m 'declare svn:eol-style for the tree' 2>$null | Out-Null
+                    } finally { Pop-Location }
+
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('checkout', 'feat-x')
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($fx3.Root, 'app.txt')) -Value 'app-v2'
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('add', '--', 'app.txt')
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('commit', '-m', 'feat: edit an existing file')
+
+                    $script:EolRevBefore = Get-SvnValue info --show-item revision $fx3.BranchUrl
+
+                    # A .cmd, not a shell script: the scripts under test resolve `svn` through PATH,
+                    # and only an executable Windows shim will be found. The shim directory holds
+                    # nothing else and goes first on PATH, so it wins over the real svn.exe.
+                    $shimDir = [System.IO.Path]::Combine($script:EolSb3, 'svnshim')
+                    $null = New-Item -ItemType Directory -Path $shimDir -Force
+                    $shimLines = @(
+                        '@echo off',
+                        'echo %* | findstr /C:"svn:eol-style" >nul',
+                        'if not errorlevel 1 (',
+                        '  echo fake svn: refusing the property write 1>&2',
+                        '  exit /b 1',
+                        ')',
+                        ('"' + $realSvn + '" %*')
+                    )
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($shimDir, 'svn.cmd')) -Value $shimLines -Encoding ASCII
+
+                    $savedPath = $env:PATH
+                    $env:PATH = $shimDir + [System.IO.Path]::PathSeparator + $env:PATH
+                    try {
+                        # Shim guard: it must still delegate ordinary calls, or the push fails for
+                        # the wrong reason and the assertions below prove nothing.
+                        & svn --version --quiet 2>$null | Out-Null
+                        $script:EolShimOk = ($LASTEXITCODE -eq 0)
+
+                        $null = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx3.Root -ScriptArgs @('-Branch', 'feat-x')
+                        $s3 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx3.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'feat: edit an existing file')
+                        $script:EolAbortRc = $s3.ExitCode
+                    } finally {
+                        $env:PATH = $savedPath
+                    }
+
+                    $script:EolRevAfter = Get-SvnValue info --show-item revision $fx3.BranchUrl
+                }
+            }
+        }
+        AfterAll { if ($script:EolSb3) { Remove-Sandbox -Dir $script:EolSb3 } }
+
+        It 'the shim delegates ordinary svn calls, so the case is meaningful' -Skip:(-not $script:SvnReady) {
+            $script:EolShimOk | Should -BeTrue
+        }
+        It 'the push fails' -Skip:(-not $script:SvnReady) {
+            $script:EolAbortRc | Should -Not -Be 0
+        }
+        It 'and no SVN revision was created' -Skip:(-not $script:SvnReady) {
+            # The guarantee that matters. A push that committed anyway would have shipped exactly
+            # the bytes this mechanism exists to keep out.
+            $script:EolRevAfter | Should -Be $script:EolRevBefore
+        }
+    }
 }
