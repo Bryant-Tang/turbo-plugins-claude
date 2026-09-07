@@ -436,7 +436,13 @@ Describe 'Submit-SvnCommit' {
     Context 'EOL: a pre-existing file is marked once the tree declares' {
         BeforeAll {
             $script:EolSb = $null; $script:EolBefore = 'unset'; $script:EolPushed = $false; $script:EolProp = ''
-            if ($script:SvnReady) {
+            # Detected HERE rather than read from $script:SvnReady: that variable is assigned at
+            # file scope, which Pester evaluates during DISCOVERY, so a run-phase BeforeAll cannot
+            # see it -- "cannot be retrieved because it has not been set". File scope is right only
+            # for the -Skip: parameters below, which Pester also resolves at discovery.
+            $eolSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $eolSvnOk = ($LASTEXITCODE -eq 0) } catch { $eolSvnOk = $false }
+            if ($eolSvnOk) {
                 $script:EolSb = New-Sandbox -Tag 'ptsc-eol1'
                 $fx = New-FeatureBridge -Sandbox $script:EolSb
                 if ($fx) {
@@ -460,16 +466,13 @@ Describe 'Submit-SvnCommit' {
         }
         AfterAll { if ($script:EolSb) { Remove-Sandbox -Dir $script:EolSb } }
 
-        It 'app.txt starts without the property, so the case proves something' {
-            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+        It 'app.txt starts without the property, so the case proves something' -Skip:(-not $script:SvnReady) {
             $script:EolBefore | Should -BeNullOrEmpty
         }
-        It 'the push succeeds' {
-            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+        It 'the push succeeds' -Skip:(-not $script:SvnReady) {
             $script:EolPushed | Should -BeTrue
         }
-        It 'and the pre-existing file now carries svn:eol-style=native' {
-            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+        It 'and the pre-existing file now carries svn:eol-style=native' -Skip:(-not $script:SvnReady) {
             $script:EolProp | Should -Be 'native'
         }
     }
@@ -481,7 +484,10 @@ Describe 'Submit-SvnCommit' {
     Context 'EOL: nothing is marked while the tree declares nothing' {
         BeforeAll {
             $script:EolSb2 = $null; $script:EolPushed2 = $false; $script:EolProp2 = 'unset'
-            if ($script:SvnReady) {
+            # Same reason as the Context above: discovery-scope variables are not visible here.
+            $eolSvnOk2 = $false
+            try { $null = (& svn --version --quiet 2>$null); $eolSvnOk2 = ($LASTEXITCODE -eq 0) } catch { $eolSvnOk2 = $false }
+            if ($eolSvnOk2) {
                 $script:EolSb2 = New-Sandbox -Tag 'ptsc-eol2'
                 $fx2 = New-FeatureBridge -Sandbox $script:EolSb2
                 if ($fx2) {
@@ -497,12 +503,10 @@ Describe 'Submit-SvnCommit' {
         }
         AfterAll { if ($script:EolSb2) { Remove-Sandbox -Dir $script:EolSb2 } }
 
-        It 'the push still succeeds' {
-            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+        It 'the push still succeeds' -Skip:(-not $script:SvnReady) {
             $script:EolPushed2 | Should -BeTrue
         }
-        It 'and nothing was marked' {
-            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+        It 'and nothing was marked' -Skip:(-not $script:SvnReady) {
             $script:EolProp2 | Should -BeNullOrEmpty
         }
     }
