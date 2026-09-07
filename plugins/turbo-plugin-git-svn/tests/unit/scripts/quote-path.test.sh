@@ -30,7 +30,7 @@ FLAG='-c core.quotePath=false'
 
 # The shapes whose output a human reads: conflict lists, the tp-request-merge diffstat, and the
 # bridge's differing-files list.
-HUMAN_SHAPES='diff --name-only --diff-filter=U|diff --stat|diff --cached --name-only'
+HUMAN_SHAPES='diff --name-only --diff-filter=U|diff --stat|diff --cached --name-only|ls-files --eol'
 
 # Every line in scripts/ that runs one of those shapes, both language halves.
 #
@@ -43,8 +43,13 @@ HUMAN_SHAPES='diff --name-only --diff-filter=U|diff --stat|diff --cached --name-
 # first version of this test stayed GREEN with the flag deleted from exactly that call, and the
 # "at least N call sites" floor did not save it -- eleven other sites satisfied the floor while the
 # twelfth went unchecked. Normalising first is what makes both spellings one shape.
+# The pre-filter has to name every command family in HUMAN_SHAPES, not just `diff`. Adding a shape
+# to the list above without widening this grep is a silent no-op: the shape can never be reached,
+# so the new call sites go unchecked while the test still reports green. `ls-files --eol` was added
+# for the EOL classifier, whose paths feed straight into `svn propset` -- a C-quoted CJK filename
+# there is a target that does not exist (issue #164 / #167).
 human_lines() {
-    grep -rn -E 'diff' "$SCRIPTS_DIR" --include='*.sh' --include='*.ps1' 2>/dev/null \
+    grep -rn -E 'diff|ls-files' "$SCRIPTS_DIR" --include='*.sh' --include='*.ps1' 2>/dev/null \
         | tr -d "'\"," \
         | grep -E "($HUMAN_SHAPES)"
 }

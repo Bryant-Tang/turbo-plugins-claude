@@ -309,7 +309,10 @@ function Get-SvnEolClassification {
     # that is the common case, not an edge one.
     $result = Read-Git -Cwd $Worktree -GitArgs @('-c', 'core.quotePath=false', 'ls-files', '--eol')
     if ($result.Code -ne 0) {
-        throw "Could not classify line endings in '$Worktree' (git ls-files --eol failed)."
+        # Worded to avoid the literal command shape: quote-path.test.sh scans for that shape to
+        # check every call site passes core.quotePath=false, and a prose copy of it in an error
+        # string is a false positive there.
+        throw "Could not classify line endings in '$Worktree' -- git could not list the tracked files."
     }
 
     $rows = New-Object System.Collections.Generic.List[psobject]
