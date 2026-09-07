@@ -425,4 +425,85 @@ Describe 'Submit-SvnCommit' {
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
+
+    # ─── EOL: the push path marks text files, and only once the tree declares (#167) ──────────
+    # Mirrors submit-svn-commit.test.sh case for case. The subject is a PRE-EXISTING file, never a
+    # newly added one: svn:auto-props applies the property itself at `svn add` time, so a version
+    # of this that added a new file stayed green even with the push path's marking call deleted --
+    # it was measuring SVN's own behaviour. Files that predate the declaration are the ones only
+    # the push path can reach, and they are the realistic case: a repository migrates once and then
+    # keeps editing what it already had.
+    Context 'EOL: a pre-existing file is marked once the tree declares' {
+        BeforeAll {
+            $script:EolSb = $null; $script:EolBefore = 'unset'; $script:EolPushed = $false; $script:EolProp = ''
+            if ($script:SvnReady) {
+                $script:EolSb = New-Sandbox -Tag 'ptsc-eol1'
+                $fx = New-FeatureBridge -Sandbox $script:EolSb
+                if ($fx) {
+                    $script:EolBefore = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/app.txt"
+                    $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                    # Exactly what /tp-init-svn-eol-style leaves behind.
+                    Push-Location $bridge
+                    try {
+                        & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+                        & svn --non-interactive commit -m 'declare svn:eol-style for the tree' 2>$null | Out-Null
+                    } finally { Pop-Location }
+
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'app.txt')) -Value 'app-v2'
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '--', 'app.txt')
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: edit an existing file')
+                    $script:EolPushed = Invoke-FeatPush -Root $fx.Root -Title 'feat: edit an existing file'
+                    $script:EolProp = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/app.txt"
+                }
+            }
+        }
+        AfterAll { if ($script:EolSb) { Remove-Sandbox -Dir $script:EolSb } }
+
+        It 'app.txt starts without the property, so the case proves something' {
+            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+            $script:EolBefore | Should -BeNullOrEmpty
+        }
+        It 'the push succeeds' {
+            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+            $script:EolPushed | Should -BeTrue
+        }
+        It 'and the pre-existing file now carries svn:eol-style=native' {
+            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+            $script:EolProp | Should -Be 'native'
+        }
+    }
+
+    # The other half of the same rule. Same file and same edit as above, so the two cases differ in
+    # exactly one thing: whether the tree declares. Marking files in a tree that has not been
+    # migrated is what made svn write platform endings for some files while git stayed pinned to LF
+    # for the rest, leaving the bridge permanently modified.
+    Context 'EOL: nothing is marked while the tree declares nothing' {
+        BeforeAll {
+            $script:EolSb2 = $null; $script:EolPushed2 = $false; $script:EolProp2 = 'unset'
+            if ($script:SvnReady) {
+                $script:EolSb2 = New-Sandbox -Tag 'ptsc-eol2'
+                $fx2 = New-FeatureBridge -Sandbox $script:EolSb2
+                if ($fx2) {
+                    # Deliberately NO declaration here -- that is the whole case.
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('checkout', 'feat-x')
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($fx2.Root, 'app.txt')) -Value 'app-v2'
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('add', '--', 'app.txt')
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('commit', '-m', 'feat: edit an existing file')
+                    $script:EolPushed2 = Invoke-FeatPush -Root $fx2.Root -Title 'feat: edit an existing file'
+                    $script:EolProp2 = Get-SvnValue propget svn:eol-style "$($fx2.BranchUrl)/app.txt"
+                }
+            }
+        }
+        AfterAll { if ($script:EolSb2) { Remove-Sandbox -Dir $script:EolSb2 } }
+
+        It 'the push still succeeds' {
+            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+            $script:EolPushed2 | Should -BeTrue
+        }
+        It 'and nothing was marked' {
+            if (-not $script:SvnReady) { Set-ItResult -Skipped -Because 'svn is not on PATH'; return }
+            $script:EolProp2 | Should -BeNullOrEmpty
+        }
+    }
 }
