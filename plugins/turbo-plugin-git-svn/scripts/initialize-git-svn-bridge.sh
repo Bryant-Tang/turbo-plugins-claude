@@ -312,6 +312,13 @@ else
   svn checkout "$SVN_URL" "$REMOTE_PATH"
 fi
 
+# Re-read the mode now that .svn exists. The call before the checkout could only ever answer
+# "not declared" -- there was no working copy to ask yet. For a repository that already carried
+# svn:eol-style BEFORE adopting this plugin, that answer is wrong: the bridge stays pinned to LF
+# while svn writes platform endings, and the FIRST `git add -A` then stores CRLF in git for good.
+# Measured on a tree with the property already set: blob 3 CR without this second read, 0 with it.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
+
 # ---- step 9b: keep svn metadata out of git for the WHOLE import, independent of .gitignore. ----
 # The bridge .gitignore can only be written AFTER the import (step 10 below explains why), so
 # `git add -A` needs a different ignore source while the replay runs. info/exclude is repo-local,

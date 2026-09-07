@@ -1899,5 +1899,52 @@ test_apply_svn_eol_style_is_idempotent() {
     assertEquals 'calling it twice records no second property change' 0 "$rc"
 }
 
+# ─── the bootstrap scripts must re-read the EOL mode AFTER the svn checkout ──────────────────
+# Before the checkout there is no working copy to ask, so the answer is always "not declared". For
+# a repository that already carried svn:eol-style before adopting this plugin, that answer is
+# wrong: the bridge stays pinned to LF while svn writes platform endings, and the first
+# `git add -A` stores CRLF in git permanently. Measured on such a tree: blob 3 CR without the
+# second read, 0 with it.
+#
+# Structural rather than behavioural on purpose. The ordering IS the whole content of the fix, and
+# a behavioural version would need a full bootstrap fixture per script -- three more chances to
+# build a fixture that measures the wrong thing. Same shape as the svn-shim check above.
+test_bootstrap_scripts_reread_eol_mode_after_checkout() {
+    local scripts_dir="$PLUGIN_ROOT/scripts" f path last_checkout last_mode checked=0
+
+    for f in initialize-git-svn-bridge.sh new-remote-bridge.sh checkout-svn-branch.sh; do
+        path="$scripts_dir/$f"
+        if [ ! -f "$path" ]; then fail "missing bootstrap script: $f"; continue; fi
+        checked=$((checked + 1))
+        last_checkout="$(grep -n '^[[:space:]]*svn checkout' "$path" | tail -1 | cut -d: -f1)"
+        last_mode="$(grep -n 'ensure_bridge_eol_mode ' "$path" | tail -1 | cut -d: -f1)"
+        if [ -z "$last_checkout" ] || [ -z "$last_mode" ]; then
+            fail "$f: expected both an 'svn checkout' and an 'ensure_bridge_eol_mode' call"
+            continue
+        fi
+        # Command substitution stays OUT of the assertion message: it would run first and leave its
+        # own exit code in $?, so the assertion could never fail.
+        assertTrue "$f: ensure_bridge_eol_mode (line $last_mode) must come after svn checkout (line $last_checkout)" \
+            "[ '$last_mode' -gt '$last_checkout' ]"
+    done
+
+    for f in Initialize-GitSvnBridge.ps1 New-RemoteBridge.ps1 Checkout-SvnBranch.ps1; do
+        path="$scripts_dir/$f"
+        if [ ! -f "$path" ]; then fail "missing bootstrap script: $f"; continue; fi
+        checked=$((checked + 1))
+        last_checkout="$(grep -n '& svn checkout' "$path" | tail -1 | cut -d: -f1)"
+        last_mode="$(grep -n 'Set-BridgeEolMode ' "$path" | tail -1 | cut -d: -f1)"
+        if [ -z "$last_checkout" ] || [ -z "$last_mode" ]; then
+            fail "$f: expected both an 'svn checkout' and a 'Set-BridgeEolMode' call"
+            continue
+        fi
+        assertTrue "$f: Set-BridgeEolMode (line $last_mode) must come after svn checkout (line $last_checkout)" \
+            "[ '$last_mode' -gt '$last_checkout' ]"
+    done
+
+    # Floor: a renamed file would silently reduce this to a no-op that still reports green.
+    assertEquals 'all six bootstrap scripts were checked' 6 "$checked"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

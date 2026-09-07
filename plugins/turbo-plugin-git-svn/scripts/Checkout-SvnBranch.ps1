@@ -286,6 +286,14 @@ try {
         & svn checkout $SvnUrl $remoteWorktreePath
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
 
+        # Re-read the mode now that .svn exists. The call before the checkout could only ever answer
+        # "not declared" -- there was no working copy to ask yet. For a repository that already
+        # carried svn:eol-style BEFORE adopting this plugin, that answer is wrong: the bridge stays
+        # pinned to LF while svn writes platform endings, and the `git add -A` below then stores
+        # CRLF in git for good. Measured on a tree with the property already set: blob 3 CR without
+        # this second read, 0 with it.
+        Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
+
         # Untrack `.git` from the svn working copy (pure-local WC fix; tolerate "not tracked").
         # We never svn-commit, so this never reaches SVN - it just keeps the WC tidy.
         Push-Location $remoteWorktreePath

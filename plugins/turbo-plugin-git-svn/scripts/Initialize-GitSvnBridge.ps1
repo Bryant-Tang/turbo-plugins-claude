@@ -330,6 +330,14 @@ try {
         }
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
 
+        # Re-read the mode now that .svn exists. The call before the checkout could only ever answer
+        # "not declared" -- there was no working copy to ask yet. For a repository that already
+        # carried svn:eol-style BEFORE adopting this plugin, that answer is wrong: the bridge stays
+        # pinned to LF while svn writes platform endings, and the FIRST `git add -A` then stores
+        # CRLF in git for good. Measured on a tree with the property already set: blob 3 CR without
+        # this second read, 0 with it.
+        Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
+
         # ---- step 9b: keep svn metadata out of git for the WHOLE import, independent of .gitignore.
         # `git add -A` needs an ignore source that does not depend on whatever .gitignore SVN
         # happens to carry. info/exclude is repo-local, unversioned and idempotent -- and '.svn/'
