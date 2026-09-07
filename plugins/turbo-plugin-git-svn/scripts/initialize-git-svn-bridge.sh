@@ -292,7 +292,7 @@ trap _rollback ERR
 
 # ---- step 7: build the EMPTY bridge worktree (orphan branch, empty index + working tree). ----
 git -C "$MAIN_WORKTREE" worktree add --detach --no-checkout "$REMOTE_PATH"
-# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN matters:
+# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN tree
 # rather than assuming: with no svn:eol-style there yet svn writes LF, so git must be pinned
 # to match -- otherwise core.autocrlf=true has the checkout write CRLF and every guard that
 # asks whether the bridge is clean fires at once. The mode flips after /tp-init-svn-eol-style.

@@ -57,13 +57,28 @@ make_bridge_fixture() {
     git -C "$root" init -q -b main >/dev/null 2>&1 || return 1
     git -C "$root" config user.email 'test@turbo-plugin' || return 1
     git -C "$root" config user.name 'turbo-plugin-test' || return 1
-    git -C "$root" config core.autocrlf false || return 1
+    # true, not false: this is the Git for Windows SYSTEM default, so it is what an unpinned bridge
+    # actually inherits on a real user's machine. Pinning the fixture to false would quietly make
+    # "unpinned" mean "still expects raw bytes", and the migrate-then-pull case below would be
+    # measuring a platform nobody has.
+    git -C "$root" config core.autocrlf true || return 1
     echo init > "$root/init.txt"
     git -C "$root" add -A >/dev/null 2>&1 || return 1
     git -C "$root" -c commit.gpgsign=false commit -qm initial >/dev/null 2>&1 || return 1
 
     mkdir -p "$root/.turbo-plugin/worktrees" || return 1
     git -C "$root" worktree add -q --no-checkout "$bridge" -b 'remote-svn/main' >/dev/null 2>&1 || return 1
+
+    # Pin BEFORE any content lands, which is what production does and what makes this fixture a
+    # real pre-migration bridge. Pinning afterwards instead produces a state that cannot occur:
+    # blobs normalised under autocrlf=true but read back raw, so the CRLF files mismatch their own
+    # blobs. That mismatch is also RACY -- git's racily-clean rule re-hashes a file only when its
+    # timestamp differs from the index, so a fixture built inside one second reports dirty
+    # sometimes and clean other times. This test was flaky for exactly that reason.
+    git -C "$root" config extensions.worktreeConfig true >/dev/null 2>&1 || return 1
+    git -C "$bridge" config --worktree core.autocrlf false >/dev/null 2>&1 || return 1
+    git -C "$bridge" config --worktree core.eol lf >/dev/null 2>&1 || return 1
+
     svn --non-interactive checkout -q --force "$uri/trunk" "$bridge" >/dev/null 2>&1 || return 1
     svn --non-interactive propset -q svn:ignore '.git' "$bridge" >/dev/null 2>&1 || return 1
     # Keep .svn out of git, as the production bootstrap does. It goes in the COMMON git dir's
@@ -187,6 +202,63 @@ test_dirty_bridge_is_refused() {
     rm -rf "$tmp" 2>/dev/null || true
     [ "$rc" -eq 98 ] && { startSkipping; return 0; }
     assertEquals 'a bridge with pending changes is refused' 0 "$rc"
+}
+
+# The order that actually breaks people: migrate, then PULL -- without a push in between.
+#
+# The bridge's EOL mode is read from the SVN tree, so migrating changes what the right mode is. The
+# push path refreshes it; for a while the pull path did not, and "migrate then pull" is a perfectly
+# ordinary order (check the remote before sending anything). `svn update` would then write platform
+# endings into a bridge whose git side was still pinned to LF and every file would read as modified.
+#
+# It drives the real chokepoint, `svn_position_wc_at_rev`, rather than calling the refresh directly:
+# the defect was never in the refresh, it was in nothing calling it.
+test_pull_after_migration_leaves_the_bridge_clean() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-pull-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp")" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+
+        # The fixture already built this as a pre-migration bridge: pinned to LF from before any
+        # content landed, which is the state a real upgrading user is in.
+        pinned_before="$(git -C "$bridge" config --worktree core.eol 2>/dev/null || true)"
+        if [ "$pinned_before" != 'lf' ]; then
+            echo "fixture: expected a pinned bridge, core.eol='$pinned_before'" >&2; exit 1
+        fi
+
+        bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
+
+        # Now do what a pull does. Sourcing the lib is the point: this is the chokepoint every
+        # SVN-content write funnels through, and it is where the mode refresh lives.
+        # shellcheck source=/dev/null
+        . "$PLUGIN_ROOT/scripts/lib/common.sh"
+        set +e +u +o pipefail
+        rev="$(cd "$bridge" && svn --non-interactive info --show-item revision | tr -d '\r\n')"
+        svn_position_wc_at_rev "$bridge" "$rev" >/dev/null 2>&1 || exit 96
+
+        # Asserted on plain.txt, NOT on the whole tree, and the distinction is the point.
+        # wascrlf.txt SHOULD show as modified afterwards: the migration really did rewrite it in
+        # SVN, from CRLF to LF, and that is a genuine content change waiting to be synced into git.
+        # A whole-tree "must be clean" assertion would call that correct behaviour a failure.
+        # plain.txt's content nobody touched, so it may only appear if the MODE is wrong -- which
+        # is exactly the defect, and pre-fix it took the entire tree with it.
+        dirty="$(git -C "$bridge" status --porcelain -- plain.txt 2>/dev/null || true)"
+        if [ -n "$dirty" ]; then
+            echo "an untouched file reads as modified after migrate-then-pull: [$dirty]" >&2; exit 1
+        fi
+        # And the pin really is gone -- otherwise "clean" might just mean nothing was rewritten.
+        pin="$(git -C "$bridge" config --worktree core.eol 2>/dev/null || true)"
+        if [ -n "$pin" ]; then
+            echo "the LF pin survived the migration: core.eol=$pin" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'migrating and then pulling unpins the bridge and leaves untouched files alone' 0 "$rc"
 }
 
 # shellcheck disable=SC1090

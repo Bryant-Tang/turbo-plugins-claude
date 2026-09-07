@@ -151,6 +151,8 @@ else
   svn delete -- "$SVN_TARGET" || svn_remove_failed
 fi
 svn commit --file "$MSG_FILE" --encoding UTF-8 -- "$SVN_TARGET" || svn_remove_failed
+# This update writes SVN content back onto the bridge, so the EOL mode has to be current first.
+ensure_bridge_eol_mode_once "$REMOTE_PATH" || true
 svn update >/dev/null || echo 'Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.' >&2
 SVN_REV="$(svn info --show-item revision)"
 popd >/dev/null

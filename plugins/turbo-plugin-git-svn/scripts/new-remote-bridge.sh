@@ -119,7 +119,7 @@ trap _rollback_bridge ERR
 
 git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$BASE_REF"
 git -C "$MAIN_WORKTREE" worktree add --no-checkout "$REMOTE_PATH" "$REMOTE_BRANCH"
-# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN matters:
+# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN tree
 # rather than assuming: with no svn:eol-style there yet svn writes LF, so git must be pinned
 # to match -- otherwise core.autocrlf=true has the checkout write CRLF and every guard that
 # asks whether the bridge is clean fires at once. The mode flips after /tp-init-svn-eol-style.

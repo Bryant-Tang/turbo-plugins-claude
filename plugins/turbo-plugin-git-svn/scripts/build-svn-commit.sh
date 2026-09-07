@@ -107,8 +107,8 @@ if [[ -z "$SVN_BODY" ]]; then
   exit 1
 fi
 
-# Re-assert the bridge EOL mode: this is the step that materialises files into the bridge, is
-# the step that actually writes CRLF out: the merge checks the changed files out into the
+# Re-assert the bridge EOL mode: this is the step that materialises files into the bridge,
+# and the mode may have changed since the bridge was created -- /tp-init-svn-eol-style moves
 # a repository from "git pins LF" to "svn normalises, git follows". Idempotent either way.
 ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 

@@ -1769,9 +1769,6 @@ test_apply_svn_eol_style_sets_text_only() {
         # svn.exe cannot read an MSYS /tmp path; it needs the Windows spelling.
         url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
         svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
-        # The tree has to declare eol-style before the push path will mark anything: one signal
-        # governs both that decision and the bridge's git mode, so that they cannot disagree.
-        ( cd "$wc" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
 
         git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
         git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
@@ -1785,6 +1782,12 @@ test_apply_svn_eol_style_sets_text_only() {
         git -C "$wc" commit -qm seed >/dev/null 2>&1 || exit 98
 
         svn --non-interactive add -q "$wc/text.txt" "$wc/mixed.txt" "$wc/blob.bin" >/dev/null 2>&1 || exit 98
+        # Declared AFTER the adds, and that order is load-bearing rather than incidental: with
+        # svn:auto-props already in place, `svn add mixed.txt` applies svn:eol-style to it and
+        # svn then refuses the file outright -- "E200009: has inconsistent newlines". Which is
+        # the very hazard this code exists to avoid, arriving through the fixture. It also
+        # matches production: the migration declares it on a tree that already has files.
+        ( cd "$wc" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
 
         n="$(apply_svn_eol_style "$wc" 'text.txt' 'mixed.txt' 'blob.bin')" || exit 97
 
@@ -1863,9 +1866,6 @@ test_apply_svn_eol_style_is_idempotent() {
         svnadmin create "$repo" >/dev/null 2>&1 || exit 98
         url="file:///$(cygpath -m "$repo" 2>/dev/null || echo "$repo")"
         svn --non-interactive checkout -q "$url" "$wc" >/dev/null 2>&1 || exit 98
-        # The tree has to declare eol-style before the push path will mark anything: one signal
-        # governs both that decision and the bridge's git mode, so that they cannot disagree.
-        ( cd "$wc" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
         git -C "$wc" init -q -b main >/dev/null 2>&1 || exit 98
         git -C "$wc" config user.email 'test@turbo-plugin' || exit 98
         git -C "$wc" config user.name 'turbo-plugin-test' || exit 98
@@ -1873,6 +1873,12 @@ test_apply_svn_eol_style_is_idempotent() {
         git -C "$wc" add -A >/dev/null 2>&1 || exit 98
         git -C "$wc" commit -qm seed >/dev/null 2>&1 || exit 98
         svn --non-interactive add -q "$wc/text.txt" >/dev/null 2>&1 || exit 98
+        # Declared AFTER the adds, and that order is load-bearing rather than incidental: with
+        # svn:auto-props already in place, `svn add mixed.txt` applies svn:eol-style to it and
+        # svn then refuses the file outright -- "E200009: has inconsistent newlines". Which is
+        # the very hazard this code exists to avoid, arriving through the fixture. It also
+        # matches production: the migration declares it on a tree that already has files.
+        ( cd "$wc" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
 
         apply_svn_eol_style "$wc" 'text.txt' >/dev/null || exit 97
         svn --non-interactive commit -q -m 'first' "$wc" >/dev/null 2>&1 || exit 97

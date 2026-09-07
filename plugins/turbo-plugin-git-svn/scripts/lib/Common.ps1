@@ -182,6 +182,31 @@ function Test-SvnTreeDeclaresEolStyle {
     }
 }
 
+# Set-BridgeEolMode, but at most once per process and taking only the bridge path.
+#
+# Memoised because the mode cannot change while a single command is running -- nobody migrates the
+# repository midway through their own pull -- and the alternative is one `svn propget` per replayed
+# revision, which on a long range is real time spent re-answering a settled question.
+#
+# Taking only the bridge keeps it callable from the deep replay helpers, which are handed a bridge
+# path and nothing else; the main worktree is recovered from it, since the bridge is a linked
+# worktree of the same repository. Failures are swallowed: this is a correctness refresh on a path
+# whose real job is something else, and it must not turn a working pull into a hard error.
+$script:TpEolModeSynced = ''
+function Set-BridgeEolModeOnce {
+    param([Parameter(Mandatory = $true)][string]$Bridge)
+
+    if ($script:TpEolModeSynced -eq $Bridge) { return }
+    try {
+        $mainWorktree = Get-MainWorktree -RepoRoot $Bridge
+        if ([string]::IsNullOrWhiteSpace($mainWorktree)) { return }
+        Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $Bridge
+        $script:TpEolModeSynced = $Bridge
+    } catch {
+        # leave the memo unset so a later call can retry
+    }
+}
+
 # Put the bridge's EOL handling in whichever of the two modes matches the SVN side.
 #
 # The bridge is the one directory written by BOTH tools, so its git config has to agree with what
@@ -219,6 +244,9 @@ function Set-BridgeEolMode {
     & git -C $MainWorktree config extensions.worktreeConfig true
     if ($LASTEXITCODE -ne 0) { throw 'Could not enable extensions.worktreeConfig.' }
 
+    $beforeAutocrlf = (Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--get', 'core.autocrlf')).Text.Trim()
+    $beforeEol = (Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')).Text.Trim()
+
     if ($declared) {
         # `--unset` on a key that is not set exits 5, the ordinary case for a bridge never pinned;
         # Read-Git swallows it rather than letting EAP=Stop turn a normal outcome into a throw.
@@ -229,6 +257,20 @@ function Set-BridgeEolMode {
         if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.autocrlf=false on the bridge worktree.' }
         & git -C $Bridge config --worktree core.eol lf
         if ($LASTEXITCODE -ne 0) { throw 'Could not pin core.eol=lf on the bridge worktree.' }
+    }
+
+    $afterAutocrlf = (Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--get', 'core.autocrlf')).Text.Trim()
+    $afterEol = (Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')).Text.Trim()
+
+    # Switching the mode changes what git EXPECTS on disk, and the files already there were written
+    # under the old one. They are byte-identical to their blobs, but git now reads them through
+    # different rules, so `git status` reports the whole tree as modified while `git diff` is empty
+    # -- and every guard that asks "is this bridge clean?" believes status. `git add -A`
+    # renormalises the index and leaves the tree identical; it is the established remedy in this
+    # plugin for exactly this shape. Only on an actual change, so ordinary calls stay side-effect
+    # free.
+    if (($beforeAutocrlf -ne $afterAutocrlf) -or ($beforeEol -ne $afterEol)) {
+        $null = Read-Git -Cwd $Bridge -GitArgs @('add', '-A')
     }
 }
 
@@ -1111,6 +1153,14 @@ function Set-SvnWcPosition {
         [string]$BaseUrl = '',
         [int]$PegRev = 0
     )
+
+    # Every path that writes SVN content onto the bridge funnels through here, so the EOL mode is
+    # re-read HERE rather than at each caller. Leaving it to the callers is exactly how the pull
+    # path got missed: the mode was refreshed at the three bridge-creation sites and in the push
+    # path, and a user who ran `/tp-init-svn-eol-style` and then pulled -- a perfectly ordinary
+    # order -- got svn writing platform endings into a bridge whose git side was still pinned to LF.
+    Set-BridgeEolModeOnce -Bridge $RemotePath
+
     if (-not [string]::IsNullOrWhiteSpace($TargetUrl)) {
         $wcUrl = (& svn info --show-item url $RemotePath | Out-String).Trim()
         if ($wcUrl -ne $TargetUrl) {

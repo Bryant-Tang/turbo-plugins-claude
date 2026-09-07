@@ -192,6 +192,26 @@ svn_tree_declares_eol_style() {
   return 1
 }
 
+# ensure_bridge_eol_mode, but at most once per process and taking only the bridge path.
+#
+# Memoised because the mode cannot change while a single command is running -- nobody migrates the
+# repository midway through their own pull -- and the alternative is one `svn propget` per replayed
+# revision, which on a long range is real time spent re-answering a settled question.
+#
+# Taking only the bridge keeps it callable from the deep replay helpers, which are handed a bridge
+# path and nothing else; the main worktree is recovered from it, since the bridge is a linked
+# worktree of the same repository.
+TP_EOL_MODE_SYNCED=''
+ensure_bridge_eol_mode_once() {
+  local bridge="$1" main_wt
+  [ "$TP_EOL_MODE_SYNCED" = "$bridge" ] && return 0
+  main_wt="$(get_main_worktree "$bridge" 2>/dev/null || true)"
+  [ -n "$main_wt" ] || return 0
+  ensure_bridge_eol_mode "$main_wt" "$bridge" || return 1
+  TP_EOL_MODE_SYNCED="$bridge"
+  return 0
+}
+
 # Put the bridge's EOL handling in whichever of the two modes matches the SVN side.
 #
 # The bridge is the one directory written by BOTH tools, so its git config has to agree with what
@@ -228,6 +248,10 @@ ensure_bridge_eol_mode() {
   # Enabling it is non-destructive: existing config stays in the shared file.
   git -C "$main_worktree" config extensions.worktreeConfig true || return 1
 
+  local before_autocrlf before_eol after_autocrlf after_eol
+  before_autocrlf="$(git -C "$bridge" config --worktree --get core.autocrlf 2>/dev/null || true)"
+  before_eol="$(git -C "$bridge" config --worktree --get core.eol 2>/dev/null || true)"
+
   if [ "$declared" -eq 1 ]; then
     # `--unset` on a key that is not set exits 5, which is the ordinary case for a bridge that
     # was never pinned.
@@ -236,6 +260,19 @@ ensure_bridge_eol_mode() {
   else
     git -C "$bridge" config --worktree core.autocrlf false || return 1
     git -C "$bridge" config --worktree core.eol lf || return 1
+  fi
+
+  after_autocrlf="$(git -C "$bridge" config --worktree --get core.autocrlf 2>/dev/null || true)"
+  after_eol="$(git -C "$bridge" config --worktree --get core.eol 2>/dev/null || true)"
+
+  # Switching the mode changes what git EXPECTS on disk, and the files already there were written
+  # under the old one. They are byte-identical to their blobs, but git now reads them through
+  # different rules, so `git status` reports the whole tree as modified while `git diff` is empty --
+  # and every guard that asks "is this bridge clean?" believes status. `git add -A` renormalises
+  # the index and leaves the tree identical; it is the established remedy in this plugin for
+  # exactly this shape. Only on an actual change, so ordinary calls stay side-effect free.
+  if [ "$before_autocrlf" != "$after_autocrlf" ] || [ "$before_eol" != "$after_eol" ]; then
+    git -C "$bridge" add -A >/dev/null 2>&1 || true
   fi
   return 0
 }
@@ -1144,6 +1181,13 @@ svn_url_at_rev() {
 # Args: <remote_path> <rev> [<target_url>] [<base_url>] [<peg_rev>]
 svn_position_wc_at_rev() {
   local remote_path="$1" rev="$2" target_url="${3:-}" base_url="${4:-}" peg_rev="${5:-}" wc_url recovered
+
+  # Every path that writes SVN content onto the bridge funnels through here, so the EOL mode is
+  # re-read HERE rather than at each caller. Leaving it to the callers is exactly how the pull path
+  # got missed: the mode was refreshed at the three bridge-creation sites and in the push path, and
+  # a user who ran `/tp-init-svn-eol-style` and then pulled -- a perfectly ordinary order -- got
+  # svn writing platform endings into a bridge whose git side was still pinned to LF.
+  ensure_bridge_eol_mode_once "$remote_path" || true
 
   if [[ -n "$target_url" ]]; then
     wc_url="$(svn info --show-item url "$remote_path" 2>/dev/null | tr -d '\r\n')"

@@ -1831,10 +1831,6 @@ Describe 'Set-SvnEolStyle' {
             $url = 'file:///' + ($repo -replace '\\', '/')
             & svn --non-interactive checkout -q $url $wc 2>$null | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
-            # The tree has to declare eol-style before the push path will mark anything: one
-            # signal governs both that decision and the bridge's git mode, so they cannot disagree.
-            Push-Location -LiteralPath $wc
-            try { & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null } finally { Pop-Location }
 
             Invoke-GitSilent $wc init -q -b main
             Invoke-GitSilent $wc config user.email 'test@turbo-plugin'
@@ -1851,6 +1847,14 @@ Describe 'Set-SvnEolStyle' {
             Invoke-GitSilent $wc add -A
             Invoke-GitSilent $wc commit -q -m seed
             & svn --non-interactive add -q (Join-Path $wc 'text.txt') (Join-Path $wc 'mixed.txt') (Join-Path $wc 'blob.bin') 2>$null | Out-Null
+
+            # Declared AFTER the adds, and that order is load-bearing rather than incidental: with
+            # svn:auto-props already in place, `svn add mixed.txt` applies svn:eol-style to it and
+            # svn then refuses the file outright -- "E200009: has inconsistent newlines". Which is
+            # the very hazard this code exists to avoid, arriving through the fixture. It also
+            # matches production: the migration declares it on a tree that already has files.
+            Push-Location -LiteralPath $wc
+            try { & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null } finally { Pop-Location }
             return @{ Dir = $dir; Wc = $wc }
         }
 

@@ -9,18 +9,20 @@
 #
 # Mirrors initialize-svn-eol-style.test.sh case for case.
 
-# --- Discovery-time svn gate (evaluated BEFORE BeforeAll) -----------------------
-# It has to live here, not in BeforeAll: Pester resolves -Skip: during DISCOVERY, where a flag set
-# in BeforeAll is still $null -- the file would then skip silently while reporting green.
-$SvnAvailable = $false
-try {
-    $null = (& svn --version --quiet 2>$null)
-    $SvnAvailable = ($LASTEXITCODE -eq 0)
-} catch {
-    $SvnAvailable = $false
-}
-
 BeforeAll {
+    # The skip flag is set HERE, in the run phase, and read from inside each It -- not declared at
+    # file scope. A bare file-scope variable is evaluated during DISCOVERY and is simply not in
+    # scope when the It body runs: every case died with "The variable '$SvnAvailable' cannot be
+    # retrieved because it has not been set". File scope is right only for `-Skip:`, which Pester
+    # resolves at discovery; this file uses Set-ItResult instead, so the flag belongs here.
+    $script:SvnAvailable = $false
+    try {
+        $null = (& svn --version --quiet 2>$null)
+        $script:SvnAvailable = ($LASTEXITCODE -eq 0)
+    } catch {
+        $script:SvnAvailable = $false
+    }
+
     $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
     $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-SvnEolStyle.ps1')
 
@@ -87,7 +89,10 @@ BeforeAll {
         Invoke-GitQuiet $root init -q -b main
         Invoke-GitQuiet $root config user.email 'test@turbo-plugin'
         Invoke-GitQuiet $root config user.name 'turbo-plugin-test'
-        Invoke-GitQuiet $root config core.autocrlf false
+        # true, not false: this is the Git for Windows SYSTEM default, so it is what an unpinned
+        # bridge actually inherits on a real user's machine. Pinning the fixture to false would
+        # quietly make "unpinned" mean "still expects raw bytes" -- a platform nobody has.
+        Invoke-GitQuiet $root config core.autocrlf true
         [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, 'init.txt'), "init`n", $enc)
         Invoke-GitQuiet $root add -A
         Invoke-GitQuiet $root -c commit.gpgsign=false commit -q -m 'initial'
@@ -125,7 +130,7 @@ Describe 'Initialize-SvnEolStyle' {
     }
 
     It 'previews without changing anything, and names the mixed-ending file' {
-        if (-not $SvnAvailable) {
+        if (-not $script:SvnAvailable) {
             Set-ItResult -Skipped -Because 'svn is not on PATH'
             return
         }
@@ -149,7 +154,7 @@ Describe 'Initialize-SvnEolStyle' {
     }
 
     It 'marks text files, skips binary and mixed, commits, and SVN then stores LF' {
-        if (-not $SvnAvailable) {
+        if (-not $script:SvnAvailable) {
             Set-ItResult -Skipped -Because 'svn is not on PATH'
             return
         }
@@ -177,7 +182,7 @@ Describe 'Initialize-SvnEolStyle' {
     }
 
     It 'refuses a bridge with pending SVN changes' {
-        if (-not $SvnAvailable) {
+        if (-not $script:SvnAvailable) {
             Set-ItResult -Skipped -Because 'svn is not on PATH'
             return
         }
