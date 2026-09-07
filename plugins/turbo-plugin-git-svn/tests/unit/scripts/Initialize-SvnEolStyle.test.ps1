@@ -23,8 +23,8 @@ BeforeAll {
         $script:SvnAvailable = $false
     }
 
-    $pluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
-    $script:ScriptUnderTest = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-SvnEolStyle.ps1')
+    $script:PluginRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', '..'))
+    $script:ScriptUnderTest = [System.IO.Path]::Combine($script:PluginRoot, 'scripts', 'Initialize-SvnEolStyle.ps1')
 
     . ([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'lib', 'ScriptsCommon.ps1'))
 
@@ -99,6 +99,17 @@ BeforeAll {
 
         $null = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($root, '.turbo-plugin', 'worktrees')) -Force
         Invoke-GitQuiet $root worktree add -q --no-checkout $bridge -b 'remote-svn/main'
+
+        # Pin BEFORE any content lands, which is what production does and what makes this fixture a
+        # real pre-migration bridge. Pinning afterwards instead produces a state that cannot occur:
+        # blobs normalised under autocrlf=true but read back raw, so the CRLF files mismatch their
+        # own blobs. That mismatch is also RACY -- git re-hashes a file only when its timestamp
+        # differs from the index, so a fixture built inside one second reports dirty sometimes and
+        # clean other times. The bash twin was flaky for exactly that reason.
+        Invoke-GitQuiet $root config extensions.worktreeConfig true
+        Invoke-GitQuiet $bridge config --worktree core.autocrlf false
+        Invoke-GitQuiet $bridge config --worktree core.eol lf
+
         Invoke-SvnQuiet checkout -q --force "$uri/trunk" $bridge
         Invoke-SvnQuiet propset -q 'svn:ignore' '.git' $bridge
 
@@ -172,10 +183,61 @@ Describe 'Initialize-SvnEolStyle' {
             # The payoff: a file the repository was storing as CRLF is now stored as LF. Read back
             # through svnlook rather than a working copy -- a working copy applies the very
             # translation under test, so it would report LF either way.
-            $old = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            try { $bytes = (& svnlook cat $fx.SvnRepo 'trunk/wascrlf.txt' 2>$null | Out-String) } finally { $ErrorActionPreference = $old }
-            ([regex]::Matches($bytes, "`r")).Count | Should -Be 0
+            #
+            # Redirected by cmd and read as BYTES, never through the PowerShell pipeline. `|
+            # Out-String` re-joins the lines with the platform newline, so on Windows it manufactures
+            # the very CRLF this assertion is looking for: it reported 2 CR on CI no matter what
+            # svnlook actually emitted. Anything that turns the output into PowerShell strings has
+            # the same problem; only the raw bytes answer this question.
+            $catFile = [System.IO.Path]::Combine($fx.Sandbox, 'wascrlf.out')
+            & cmd.exe /c "svnlook cat `"$($fx.SvnRepo)`" trunk/wascrlf.txt > `"$catFile`" 2>nul"
+            $bytes = [System.IO.File]::ReadAllBytes($catFile)
+            # Floor first: an empty file would satisfy "no CR" while proving nothing.
+            $bytes.Length | Should -BeGreaterThan 0
+            @($bytes | Where-Object { $_ -eq 13 }).Count | Should -Be 0
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # The order that actually breaks people: migrate, then PULL -- without a push in between.
+    #
+    # The bridge's EOL mode is read from the SVN tree, so migrating changes what the right mode is.
+    # The push path refreshes it; for a while the pull path did not, and "migrate then pull" is a
+    # perfectly ordinary order (check the remote before sending anything). `svn update` would then
+    # write platform endings into a bridge still pinned to LF and every file would read as modified.
+    #
+    # It drives the real chokepoint, Set-SvnWcPosition, rather than calling the refresh directly:
+    # the defect was never in the refresh, it was in nothing calling it.
+    It 'unpins the bridge and leaves untouched files alone when a pull follows the migration' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolpull'
+        try {
+            # The fixture already built this as a pre-migration bridge: pinned to LF from before any
+            # content landed, which is the state a real upgrading user is in.
+            (Read-Git -Cwd $fx.Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')).Text.Trim() | Should -Be 'lf'
+
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Be 0
+
+            # Now do what a pull does. Dot-sourcing the lib is the point: this is the chokepoint
+            # every SVN-content write funnels through, and it is where the mode refresh lives.
+            . ([System.IO.Path]::Combine($script:PluginRoot, 'scripts', 'lib', 'Common.ps1'))
+            $rev = [int]((& svn --non-interactive info --show-item revision $fx.Bridge | Out-String).Trim())
+            Set-SvnWcPosition -RemotePath $fx.Bridge -Rev $rev
+
+            # Asserted on plain.txt, NOT on the whole tree, and the distinction is the point.
+            # wascrlf.txt SHOULD show as modified afterwards: the migration really did rewrite it in
+            # SVN, from CRLF to LF, and that is a genuine content change waiting to be synced into
+            # git. A whole-tree "must be clean" assertion would call that correct behaviour a
+            # failure. plain.txt's content nobody touched, so it may only appear if the MODE is
+            # wrong -- which is exactly the defect, and pre-fix it took the entire tree with it.
+            (Read-Git -Cwd $fx.Bridge -GitArgs @('status', '--porcelain', '--', 'plain.txt')).Text.Trim() | Should -BeNullOrEmpty
+            # And the pin really is gone -- otherwise "clean" might just mean nothing was rewritten.
+            (Read-Git -Cwd $fx.Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')).Text.Trim() | Should -BeNullOrEmpty
         } finally {
             Remove-Sandbox -Dir $fx.Sandbox
         }

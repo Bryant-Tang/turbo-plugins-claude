@@ -168,6 +168,11 @@ test_apply_marks_text_only_and_commits() {
         # The payoff: a file the repository was storing as CRLF is now stored as LF. Reading it
         # back through svnlook rather than through a working copy is deliberate -- a working copy
         # applies the very translation under test, so it would report LF either way.
+        # Floor first: an empty read would satisfy "no CR" while proving nothing.
+        total="$(svnlook cat "$svnrepo" trunk/wascrlf.txt | wc -c | tr -d ' ')"
+        if [ "$total" -eq 0 ]; then
+            echo "svnlook returned nothing for wascrlf.txt; the assertion below would be vacuous" >&2; exit 1
+        fi
         cr="$(svnlook cat "$svnrepo" trunk/wascrlf.txt | tr -dc '\r' | wc -c | tr -d ' ')"
         if [ "$cr" -ne 0 ]; then
             echo "SVN still stores CRLF for wascrlf.txt ($cr CR bytes)" >&2; exit 1
