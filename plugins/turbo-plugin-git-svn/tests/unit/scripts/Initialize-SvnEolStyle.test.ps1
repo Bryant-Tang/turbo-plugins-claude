@@ -43,6 +43,18 @@ BeforeAll {
         try { & svn --non-interactive @SvnArgs 2>$null | Out-Null } catch { } finally { $ErrorActionPreference = $old }
     }
 
+    # Reads git output without depending on the production lib. Read-Git would do, but it lives in
+    # Common.ps1 and this file only dot-sources that partway through one It -- using it before then
+    # is a CommandNotFoundException, which is exactly how the pull-regression case first failed.
+    function Get-GitOutput {
+        param([Parameter(Mandatory = $true, Position = 0)][string]$RepoDir,
+              [Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $out = (& git -C $RepoDir @GitArgs 2>$null | Out-String) } catch { $out = '' } finally { $ErrorActionPreference = $old }
+        return "$out".Trim()
+    }
+
     function Get-SvnEolProp {
         param([string]$File)
         $old = $ErrorActionPreference
@@ -218,7 +230,7 @@ Describe 'Initialize-SvnEolStyle' {
         try {
             # The fixture already built this as a pre-migration bridge: pinned to LF from before any
             # content landed, which is the state a real upgrading user is in.
-            (Read-Git -Cwd $fx.Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')).Text.Trim() | Should -Be 'lf'
+            (Get-GitOutput $fx.Bridge config --worktree --get core.eol) | Should -Be 'lf'
 
             $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
             $r.ExitCode | Should -Be 0
@@ -235,9 +247,9 @@ Describe 'Initialize-SvnEolStyle' {
             # git. A whole-tree "must be clean" assertion would call that correct behaviour a
             # failure. plain.txt's content nobody touched, so it may only appear if the MODE is
             # wrong -- which is exactly the defect, and pre-fix it took the entire tree with it.
-            (Read-Git -Cwd $fx.Bridge -GitArgs @('status', '--porcelain', '--', 'plain.txt')).Text.Trim() | Should -BeNullOrEmpty
+            (Get-GitOutput $fx.Bridge status --porcelain -- plain.txt) | Should -BeNullOrEmpty
             # And the pin really is gone -- otherwise "clean" might just mean nothing was rewritten.
-            (Read-Git -Cwd $fx.Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')).Text.Trim() | Should -BeNullOrEmpty
+            (Get-GitOutput $fx.Bridge config --worktree --get core.eol) | Should -BeNullOrEmpty
         } finally {
             Remove-Sandbox -Dir $fx.Sandbox
         }
