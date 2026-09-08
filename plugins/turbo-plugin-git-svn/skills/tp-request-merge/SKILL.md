@@ -1,6 +1,6 @@
 ---
 name: tp-request-merge
-description: 'The stand-in for a pull request in a repo with no git remote: report what a working branch would merge into main, get the user to confirm, then merge it in the main worktree. Suggest it when work on an isolated/peer worktree branch is finished, but it writes to main, so NEVER merge without explicit confirmation.'
+description: 'The stand-in for a pull request in a repo with no git remote: report what a working branch would merge into its base (`main` by default, any branch via `--base`), get the user to confirm, then run the merge in the main worktree. Suggest it when work on an isolated/peer worktree branch is finished, but it writes to the base branch, so NEVER merge without explicit confirmation.'
 argument-hint: '--branch <name> [--base <name>]'
 user-invocable: true
 allowed-tools: Bash, Read, AskUserQuestion, ListAgents, SendMessage
@@ -16,7 +16,7 @@ allowed-tools: Bash, Read, AskUserQuestion, ListAgents, SendMessage
 
 本 skill 補上那一關:先產出一份唯讀的 **Merge Request** 報告(分支、base、要合併的 commit、diffstat、領先 / 落後數),**由使用者確認**,再由腳本**在主 worktree** 執行 `git merge --no-ff`。合併完成後 `remove` 才真的安全。
 
-它是 `tp-merge-main-into-branches` 的**鏡像**:那支是下行(main → 分支),這支是上行(分支 → main)。兩支同樣用 `Get-MainWorktree` 自行定位,所以**在 linked worktree 裡呼叫,操作仍落在主 worktree**。
+它是 `tp-merge-main-into-branches` 的**鏡像**,但兩支的能力邊界不一樣:那支是下行,來源**固定是 `main`**;這支是上行(分支 → `<base>`),**`<base>` 省略時才是 `main`,可以用 `--base` 指定任何分支**(併進 `test` / `dev` 這類整合分支、或併回它長出來的那條功能分支)。兩支同樣用 `Get-MainWorktree` 自行定位,所以**在 linked worktree 裡呼叫,操作仍落在主 worktree**。
 
 ## Procedure
 
@@ -24,7 +24,7 @@ allowed-tools: Bash, Read, AskUserQuestion, ListAgents, SendMessage
 
 讀 `${CLAUDE_PLUGIN_ROOT}/assets/repo-target.md`,依它的判準決定要不要帶 `-RepoRoot` / `--repo-root`。單一專案的目錄不用帶。**決定後本 SKILL 每一次呼叫都要帶同一個值**——報告階段與合併階段指到不同 repo 會讓使用者對著 A 的報告核准 B 的合併。
 
-這支會**寫入 main**,所以 Step 2 的確認裡**必須**帶上要動的專案絕對路徑——報告本體的 `repo :` 那一行就是,直接用它。
+這支會**寫入 `<base>`**(省略時是 `main`),所以 Step 2 的確認裡**必須**帶上要動的專案絕對路徑——報告本體的 `repo :` 那一行就是,直接用它。
 
 ### Step 1 — 產出報告(唯讀)
 
@@ -63,7 +63,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 
 - 要動的專案**絕對路徑**(報告的 `repo :` 那一行)
 - `<branch>` → `<base>`,以及 `ahead` 筆 commit
-- 你自己對驗收狀態的敘述(建置過了沒、實測了什麼)——**用你自己的話講,不要宣稱腳本驗過**。腳本報的是客觀事實(commit、diffstat、乾不乾淨),**沒有 CI、沒有驗收把關**;判斷「這批東西可不可以進 main」的是使用者。
+- 你自己對驗收狀態的敘述(建置過了沒、實測了什麼)——**用你自己的話講,不要宣稱腳本驗過**。腳本報的是客觀事實(commit、diffstat、乾不乾淨),**沒有 CI、沒有驗收把關**;判斷「這批東西可不可以進 `<base>`」的是使用者。
 
 **同一次 `AskUserQuestion` 順便問收尾**——只在 token 的 `worktree=no` 時問:「合併成功後要不要刪掉 `<branch>` 這條分支?」**預設不刪**。理由要講白話:有些分支併進整合用的分支之後還要繼續用,刪掉會很痛,所以這件事一律問過才做。`worktree=yes` 時**不要問這題**,那條分支的收法是 `ExitWorktree` 的 `remove`(見 Step 4)。
 
@@ -107,7 +107,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
   - Windows + 無 Git Bash → 用 **PowerShell 工具**跑 `.ps1`。
   - Linux / macOS → 用 **Bash 工具**跑 `.sh`。
   Git Bash 偵測:依序檢查 `C:\Program Files\Git\bin\bash.exe`、`C:\Program Files (x86)\Git\bin\bash.exe`;都不存在再用 `where.exe bash`,但**排除** `System32\bash.exe`(那是 WSL,不是 Git Bash)。
-- **合併是寫入 main,一定要明確確認**。可以在「隔離 worktree 的工作完成、要收尾」時**主動建議**這支,但**絕不**在沒有使用者確認的情況下跑 `--merge`。
+- **合併是寫入 `<base>`(省略時是 `main`),一定要明確確認**。可以在「隔離 worktree 的工作完成、要收尾」時**主動建議**這支,但**絕不**在沒有使用者確認的情況下跑 `--merge`。
 - **報告與合併是同一支腳本的兩個模式,不是兩支腳本**。`--merge` 會重跑全部守門,所以使用者看到的那道關卡與放行合併的那道關卡是**同一段程式碼**,不會漂移。不要為了省一次呼叫而跳過 Step 1 直接跑 `--merge`。
 - **`SOURCE_DIRTY` 一律停下,不要建議繞過**。那條分支的 worktree 還有沒 commit 的東西時,合併會少帶,而接下來的 `remove` 會把少帶的部分刪掉——這是這條路徑上唯一會**無聲掉東西**的地方。
 - **被別的 worktree 卡住時,先找佔用它的那條 session,不要一律把工作推回給使用者**。判準與訊息寫法在 `${CLAUDE_PLUGIN_ROOT}/assets/occupied-worktree.md`(`SOURCE_DIRTY` 與 `BASE_ELSEWHERE` 共用同一份)。**界線在那份檔案裡,一定要照著**:自己被權限擋下的動作,不可以改送給另一條 session 去做;守門要的東西也不能靠別的 session 繞過。**還有一條同樣重要的:使用者說要收工 / 暫停時就停止跨 session 通訊**——peer 之間的往返會出現在他畫面上,即使收件人不是他。
@@ -116,7 +116,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - **落後 `<base>` 預設擋下,不要自己加 `--allow-behind` 繞過**。那個旗標是**使用者看過落後筆數之後親口說「還是要併」**才帶的;由你自作主張帶上,等於把這一關整個拿掉,而它擋的正是「兩邊各自都好、併起來壞掉」這種要等下一個人建置才發現的問題。**優先建議先同步**。
 - **合併時一定要帶 `--expect-base`,而且值只能來自剛才那份報告**。同一個主 worktree 上可能有好幾條 session 在往 `<base>` 合併,所以使用者思考的期間 `<base>` 會動;帶著報告那顆 sha 去合併,等於問一句「他核准的還是這個狀態嗎」。對不上就回 `BASE_MOVED`、什麼都不做。**不要為了讓它過而換上新的 sha**——那不是解決衝突,那是替使用者核准一份他沒看過的東西。沒帶 `--allow-behind` 時漏帶還有 `BEHIND_BASE` 接著;帶了 `--allow-behind` 就沒有第二道了,所以那時腳本直接要求它。
 - **衝突在分支上解,不在 `<base>` 上解**。腳本永遠 `merge --abort`,不會留下衝突樹要人收拾。
-- **不串 SVN**。合併進 main 之後要不要推 SVN 是另一個決定,而且 SVN 寫入是永久的。
+- **不串 SVN**。合併進 `<base>` 之後要不要推 SVN 是另一個決定,而且 SVN 寫入是永久的。
 - **沒有 CI 就不要假裝有**。腳本不做驗收把關,也不要求 agent 提交結構化的「測試通過」宣告——那只會變成一句沒人驗證的自我宣稱。客觀事實由腳本提供,判斷交給使用者。
 
 ## Completion Checks
@@ -137,6 +137,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/request-merge.sh" --branch <name> [--base <n
 - **Conflict**:分支與 main 改同一行 + `--allow-behind` → `CONFLICT`,main sha 不變、無 `MERGE_HEAD`、HEAD 回原分支。(不帶那個旗標會先被 `BEHIND_BASE` 擋下,因為會衝突就代表 main 動過。)
 - **Nothing to merge**:已經合併過的分支 → `NOTHING_TO_MERGE`,並告知可以安全清掉。
 - **Delete branch**:合併後帶 `--delete-branch` → `MERGED ... deleted=yes`,`git branch` 裡沒有那條分支、`<base>` 仍含其內容;不帶 → `deleted=no reason=not-requested`,分支還在。
+- **Base 不是 `main`**:`--base intg` 併進整合分支並帶 `--delete-branch` → `MERGED ... base=intg ... deleted=yes`,`intg` 含分支 tip、**`main` 不含**(證明併去的是指定的 base),分支 ref 已刪、HEAD 回原分支。這條是 `git branch -d` 會誤報 `not fully merged` 的形狀。
 - **Delete branch(有 worktree)**:分支被 peer worktree 佔用時帶 `--delete-branch` → `deleted=no reason=has-worktree`,**合併照樣成功**、分支還在(該用 `ExitWorktree` 的 `remove`)。
 - **Delete without merge**:只給 `--delete-branch` 不給 `--merge` → exit 1 且**完全沒有** `TP_TOKEN:` 行(報告模式永遠唯讀)。
 - **Behind base**:`<base>` 有分支沒有的 commit → `BEHIND_BASE`(報告照樣印,只是不放行);同一次呼叫加上 `--allow-behind` → 回到 `READY`;`--merge` 沒帶那個旗標時**不會合併**、`<base>` 不動。

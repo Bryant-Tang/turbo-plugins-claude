@@ -14,7 +14,7 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 | `/tp-checkout-svn-branch` | 把**既有** SVN 分支**唯讀**匯入成 bridge + 已填內容工作分支(對 SVN 端零寫入;日後走 `/tp-pull-from-svn` 同步) |
 | `/tp-svn-log` | 在 `remote-svn-*` worktree 跑 SVN log(中文安全 + 互動分頁) |
 | `/tp-merge-main-into-branches` | 把最新 main merge 進指定(預設全部非 remote-svn)本地分支 |
-| `/tp-request-merge` | **沒有 git remote 時的 PR 等價物**:報告某條工作分支會併進 main 的內容(commit / diffstat / 領先落後),使用者確認後由腳本在主 worktree `git merge --no-ff`。合併完成後 `ExitWorktree` 的 `remove` 才安全 |
+| `/tp-request-merge` | **沒有 git remote 時的 PR 等價物**:報告某條工作分支會併進 base 分支(預設 `main`,可用 `--base` 指定 `test` / `dev` 之類的整合分支)的內容(commit / diffstat / 領先落後),使用者確認後由腳本在主 worktree `git merge --no-ff`。合併完成後 `ExitWorktree` 的 `remove` 才安全 |
 | `/tp-suggest-ignore` | 找出不該進版控的檔案並加進 `.gitignore`,也可把已不該追蹤的檔從 SVN un-track(SVN 移除委派 `Remove-SvnFile`,不裸 svn)。**哪些該排除由 agent 看專案實際內容判斷,不套固定 pattern 清單**(判準在 `skills/tp-suggest-ignore/assets/ignore-rubric.md`);`/tp-setup` 收尾會自動跑一次,`/tp-push-to-svn` 只在偵測到才出聲 |
 | `/tp-commit-msg` | 撰寫 / 檢查 commit message 語意(祈使句、what+why;禁 SHA / 本地識別碼;不驗證 / 不限制 type) |
 | `/tp-init-svn-eol-style` | **一次性遷移**:把 `svn:eol-style=native` 補到 SVN 上既有的文字檔。**會寫入 SVN 且不可逆**,一律先跑 `--preview` 並取得同意。詳見下方「行尾:SVN 存 LF,工作副本依平台」 |
