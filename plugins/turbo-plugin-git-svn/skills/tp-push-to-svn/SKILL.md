@@ -126,6 +126,12 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
   - **有發現才出聲**;沒發現就什麼都不提,Step 4 照常只列異動檔案。不要每次 push 都問使用者 ignore 的事。
   - 這裡**只偵測、不修**:不要在 push 流程中途去改 `.gitignore` 或呼叫別的 skill(merge 已經 stage 好了,
     中途插入寫檔會把這次推送的內容弄髒)。把發現帶到 Step 4 讓使用者決定要不要先取消。
+- **解析 `BINARY` 段**。這一段列的是「git 當成文字檔、但 SVN 會當成 binary」的檔案,一行一筆
+  `<new|existing><TAB><路徑>`;**空的就代表沒有,什麼都不要提**。SVN 對這些檔案設不了 `svn:eol-style`,
+  而推送路徑沒有屬性就不肯提交,所以**不處理的話這次推送會在寫入 SVN 的那一刻被擋下來**。
+  - `new` = 還沒進 SVN,是這次要新增的;`existing` = 早就在 SVN 裡、當初被標上去的。兩者對使用者的
+    講法不一樣(前者「還沒發生」,後者「很久以前就被標了、一直沒人看得出來」)。
+  - 這裡**只讀不改**,跟 ignore 檢查同樣的道理:帶到 Step 4 讓使用者決定。
 - 解析 `BODY` 段(每個 commit 一行的條列)——原樣留待放進 Step 4 的訊息預覽。
 - propose 一行 **title**(白話摘要,**固定不加 conventional-commit type 前綴**——`feat:` / `fix:` / `chore:` / `docs:` / `refactor:` 等都不要;SVN 端不跑 release-please / commitlint,type 前綴只是雜訊)。它會成為 Step 4 預覽訊息的第一行;commit 腳本端會把 title collapse 成單行,agent **無法**藉換行把額外內容塞進 body。
 
@@ -143,6 +149,14 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
      然後在 Step 4 的 `AskUserQuestion` 多給一個選項:「先取消,處理這幾個檔案」——使用者選它就
      `git -C <remote-path> merge --abort` 清掉已 stage 的 merge、結束 skill,並告訴他可以跑
      `/tp-suggest-ignore` 處理完再重推。
+   - **`BINARY` 段非空時**(只有非空才寫這段):接在後面,用白話說明——SVN 會把這幾個**純文字檔**
+     當成 binary(它只看檔案開頭 1024 個位元組,而中文每個位元組都不算「文字」,所以標記少、
+     英文少的中文文件就會越線),而被標成 binary 的檔案**設不了行尾屬性**,所以**這次推送會被擋下來**。
+     逐檔講清楚是哪一種:
+     - `new`:這個檔還沒進 SVN,是這次要新增的;標記會在加進去的當下被蓋上。
+     - `existing`:這個檔早就在 SVN 裡,當初被加進去時就被標了,而**這件事在 git 和 svn 兩邊都看不出來**,
+       所以一直沒人發現,直到這次剛好動到它。
+     **不要自己決定要不要拿掉那個標記**——那等於替使用者斷定一個檔案不是 binary。把選擇交給 Step 4。
 2. **`AskUserQuestion`**:把**完整 SVN message 預覽放進 `question` 本身**(**不要**先用純文字把預覽印一次、再用「以上 / 上方」帶過;**不洩漏內部術語**):
    - `question`:
 
@@ -173,12 +187,17 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
      3. **取消** → 跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill。
      4. (**只在有發現時出現**)**先取消,處理那幾個檔案** → 同「取消」清掉 stage 的 merge、結束 skill,
         並告訴使用者可以跑 `/tp-suggest-ignore` 把它們排除掉再重推。
+     5. (**只在 `BINARY` 段非空時出現**)**拿掉那個 binary 標記再送出** → 進 Step 5,而且**多帶
+        `--clear-binary-mime` / `-ClearBinaryMime`**。選項描述要講清楚它做什麼:把那幾個檔案上
+        `svn:mime-type` 的 binary 標記拿掉,SVN 之後就會把它們當文字檔處理(行尾正規化會生效)。
+        **不選它就照常送出,而送出會失敗**——這一點要講在前面,不要讓使用者以為「確認送出」也走得通。
+        真的有檔案是二進位的話,請他選「取消」,把那些檔案改成不要進版控或另外處理。
 
 > 注意:送出前若你又 commit 新內容進 working branch,Step 5 的 commit 腳本會偵測 git HEAD SHA 不符並 abort,提示重跑 prepare。請在送出前確認不會再 commit 新內容。
 
 ### Step 5 — Commit to SVN
 
-跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Submit-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/submit-svn-commit.sh`)帶 `--branch <name> --title "<那一行 title>"`(**只傳 title,不傳 body / message**)。Script 會:
+跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Submit-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/submit-svn-commit.sh`)帶 `--branch <name> --title "<那一行 title>"`(**只傳 title,不傳 body / message**);**只有使用者在 Step 4 選了第 5 個選項時才多帶 `--clear-binary-mime` / `-ClearBinaryMime`**——沒有使用者明講就不要帶,那個旗標會改掉 SVN 對那幾個檔案的認定。Script 會:
 - 再次 re-validate SVN HEAD + SHA pin + svn-status drift(防止 race condition)
 - 讀 `MERGE_HEAD.tp_svn_body`(鎖定 body;缺檔則 fail-closed 要求重 prepare),把 title collapse 成單行,自組 `title` + 換行 + `body`(**兩者之間不空行**,與 Step 4 預覽逐字一致)寫入 UTF-8 no-BOM temp 檔
 - `git commit --no-edit` 完成 stage merge
@@ -228,6 +247,11 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
   每次都問 ignore 只會變成雜訊);有發現才在 Step 4 的檔案清單後面白話點名,並多給一個「先取消去處理」
   的選項。**不要在 push 中途改 `.gitignore` 或呼叫別的 skill**:merge 已經 stage 好了,中途寫檔會弄髒
   這次推送的內容。之所以值得擋這一下:SVN 提交是永久的,推上去之後刪檔,歷史裡還在。
+- **SVN 誤判成 binary 的純文字檔:一律問過才修,不要自己決定**(Step 3/4/5)——prepare 的 `BINARY` 段
+  非空就代表這次推送**會被擋下來**,所以這件事跟 ignore 檢查不同:**不能只是提一下就照常送出**,
+  要在 Step 4 明講「不處理的話送不出去」,並把「拿掉標記」與「取消」兩條路都給出來。
+  `--clear-binary-mime` **只有在使用者選了那個選項之後才可以帶**——帶上它等於替某個檔案斷定它不是
+  二進位檔,而那是使用者的判斷,不是 agent 的。反過來也一樣:**不要因為推送失敗就自己重跑一次帶上旗標**。
 - **Merge state 必須乾淨**:Step 2 開頭 check `MERGE_HEAD` 不存在;cancel 一律呼叫 `git merge --abort` 確保不留 stale state。
 - **UTF-8 no-BOM commit message**:Step 5 script 已正確處理,**不要**改成 `svn commit -m "..."`(Windows CP_ACP 會 mangle 中文)。
 - **Pull-from-svn 是 prerequisite**:remote SVN HEAD 不 up-to-date 直接拒跑,讓使用者先 `/tp-pull-from-svn`。
@@ -253,6 +277,9 @@ Script 印出 `Created tag: <branch>-release-<yyyy-MM-dd>-<NNN>`(serial 同日�
 - **PENDING_MERGE Cancel path**: prepare 偵到既有 staged merge → SKILL 三選一選 Cancel(option 3)→ SKILL 結束,remote worktree `git status` 仍顯示 unstaged merge state(刻意不清,讓使用者手動處理)。
 - **ignore 檢查:乾淨的 push 不出聲**: 推一批純程式碼變更 → Step 4 只列異動檔案 + 三選一,**完全沒有**關於 ignore 的文字或第 4 個選項。
 - **ignore 檢查:有發現才出聲**: 讓一個明顯是建置產物的新檔(以及一個含連線字串的設定檔)進入本次推送範圍 → Step 4 在檔案清單後白話點名(機密那筆單獨列最前面)、出現「先取消去處理」選項;選它 → `git -C <remote-path> status --porcelain` 乾淨(merge 已 abort)、SVN 無新 revision。
+
+- **binary 誤判:沒有就完全不提**: 推一批普通檔案 → prepare 的 `BINARY` 段是空的,Step 4 不出現任何相關文字,也沒有第 5 個選項。
+- **binary 誤判:有就必須擋在寫入之前**: 讓一個「中文散文、幾乎沒有 ASCII 標記」的 `.md` 進入推送範圍(SVN 會把它判成 binary)→ Step 4 列出它、說明不處理就送不出去,並出現「拿掉那個 binary 標記再送出」。選**確認送出**應失敗且 SVN 無新 revision;選那個新選項應成功,而該檔在 SVN 上沒有 `svn:mime-type`、有 `svn:eol-style=native`。**未遷移的樹上同一個檔完全不該被提起。**
 
 ## Tool Preference
 

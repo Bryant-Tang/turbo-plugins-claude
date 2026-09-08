@@ -356,6 +356,172 @@ function Get-SvnEolCandidate {
     return $paths.ToArray()
 }
 
+# Would `svn add` decide this file is binary?
+#
+# svn has its own content heuristic, and it disagrees with git's. It skips a leading UTF-8 BOM,
+# reads up to the next 1024 bytes, and calls the file binary if any of them is NUL or if fewer than
+# about 15% of them are "text" bytes -- 0x07-0x0D or 0x20-0x7F. (In svn's own terms:
+# `(non_text * 1000) / len > 850`, in C integer arithmetic.) Files it calls binary get
+# svn:mime-type=application/octet-stream at `svn add` time, and svn:eol-style CANNOT be set on a
+# file carrying a binary mime type -- so the disagreement turns into E200009 at the moment
+# something tries to write to SVN.
+#
+# Every byte of UTF-8 CJK falls outside the text set, so a prose document in Chinese with few ASCII
+# markers -- no code fences, few headings, no English terms -- crosses the line while looking like
+# an ordinary .md to everyone else. Measured against real svn: 153 text bytes in 1024 is text, 152
+# is binary.
+#
+# `0x07` BEL counts as text and every high-bit byte does not, so "the usual control characters" is
+# the wrong shorthand and puts 0x07-0x08 and 0x0B-0x0C on the wrong side.
+function Test-SvnWouldStampBinary {
+    param([Parameter(Mandatory = $true)][string]$File)
+    if (-not [System.IO.File]::Exists($File)) { return $false }
+    $fs = [System.IO.File]::OpenRead($File)
+    try {
+        # 1027, not 1024: three of them may be a BOM that svn skips before it starts counting.
+        $buf = New-Object byte[] 1027
+        $read = $fs.Read($buf, 0, 1027)
+    } finally {
+        $fs.Dispose()
+    }
+    $start = 0
+    if ($read -ge 3 -and $buf[0] -eq 0xEF -and $buf[1] -eq 0xBB -and $buf[2] -eq 0xBF) { $start = 3 }
+    $len = $read - $start
+    if ($len -gt 1024) { $len = 1024 }
+    if ($len -le 0) { return $false }
+    $nonText = 0
+    for ($i = $start; $i -lt ($start + $len); $i++) {
+        $v = $buf[$i]
+        if ($v -eq 0) { return $true }
+        if (-not ((($v -ge 7) -and ($v -le 13)) -or (($v -ge 32) -and ($v -le 127)))) { $nonText++ }
+    }
+    # [int] division truncates, which is what svn's C arithmetic does and what decides the boundary
+    # case: 871 non-text bytes in 1024 is 850.58, svn sees 850, and 850 is NOT greater than 850 --
+    # so that file is text. Comparing in floating point calls it binary and is wrong by exactly one
+    # bucket, on the one input where it matters.
+    return ([int]([math]::Floor(($nonText * 1000) / $len)) -gt 850)
+}
+
+# Does this path ALREADY carry a mime type that svn considers binary?
+#
+# The counterpart to the heuristic above for files that are already in SVN: the property was
+# applied once, at `svn add` time, and nothing re-derives it afterwards -- so for these the stored
+# property is the truth and the content no longer is.
+#
+# svn's rule is that a mime type is binary unless it starts with `text/`, which is what this
+# mirrors rather than looking for octet-stream specifically.
+function Test-SvnHasBinaryMime {
+    param(
+        [Parameter(Mandatory = $true)][string]$Bridge,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $target = ConvertTo-SvnTarget -Path $Path
+    Push-Location -LiteralPath $Bridge
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # A property that is simply not there is the overwhelmingly common answer, and svn does not
+        # promise exit 0 for it -- hence Continue plus the try/catch rather than a $LASTEXITCODE
+        # check, which under EAP=Stop would take the whole push down on the ordinary case.
+        try { $mt = (& svn propget svn:mime-type $target 2>$null | Out-String) } catch { $mt = '' }
+    } finally {
+        $ErrorActionPreference = $prev
+        Pop-Location
+    }
+    $mt = "$mt".Trim()
+    if ([string]::IsNullOrEmpty($mt)) { return $false }
+    if ($mt.StartsWith('text/')) { return $false }
+    return $true
+}
+
+# The files in a changeset that will stop svn:eol-style from being set.
+#
+# Takes `<svn status letter><TAB><path>` entries and returns objects with Why (`new` or `existing`)
+# and Path. The two need different words in front of a user: for a new file nothing has happened
+# yet, while for an existing one the mark was made long ago, silently, and has been sitting there
+# ever since.
+#
+# Gated on the tree having been migrated, exactly like Set-SvnEolStyle: until then nothing sets
+# svn:eol-style, so nothing can be blocked and warning about it would be noise.
+function Get-SvnEolBlocker {
+    param(
+        [Parameter(Mandatory = $true)][string]$Bridge,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Entry
+    )
+    $out = New-Object System.Collections.Generic.List[object]
+    if (-not (Test-SvnTreeDeclaresEolStyle -Bridge $Bridge)) { return $out.ToArray() }
+
+    # Only files that would actually be given svn:eol-style can be the thing that blocks the push,
+    # so the scope here is exactly Set-SvnEolStyle's -- git's own text classification, read once for
+    # the whole tree rather than per path.
+    $candidates = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($c in @(Get-SvnEolCandidate -Worktree $Bridge)) {
+        if ($c) { $null = $candidates.Add(($c -replace '\\', '/')) }
+    }
+
+    foreach ($e in $Entry) {
+        if ([string]::IsNullOrEmpty($e)) { continue }
+        $tab = $e.IndexOf("`t")
+        if ($tab -lt 1) { continue }
+        $status = $e.Substring(0, $tab)
+        $path = $e.Substring($tab + 1)
+        if ([string]::IsNullOrEmpty($path)) { continue }
+        # Deletions have no working file left to translate, so they are never in scope.
+        if ($status -eq 'D' -or $status -eq '!') { continue }
+        if (-not $candidates.Contains(($path -replace '\\', '/'))) { continue }
+        if ($status -eq 'M' -or $status -eq 'A') {
+            # Already versioned: ask svn what it stored, because the content no longer decides.
+            if (Test-SvnHasBinaryMime -Bridge $Bridge -Path $path) {
+                $out.Add([PSCustomObject]@{ Why = 'existing'; Path = $path })
+            }
+        } else {
+            # Not in SVN yet: nothing has decided anything, so predict what `svn add` will do.
+            if (Test-SvnWouldStampBinary -File ([System.IO.Path]::Combine($Bridge, $path))) {
+                $out.Add([PSCustomObject]@{ Why = 'new'; Path = $path })
+            }
+        }
+    }
+    return $out.ToArray()
+}
+
+# Take svn:mime-type off the given paths so svn:eol-style can be set on them.
+#
+# Deliberately narrow: this exists so a user who has been SHOWN the list and said yes can act on
+# it. Nothing calls it on its own -- see the push path, where it is reachable only behind an
+# explicit switch that the SKILL only passes after asking.
+#
+# Returns $true on success.
+function Clear-SvnBinaryMime {
+    param(
+        [Parameter(Mandatory = $true)][string]$Bridge,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Path
+    )
+    $paths = @($Path | Where-Object { -not [string]::IsNullOrEmpty($_) })
+    if ($paths.Count -eq 0) { return $true }
+    $ok = $true
+    Push-Location -LiteralPath $Bridge
+    try {
+        # One call per path, NOT a --targets file: `svn propdel` does not accept --targets, unlike
+        # `svn propset` right next to it. A loop is fine here anyway -- this list is the handful of
+        # files a user was just shown, not the whole changeset.
+        foreach ($p in $paths) {
+            $target = ConvertTo-SvnTarget -Path $p
+            try {
+                & svn propdel svn:mime-type --quiet $target
+                if ($LASTEXITCODE -ne 0) { $ok = $false }
+            } catch {
+                # EAP=Stop turns anything svn writes to stderr into a terminating error, so the
+                # exit-code test above is unreachable for a failure that talks. Catching keeps this
+                # a boolean the caller can act on rather than an exception thrown past it.
+                $ok = $false
+            }
+        }
+    } finally {
+        Pop-Location
+    }
+    return $ok
+}
+
 # Put svn:eol-style=native on the text files in a changeset that do not already carry it.
 #
 # This is what lets the bridge stop being pinned to LF. SVN normalises a file's line endings to LF

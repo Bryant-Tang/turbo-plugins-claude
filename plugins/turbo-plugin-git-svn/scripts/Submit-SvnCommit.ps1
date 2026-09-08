@@ -5,7 +5,12 @@ param(
     # Build-SvnCommit (body-from-file) and combined here — the agent cannot pass a free message.
     [string]$Title = '',
     # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).
-    [string]$RepoRoot = ''
+    [string]$RepoRoot = '',
+    # Drop svn:mime-type from the files SVN decided were binary but git calls text. Off by default
+    # and deliberately not inferable: it changes how SVN will treat those files from here on, so it
+    # is the user's call. The SKILL shows the list at confirmation time and only passes this after
+    # a yes.
+    [switch]$ClearBinaryMime
 )
 
 Set-StrictMode -Version Latest
@@ -252,6 +257,40 @@ try {
             # bridge stop being pinned to LF while SVN still ends up holding LF, the same division
             # of labour git has with GitHub.
             #
+            # SVN's own content heuristic can decide a plain-text file is binary -- it reads the
+            # first 1024 bytes and counts every byte of UTF-8 CJK against the file, so prose with
+            # few ASCII markers crosses the line -- and it stamps
+            # svn:mime-type=application/octet-stream at `svn add` time. svn:eol-style CANNOT be set
+            # on a file carrying a binary mime type, so those files stop the push one step below,
+            # and until now they did it with no warning at any earlier point (issue #175).
+            #
+            # This asks svn what it actually stored rather than re-deriving it: by now the adds
+            # have been scheduled, so the property is real and no longer a prediction. The
+            # prediction belongs to Build-SvnCommit, which runs before anything is written and is
+            # what the confirmation shows.
+            $blockerEntries = @($commitDisplay | ForEach-Object { $_.Status + "`t" + $_.Path })
+            $blockers = @(Get-SvnEolBlocker -Bridge $remote.Path -Entry $blockerEntries)
+            if ($blockers.Count -gt 0) {
+                $blockedPaths = @($blockers | ForEach-Object { $_.Path })
+                if ($ClearBinaryMime) {
+                    if (-not (Clear-SvnBinaryMime -Bridge $remote.Path -Path $blockedPaths)) {
+                        throw 'Could not remove svn:mime-type from the files SVN marked binary; aborting (pins retained for retry).'
+                    }
+                    Write-Output "Removed svn:mime-type from $($blockedPaths.Count) file(s) SVN had marked binary."
+                } else {
+                    $listing = ($blockedPaths | ForEach-Object { "  $_" }) -join [Environment]::NewLine
+                    throw @"
+SVN treats these files as binary, so svn:eol-style cannot be set on them and this push
+cannot go through (pins retained for retry):
+$listing
+
+git considers them text. SVN decides from the first 1024 bytes and counts every byte of
+UTF-8 CJK against the file, so a prose document with few ASCII markers ends up on the
+wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
+"@
+                }
+            }
+
             # Deletions are excluded: there is no working file left to translate.
             $eolScope = @($commitDisplay | Where-Object { $_.Status -ne 'D' } | ForEach-Object { $_.Path })
             if ($eolScope.Count -gt 0) {

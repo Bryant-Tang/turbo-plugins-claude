@@ -15,12 +15,17 @@ BRANCH=''
 TITLE=''
 # Optional explicit repository root; omit to act on the current directory (see resolve_git_root).
 REPO_ROOT=''
+# Drop svn:mime-type from the files SVN decided were binary but git calls text. Off by default and
+# deliberately not inferable: it changes how SVN will treat those files from here on, so it is the
+# user's call. The SKILL shows the list at confirmation time and only passes this after a yes.
+CLEAR_BINARY_MIME=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch)    [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
     --title)     [[ $# -ge 2 ]] || { echo "Error: --title requires a value" >&2; exit 1; }; TITLE="$2"; shift 2 ;;
     --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
+    --clear-binary-mime) CLEAR_BINARY_MIME=1; shift ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
@@ -238,6 +243,41 @@ set +e
     echo "No changes to commit to SVN (all pending changes are git-ignored)"
     svn update > /dev/null || echo 'Warning: svn update on no-commit path failed. Remote worktree may be stale.' >&2
     exit 0
+  fi
+
+  # SVN's own content heuristic can decide a plain-text file is binary -- it reads the first 1024
+  # bytes and counts every byte of UTF-8 CJK against the file, so prose with few ASCII markers
+  # crosses the line -- and it stamps svn:mime-type=application/octet-stream at `svn add` time.
+  # svn:eol-style CANNOT be set on a file carrying a binary mime type, so those files stop the push
+  # one step below, and until now they did it with no warning at any earlier point (issue #175).
+  #
+  # This asks svn what it actually stored rather than re-deriving it: by now the adds have been
+  # scheduled, so the property is real and no longer a prediction. The prediction belongs to
+  # build-svn-commit.sh, which runs before anything is written and is what the confirmation shows.
+  BLOCKERS_TSV="$(printf '%s\n' ${COMMIT_DISPLAY[@]+"${COMMIT_DISPLAY[@]}"} | list_svn_eol_blockers "$REMOTE_PATH")"
+  if [[ -n "$BLOCKERS_TSV" ]]; then
+    BLOCKED_PATHS=()
+    while IFS=$'\t' read -r _why blocked_path; do
+      [[ -n "$blocked_path" ]] && BLOCKED_PATHS+=("$blocked_path")
+    done <<< "$BLOCKERS_TSV"
+    if [[ "$CLEAR_BINARY_MIME" == 1 ]]; then
+      if ! clear_svn_binary_mime "$REMOTE_PATH" "${BLOCKED_PATHS[@]}"; then
+        echo 'Error: could not remove svn:mime-type from the files SVN marked binary; aborting (pins retained for retry).' >&2
+        exit 1
+      fi
+      echo "Removed svn:mime-type from ${#BLOCKED_PATHS[@]} file(s) SVN had marked binary."
+    else
+      {
+        echo 'Error: SVN treats these files as binary, so svn:eol-style cannot be set on them and'
+        echo '       this push cannot go through (pins retained for retry):'
+        printf '  %s\n' "${BLOCKED_PATHS[@]}"
+        echo
+        echo 'git considers them text. SVN decides from the first 1024 bytes and counts every byte'
+        echo 'of UTF-8 CJK against the file, so a prose document with few ASCII markers ends up on'
+        echo 'the wrong side. Rerun with --clear-binary-mime to drop svn:mime-type from them.'
+      } >&2
+      exit 1
+    fi
   fi
 
   # Every text file in this changeset must carry svn:eol-style before the commit, because that
