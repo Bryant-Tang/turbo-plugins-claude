@@ -227,10 +227,17 @@ and each working copy gets its own platform's endings.
                 } catch {
                     $svnUrl = ''
                 }
-                $logHint = if ($svnUrl) { "svn log --limit 1 `"$svnUrl`"" } else { 'svn log --limit 1 <the branch URL>' }
+                $target = if ($svnUrl) { """$svnUrl""" } else { '<the branch URL>' }
                 # A timeout means "no answer", not "no commit". After an operation that touches
                 # every file in the tree, "did it actually go through?" is the first thing that has
                 # to be settled, and the only place that can answer it is the server.
+                #
+                # Ask about THIS PATH, never about the repository. SVN revision numbers are shared
+                # by the whole repository, so an unrelated commit by someone else to another
+                # project in the same repository moves the HEAD while this commit failed -- and
+                # the two are indistinguishable from the HEAD alone. Reading that as success is
+                # the one direction that loses the migration silently: the user does not retry,
+                # and the tens of thousands of pending property changes just sit there.
                 throw @"
 svn commit failed. The property changes are still pending in the bridge worktree.
 
@@ -239,10 +246,13 @@ command, or just ``svn commit`` in the bridge worktree, will use the changes alr
 staged there.
 
 If this was a timeout [E175012], the data may still have reached the server: a timeout
-means no answer came back, not that nothing happened. Check whether the remote HEAD
-moved before retrying -- if the newest log entry is this migration message, it landed
-and the pending changes in the bridge are already redundant:
-  $logHint
+means no answer came back, not that nothing happened. Ask about THIS BRANCH PATH, not
+about the repository -- revision numbers are shared repository-wide, so someone else
+committing to an unrelated path moves the HEAD without your commit having landed:
+  svn info --show-item last-changed-revision $target
+  svn log --limit 1 $target
+If the newest entry for that path is this migration message, it landed and the changes
+still pending in the bridge are already redundant.
 "@
             }
         } finally {

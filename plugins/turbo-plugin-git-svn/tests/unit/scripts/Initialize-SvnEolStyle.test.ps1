@@ -367,6 +367,11 @@ Describe 'Initialize-SvnEolStyle' {
             $r.ExitCode | Should -Not -Be 0
             $r.Combined | Should -Match 'svn log --limit 1'
             $r.Combined | Should -Match 'does NOT have to be repeated'
+            # Path-scoped, not repository-scoped. SVN revision numbers are shared by the whole
+            # repository, so "did the HEAD move?" answers yes when someone else committed to an
+            # unrelated path -- and reading that as success is the direction that loses the
+            # migration silently.
+            $r.Combined | Should -Match 'last-changed-revision'
 
             # The opposite of the propset case: here the staged work is deliberately KEPT, because
             # the commit is what failed and rerunning it is the cheap fix.

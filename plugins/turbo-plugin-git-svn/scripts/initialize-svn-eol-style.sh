@@ -211,15 +211,26 @@ if ! ( cd "$REMOTE_PATH" && svn commit --file "$MSG_FILE" --encoding UTF-8 \
     # A timeout means "no answer", not "no commit". After an operation that touches every file in
     # the tree, "did it actually go through?" is the first thing that has to be settled, and the
     # only place that can answer it is the server.
+    #
+    # Ask about THIS PATH, never about the repository. SVN revision numbers are shared by the
+    # whole repository, so an unrelated commit by someone else to another project in the same
+    # repository moves the HEAD while this commit failed -- and the two are indistinguishable from
+    # the HEAD alone. Reading that as success is the one direction that loses the migration
+    # silently: the user does not retry, and the tens of thousands of pending property changes just
+    # sit there. Observed in the wild, on the same day, on a second branch.
     echo 'If this was a timeout [E175012], the data may still have reached the server: a timeout'
-    echo 'means no answer came back, not that nothing happened. Check whether the remote HEAD'
-    echo 'moved before retrying -- if the newest log entry is this migration message, it landed'
-    echo 'and the pending changes in the bridge are already redundant:'
+    echo 'means no answer came back, not that nothing happened. Ask about THIS BRANCH PATH, not'
+    echo 'about the repository -- revision numbers are shared repository-wide, so someone else'
+    echo 'committing to an unrelated path moves the HEAD without your commit having landed:'
     if [[ -n "$SVN_URL" ]]; then
+      echo "  svn info --show-item last-changed-revision \"$SVN_URL\""
       echo "  svn log --limit 1 \"$SVN_URL\""
     else
+      echo '  svn info --show-item last-changed-revision <the branch URL>'
       echo '  svn log --limit 1 <the branch URL>'
     fi
+    echo 'If the newest entry for that path is this migration message, it landed and the changes'
+    echo 'still pending in the bridge are already redundant.'
   } >&2
   exit 1
 fi

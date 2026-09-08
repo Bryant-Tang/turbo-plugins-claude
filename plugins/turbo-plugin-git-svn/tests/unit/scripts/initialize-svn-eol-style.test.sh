@@ -358,6 +358,13 @@ test_commit_failure_keeps_the_work_and_says_how_to_check() {
 
         case "$out" in *'svn log --limit 1'*) : ;;
             *) echo "no way to check whether it landed: $out" >&2; exit 1 ;; esac
+        # Path-scoped, not repository-scoped. SVN revision numbers are shared by the whole
+        # repository, so "did the HEAD move?" answers yes when someone else committed to an
+        # unrelated path -- and reading that as success is the direction that loses the migration
+        # silently. Asserting the path-scoped question is what keeps the guidance from sliding
+        # back to the repository one.
+        case "$out" in *'last-changed-revision'*) : ;;
+            *) echo "the check is not scoped to this branch path: $out" >&2; exit 1 ;; esac
         case "$out" in *'does NOT have to be repeated'*) : ;;
             *) echo "did not say the propset survives: $out" >&2; exit 1 ;; esac
 
