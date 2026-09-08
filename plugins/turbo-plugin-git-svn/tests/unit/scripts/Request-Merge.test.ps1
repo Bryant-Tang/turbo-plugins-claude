@@ -635,6 +635,31 @@ Describe 'Request-Merge' {
             } finally { Remove-Sandbox -Dir $sb }
         }
 
+        # issue #165: every other merge case here uses the default base, so "merges into main" and
+        # "merges into the base it was given" are indistinguishable. Here `main` never sees the
+        # branch at all -- the shape where `git branch -d`, judging against the current HEAD, would
+        # refuse a branch whose work is safely in `intg`. Proving the deletion against the base
+        # actually merged into is the only thing that gets it right.
+        It 'merges into a base other than main and proves the deletion against it' {
+            $sb = New-Sandbox -Tag 'rqm-165'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Run-Git -Cwd $root -GitArgs @('branch', 'intg', 'main')
+                $tip = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'feat')
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-Branch', 'feat', '-Base', 'intg', '-DeleteBranch', '-Merge')
+                $res.ExitCode | Should -Be 0
+                Get-TokenCount $res.Stdout | Should -Be 1
+                (Get-Token $res.Stdout) | Should -Match '^TP_TOKEN:MERGED branch=feat base=intg commit=.* deleted=yes$'
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', $tip, 'intg')) | Should -Be 0
+                # The discriminator: without it this passes just as happily if -Base were ignored.
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', $tip, 'main')) | Should -Not -Be 0
+                (Run-Git -Cwd $root -GitArgs @('rev-parse', '--verify', '--quiet', 'refs/heads/feat')) | Should -Not -Be 0
+                (Run-Git-Capture -Cwd $root -GitArgs @('symbolic-ref', '--short', 'HEAD')) | Should -Be 'main'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
         # Removing the ref and removing the worktree are two different jobs, and the second is
         # `ExitWorktree`'s. Refusing the deletion is not a merge failure.
         It 'refuses to delete a branch that has a worktree, and still merges' {
