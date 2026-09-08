@@ -2,6 +2,14 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.7.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.7.1...turbo-plugin-git-svn--v0.7.2) (2026-09-08)
+
+
+### Fixed
+
+* **git-svn:** bootstrap 在 svn checkout 之後重讀行尾模式 ([7b701d3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7b701d3e3bb281fc77730e275c975327b1e5e0aa)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
+* **git-svn:** PS 推送測試的 svn 判斷改用 discovery 期的 -Skip: ([f767c33](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f767c33f4333b821e7fb6d5b7167d93bb583653e)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
+
 ## [0.7.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.7.0...turbo-plugin-git-svn--v0.7.1) (2026-09-07)
 
 
