@@ -257,11 +257,11 @@ trap _rollback ERR
 # ancestor on main and was verified non-empty above.
 git -C "$MAIN_WORKTREE" branch "$REMOTE_BRANCH" "$FORK_COMMIT"
 git -C "$MAIN_WORKTREE" worktree add --no-checkout "$REMOTE_PATH" "$REMOTE_BRANCH"
-# Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order matters:
-# with core.autocrlf still true, `worktree add` would write CRLF and the files on disk would no
-# longer match their blobs -- and for a bridge whose SVN side does not carry them yet, that turns
-# a harmless "phantom M" into a real diff the drift check would report.
-ensure_bridge_eol_faithful "$MAIN_WORKTREE" "$REMOTE_PATH"
+# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN tree
+# rather than assuming: with no svn:eol-style there yet svn writes LF, so git must be pinned
+# to match -- otherwise core.autocrlf=true has the checkout write CRLF and every guard that
+# asks whether the bridge is clean fires at once. The mode flips after /tp-init-svn-eol-style.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 git -C "$REMOTE_PATH" reset --hard --quiet
 # EMPTY the worktree (keep the .git pointer) so the plain `svn checkout` below yields the EXACT SVN
 # branch tree. `git add -A` then records precisely the branch's delta from trunk (adds/mods/deletes)
@@ -273,6 +273,13 @@ git -C "$REMOTE_PATH" clean -dffx
 # worktree is empty except the .git pointer file.
 echo "Running: svn checkout $SVN_URL $REMOTE_PATH"
 svn checkout "$SVN_URL" "$REMOTE_PATH"
+
+# Re-read the mode now that .svn exists. The call before the checkout could only ever answer
+# "not declared" -- there was no working copy to ask yet. For a repository that already carried
+# svn:eol-style BEFORE adopting this plugin, that answer is wrong: the bridge stays pinned to LF
+# while svn writes platform endings, and the `git add -A` below then stores CRLF in git for good.
+# Measured on a tree with the property already set: blob 3 CR without this second read, 0 with it.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 
 # Untrack `.git` from the svn working copy (pure-local WC fix; tolerate "not tracked"). We never
 # svn-commit, so this never reaches SVN.

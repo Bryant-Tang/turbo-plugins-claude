@@ -125,10 +125,10 @@ try {
     # NativeCommandError and the user would lose the conflicting-file list entirely.
     $ea3 = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
-    # Bridges created before this pin exists still carry the inherited core.autocrlf, and THIS
-    # is the step that actually writes CRLF out: the merge checks the changed files out into the
-    # bridge, and `svn commit` ships whatever landed. Pinning here (idempotent) fixes those too.
-    Set-BridgeEolFaithful -MainWorktree $mainWorktree -Bridge $remote.Path
+    # Re-assert the bridge EOL mode: this is the step that materialises files into the bridge,
+    # and the mode may have changed since the bridge was created -- /tp-init-svn-eol-style moves
+    # a repository from "git pins LF" to "svn normalises, git follows". Idempotent either way.
+    Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $remote.Path
     & git -C $remote.Path merge --no-ff --no-commit -m $mergeMsg $Branch 2>$null | Out-Null
     $mergeExit = $LASTEXITCODE
     $ErrorActionPreference = $ea3

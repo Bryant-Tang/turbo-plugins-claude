@@ -159,6 +159,10 @@ try {
             if (Test-Path -LiteralPath $msgFile) { try { [System.IO.File]::Delete($msgFile) } catch { } }
         }
 
+        # This update writes SVN content back onto the bridge, so the EOL mode has to be current
+        # first. Memoised, so it costs nothing when something earlier already refreshed it.
+        Set-BridgeEolModeOnce -Bridge $remote.Path
+
         # post-commit resync + read the new revision (EAP-soften: svn update is a resync, its stderr
         # must not throw and falsely report the successful commit as failed).
         $eaU = $ErrorActionPreference

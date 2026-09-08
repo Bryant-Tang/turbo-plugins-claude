@@ -144,6 +144,9 @@ Cannot read SVN at the path this bridge is attached to:
         # a tree conflict, a locally missing file and a clean local modification all exit 0 with
         # empty stderr, so the common paths do not throw at all.
         if ($wcRevStart -lt $headRev) {
+            # Same reason as the replay path: this writes SVN content onto the bridge, so the EOL
+            # mode has to be current first. Memoised, so it is free when the replay refreshed it.
+            Set-BridgeEolModeOnce -Bridge $remote.Path
             try { & svn update $remote.Path 2>$null | Out-Null } catch { }
         }
         Write-Output "Already up to date at SVN r$cur"

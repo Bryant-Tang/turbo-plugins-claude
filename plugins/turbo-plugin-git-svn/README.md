@@ -17,6 +17,7 @@ env-free 設計,集中設定於專案根的 `.turbo-plugin/`（與其它 turbo-p
 | `/tp-request-merge` | **沒有 git remote 時的 PR 等價物**:報告某條工作分支會併進 main 的內容(commit / diffstat / 領先落後),使用者確認後由腳本在主 worktree `git merge --no-ff`。合併完成後 `ExitWorktree` 的 `remove` 才安全 |
 | `/tp-suggest-ignore` | 找出不該進版控的檔案並加進 `.gitignore`,也可把已不該追蹤的檔從 SVN un-track(SVN 移除委派 `Remove-SvnFile`,不裸 svn)。**哪些該排除由 agent 看專案實際內容判斷,不套固定 pattern 清單**(判準在 `skills/tp-suggest-ignore/assets/ignore-rubric.md`);`/tp-setup` 收尾會自動跑一次,`/tp-push-to-svn` 只在偵測到才出聲 |
 | `/tp-commit-msg` | 撰寫 / 檢查 commit message 語意(祈使句、what+why;禁 SHA / 本地識別碼;不驗證 / 不限制 type) |
+| `/tp-init-svn-eol-style` | **一次性遷移**:把 `svn:eol-style=native` 補到 SVN 上既有的文字檔。**會寫入 SVN 且不可逆**,一律先跑 `--preview` 並取得同意。詳見下方「行尾:SVN 存 LF,工作副本依平台」 |
 
 ## 設定
 
@@ -130,6 +131,55 @@ git 不允許同一條分支同時 checkout 在兩處，所以這兩支都會遇
 ## `.git` 不進 SVN 的機制
 
 bridge 建立時靠 `svn rm --keep-local .git`（修正 `svn checkout` 副作用）+ 固定 `svn:ignore=.git` 來確保 `.git` 不被推進 SVN——首個 bridge（`tp-setup` case (a)/(b)）由 `Initialize-GitSvnBridge` / `initialize-git-svn-bridge.sh` 做、後續工作分支的 bridge 由 `New-RemoteBridge` / `Checkout-SvnBranch` 做。其餘該排除的檔一律由 `.gitignore` + push 腳本的 `git check-ignore` 決定（bridge 的 add-set = `svn status` 的 `?` 減去 git-ignored），讓 remote-svn 用起來更接近 remote git。
+
+## 行尾：SVN 存 LF，工作副本依平台
+
+分工跟 git + GitHub 完全一樣，只是把 GitHub 換成 SVN：**SVN 儲存 LF，每一份工作副本拿自己
+平台的行尾**。跑過 `/tp-init-svn-eol-style` 之後 bridge 也沒有例外——它跟主 checkout、其它
+一般 worktree 一樣依平台而定。
+
+讓這件事成立的是 **`svn:eol-style=native`**。SVN 只會替**帶有這個屬性的檔案**在儲存時把行尾
+正規化成 LF；沒有屬性時它原樣存工作副本的位元組。`native` 不會讓 SVN 用 CRLF 儲存——它只在
+取出到工作副本時轉換。
+
+| 設定 | SVN repository 存的 | Windows 上 `svn checkout` 拿到 |
+|---|---|---|
+| 沒有屬性 | 你推什麼就是什麼 | 同左（原樣取） |
+| `svn:eol-style=native` | **LF** | **CRLF** |
+
+**整個 repo 只會處於兩種模式之一，`/tp-init-svn-eol-style` 是唯一把它從一種移到另一種的
+動作**（見上方 Skills 表）。它會寫入 SVN 且不可逆，所以一律先 `--preview`。
+
+跑過之後，`/tp-push-to-svn` 會在 commit 之前替變更集裡的文字檔補上 `svn:eol-style=native`，
+所以之後新增的檔案自動保持一致。**在那之前它什麼都不會標記**——這不是保守，是必要：只標記
+一部分檔案會讓 SVN 開始對「那些」檔案寫平台行尾，而 bridge 的 git 側仍為其餘檔案釘在 LF，
+兩邊打架、bridge 永久顯示為已修改。這件事實際發生過，讓 21 條拉取路徑測試同時掛掉。
+
+**兩類檔案永遠不會被標記**：
+
+- **二進位檔**——SVN 會去 translate 不是換行的位元組，檔案會損毀。
+- **行尾混雜的檔案**——設了屬性之後 SVN 會**拒絕 commit** 這種檔案（`E135000`），而 commit 是
+  不可分割的，漏掉一個就整批失敗。要涵蓋它們得先在 git 這側正規化再重跑。
+
+判準用 `git ls-files --eol`，也就是 **git 自己的判斷**——在這個流程裡 git 本來就是內容的
+源頭。而且它一個指令掃完整棵樹：逐檔探測內容在兩萬檔的樹上，是「幾秒」與「幾十分鐘」的差別。
+
+### bridge 的兩種模式（會自己切換，不需要你管）
+
+bridge 是**唯一一個被兩套工具同時寫入**的目錄，所以它的 git 設定必須跟 svn 寫出來的東西一致。
+而 svn 寫出什麼取決於樹上有沒有 `svn:eol-style`——**兩種狀態需要相反的設定**：
+
+| SVN 樹的狀態 | `svn update` 寫出 | bridge 的 git 設定 |
+|---|---|---|
+| 沒有 `svn:eol-style`（遷移前） | LF（原樣） | **釘成 LF**（`core.autocrlf=false` + `core.eol=lf`） |
+| 有 `svn:eol-style`（遷移後） | 平台行尾（Windows 上 CRLF） | **移除釘選**，跟著平台走 |
+
+弄反的後果不隱晦——整棵樹會被 git 判定為已修改，每一道「bridge 乾淨嗎」的守門同時開火。但
+**用環境假設去猜、而不是去讀樹的狀態**，就會弄反。所以這件事每次都從樹上讀，不從假設推。
+
+> 0.7.x 一律釘成 LF，那對一個沒有任何 `svn:eol-style` 的 repo 是對的。`/tp-init-svn-eol-style`
+> 是把 repo 從一種模式移到另一種的那個動作;之後每次呼叫都會自動切到正確的模式，包含**主動
+> 移除**遷移前留下的釘選——只是「不再設定」的話，舊 bridge 會永遠停在舊模式。
 
 ## SVN 路徑被改名時（`svn move` 過的資料夾）
 

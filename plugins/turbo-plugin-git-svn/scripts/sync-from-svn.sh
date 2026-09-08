@@ -132,6 +132,9 @@ if (( COUNT == 0 && AHEAD_COUNT == 0 )); then
   # pull re-enumerate an ever-growing range of revisions that were never ours. Failure is not fatal
   # here -- we are already reporting "up to date".
   if (( WC_REV_START < HEAD_REV )); then
+    # Same reason as the replay path: this writes SVN content onto the bridge, so the EOL mode has
+    # to be current first. Memoised, so it costs nothing when the replay already refreshed it.
+    ensure_bridge_eol_mode_once "$REMOTE_PATH" || true
     svn update "$REMOTE_PATH" >/dev/null 2>&1 || true
   fi
   echo "Already up to date at SVN r$CUR"

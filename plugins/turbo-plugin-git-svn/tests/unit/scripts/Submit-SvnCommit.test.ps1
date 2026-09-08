@@ -425,4 +425,175 @@ Describe 'Submit-SvnCommit' {
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
+
+    # ─── EOL: the push path marks text files, and only once the tree declares (#167) ──────────
+    # Mirrors submit-svn-commit.test.sh case for case. The subject is a PRE-EXISTING file, never a
+    # newly added one: svn:auto-props applies the property itself at `svn add` time, so a version
+    # of this that added a new file stayed green even with the push path's marking call deleted --
+    # it was measuring SVN's own behaviour. Files that predate the declaration are the ones only
+    # the push path can reach, and they are the realistic case: a repository migrates once and then
+    # keeps editing what it already had.
+    Context 'EOL: a pre-existing file is marked once the tree declares' {
+        BeforeAll {
+            $script:EolSb = $null; $script:EolBefore = 'unset'; $script:EolPushed = $false; $script:EolProp = ''
+            # Detected HERE rather than read from $script:SvnReady: that variable is assigned at
+            # file scope, which Pester evaluates during DISCOVERY, so a run-phase BeforeAll cannot
+            # see it -- "cannot be retrieved because it has not been set". File scope is right only
+            # for the -Skip: parameters below, which Pester also resolves at discovery.
+            $eolSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $eolSvnOk = ($LASTEXITCODE -eq 0) } catch { $eolSvnOk = $false }
+            if ($eolSvnOk) {
+                $script:EolSb = New-Sandbox -Tag 'ptsc-eol1'
+                $fx = New-FeatureBridge -Sandbox $script:EolSb
+                if ($fx) {
+                    $script:EolBefore = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/app.txt"
+                    $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                    # Exactly what /tp-init-svn-eol-style leaves behind.
+                    Push-Location $bridge
+                    try {
+                        & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+                        & svn --non-interactive commit -m 'declare svn:eol-style for the tree' 2>$null | Out-Null
+                    } finally { Pop-Location }
+
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'app.txt')) -Value 'app-v2'
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '--', 'app.txt')
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: edit an existing file')
+                    $script:EolPushed = Invoke-FeatPush -Root $fx.Root -Title 'feat: edit an existing file'
+                    $script:EolProp = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/app.txt"
+                }
+            }
+        }
+        AfterAll { if ($script:EolSb) { Remove-Sandbox -Dir $script:EolSb } }
+
+        It 'app.txt starts without the property, so the case proves something' -Skip:(-not $script:SvnReady) {
+            $script:EolBefore | Should -BeNullOrEmpty
+        }
+        It 'the push succeeds' -Skip:(-not $script:SvnReady) {
+            $script:EolPushed | Should -BeTrue
+        }
+        It 'and the pre-existing file now carries svn:eol-style=native' -Skip:(-not $script:SvnReady) {
+            $script:EolProp | Should -Be 'native'
+        }
+    }
+
+    # The other half of the same rule. Same file and same edit as above, so the two cases differ in
+    # exactly one thing: whether the tree declares. Marking files in a tree that has not been
+    # migrated is what made svn write platform endings for some files while git stayed pinned to LF
+    # for the rest, leaving the bridge permanently modified.
+    Context 'EOL: nothing is marked while the tree declares nothing' {
+        BeforeAll {
+            $script:EolSb2 = $null; $script:EolPushed2 = $false; $script:EolProp2 = 'unset'
+            # Same reason as the Context above: discovery-scope variables are not visible here.
+            $eolSvnOk2 = $false
+            try { $null = (& svn --version --quiet 2>$null); $eolSvnOk2 = ($LASTEXITCODE -eq 0) } catch { $eolSvnOk2 = $false }
+            if ($eolSvnOk2) {
+                $script:EolSb2 = New-Sandbox -Tag 'ptsc-eol2'
+                $fx2 = New-FeatureBridge -Sandbox $script:EolSb2
+                if ($fx2) {
+                    # Deliberately NO declaration here -- that is the whole case.
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('checkout', 'feat-x')
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($fx2.Root, 'app.txt')) -Value 'app-v2'
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('add', '--', 'app.txt')
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('commit', '-m', 'feat: edit an existing file')
+                    $script:EolPushed2 = Invoke-FeatPush -Root $fx2.Root -Title 'feat: edit an existing file'
+                    $script:EolProp2 = Get-SvnValue propget svn:eol-style "$($fx2.BranchUrl)/app.txt"
+                }
+            }
+        }
+        AfterAll { if ($script:EolSb2) { Remove-Sandbox -Dir $script:EolSb2 } }
+
+        It 'the push still succeeds' -Skip:(-not $script:SvnReady) {
+            $script:EolPushed2 | Should -BeTrue
+        }
+        It 'and nothing was marked' -Skip:(-not $script:SvnReady) {
+            $script:EolProp2 | Should -BeNullOrEmpty
+        }
+    }
+
+    # The failure path, which is the whole reason the marking step aborts instead of warning.
+    # Pushing CRLF into a repository that stores LF is silent afterwards -- git reports clean
+    # because it normalises on read, svn reports clean because it committed exactly what was on
+    # disk -- so before the commit is the only moment anything can be done about it.
+    #
+    # The property write is made to fail with a PATH shim that refuses exactly the call carrying
+    # `svn:eol-style` and delegates everything else to the real svn. Breaking every svn call would
+    # prove nothing: the push would die earlier and the assertions would pass for the wrong reason.
+    # That is not hypothetical -- the bash twin did exactly that on the first attempt, because an
+    # unquoted path split at a space, and only mutation testing surfaced it.
+    Context 'EOL: the push aborts when the property cannot be set' {
+        BeforeAll {
+            $script:EolSb3 = $null; $script:EolAbortRc = 0
+            $script:EolRevBefore = 'a'; $script:EolRevAfter = 'b'; $script:EolShimOk = $false
+            $eolSvnOk3 = $false
+            try { $null = (& svn --version --quiet 2>$null); $eolSvnOk3 = ($LASTEXITCODE -eq 0) } catch { $eolSvnOk3 = $false }
+            $realSvn = (Get-Command svn -ErrorAction SilentlyContinue).Source
+
+            if ($eolSvnOk3 -and $realSvn) {
+                $script:EolSb3 = New-Sandbox -Tag 'ptsc-eol3'
+                $fx3 = New-FeatureBridge -Sandbox $script:EolSb3
+                if ($fx3) {
+                    $bridge3 = [System.IO.Path]::Combine($fx3.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                    Push-Location $bridge3
+                    try {
+                        & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+                        & svn --non-interactive commit -m 'declare svn:eol-style for the tree' 2>$null | Out-Null
+                    } finally { Pop-Location }
+
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('checkout', 'feat-x')
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($fx3.Root, 'app.txt')) -Value 'app-v2'
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('add', '--', 'app.txt')
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('commit', '-m', 'feat: edit an existing file')
+
+                    $script:EolRevBefore = Get-SvnValue info --show-item revision $fx3.BranchUrl
+
+                    # A .cmd, not a shell script: the scripts under test resolve `svn` through PATH,
+                    # and only an executable Windows shim will be found. The shim directory holds
+                    # nothing else and goes first on PATH, so it wins over the real svn.exe.
+                    $shimDir = [System.IO.Path]::Combine($script:EolSb3, 'svnshim')
+                    $null = New-Item -ItemType Directory -Path $shimDir -Force
+                    $shimLines = @(
+                        '@echo off',
+                        'echo %* | findstr /C:"svn:eol-style" >nul',
+                        'if not errorlevel 1 (',
+                        '  echo fake svn: refusing the property write 1>&2',
+                        '  exit /b 1',
+                        ')',
+                        ('"' + $realSvn + '" %*')
+                    )
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($shimDir, 'svn.cmd')) -Value $shimLines -Encoding ASCII
+
+                    $savedPath = $env:PATH
+                    $env:PATH = $shimDir + [System.IO.Path]::PathSeparator + $env:PATH
+                    try {
+                        # Shim guard: it must still delegate ordinary calls, or the push fails for
+                        # the wrong reason and the assertions below prove nothing.
+                        & svn --version --quiet 2>$null | Out-Null
+                        $script:EolShimOk = ($LASTEXITCODE -eq 0)
+
+                        $null = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx3.Root -ScriptArgs @('-Branch', 'feat-x')
+                        $s3 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx3.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'feat: edit an existing file')
+                        $script:EolAbortRc = $s3.ExitCode
+                    } finally {
+                        $env:PATH = $savedPath
+                    }
+
+                    $script:EolRevAfter = Get-SvnValue info --show-item revision $fx3.BranchUrl
+                }
+            }
+        }
+        AfterAll { if ($script:EolSb3) { Remove-Sandbox -Dir $script:EolSb3 } }
+
+        It 'the shim delegates ordinary svn calls, so the case is meaningful' -Skip:(-not $script:SvnReady) {
+            $script:EolShimOk | Should -BeTrue
+        }
+        It 'the push fails' -Skip:(-not $script:SvnReady) {
+            $script:EolAbortRc | Should -Not -Be 0
+        }
+        It 'and no SVN revision was created' -Skip:(-not $script:SvnReady) {
+            # The guarantee that matters. A push that committed anyway would have shipped exactly
+            # the bytes this mechanism exists to keep out.
+            $script:EolRevAfter | Should -Be $script:EolRevBefore
+        }
+    }
 }

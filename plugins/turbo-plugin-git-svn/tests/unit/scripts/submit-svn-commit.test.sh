@@ -413,5 +413,133 @@ test_push_listing_order_is_byte_wise() {
         'A  B.txt|A  C.txt|A  _z.txt|A  a.txt|' "$order"
 }
 
+# ─── the push path marks text files, and only once the tree declares (#167) ──────────────────
+# The two cases below are one rule seen from both sides. The property write and the bridge's git
+# EOL mode read the SAME signal, deliberately: when they read different ones, svn started writing
+# platform endings for the files the push had marked while git stayed pinned to LF for everything
+# else, and the bridge read as permanently modified. That took out 21 pull-path tests.
+#
+# Tested here, at the push script, and not only at the library function: the library tests prove
+# the function marks the right files, they cannot prove the push path calls it at all.
+declare_eol_style_on_branch() {
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || return 1
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" commit -m 'declare svn:eol-style for the tree' ) >/dev/null 2>&1 || return 1
+}
+
+# It has to be an EXISTING file, not a newly added one. svn:auto-props applies the property itself
+# at `svn add` time, so a test that adds a new file passes whether or not the push path does
+# anything -- verified: deleting the push path's marking call left that version of this test green.
+# Files that predate the declaration are the ones only the push path can reach, and they are also
+# the realistic case: a repository migrates once and then keeps editing what it already had.
+test_push_marks_a_pre_existing_file_once_the_tree_declares() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local prop before
+    # app.txt was seeded before anything declared eol-style, so it carries no property.
+    before="$(svn propget svn:eol-style "$BRANCH_URL/app.txt" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    if [ -n "$before" ]; then
+        fail "fixture: app.txt already carries svn:eol-style ('$before'); the case proves nothing"
+        return 0
+    fi
+
+    # Exactly what /tp-init-svn-eol-style leaves behind.
+    if ! declare_eol_style_on_branch; then startSkipping; return 0; fi
+
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add -- 'app.txt' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: edit an existing file' >/dev/null 2>&1
+    if ! push_feat 'feat: edit an existing file'; then fail 'push failed'; return 0; fi
+
+    prop="$(svn propget svn:eol-style "$BRANCH_URL/app.txt" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the push path marks a pre-existing text file once the tree declares' 'native' "$prop"
+}
+
+test_push_marks_nothing_while_the_tree_declares_nothing() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local prop
+    # Deliberately NO declaration here -- that is the whole case. Same file and same edit as above,
+    # so the two differ in exactly one thing.
+
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add -- 'app.txt' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: edit an existing file' >/dev/null 2>&1
+    if ! push_feat 'feat: edit an existing file'; then fail 'push failed'; return 0; fi
+
+    prop="$(svn propget svn:eol-style "$BRANCH_URL/app.txt" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'nothing is marked while the tree itself declares nothing' '' "$prop"
+}
+
+# The failure path, which is the whole reason the marking step aborts instead of warning. Pushing
+# CRLF into a repository that stores LF is silent afterwards -- git reports clean because it
+# normalises on read, svn reports clean because it committed exactly what was on disk -- so the
+# only moment anything can be done about it is before the commit.
+#
+# The property write is made to fail with a PATH shim that refuses exactly `propset svn:eol-style`
+# and delegates everything else to the real svn. Failing the whole of svn would prove nothing: the
+# push would die somewhere earlier and the assertion would pass for the wrong reason.
+test_push_aborts_when_the_property_cannot_be_set() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local real_svn shim_dir saved_path rev_before rev_after out rc
+    real_svn="$(command -v svn 2>/dev/null)"
+    [ -n "$real_svn" ] || { startSkipping; return 0; }
+    if ! declare_eol_style_on_branch; then startSkipping; return 0; fi
+
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add -- 'app.txt' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: edit an existing file' >/dev/null 2>&1
+
+    rev_before="$(branch_rev)"
+
+    shim_dir="$SB/svnshim"
+    mkdir -p "$shim_dir"
+    {
+        printf '%s\n' '#!/usr/bin/env bash'
+        printf '%s\n' 'for a in "$@"; do'
+        printf '%s\n' '  if [ "$a" = "svn:eol-style" ]; then'
+        printf '%s\n' '    echo "fake svn: refusing propset svn:eol-style" >&2'
+        printf '%s\n' '    exit 1'
+        printf '%s\n' '  fi'
+        printf '%s\n' 'done'
+        # QUOTED. The real svn commonly lives under a path with a space -- Git Bash reports
+        # TortoiseSVN's as `/c/Program Files/...` -- and an unquoted exec splits it, so every
+        # delegated call dies with "/c/Program: No such file or directory". The push then fails
+        # for that reason instead of the one under test, and the assertions below pass while
+        # proving nothing. Mutation testing is what surfaced it: removing the abort left this
+        # test green.
+        printf 'exec "%s" "$@"\n' "$real_svn"
+    } > "$shim_dir/svn"
+    chmod +x "$shim_dir/svn"
+
+    saved_path="$PATH"
+    PATH="$shim_dir:$PATH"
+    export PATH
+
+    # Shim guard: it must refuse ONLY the property write and delegate everything else. A shim that
+    # breaks every svn call would make the push fail for the wrong reason, and both assertions
+    # below would still pass. That is not hypothetical -- it is what an unquoted exec did here.
+    if ! svn --version --quiet >/dev/null 2>&1; then
+        PATH="$saved_path"; export PATH
+        fail 'shim guard: the shim does not delegate ordinary svn calls; the case would prove nothing'
+        return 0
+    fi
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: edit an existing file' 2>&1 )"; rc=$?
+    PATH="$saved_path"
+    export PATH
+
+    assertNotEquals 'the push must fail when the property cannot be set' 0 "$rc"
+
+    # The guarantee that matters: nothing reached SVN. A push that committed anyway would have
+    # shipped the very bytes this mechanism exists to keep out.
+    rev_after="$(branch_rev)"
+    assertEquals "no SVN revision may be created when marking fails (out: $out)" "$rev_before" "$rev_after"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

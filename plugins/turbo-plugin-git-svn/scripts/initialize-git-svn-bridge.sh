@@ -292,11 +292,11 @@ trap _rollback ERR
 
 # ---- step 7: build the EMPTY bridge worktree (orphan branch, empty index + working tree). ----
 git -C "$MAIN_WORKTREE" worktree add --detach --no-checkout "$REMOTE_PATH"
-# Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order matters:
-# with core.autocrlf still true, `worktree add` would write CRLF and the files on disk would no
-# longer match their blobs -- and for a bridge whose SVN side does not carry them yet, that turns
-# a harmless "phantom M" into a real diff the drift check would report.
-ensure_bridge_eol_faithful "$MAIN_WORKTREE" "$REMOTE_PATH"
+# Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN tree
+# rather than assuming: with no svn:eol-style there yet svn writes LF, so git must be pinned
+# to match -- otherwise core.autocrlf=true has the checkout write CRLF and every guard that
+# asks whether the bridge is clean fires at once. The mode flips after /tp-init-svn-eol-style.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 git -C "$REMOTE_PATH" checkout --orphan "$REMOTE_BRANCH"
 # Clear the index. Tolerate "pathspec '.' did not match" when the index is already empty.
 git -C "$REMOTE_PATH" rm -rf --cached . >/dev/null 2>&1 || true
@@ -311,6 +311,13 @@ else
   echo "Running: svn checkout $SVN_URL $REMOTE_PATH"
   svn checkout "$SVN_URL" "$REMOTE_PATH"
 fi
+
+# Re-read the mode now that .svn exists. The call before the checkout could only ever answer
+# "not declared" -- there was no working copy to ask yet. For a repository that already carried
+# svn:eol-style BEFORE adopting this plugin, that answer is wrong: the bridge stays pinned to LF
+# while svn writes platform endings, and the FIRST `git add -A` then stores CRLF in git for good.
+# Measured on a tree with the property already set: blob 3 CR without this second read, 0 with it.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
 
 # ---- step 9b: keep svn metadata out of git for the WHOLE import, independent of .gitignore. ----
 # The bridge .gitignore can only be written AFTER the import (step 10 below explains why), so

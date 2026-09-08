@@ -300,11 +300,11 @@ try {
         # ---- step 7: build the EMPTY bridge worktree (orphan branch, empty index + working tree). ----
         & git -C $mainWorktree worktree add --detach --no-checkout $remoteWorktreePath
         if ($LASTEXITCODE -ne 0) { throw "git worktree add $remoteWorktreeName failed" }
-        # Pin the bridge to byte-faithful checkouts BEFORE anything materialises files. Order
-        # matters: with core.autocrlf still true, the checkout writes CRLF and the files on disk
-        # no longer match their blobs -- and for a bridge whose SVN side does not carry them yet,
-        # that turns a harmless "phantom M" into a real diff the drift check would report.
-        Set-BridgeEolFaithful -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
+        # Set the bridge EOL mode BEFORE anything materialises files, and read it from the SVN
+        # tree rather than assuming: with no svn:eol-style there yet svn writes LF, so git must
+        # be pinned to match -- otherwise core.autocrlf=true has the checkout write CRLF and
+        # every guard asking whether the bridge is clean fires at once.
+        Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
 
         & git -C $remoteWorktreePath checkout --orphan $remoteBranch
         if ($LASTEXITCODE -ne 0) { throw "git checkout --orphan $remoteBranch failed" }
@@ -329,6 +329,14 @@ try {
             & svn checkout $SvnUrl $remoteWorktreePath
         }
         if ($LASTEXITCODE -ne 0) { throw 'svn checkout failed' }
+
+        # Re-read the mode now that .svn exists. The call before the checkout could only ever answer
+        # "not declared" -- there was no working copy to ask yet. For a repository that already
+        # carried svn:eol-style BEFORE adopting this plugin, that answer is wrong: the bridge stays
+        # pinned to LF while svn writes platform endings, and the FIRST `git add -A` then stores
+        # CRLF in git for good. Measured on a tree with the property already set: blob 3 CR without
+        # this second read, 0 with it.
+        Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
 
         # ---- step 9b: keep svn metadata out of git for the WHOLE import, independent of .gitignore.
         # `git add -A` needs an ignore source that does not depend on whatever .gitignore SVN
