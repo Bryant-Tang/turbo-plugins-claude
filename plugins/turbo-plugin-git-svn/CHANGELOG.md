@@ -2,11 +2,23 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
-## [0.7.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.7.1...turbo-plugin-git-svn--v0.7.2) (2026-09-08)
+## [0.8.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.7.1...turbo-plugin-git-svn--v0.8.0) (2026-09-08)
+
+
+### Added
+
+* **git-svn:** bridge 改為依平台而定,SVN 端由 svn:eol-style=native 負責正規化 ([25046b4](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/25046b4f1d66a4f13f6d266480aeb7fee949affa)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
+* **git-svn:** 加入 svn:eol-style 全樹遷移指令,附預覽模式 ([9c2781d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/9c2781db174d4f5af69347c9f53bc0b8d8b49543)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
 
 
 ### Fixed
 
+* **git-svn:** 補上新增 .sh 的執行位元 ([851201a](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/851201a8e07eb37de9c105f2b988fc841af6b451))
+* **git-svn:** 分類器補上 core.quotePath=false,中文檔名不再被回傳成跳脫字串 ([05efc21](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/05efc214ad445f8bb239a64e80cf5ce2a0f86845)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
+* **git-svn:** 行尾模式改由單一信號決定,修好被我弄壞的拉取路徑 ([242605f](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/242605f9396a84492a36a54d0ade4c66b7c67184)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
+* **git-svn:** 拉取路徑也要重讀行尾模式,並在模式改變後重新正規化索引 ([8ff96eb](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/8ff96eb59200cc1a9ce5b46b9883c08b5a867c6e)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
+* **git-svn:** 遷移驗證改讀原始位元組,並補上拉取回歸的 PowerShell 對稱測試 ([8c452be](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/8c452bed6ced68a08dcd929a9a42aa898c5b5d2a)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
+* **git-svn:** PS 拉取回歸測試改用自備的 git 讀取 helper ([510e865](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/510e865bbce8b3b6f5f9e91d5a9f2aec09484815)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
 * **git-svn:** bootstrap 在 svn checkout 之後重讀行尾模式 ([7b701d3](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7b701d3e3bb281fc77730e275c975327b1e5e0aa)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
 * **git-svn:** PS 推送測試的 svn 判斷改用 discovery 期的 -Skip: ([f767c33](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f767c33f4333b821e7fb6d5b7167d93bb583653e)), closes [#167](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/167)
 
