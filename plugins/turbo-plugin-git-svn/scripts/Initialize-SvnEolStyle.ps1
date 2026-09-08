@@ -85,10 +85,43 @@ try {
         $targetsFile = [System.IO.Path]::GetTempFileName()
         $targets = @($candidates | ForEach-Object { ConvertTo-SvnTarget -Path $_ })
         Write-SvnTargetsFile -Path $targetsFile -Targets $targets
+        # `svn propset --targets` stops at the first file it cannot mark and leaves every file
+        # BEFORE it staged -- on a large tree that is tens of thousands of pending property
+        # changes. Saying only "nothing was committed" is true of SVN and quite wrong about the
+        # working copy: the bridge is left dirty, the pre-flight then refuses to run again, and
+        # the reason is not discoverable from anything the user can see.
+        #
+        # Reverting is safe here for exactly the reason it is safe on the -Preview path below: the
+        # pre-flight refused to start on a bridge carrying any pending SVN change, so the only
+        # thing there is to revert is what this script staged seconds ago. Unlike a failed COMMIT
+        # there is nothing worth keeping for a retry -- the propset is cheap to redo and the
+        # commit never happened.
         Push-Location -LiteralPath $bridge
         try {
-            & svn propset svn:eol-style native --quiet --targets $targetsFile
-            if ($LASTEXITCODE -ne 0) { throw 'svn propset failed; nothing was committed.' }
+            $propsetOk = $false
+            try {
+                & svn propset svn:eol-style native --quiet --targets $targetsFile
+                $propsetOk = ($LASTEXITCODE -eq 0)
+            } catch {
+                # PS 5.1 with $ErrorActionPreference = 'Stop' turns anything a native exe writes to
+                # stderr into a terminating NativeCommandError, so the exit-code test above never
+                # runs for the failure that actually happens here -- the one that prints E200009.
+                # Without this catch the revert below is unreachable, which is the entire bug.
+                $propsetOk = $false
+            }
+            if (-not $propsetOk) {
+                $reverted = $false
+                try {
+                    & svn revert -R --quiet '.'
+                    $reverted = ($LASTEXITCODE -eq 0)
+                } catch {
+                    $reverted = $false
+                }
+                if ($reverted) {
+                    throw 'svn propset failed; nothing was committed. The property changes this run had already staged were reverted, so the bridge worktree is back to the state it was in before this run.'
+                }
+                throw 'svn propset failed; nothing was committed. The revert failed as well, so the bridge worktree still holds staged property changes -- clear them by running `svn revert -R .` there before rerunning.'
+            }
         } finally {
             Pop-Location
         }
@@ -172,9 +205,45 @@ Line endings are now normalised by SVN on commit, so the repository stores LF
 and each working copy gets its own platform's endings.
 "@
             Write-Output 'Committing the property change to SVN...'
-            & svn commit --file $msgFile --encoding UTF-8
-            if ($LASTEXITCODE -ne 0) {
-                throw 'svn commit failed. The property changes are still pending in the bridge worktree.'
+            # This command is a single commit touching every text file in the tree by design, so
+            # the file count IS the size of the repository -- and the bigger the repository, the
+            # more it needs the migration. On a tree of ~17k files the data transmits fine and the
+            # server then times out during `Committing transaction`, which is the phase this
+            # raises the ceiling for. svn's own default is short enough that a large tree hits it
+            # routinely, and the retry that works is the same commit with a longer one (#177).
+            $svnHttpTimeout = 3600
+            $commitOk = $false
+            try {
+                & svn commit --file $msgFile --encoding UTF-8 `
+                    --config-option "servers:global:http-timeout=$svnHttpTimeout"
+                $commitOk = ($LASTEXITCODE -eq 0)
+            } catch {
+                $commitOk = $false
+            }
+            if (-not $commitOk) {
+                $svnUrl = ''
+                try {
+                    $svnUrl = (& svn info --show-item url 2>$null | Out-String).Trim()
+                } catch {
+                    $svnUrl = ''
+                }
+                $logHint = if ($svnUrl) { "svn log --limit 1 `"$svnUrl`"" } else { 'svn log --limit 1 <the branch URL>' }
+                # A timeout means "no answer", not "no commit". After an operation that touches
+                # every file in the tree, "did it actually go through?" is the first thing that has
+                # to be settled, and the only place that can answer it is the server.
+                throw @"
+svn commit failed. The property changes are still pending in the bridge worktree.
+
+Nothing was lost. The propset step does NOT have to be repeated -- rerunning this
+command, or just ``svn commit`` in the bridge worktree, will use the changes already
+staged there.
+
+If this was a timeout [E175012], the data may still have reached the server: a timeout
+means no answer came back, not that nothing happened. Check whether the remote HEAD
+moved before retrying -- if the newest log entry is this migration message, it landed
+and the pending changes in the bridge are already redundant:
+  $logHint
+"@
             }
         } finally {
             Pop-Location

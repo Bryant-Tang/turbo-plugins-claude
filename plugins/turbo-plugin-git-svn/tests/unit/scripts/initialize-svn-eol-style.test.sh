@@ -266,5 +266,114 @@ test_pull_after_migration_leaves_the_bridge_clean() {
     assertEquals 'migrating and then pulling unpins the bridge and leaves untouched files alone' 0 "$rc"
 }
 
+# A file `svn add` stamps as binary even though it is plain text.
+#
+# svn reads the first 1024 bytes (after skipping a UTF-8 BOM) and calls the file binary when fewer
+# than ~15% of them are "text" bytes -- 0x07-0x0D or 0x20-0x7F. Every byte of UTF-8 CJK is outside
+# that set, so a prose document in Chinese with few ASCII markers lands on the wrong side of the
+# line. Measured against real svn: 153 text bytes is text, 152 is binary. This writes 152.
+#
+# The NAME matters. The candidate list is sorted, and `svn propset --targets` stops at the first
+# file it cannot mark -- so a name sorting first would fail before anything else was staged, and
+# the revert this test is about would have nothing to undo while the test still passed.
+write_svn_binary_mime_file() {
+    local path="$1"
+    # shellcheck disable=SC2046
+    printf 'a%.0s' $(seq 152) > "$path" || return 1
+    # \200 is one byte, 0x80: high-bit, so svn counts it as non-text, and no NUL means git still
+    # calls the file text -- which is exactly the disagreement that breaks the migration.
+    # shellcheck disable=SC2046
+    printf '\200%.0s' $(seq 872) >> "$path" || return 1
+}
+
+# issue #176: propset stops partway, and everything it staged before that point stayed staged.
+# The message said "nothing was committed", which is true of SVN and quite wrong about the working
+# copy -- the bridge was left holding thousands of pending property changes, the pre-flight then
+# refused to rerun, and nothing on screen connected the two.
+test_propset_failure_reverts_the_staged_property_changes() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-prev-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp")" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+
+        write_svn_binary_mime_file "$bridge/zzbinmime.txt" || exit 98
+        ( cd "$bridge" && svn --non-interactive add -q zzbinmime.txt ) || exit 98
+        ( cd "$bridge" && svn --non-interactive commit -q -m 'a text file svn calls binary' ) || exit 98
+        git -C "$bridge" add -A >/dev/null 2>&1 || exit 98
+        git -C "$bridge" -c commit.gpgsign=false commit -qm 'binmime' >/dev/null 2>&1 || exit 98
+
+        # Fixture guard. If svn did NOT stamp the file, propset succeeds and this test passes while
+        # measuring nothing at all -- the exact shape of a false green.
+        mt="$(cd "$bridge" && svn propget svn:mime-type zzbinmime.txt 2>/dev/null | tr -d '\r\n')"
+        case "$mt" in
+            application/octet-stream) : ;;
+            *) echo "fixture: svn did not stamp the file binary (svn:mime-type=[$mt])" >&2; exit 98 ;;
+        esac
+
+        out="$(bash "$SUT" --repo-root "$root" 2>&1)" && { echo "the run should have failed: $out" >&2; exit 1; }
+
+        case "$out" in *'propset failed'*) : ;; *) echo "no propset failure message: $out" >&2; exit 1 ;; esac
+
+        # The point of the whole issue: the working copy is back to how it was found.
+        st="$(cd "$bridge" && svn status | grep -v '^?' || true)"
+        if [ -n "$st" ]; then
+            echo "the failed run left staged changes behind: [$st]" >&2; exit 1
+        fi
+        # And specifically, no file kept a half-applied property.
+        if [ -n "$(svn_eol_prop "$bridge/plain.txt")" ]; then
+            echo "plain.txt kept the property from the failed run" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'a failed propset reverts what it staged and leaves the bridge clean' 0 "$rc"
+}
+
+# issue #177: the migration is one commit over every text file in the tree, so on a big repository
+# it times out in `Committing transaction` -- after the data transmitted. A timeout means no answer
+# came back, NOT that nothing happened, so the message has to say how to find out which.
+#
+# The failure is forced with a pre-commit hook rather than a real timeout: what is under test is
+# the message and the fact that the pending changes are KEPT, which is the same on any commit
+# failure. (In PowerShell this path is also where EAP=Stop would otherwise throw past the guidance.)
+test_commit_failure_keeps_the_work_and_says_how_to_check() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-prev-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp")" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+        svnrepo="$tmp/svnrepo"
+
+        # Both spellings: svn runs `pre-commit` on POSIX and `pre-commit.bat` on Windows.
+        printf '#!/bin/sh\nexit 1\n' > "$svnrepo/hooks/pre-commit" || exit 98
+        chmod +x "$svnrepo/hooks/pre-commit" 2>/dev/null || true
+        printf '@echo off\r\nexit 1\r\n' > "$svnrepo/hooks/pre-commit.bat" || exit 98
+
+        out="$(bash "$SUT" --repo-root "$root" 2>&1)" && { echo "the commit should have failed: $out" >&2; exit 1; }
+
+        case "$out" in *'svn log --limit 1'*) : ;;
+            *) echo "no way to check whether it landed: $out" >&2; exit 1 ;; esac
+        case "$out" in *'does NOT have to be repeated'*) : ;;
+            *) echo "did not say the propset survives: $out" >&2; exit 1 ;; esac
+
+        # The opposite of the propset case: here the staged work is deliberately KEPT, because the
+        # commit is what failed and rerunning it is the cheap fix.
+        st="$(cd "$bridge" && svn status | grep -v '^?' || true)"
+        if [ -z "$st" ]; then
+            echo "the property changes were discarded; the message promises they are still there" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'a failed commit keeps the staged properties and explains how to check SVN' 0 "$rc"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

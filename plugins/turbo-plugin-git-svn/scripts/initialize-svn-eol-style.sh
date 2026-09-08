@@ -104,8 +104,28 @@ if [[ "$CAND_COUNT" -gt 0 ]]; then
     TARGET_LIST+=("$(svn_target "$p")")
   done < "$CANDIDATES"
   write_svn_targets_file "$TARGETS" "${TARGET_LIST[@]}" || { echo 'Error: could not write the svn targets file.' >&2; exit 1; }
-  ( cd "$REMOTE_PATH" && svn propset svn:eol-style native --quiet --targets "$TARGETS" ) \
-    || { echo 'Error: svn propset failed; nothing was committed.' >&2; exit 1; }
+  # `svn propset --targets` stops at the first file it cannot mark and leaves every file BEFORE it
+  # staged -- on a large tree that is tens of thousands of pending property changes. Saying only
+  # "nothing was committed" is true of SVN and quite wrong about the working copy: the bridge is
+  # left dirty, the pre-flight above then refuses to run again, and the reason is not discoverable
+  # from anything the user can see.
+  #
+  # Reverting is safe here for exactly the reason it is safe on the preview path below: the
+  # pre-flight refused to start on a bridge carrying any pending SVN change, so the only thing
+  # there is to revert is what this script staged seconds ago. Unlike a failed COMMIT, there is
+  # nothing here worth keeping for a retry -- the propset is cheap to redo and the commit never
+  # happened.
+  if ! ( cd "$REMOTE_PATH" && svn propset svn:eol-style native --quiet --targets "$TARGETS" ); then
+    echo 'Error: svn propset failed; nothing was committed.' >&2
+    echo 'Reverting the property changes this run had already staged...' >&2
+    if ( cd "$REMOTE_PATH" && svn revert -R --quiet '.' ); then
+      echo 'The bridge worktree is back to the state it was in before this run.' >&2
+    else
+      echo 'Warning: the revert failed as well. The bridge worktree still holds staged property' >&2
+      echo '         changes; clear them with `svn revert -R .` there before rerunning.' >&2
+    fi
+    exit 1
+  fi
 fi
 
 # Column 2 of `svn status` is the property status; count the entries svn now considers changed.
@@ -171,8 +191,38 @@ Line endings are now normalised by SVN on commit, so the repository stores LF
 and each working copy gets its own platform's endings."
 
 echo "Committing the property change to SVN..."
-( cd "$REMOTE_PATH" && svn commit --file "$MSG_FILE" --encoding UTF-8 ) \
-  || { echo 'Error: svn commit failed. The property changes are still pending in the bridge worktree.' >&2; exit 1; }
+# This command is a single commit touching every text file in the tree by design, so the file
+# count IS the size of the repository -- and the bigger the repository, the more it needs the
+# migration. On a tree of ~17k files the data transmits fine and the server then times out during
+# `Committing transaction`, which is the phase this raises the ceiling for. svn's built-in default
+# is short enough that a large tree hits it routinely, and the retry that works is simply the same
+# commit with a longer one (issue #177).
+SVN_HTTP_TIMEOUT=3600
+if ! ( cd "$REMOTE_PATH" && svn commit --file "$MSG_FILE" --encoding UTF-8 \
+         --config-option "servers:global:http-timeout=$SVN_HTTP_TIMEOUT" ); then
+  SVN_URL="$( ( cd "$REMOTE_PATH" && svn info --show-item url 2>/dev/null ) || true )"
+  {
+    echo 'Error: svn commit failed. The property changes are still pending in the bridge worktree.'
+    echo
+    echo 'Nothing was lost. The propset step does NOT have to be repeated -- rerunning this'
+    echo 'command, or just `svn commit` in the bridge worktree, will use the changes already'
+    echo 'staged there.'
+    echo
+    # A timeout means "no answer", not "no commit". After an operation that touches every file in
+    # the tree, "did it actually go through?" is the first thing that has to be settled, and the
+    # only place that can answer it is the server.
+    echo 'If this was a timeout [E175012], the data may still have reached the server: a timeout'
+    echo 'means no answer came back, not that nothing happened. Check whether the remote HEAD'
+    echo 'moved before retrying -- if the newest log entry is this migration message, it landed'
+    echo 'and the pending changes in the bridge are already redundant:'
+    if [[ -n "$SVN_URL" ]]; then
+      echo "  svn log --limit 1 \"$SVN_URL\""
+    else
+      echo '  svn log --limit 1 <the branch URL>'
+    fi
+  } >&2
+  exit 1
+fi
 
 echo
 echo "Done. $SET_COUNT file(s) now carry svn:eol-style=native."

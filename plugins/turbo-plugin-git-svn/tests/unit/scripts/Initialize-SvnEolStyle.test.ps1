@@ -63,6 +63,30 @@ BeforeAll {
         return "$v".Trim()
     }
 
+    function Get-SvnMimeProp {
+        param([string]$File)
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $v = (& svn --non-interactive propget svn:mime-type $File 2>$null | Out-String) } catch { $v = '' } finally { $ErrorActionPreference = $old }
+        return "$v".Trim()
+    }
+
+    # A file `svn add` stamps as binary even though it is plain text.
+    #
+    # svn reads the first 1024 bytes (after skipping a UTF-8 BOM) and calls the file binary when
+    # fewer than ~15% of them are "text" bytes -- 0x07-0x0D or 0x20-0x7F. Every byte of UTF-8 CJK
+    # is outside that set, so a prose document in Chinese with few ASCII markers lands on the wrong
+    # side of the line. Measured against real svn: 153 text bytes is text, 152 is binary.
+    function New-SvnBinaryMimeFile {
+        param([string]$Path)
+        $bytes = New-Object byte[] 1024
+        for ($i = 0; $i -lt 152; $i++) { $bytes[$i] = 0x61 }
+        # 0x80: high-bit, so svn counts it as non-text, and with no NUL anywhere git still calls
+        # the file text -- which is exactly the disagreement that breaks the migration.
+        for ($i = 152; $i -lt 1024; $i++) { $bytes[$i] = 0x80 }
+        [System.IO.File]::WriteAllBytes($Path, $bytes)
+    }
+
     # Build root + a bridge that is genuinely both things. Returns @{ Root; Bridge; SvnRepo }.
     #
     # Order matters and mirrors the production bootstrap: `git worktree add --no-checkout` first so
@@ -270,6 +294,86 @@ Describe 'Initialize-SvnEolStyle' {
 
             $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
             $r.ExitCode | Should -Not -Be 0
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # issue #176: propset stops partway, and everything it staged before that point stayed staged.
+    # The message said "nothing was committed", which is true of SVN and quite wrong about the
+    # working copy -- the bridge was left holding thousands of pending property changes, the
+    # pre-flight then refused to rerun, and nothing on screen connected the two.
+    It 'reverts the property changes it had staged when propset fails' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolrevert'
+        try {
+            # The NAME matters. The candidate list is sorted and `svn propset --targets` stops at
+            # the first file it cannot mark, so a name sorting FIRST would fail before anything
+            # else was staged -- and the revert under test would have nothing to undo while this
+            # case still passed.
+            $binPath = [System.IO.Path]::Combine($fx.Bridge, 'zzbinmime.txt')
+            New-SvnBinaryMimeFile -Path $binPath
+            Invoke-SvnQuiet add -q $binPath
+            Invoke-SvnQuiet commit -q -m 'a text file svn calls binary' $fx.Bridge
+            Invoke-GitQuiet $fx.Bridge add -A
+            Invoke-GitQuiet $fx.Bridge -c commit.gpgsign=false commit -q -m 'binmime'
+
+            # Fixture guard: if svn did NOT stamp the file, propset succeeds and this case measures
+            # nothing at all while still reporting green.
+            (Get-SvnMimeProp $binPath) | Should -Be 'application/octet-stream'
+
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Not -Be 0
+            $r.Combined | Should -Match 'propset failed'
+
+            # The point of the whole issue: the working copy is back to how it was found.
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $st = @(& svn --non-interactive status $fx.Bridge 2>$null | Where-Object { $_ -and ($_ -notmatch '^\?') }) } finally { $ErrorActionPreference = $old }
+            $st.Count | Should -Be 0
+            (Get-SvnEolProp ([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'))) | Should -BeNullOrEmpty
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # issue #177: the migration is one commit over every text file in the tree, so on a big
+    # repository it times out in `Committing transaction` -- after the data transmitted. A timeout
+    # means no answer came back, NOT that nothing happened, so the message has to say how to find
+    # out which.
+    #
+    # The failure is forced with a pre-commit hook rather than a real timeout: what is under test
+    # is the message and the fact that the pending changes are KEPT, which is the same on any
+    # commit failure. It also pins the PS-only hazard -- with EAP=Stop, svn writing to stderr
+    # throws a NativeCommandError, so without a catch the guidance below is never reached.
+    It 'keeps the staged properties and says how to check SVN when the commit fails' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolcommitfail'
+        try {
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            $hooks = [System.IO.Path]::Combine($fx.SvnRepo, 'hooks')
+            # svn runs `pre-commit.bat` on Windows; the extensionless one is written too so this
+            # stays true to its bash twin if it is ever run elsewhere.
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($hooks, 'pre-commit.bat'), "@echo off`r`nexit 1`r`n", $enc)
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($hooks, 'pre-commit'), "#!/bin/sh`nexit 1`n", $enc)
+
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Not -Be 0
+            $r.Combined | Should -Match 'svn log --limit 1'
+            $r.Combined | Should -Match 'does NOT have to be repeated'
+
+            # The opposite of the propset case: here the staged work is deliberately KEPT, because
+            # the commit is what failed and rerunning it is the cheap fix.
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $st = @(& svn --non-interactive status $fx.Bridge 2>$null | Where-Object { $_ -and ($_ -notmatch '^\?') }) } finally { $ErrorActionPreference = $old }
+            $st.Count | Should -BeGreaterThan 0
         } finally {
             Remove-Sandbox -Dir $fx.Sandbox
         }
