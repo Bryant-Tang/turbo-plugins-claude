@@ -555,6 +555,33 @@ test_delete_works_when_head_is_on_a_third_branch() {
         "$(git -C "$root" symbolic-ref --short HEAD)"
 }
 
+# ── Case 28b (issue #165): a base that is NOT `main` ──────────────────────────
+# Every other merge case above uses the default base, so "merges into main" and "merges into the
+# base it was given" are indistinguishable in this suite. Here `main` never sees the branch at
+# all: it is the case where `git branch -d` -- which judges against the current HEAD -- would
+# refuse a branch whose work is safely in `intg`, and the only thing that gets the deletion right
+# is proving it against the base actually merged into.
+test_merge_into_a_non_main_base_and_delete() {
+    local root out tip
+    root="$(make_fixture)"
+    git -C "$root" branch intg main >/dev/null 2>&1
+    tip="$(git -C "$root" rev-parse feat)"
+    out="$(run_sut "$root" --branch feat --base intg --merge --delete-branch)"
+    assertEquals 'merge exit 0' 0 $?
+    printf '%s' "$(token_of "$out")" | grep -q '^TP_TOKEN:MERGED branch=feat base=intg commit=.* deleted=yes$'
+    assertTrue 'MERGED names the base it was given, and reports the deletion' $?
+    assertEquals 'one token' 1 "$(token_count "$out")"
+    git -C "$root" merge-base --is-ancestor "$tip" intg
+    assertTrue 'the requested base really contains the branch tip' $?
+    # The discriminator: without it this case would pass just as happily if --base were ignored.
+    git -C "$root" merge-base --is-ancestor "$tip" main
+    assertFalse 'and main does NOT -- the merge went where it was asked, not to main' $?
+    git -C "$root" rev-parse --verify --quiet refs/heads/feat >/dev/null
+    assertFalse 'the branch ref is gone' $?
+    assertEquals 'and HEAD is back on main' 'main' \
+        "$(git -C "$root" symbolic-ref --short HEAD)"
+}
+
 # ── Case 29: a branch with a worktree is not deleted here ─────────────────────
 # Removing the ref and removing the worktree are two different jobs, and the second one is
 # `ExitWorktree`'s. The merge must still succeed -- refusing the deletion is not a merge failure.
