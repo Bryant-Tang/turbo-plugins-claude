@@ -2,6 +2,19 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.7.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.7.0...turbo-plugin-git-svn--v0.7.1) (2026-09-07)
+
+
+### Fixed
+
+* **git-svn:** bridge 行尾釘選補上 core.eol,repo 有 text=auto 時不再寫出 CRLF ([3514d4d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3514d4df853106e39ae46459d12611365ab02c4b)), closes [#164](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/164)
+* **git-svn:** drift 檢查改用單趟 awk 集合差,大型 repo 不再誤報「file(s) appeared」 ([aa5d938](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/aa5d938940885f18961382073ef62828e62f8d7f))
+
+
+### Documentation
+
+* **git-svn:** submit-svn-commit 的 source 註解補上 svn_status_drift_paths ([0246d3d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0246d3dfcc46131967aabf3cc36603fcf0c7f6d8))
+
 ## [0.7.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.6.0...turbo-plugin-git-svn--v0.7.0) (2026-09-03)
 
 
