@@ -312,8 +312,17 @@ and each working copy gets its own platform's endings.
                 try {
                     # --depth empty keeps the root target from recursing; explicit file targets
                     # still commit.
+                    #
+                    # `| Out-Host` is load-bearing, not cosmetic. A PowerShell function returns
+                    # EVERYTHING left on its output stream, so an unpiped `& svn` puts svn's own
+                    # "Committing transaction... Committed revision N." lines into the return
+                    # value. The caller's `if (-not (Invoke-BatchCommit ...))` then tests an array
+                    # rather than the boolean -- a non-empty array is truthy, so `-not` is always
+                    # false and the failure branch is UNREACHABLE. CI caught exactly that: the
+                    # pre-commit hook rejected the commit and the script still exited 0. Out-Host
+                    # keeps the progress visible while leaving the stream clean.
                     & svn commit --file $MsgPath --encoding UTF-8 --depth empty `
-                        --targets $ChunkPath --config-option "servers:global:http-timeout=$Timeout"
+                        --targets $ChunkPath --config-option "servers:global:http-timeout=$Timeout" | Out-Host
                     return ($LASTEXITCODE -eq 0)
                 } catch {
                     return $false

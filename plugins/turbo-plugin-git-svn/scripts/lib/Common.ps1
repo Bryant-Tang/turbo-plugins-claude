@@ -507,7 +507,12 @@ function Clear-SvnBinaryMime {
         foreach ($p in $paths) {
             $target = ConvertTo-SvnTarget -Path $p
             try {
-                & svn propdel svn:mime-type --quiet $target
+                # `| Out-Null` for the same reason Invoke-BatchCommit pipes to Out-Host: a function
+                # returns everything left on its output stream, so anything svn prints would ride
+                # out with the boolean this function is supposed to return and make the caller's
+                # test meaningless. --quiet already keeps it silent in practice; this makes it so
+                # by construction. Errors still reach stderr.
+                & svn propdel svn:mime-type --quiet $target | Out-Null
                 if ($LASTEXITCODE -ne 0) { $ok = $false }
             } catch {
                 # EAP=Stop turns anything svn writes to stderr into a terminating error, so the
