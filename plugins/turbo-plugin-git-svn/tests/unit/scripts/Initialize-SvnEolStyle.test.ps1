@@ -63,6 +63,38 @@ BeforeAll {
         return "$v".Trim()
     }
 
+    function Get-NativeText {
+        param([scriptblock]$Block)
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $o = & $Block 2>$null } catch { $o = $null } finally { $ErrorActionPreference = $old }
+        return ((@($o) -join "`n").Trim())
+    }
+
+    function Get-SvnMimeProp {
+        param([string]$File)
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $v = (& svn --non-interactive propget svn:mime-type $File 2>$null | Out-String) } catch { $v = '' } finally { $ErrorActionPreference = $old }
+        return "$v".Trim()
+    }
+
+    # A file `svn add` stamps as binary even though it is plain text.
+    #
+    # svn reads the first 1024 bytes (after skipping a UTF-8 BOM) and calls the file binary when
+    # fewer than ~15% of them are "text" bytes -- 0x07-0x0D or 0x20-0x7F. Every byte of UTF-8 CJK
+    # is outside that set, so a prose document in Chinese with few ASCII markers lands on the wrong
+    # side of the line. Measured against real svn: 153 text bytes is text, 152 is binary.
+    function New-SvnBinaryMimeFile {
+        param([string]$Path)
+        $bytes = New-Object byte[] 1024
+        for ($i = 0; $i -lt 152; $i++) { $bytes[$i] = 0x61 }
+        # 0x80: high-bit, so svn counts it as non-text, and with no NUL anywhere git still calls
+        # the file text -- which is exactly the disagreement that breaks the migration.
+        for ($i = 152; $i -lt 1024; $i++) { $bytes[$i] = 0x80 }
+        [System.IO.File]::WriteAllBytes($Path, $bytes)
+    }
+
     # Build root + a bridge that is genuinely both things. Returns @{ Root; Bridge; SvnRepo }.
     #
     # Order matters and mirrors the production bootstrap: `git worktree add --no-checkout` first so
@@ -269,6 +301,155 @@ Describe 'Initialize-SvnEolStyle' {
             [System.IO.File]::WriteAllText([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'), "alpha`nbeta`ngamma`n", $enc)
 
             $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Not -Be 0
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # issue #176: propset stops partway, and everything it staged before that point stayed staged.
+    # The message said "nothing was committed", which is true of SVN and quite wrong about the
+    # working copy -- the bridge was left holding thousands of pending property changes, the
+    # pre-flight then refused to rerun, and nothing on screen connected the two.
+    It 'reverts the property changes it had staged when propset fails' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolrevert'
+        try {
+            # The NAME matters. The candidate list is sorted and `svn propset --targets` stops at
+            # the first file it cannot mark, so a name sorting FIRST would fail before anything
+            # else was staged -- and the revert under test would have nothing to undo while this
+            # case still passed.
+            $binPath = [System.IO.Path]::Combine($fx.Bridge, 'zzbinmime.txt')
+            New-SvnBinaryMimeFile -Path $binPath
+            Invoke-SvnQuiet add -q $binPath
+            Invoke-SvnQuiet commit -q -m 'a text file svn calls binary' $fx.Bridge
+            Invoke-GitQuiet $fx.Bridge add -A
+            Invoke-GitQuiet $fx.Bridge -c commit.gpgsign=false commit -q -m 'binmime'
+
+            # Fixture guard: if svn did NOT stamp the file, propset succeeds and this case measures
+            # nothing at all while still reporting green.
+            (Get-SvnMimeProp $binPath) | Should -Be 'application/octet-stream'
+
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Not -Be 0
+            $r.Combined | Should -Match 'propset failed'
+
+            # The point of the whole issue: the working copy is back to how it was found.
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $st = @(& svn --non-interactive status $fx.Bridge 2>$null | Where-Object { $_ -and ($_ -notmatch '^\?') }) } finally { $ErrorActionPreference = $old }
+            $st.Count | Should -Be 0
+            (Get-SvnEolProp ([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'))) | Should -BeNullOrEmpty
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # issue #177: the migration is one commit over every text file in the tree, so on a big
+    # repository it times out in `Committing transaction` -- after the data transmitted. A timeout
+    # means no answer came back, NOT that nothing happened, so the message has to say how to find
+    # out which.
+    #
+    # The failure is forced with a pre-commit hook rather than a real timeout: what is under test
+    # is the message and the fact that the pending changes are KEPT, which is the same on any
+    # commit failure. It also pins the PS-only hazard -- with EAP=Stop, svn writing to stderr
+    # throws a NativeCommandError, so without a catch the guidance below is never reached.
+    It 'keeps the staged properties and says how to check SVN when the commit fails' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolcommitfail'
+        try {
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            $hooks = [System.IO.Path]::Combine($fx.SvnRepo, 'hooks')
+            # svn runs `pre-commit.bat` on Windows; the extensionless one is written too so this
+            # stays true to its bash twin if it is ever run elsewhere.
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($hooks, 'pre-commit.bat'), "@echo off`r`nexit 1`r`n", $enc)
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($hooks, 'pre-commit'), "#!/bin/sh`nexit 1`n", $enc)
+
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Not -Be 0
+            $r.Combined | Should -Match 'svn log --limit 1'
+            $r.Combined | Should -Match 'does NOT have to be repeated'
+            # Path-scoped, not repository-scoped. SVN revision numbers are shared by the whole
+            # repository, so "did the HEAD move?" answers yes when someone else committed to an
+            # unrelated path -- and reading that as success is the direction that loses the
+            # migration silently.
+            $r.Combined | Should -Match 'THIS BRANCH PATH'
+            # And the guidance has to say "wait" before it says "check". A large transaction can
+            # finish on the server minutes after it stopped answering -- reported in the wild two
+            # hours later, after the user had already concluded it failed and reverted. Telling
+            # someone how to check without telling them not to check YET produced the wrong answer.
+            $r.Combined | Should -Match 'WAIT a few minutes'
+            $r.Combined | Should -Match 'Do NOT'
+            # The locks an interrupted commit leaves behind block every later svn operation, and
+            # the old message never mentioned them -- which is what made that state undiagnosable.
+            $r.Combined | Should -Match 'svn cleanup'
+
+            # The opposite of the propset case: here the staged work is deliberately KEPT, because
+            # the commit is what failed and rerunning it is the cheap fix.
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $st = @(& svn --non-interactive status $fx.Bridge 2>$null | Where-Object { $_ -and ($_ -notmatch '^\?') }) } finally { $ErrorActionPreference = $old }
+            $st.Count | Should -BeGreaterThan 0
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # issue #177: the migration is one pass over every text file in the tree, so on a big repository
+    # the single transaction times out on the server. It commits in batches instead.
+    #
+    # -BatchSize 1 on the fixture's two candidates gives three revisions: the declaring one plus one
+    # per file. Mirrors initialize-svn-eol-style.test.sh.
+    It 'commits in batches, declares the tree first, and leaves one revision behind' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolbatch'
+        try {
+            $before = [int](Get-NativeText { & svnlook youngest $fx.SvnRepo })
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root, '-BatchSize', '1')
+            $r.ExitCode | Should -Be 0 -Because $r.Combined
+            $after = [int](Get-NativeText { & svnlook youngest $fx.SvnRepo })
+
+            # More than one revision is the whole point -- a single one means batching did nothing.
+            ($after - $before) | Should -BeGreaterOrEqual 3
+
+            # The DECLARING revision must be first. svn:auto-props on the root is the signal the
+            # bridge reads to decide whether to pin git to LF; declared last, an interrupted run
+            # would leave thousands of files carrying svn:eol-style while the bridge is still
+            # pinned, and every one of them would read as modified after the next update.
+            $ap = Get-NativeText { & svnlook propget $fx.SvnRepo 'svn:auto-props' 'trunk' -r ($before + 1) }
+            $ap | Should -Match 'svn:eol-style'
+
+            # Committing more than once leaves a MIXED-REVISION working copy unless something makes
+            # it uniform again, and the pull path reads "the" revision of the copy -- it would
+            # position everything back at the root's older one and undo the property changes on
+            # disk. svnversion prints `N:M` for a mixed copy and a single number for a uniform one.
+            $ver = Get-NativeText { Push-Location -LiteralPath $fx.Bridge; try { & svnversion . } finally { Pop-Location } }
+            $ver | Should -Not -Match ':'
+
+            (Get-SvnEolProp ([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'))) | Should -Be 'native'
+            (Get-SvnEolProp ([System.IO.Path]::Combine($fx.Bridge, 'wascrlf.txt'))) | Should -Be 'native'
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    It 'refuses a batch size below 1' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolbatch0'
+        try {
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root, '-BatchSize', '0')
             $r.ExitCode | Should -Not -Be 0
         } finally {
             Remove-Sandbox -Dir $fx.Sandbox

@@ -95,6 +95,42 @@ BeforeAll {
         $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $Root -ScriptArgs @('-Branch', 'feat-x', '-Title', $Title)
         return ($s.ExitCode -eq 0)
     }
+
+    # Same as Invoke-FeatPush, but hands back the submit result so a case can assert on what was
+    # said and not only on whether it worked. Extra args go to the submit call only.
+    function Invoke-FeatPushResult {
+        param([string]$Root, [string]$Title, [string[]]$Extra = @())
+        $b = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $Root -ScriptArgs @('-Branch', 'feat-x')
+        if ($b.ExitCode -ne 0) { return [PSCustomObject]@{ ExitCode = $b.ExitCode; Combined = $b.Combined; Prepared = $b.Combined } }
+        $submitArgs = @('-Branch', 'feat-x', '-Title', $Title) + $Extra
+        $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $Root -ScriptArgs $submitArgs
+        return [PSCustomObject]@{ ExitCode = $s.ExitCode; Combined = $s.Combined; Prepared = $b.Combined }
+    }
+
+    # Turn the fixture's tree into a migrated one -- exactly what /tp-init-svn-eol-style leaves
+    # behind, and the precondition for any of this being reachable.
+    function Set-TreeDeclaresEol {
+        param([string]$Bridge)
+        Push-Location $Bridge
+        try {
+            & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+            & svn --non-interactive commit -m 'declare svn:eol-style for the tree' 2>$null | Out-Null
+        } finally { Pop-Location }
+    }
+
+    # A file `svn add` stamps as binary even though it is plain text: 152 text bytes in 1024, one
+    # below svn's threshold (measured -- 153 is text). `.md` on purpose: the fixture's auto-props
+    # covers `*.txt`, and a file svn would apply eol-style to at add time would be testing svn
+    # rather than this code.
+    function New-SvnBinaryMimeFile {
+        param([string]$Path)
+        $bytes = New-Object byte[] 1024
+        for ($i = 0; $i -lt 152; $i++) { $bytes[$i] = 0x61 }
+        # 0x80: high-bit, so svn counts it as non-text, while the absence of any NUL keeps git
+        # calling the file text. That disagreement is the entire subject.
+        for ($i = 152; $i -lt 1024; $i++) { $bytes[$i] = 0x80 }
+        [System.IO.File]::WriteAllBytes($Path, $bytes)
+    }
 }
 
 Describe 'Submit-SvnCommit' {
@@ -594,6 +630,150 @@ Describe 'Submit-SvnCommit' {
             # The guarantee that matters. A push that committed anyway would have shipped exactly
             # the bytes this mechanism exists to keep out.
             $script:EolRevAfter | Should -Be $script:EolRevBefore
+        }
+    }
+
+    # ── issue #175: files SVN decides are binary even though git calls them text ──
+    #
+    # svn reads the first 1024 bytes and calls a file binary when fewer than ~15% of them are text
+    # bytes; every byte of UTF-8 CJK is outside that set, so a prose document in Chinese with few
+    # ASCII markers crosses the line. It then gets svn:mime-type=application/octet-stream at
+    # `svn add` time, and svn:eol-style cannot be set on such a file -- so the push dies at the
+    # moment of writing to SVN with nothing beforehand hinting at it.
+    #
+    # Mirrors submit-svn-commit.test.sh case for case.
+    Context 'BINARY: a file SVN calls binary stops the push and is named' {
+        BeforeAll {
+            $script:BinSb = $null; $script:BinRc = 0; $script:BinOut = ''
+            $script:BinRevBefore = 'a'; $script:BinRevAfter = 'b'
+            $binSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $binSvnOk = ($LASTEXITCODE -eq 0) } catch { $binSvnOk = $false }
+            if ($binSvnOk) {
+                $script:BinSb = New-Sandbox -Tag 'ptsc-bin1'
+                $fxb = New-FeatureBridge -Sandbox $script:BinSb
+                if ($fxb) {
+                    Set-TreeDeclaresEol -Bridge ([System.IO.Path]::Combine($fxb.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fxb.Root -GitArgs @('checkout', 'feat-x')
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fxb.Root, 'notes.md'))
+                    $null = Run-Git -Cwd $fxb.Root -GitArgs @('add', '--', 'notes.md')
+                    $null = Run-Git -Cwd $fxb.Root -GitArgs @('commit', '-m', 'docs: add a file svn will call binary')
+                    $script:BinRevBefore = Get-BranchRev -BranchUrl $fxb.BranchUrl
+                    $rb = Invoke-FeatPushResult -Root $fxb.Root -Title 'docs: add notes'
+                    $script:BinRc = $rb.ExitCode
+                    $script:BinOut = $rb.Combined
+                    $script:BinRevAfter = Get-BranchRev -BranchUrl $fxb.BranchUrl
+                }
+            }
+        }
+        AfterAll { if ($script:BinSb) { Remove-Sandbox -Dir $script:BinSb } }
+
+        It 'the push is refused' -Skip:(-not $script:SvnReady) {
+            $script:BinRc | Should -Not -Be 0
+        }
+        It 'and the refusal names the file' -Skip:(-not $script:SvnReady) {
+            # Naming it is the point. "could not set svn:eol-style" alone leaves the user with a
+            # tree of thousands of files and no idea which one did it.
+            $script:BinOut | Should -Match 'notes\.md'
+        }
+        It 'and says what to do about it' -Skip:(-not $script:SvnReady) {
+            # The filename alone is not evidence that this code ran: svn's own E200009 quotes the
+            # offending path too, so a case that only looked for the name would stay green with the
+            # whole detection removed. What only this code can produce is the instruction.
+            $script:BinOut | Should -Match 'ClearBinaryMime'
+        }
+        It 'and nothing reached SVN' -Skip:(-not $script:SvnReady) {
+            $script:BinRevAfter | Should -Be $script:BinRevBefore
+        }
+    }
+
+    # The other half: the switch exists so a user who was shown the list can say yes. Without this
+    # case the refusal above could be unconditional and everything would still look correct.
+    Context 'BINARY: -ClearBinaryMime lets the push through' {
+        BeforeAll {
+            $script:ClrSb = $null; $script:ClrRc = 1; $script:ClrOut = ''
+            $script:ClrMime = 'unset'; $script:ClrEol = 'unset'
+            $clrSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $clrSvnOk = ($LASTEXITCODE -eq 0) } catch { $clrSvnOk = $false }
+            if ($clrSvnOk) {
+                $script:ClrSb = New-Sandbox -Tag 'ptsc-bin2'
+                $fxc = New-FeatureBridge -Sandbox $script:ClrSb
+                if ($fxc) {
+                    Set-TreeDeclaresEol -Bridge ([System.IO.Path]::Combine($fxc.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fxc.Root -GitArgs @('checkout', 'feat-x')
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fxc.Root, 'notes.md'))
+                    $null = Run-Git -Cwd $fxc.Root -GitArgs @('add', '--', 'notes.md')
+                    $null = Run-Git -Cwd $fxc.Root -GitArgs @('commit', '-m', 'docs: add a file svn will call binary')
+                    $rc2 = Invoke-FeatPushResult -Root $fxc.Root -Title 'docs: add notes' -Extra @('-ClearBinaryMime')
+                    $script:ClrRc = $rc2.ExitCode
+                    $script:ClrOut = $rc2.Combined
+                    $script:ClrMime = Get-SvnValue propget svn:mime-type "$($fxc.BranchUrl)/notes.md"
+                    $script:ClrEol = Get-SvnValue propget svn:eol-style "$($fxc.BranchUrl)/notes.md"
+                }
+            }
+        }
+        AfterAll { if ($script:ClrSb) { Remove-Sandbox -Dir $script:ClrSb } }
+
+        It 'the push goes through' -Skip:(-not $script:SvnReady) {
+            $script:ClrRc | Should -Be 0 -Because $script:ClrOut
+        }
+        It 'the bogus binary mark is gone in SVN' -Skip:(-not $script:SvnReady) {
+            $script:ClrMime | Should -BeNullOrEmpty
+        }
+        It 'and the file is now marked like every other text file' -Skip:(-not $script:SvnReady) {
+            $script:ClrEol | Should -Be 'native'
+        }
+    }
+
+    # The prediction, which is what makes the question askable at all: by the time the push runs the
+    # adds are scheduled and svn has already decided. prepare runs BEFORE anything is written, so it
+    # has to work this out from the bytes.
+    Context 'BINARY: prepare predicts it, and stays quiet on an unmigrated tree' {
+        BeforeAll {
+            $script:PrepSb = $null; $script:PrepSb2 = $null
+            $script:PrepOut = ''; $script:PrepOutPlain = ''
+            $prepSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $prepSvnOk = ($LASTEXITCODE -eq 0) } catch { $prepSvnOk = $false }
+            if ($prepSvnOk) {
+                $script:PrepSb = New-Sandbox -Tag 'ptsc-bin3'
+                $fxp = New-FeatureBridge -Sandbox $script:PrepSb
+                if ($fxp) {
+                    Set-TreeDeclaresEol -Bridge ([System.IO.Path]::Combine($fxp.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fxp.Root -GitArgs @('checkout', 'feat-x')
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fxp.Root, 'notes.md'))
+                    $null = Run-Git -Cwd $fxp.Root -GitArgs @('add', '--', 'notes.md')
+                    $null = Run-Git -Cwd $fxp.Root -GitArgs @('commit', '-m', 'docs: add a file svn will call binary')
+                    $script:PrepOut = (Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fxp.Root -ScriptArgs @('-Branch', 'feat-x')).Combined
+                }
+                # Same file, same push, one difference: this tree was never migrated. That is what
+                # makes the case above mean something.
+                $script:PrepSb2 = New-Sandbox -Tag 'ptsc-bin4'
+                $fxp2 = New-FeatureBridge -Sandbox $script:PrepSb2
+                if ($fxp2) {
+                    $null = Run-Git -Cwd $fxp2.Root -GitArgs @('checkout', 'feat-x')
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fxp2.Root, 'notes.md'))
+                    $null = Run-Git -Cwd $fxp2.Root -GitArgs @('add', '--', 'notes.md')
+                    $null = Run-Git -Cwd $fxp2.Root -GitArgs @('commit', '-m', 'docs: add a file svn will call binary')
+                    $script:PrepOutPlain = (Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fxp2.Root -ScriptArgs @('-Branch', 'feat-x')).Combined
+                }
+            }
+        }
+        AfterAll {
+            if ($script:PrepSb) { Remove-Sandbox -Dir $script:PrepSb }
+            if ($script:PrepSb2) { Remove-Sandbox -Dir $script:PrepSb2 }
+        }
+
+        It 'prepare emits a BINARY section' -Skip:(-not $script:SvnReady) {
+            $script:PrepOut | Should -Match 'BINARY'
+        }
+        It 'and tags the file as new, because nothing has been written yet' -Skip:(-not $script:SvnReady) {
+            $script:PrepOut | Should -Match "new`tnotes\.md"
+        }
+        It 'and says nothing at all while the tree declares nothing' -Skip:(-not $script:SvnReady) {
+            # Only the tagged line counts: `notes.md` appears in FILES either way -- it IS being
+            # pushed -- so looking for the bare filename would match the FILES listing and fail on
+            # a correct implementation. The bash twin made exactly that mistake.
+            $script:PrepOutPlain | Should -Not -Match "new`tnotes\.md"
+            $script:PrepOutPlain | Should -Not -Match "existing`tnotes\.md"
         }
     }
 }

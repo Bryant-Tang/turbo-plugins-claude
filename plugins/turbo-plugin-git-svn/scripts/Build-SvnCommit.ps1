@@ -223,6 +223,32 @@ try {
     Write-Output ''
     Write-Output 'FILES'
     foreach ($fl in $fileLines) { Write-Output $fl }
+
+    # Files SVN will call binary even though git calls them text. svn:eol-style cannot be set on
+    # such a file, and the push path refuses to commit without it -- so without this section the
+    # first anyone hears of it is an E200009 abort at the moment of writing to SVN, with nothing
+    # beforehand hinting that this push was any different (issue #175).
+    #
+    # It belongs next to the ignore check for the same reason that one exists: SVN commits are
+    # permanent, and this particular mistake is invisible in git AND in svn afterwards. Derived
+    # from the printed lines rather than from `svn status` so it covers the files inside an
+    # expanded unversioned directory too -- those are not in svn status at all.
+    #
+    # Empty when the tree has not been migrated to svn:eol-style yet: nothing sets the property
+    # then, so nothing can be blocked by it.
+    $blockerEntries = @()
+    foreach ($fl in $fileLines) {
+        $parts = $fl -split '\|', 3
+        if ($parts.Count -lt 3) { continue }
+        if ($parts[1] -ne 'tracked') { continue }
+        $st = switch ($parts[0]) { 'A' { '?' } 'D' { '!' } default { $parts[0] } }
+        $blockerEntries += ($st + "`t" + $parts[2])
+    }
+    Write-Output ''
+    Write-Output 'BINARY'
+    foreach ($b in @(Get-SvnEolBlocker -Bridge $remote.Path -Entry $blockerEntries)) {
+        Write-Output ($b.Why + "`t" + $b.Path)
+    }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

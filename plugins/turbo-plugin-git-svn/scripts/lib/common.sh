@@ -336,6 +336,149 @@ list_svn_eol_candidates() {
   classify_svn_eol_paths "$1" | awk -F'\t' '$1 == "candidate" { sub(/^[^\t]*\t/, ""); print }'
 }
 
+# Would `svn add` decide this file is binary?
+#
+# svn has its own content heuristic, and it disagrees with git's. It skips a leading UTF-8 BOM,
+# reads up to the next 1024 bytes, and calls the file binary if any of them is NUL or if fewer than
+# about 15% of them are "text" bytes -- 0x07-0x0D or 0x20-0x7F. (In svn's own terms:
+# `(non_text * 1000) / len > 850`.) Files it calls binary get svn:mime-type=application/octet-stream
+# at `svn add` time, and svn:eol-style CANNOT be set on a file carrying a binary mime type -- so the
+# disagreement turns into E200009 at the moment something tries to write to SVN.
+#
+# Every byte of UTF-8 CJK falls outside the text set, so a prose document in Chinese with few ASCII
+# markers -- no code fences, few headings, no English terms -- crosses the line while looking like
+# an ordinary .md to everyone else. Measured against real svn: 153 text bytes in 1024 is text, 152
+# is binary. Two files out of ~20k in one real repository, and which two is not predictable, which
+# is why this has to be computed rather than guessed at.
+#
+# `0x07` BEL counts as text and every high-bit byte does not, so "the usual control characters"
+# is the wrong shorthand and puts 0x07-0x08 and 0x0B-0x0C on the wrong side.
+#
+# Callers only ever ask about files git calls text, which is what makes the NUL rule irrelevant
+# here: git classifies a file as binary the moment it sees a NUL in the first 8000 bytes, and a
+# file git calls binary is never given svn:eol-style, so it can never be the thing that blocks a
+# push. That is why this reads with bash builtins -- `read` cannot hold a NUL and silently drops
+# it, which would skew the count on a file whose answer nobody acts on.
+#
+# Builtins, not `od | awk`: measured at 80 ms per file on Windows, entirely process-startup, and a
+# push that adds a few thousand files would have paid minutes for a question with no subprocess in
+# it. This version spawns nothing.
+#
+# $1: path to the file. Returns 0 if svn would stamp it binary.
+svn_would_stamp_binary() {
+  local f="$1"
+  [ -f "$f" ] || return 1
+  # LC_ALL=C for the whole function: `read -N` counts CHARACTERS and the pattern ranges below are
+  # byte ranges, so both only mean what they say in the C locale.
+  local LC_ALL=C chunk=''
+  # 1027, not 1024: three of them may be a BOM that svn skips before it starts counting. `read`
+  # returns non-zero at EOF without a delimiter, which is the normal case for a short file -- the
+  # variable is still filled, so the status is deliberately ignored.
+  IFS= read -r -N 1027 chunk < "$f" || true
+  case "$chunk" in
+    $'\xef\xbb\xbf'*) chunk="${chunk:3}" ;;
+  esac
+  chunk="${chunk:0:1024}"
+  local len=${#chunk}
+  [ "$len" -gt 0 ] || return 1
+  local stripped="${chunk//[$'\x07'-$'\x0d'$'\x20'-$'\x7f']/}"
+  local nontext=${#stripped}
+  # Integer division, as svn does it in C, and the truncation is what decides the boundary case:
+  # 871 non-text bytes in 1024 is 850.58, svn sees 850, and 850 is NOT greater than 850 -- so that
+  # file is text. Comparing in floating point calls the same file binary and is wrong by exactly
+  # one bucket, on the one input where it matters. Verified against real `svn add` at 152 and 153.
+  [ $(( nontext * 1000 / len )) -gt 850 ]
+}
+
+# Does this path ALREADY carry a mime type that svn considers binary?
+#
+# The counterpart to the heuristic above for files that are already in SVN: the property was
+# applied once, at `svn add` time, and nothing re-derives it afterwards -- so for these the stored
+# property is the truth and the content no longer is.
+#
+# svn's rule is that a mime type is binary unless it starts with `text/`, which is what this
+# mirrors rather than looking for octet-stream specifically.
+#
+# $1: bridge worktree path. $2: repo-relative path. Returns 0 if the property would block.
+svn_has_binary_mime() {
+  local bridge="$1" path="$2" mt
+  # `|| true` is load-bearing: callers run under `set -e`, and `svn propget` does not promise exit
+  # 0 for a property that is simply not there -- the overwhelmingly common answer here. Without it
+  # the ordinary case would kill the push outright.
+  mt="$( ( cd "$bridge" && svn propget svn:mime-type "$(svn_target "$path")" 2>/dev/null || true ) | tr -d '\r\n' )"
+  [ -n "$mt" ] || return 1
+  case "$mt" in
+    text/*) return 1 ;;
+  esac
+  return 0
+}
+
+# The files in a changeset that will stop svn:eol-style from being set.
+#
+# Reads `<svn status letter><TAB><path>` lines on stdin and echoes `<why><TAB><path>` for the ones
+# that will block, where why is `new` (not in SVN yet -- `svn add` is about to stamp it) or
+# `existing` (already in SVN carrying the property). The two need different words in front of a
+# user: for a new file nothing has happened yet, while for an existing one the mark was made long
+# ago, silently, and has been sitting there ever since.
+#
+# Gated on the tree having been migrated, exactly like apply_svn_eol_style: until then nothing sets
+# svn:eol-style, so nothing can be blocked and warning about it would be noise.
+#
+# $1: bridge worktree path.
+list_svn_eol_blockers() {
+  local bridge="$1" status path
+  svn_tree_declares_eol_style "$bridge" || return 0
+
+  # Only files that would actually be given svn:eol-style can be the thing that blocks the push, so
+  # the scope here is exactly apply_svn_eol_style's -- git's own text classification, read once for
+  # the whole tree rather than per path. It also removes every NUL-containing file up front, which
+  # is what lets svn_would_stamp_binary use bash builtins.
+  # Keys carry a fixed prefix because a bare subscript of `@` or `*` is special to bash, and both
+  # are legal filenames -- `is_candidate[@]` would not mean what it looks like.
+  local -A is_candidate=()
+  local c
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    is_candidate["p:${c//\\//}"]=1
+  done < <(list_svn_eol_candidates "$bridge")
+
+  while IFS=$'\t' read -r status path; do
+    [ -n "$path" ] || continue
+    # Deletions have no working file left to translate, so they are never in scope.
+    case "$status" in 'D'|'!') continue ;; esac
+    [ -n "${is_candidate[p:${path//\\//}]:-}" ] || continue
+    case "$status" in
+      # Already versioned: ask svn what it stored, because the content no longer decides.
+      'M'|'A') svn_has_binary_mime "$bridge" "$path" && printf 'existing\t%s\n' "$path" ;;
+      # Not in SVN yet: nothing has decided anything, so predict what `svn add` will do.
+      *) svn_would_stamp_binary "$bridge/$path" && printf 'new\t%s\n' "$path" ;;
+    esac
+  done
+  return 0
+}
+
+# Take svn:mime-type off the given paths so svn:eol-style can be set on them.
+#
+# Deliberately narrow: this exists so a user who has been SHOWN the list and said yes can act on
+# it. Nothing calls it on its own -- see the push path, where it is reachable only behind an
+# explicit flag that the SKILL only passes after asking.
+#
+# $1: bridge worktree path. Remaining args: repo-relative paths. Non-zero on svn failure.
+clear_svn_binary_mime() {
+  local bridge="$1"; shift
+  [ "$#" -gt 0 ] || return 0
+  local p rc=0
+  # One call per path, NOT a --targets file: `svn propdel` does not accept --targets, unlike
+  # `svn propset` right next to it ("Subcommand 'propdel' doesn't accept option '--targets ARG'").
+  # A loop is fine here anyway -- this list is the handful of files a user was just shown, not the
+  # whole changeset.
+  for p in "$@"; do
+    [ -n "$p" ] || continue
+    ( cd "$bridge" && svn propdel svn:mime-type --quiet "$(svn_target "$p")" ) || rc=1
+  done
+  return "$rc"
+}
+
 # Put svn:eol-style=native on the text files in a changeset that do not already carry it.
 #
 # This is what lets the bridge stop being pinned to LF. SVN normalises a file's line endings to LF

@@ -541,5 +541,110 @@ test_push_aborts_when_the_property_cannot_be_set() {
     assertEquals "no SVN revision may be created when marking fails (out: $out)" "$rev_before" "$rev_after"
 }
 
+# ── issue #175: files SVN decides are binary even though git calls them text ──
+#
+# svn reads the first 1024 bytes and calls a file binary when fewer than ~15% of them are text
+# bytes -- 0x07-0x0D or 0x20-0x7F. Every byte of UTF-8 CJK is outside that set, so a prose document
+# in Chinese with few ASCII markers crosses the line. It then gets svn:mime-type=application/
+# octet-stream at `svn add` time, and svn:eol-style cannot be set on such a file, so the push dies
+# at the moment of writing to SVN with nothing beforehand hinting at it.
+#
+# 152 text bytes, measured against real svn: 153 is text, 152 is binary. `.md` on purpose -- the
+# fixture's auto-props covers `*.txt`, and a file svn would apply eol-style to at add time would be
+# testing svn rather than this code.
+write_svn_binary_mime_file() {
+    local path="$1"
+    # shellcheck disable=SC2046
+    printf 'a%.0s' $(seq 152) > "$path" || return 1
+    # \200 is one byte, high-bit: non-text to svn, while the absence of any NUL keeps git calling
+    # the file text. That disagreement is the entire subject.
+    # shellcheck disable=SC2046
+    printf '\200%.0s' $(seq 872) >> "$path" || return 1
+}
+
+commit_binary_mime_file_on_feat() {
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1 || return 1
+    write_svn_binary_mime_file "$ROOT/notes.md" || return 1
+    git -C "$ROOT" add -- 'notes.md' >/dev/null 2>&1 || return 1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'docs: add a file svn will call binary' >/dev/null 2>&1 || return 1
+}
+
+test_push_refuses_a_file_svn_calls_binary_and_says_which() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_on_branch; then startSkipping; return 0; fi
+    local rev_before rev_after out rc
+    if ! commit_binary_mime_file_on_feat; then startSkipping; return 0; fi
+
+    rev_before="$(branch_rev)"
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' 2>&1 )"; rc=$?
+
+    assertNotEquals 'a file SVN calls binary must stop the push' 0 "$rc"
+    # Naming it is the point. "could not set svn:eol-style" alone leaves the user with a tree of
+    # thousands of files and no idea which one did it.
+    case "$out" in *'notes.md'*) : ;; *) fail "the refusal does not name the file: $out" ;; esac
+    # And the way out has to be in the message. The filename ALONE is not enough evidence that this
+    # code ran at all: svn's own E200009 quotes the offending path too, so a version of this case
+    # that only looked for the name stayed green with the whole detection removed. What only this
+    # code can produce is the instruction.
+    case "$out" in *'--clear-binary-mime'*) : ;; *) fail "the refusal does not say what to do: $out" ;; esac
+    rev_after="$(branch_rev)"
+    assertEquals 'nothing may reach SVN when the push is refused' "$rev_before" "$rev_after"
+}
+
+# The other half: the flag exists so a user who was shown the list can say yes. Without this case
+# the refusal above could be unconditional and everything would still look correct.
+test_clear_binary_mime_lets_the_push_through() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_on_branch; then startSkipping; return 0; fi
+    local eol mime out rc
+    if ! commit_binary_mime_file_on_feat; then startSkipping; return 0; fi
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' --clear-binary-mime 2>&1 )"; rc=$?
+    assertEquals "the push must go through once the mark is cleared (out: $out)" 0 "$rc"
+
+    mime="$(svn propget svn:mime-type "$BRANCH_URL/notes.md" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the bogus binary mark is gone in SVN' '' "$mime"
+    eol="$(svn propget svn:eol-style "$BRANCH_URL/notes.md" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'and the file is now marked like every other text file' 'native' "$eol"
+}
+
+# The prediction, which is what makes the question askable at all: by the time the push runs, the
+# adds are scheduled and svn has already decided. prepare runs BEFORE anything is written, so it
+# has to work this out from the bytes.
+test_prepare_lists_the_files_svn_will_call_binary() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_on_branch; then startSkipping; return 0; fi
+    local out
+    if ! commit_binary_mime_file_on_feat; then startSkipping; return 0; fi
+
+    out="$( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x 2>&1 )"
+    case "$out" in *'BINARY'*) : ;; *) fail "prepare emitted no BINARY section: $out" ;; esac
+    # `new`, not `existing`: nothing has been written yet, and the two need different words in
+    # front of a user.
+    case "$out" in *"new	notes.md"*) : ;; *) fail "prepare did not predict notes.md: $out" ;; esac
+}
+
+# And it stays quiet on a tree that has not been migrated: nothing sets svn:eol-style there, so
+# nothing can be blocked by a mime type and warning about it would be pure noise. Same file, same
+# push, one difference -- which is what makes the case above mean something.
+test_prepare_says_nothing_while_the_tree_declares_nothing() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out
+    if ! commit_binary_mime_file_on_feat; then startSkipping; return 0; fi
+
+    out="$( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x 2>&1 )"
+    # Only the tagged line counts. `notes.md` appears in FILES either way -- it IS being pushed --
+    # and an earlier version of this case looked for the filename anywhere after the BINARY header,
+    # which matched the FILES listing and failed on a correct implementation.
+    case "$out" in *"new	notes.md"*) fail "notes.md was predicted on an unmigrated tree: $out" ;; esac
+    case "$out" in *"existing	notes.md"*) fail "notes.md was reported on an unmigrated tree: $out" ;; esac
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

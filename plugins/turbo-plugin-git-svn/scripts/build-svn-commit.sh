@@ -139,6 +139,11 @@ echo 'BODY'
 printf '%s\n' "$SVN_BODY"
 echo ''
 echo 'FILES'
+# Captured rather than streamed: the BINARY section below is derived from these same lines, and
+# deriving it from the printed list is what makes it cover the files inside an expanded
+# unversioned directory too -- those are not in `svn status` at all, only in the expansion.
+FILES_OUT="$(mktemp)"
+trap 'rm -f "$FILES_OUT"' EXIT
 svn_status_xml "$REMOTE_PATH" | while IFS=$'\t' read -r status filepath; do
   [[ -z "$filepath" ]] && continue
   case "$status" in
@@ -164,4 +169,25 @@ svn_status_xml "$REMOTE_PATH" | while IFS=$'\t' read -r status filepath; do
   if [[ "$diff_status" == 'A' && "$kind" == 'tracked' && -d "$REMOTE_PATH/$filepath" ]]; then
     expand_unversioned_dir "$REMOTE_PATH" "$filepath"
   fi
-done
+done > "$FILES_OUT"
+cat "$FILES_OUT"
+
+# Files SVN will call binary even though git calls them text. svn:eol-style cannot be set on such a
+# file, and the push path refuses to commit without it -- so without this section the first anyone
+# hears of it is an E200009 abort at the moment of writing to SVN, with nothing beforehand hinting
+# that this push was any different (issue #175).
+#
+# It belongs next to the ignore check for the same reason that one exists: SVN commits are
+# permanent, and this particular mistake is invisible in git AND in svn afterwards. Predicting it
+# costs one read of the first 1024 bytes per file and no svn calls.
+#
+# Empty when the tree has not been migrated to svn:eol-style yet -- nothing sets the property then,
+# so nothing can be blocked by it.
+echo ''
+echo 'BINARY'
+awk -F'|' '
+  $2 == "tracked" {
+    st = ($1 == "A") ? "?" : (($1 == "D") ? "!" : $1)
+    sub(/^[^|]*\|[^|]*\|/, "")
+    print st "\t" $0
+  }' "$FILES_OUT" | list_svn_eol_blockers "$REMOTE_PATH"

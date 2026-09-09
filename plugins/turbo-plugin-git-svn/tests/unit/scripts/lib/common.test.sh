@@ -2021,5 +2021,69 @@ test_status_drift_compares_non_ascii_paths_byte_wise() {
     assertEquals 'a pinned CJK path is not mistaken for an arrival' '文件/新增的報表.xml' "$out"
 }
 
+# ── svn_would_stamp_binary: svn's content heuristic, reproduced ───────────────
+#
+# The numbers here were measured against a real `svn add`, not derived from reading svn's source:
+# 153 text bytes in 1024 is text, 152 is binary. Text bytes are 0x07-0x0D and 0x20-0x7F, so every
+# byte of UTF-8 CJK counts against a file -- which is why a Chinese prose document with few ASCII
+# markers ends up on the wrong side while looking ordinary to everyone else.
+#
+# The boundary is the whole point of having these: svn compares in C integer arithmetic, and a
+# floating-point comparison of the same ratio gets 153 wrong -- by exactly one bucket, on the one
+# input where it matters.
+write_ratio_file() {
+    local path="$1" text_count="$2" prefix="${3:-}"
+    : > "$path"
+    [ -n "$prefix" ] && printf '%b' "$prefix" >> "$path"
+    # shellcheck disable=SC2046
+    [ "$text_count" -gt 0 ] && printf 'a%.0s' $(seq "$text_count") >> "$path"
+    local fill=$((1024 - text_count))
+    # \200 is one byte, 0x80: high-bit, so svn counts it as non-text.
+    # shellcheck disable=SC2046
+    [ "$fill" -gt 0 ] && printf '\200%.0s' $(seq "$fill") >> "$path"
+    return 0
+}
+
+test_svn_binary_heuristic_matches_svn_at_the_boundary() {
+    local tmp
+    tmp="$(mktemp -d -t turbo-heur-XXXXXX)"
+
+    write_ratio_file "$tmp/t153" 153
+    svn_would_stamp_binary "$tmp/t153"
+    assertFalse '153 text bytes in 1024 is TEXT (integer division: 850 is not > 850)' $?
+
+    write_ratio_file "$tmp/t152" 152
+    svn_would_stamp_binary "$tmp/t152"
+    assertTrue '152 text bytes in 1024 is BINARY' $?
+
+    printf 'ordinary source text\n' > "$tmp/plain"
+    svn_would_stamp_binary "$tmp/plain"
+    assertFalse 'an ordinary text file is not binary' $?
+
+    rm -rf "$tmp" 2>/dev/null || true
+}
+
+# svn skips a UTF-8 BOM before it starts counting, so the same 1024 bytes decide either way. Get
+# this wrong and a BOM'd file is judged on 1027 bytes -- 153/1027 lands on the binary side, so the
+# two cases below would disagree while the file's actual content is identical.
+test_svn_binary_heuristic_skips_a_utf8_bom() {
+    local tmp
+    tmp="$(mktemp -d -t turbo-heur-XXXXXX)"
+
+    write_ratio_file "$tmp/bom153" 153 '\357\273\277'
+    svn_would_stamp_binary "$tmp/bom153"
+    assertFalse 'a BOM is skipped, so this is the same TEXT answer as without one' $?
+
+    write_ratio_file "$tmp/bom152" 152 '\357\273\277'
+    svn_would_stamp_binary "$tmp/bom152"
+    assertTrue 'and the binary side moves with it' $?
+
+    printf '\357\273\277' > "$tmp/bomonly"
+    svn_would_stamp_binary "$tmp/bomonly"
+    assertFalse 'nothing left after the BOM is not binary' $?
+
+    rm -rf "$tmp" 2>/dev/null || true
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

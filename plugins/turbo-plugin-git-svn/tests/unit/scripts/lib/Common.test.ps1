@@ -1946,3 +1946,72 @@ Describe 'Set-SvnEolStyle' {
         }
     }
 }
+
+# svn's content heuristic, reproduced. The numbers were measured against a real `svn add`, not read
+# off svn's source: 153 text bytes in 1024 is text, 152 is binary. Text bytes are 0x07-0x0D and
+# 0x20-0x7F, so every byte of UTF-8 CJK counts against a file -- which is why a Chinese prose
+# document with few ASCII markers ends up on the wrong side while looking ordinary to everyone else.
+#
+# Mirrors common.test.sh case for case.
+Describe 'Test-SvnWouldStampBinary' {
+
+    BeforeAll {
+        function New-RatioFile {
+            param([string]$Path, [int]$TextCount, [byte[]]$Prefix = @())
+            $body = New-Object byte[] 1024
+            for ($i = 0; $i -lt $TextCount; $i++) { $body[$i] = 0x61 }
+            # 0x80: high-bit, so svn counts it as non-text.
+            for ($i = $TextCount; $i -lt 1024; $i++) { $body[$i] = 0x80 }
+            $all = New-Object byte[] ($Prefix.Length + 1024)
+            if ($Prefix.Length -gt 0) { [Array]::Copy($Prefix, 0, $all, 0, $Prefix.Length) }
+            [Array]::Copy($body, 0, $all, $Prefix.Length, 1024)
+            [System.IO.File]::WriteAllBytes($Path, $all)
+        }
+        $script:Bom = [byte[]](0xEF, 0xBB, 0xBF)
+    }
+
+    # The boundary is the whole point: svn compares in C integer arithmetic, and a floating-point
+    # comparison of the same ratio gets 153 wrong -- by exactly one bucket, on the one input where
+    # it matters.
+    It 'puts the boundary exactly where svn puts it' {
+        $dir = New-IsolatedRepoRoot 'heur1'
+        try {
+            New-RatioFile -Path (Join-Path $dir 't153') -TextCount 153
+            New-RatioFile -Path (Join-Path $dir 't152') -TextCount 152
+            (Test-SvnWouldStampBinary -File (Join-Path $dir 't153')) | Should -BeFalse
+            (Test-SvnWouldStampBinary -File (Join-Path $dir 't152')) | Should -BeTrue
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    # svn skips a UTF-8 BOM before it starts counting, so the same 1024 bytes decide either way.
+    # Get this wrong and a BOM'd file is judged on 1027 bytes -- 153/1027 lands on the binary side,
+    # so the two cases would disagree while the content is identical.
+    It 'skips a UTF-8 BOM before counting' {
+        $dir = New-IsolatedRepoRoot 'heur2'
+        try {
+            New-RatioFile -Path (Join-Path $dir 'bom153') -TextCount 153 -Prefix $script:Bom
+            New-RatioFile -Path (Join-Path $dir 'bom152') -TextCount 152 -Prefix $script:Bom
+            [System.IO.File]::WriteAllBytes((Join-Path $dir 'bomonly'), $script:Bom)
+            (Test-SvnWouldStampBinary -File (Join-Path $dir 'bom153')) | Should -BeFalse
+            (Test-SvnWouldStampBinary -File (Join-Path $dir 'bom152')) | Should -BeTrue
+            (Test-SvnWouldStampBinary -File (Join-Path $dir 'bomonly')) | Should -BeFalse
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'leaves an ordinary text file alone and calls a NUL binary' {
+        $dir = New-IsolatedRepoRoot 'heur3'
+        try {
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'plain.txt'), "ordinary source text`n", $enc)
+            [System.IO.File]::WriteAllBytes((Join-Path $dir 'zerobyte.bin'), [byte[]](104, 0, 105))
+            (Test-SvnWouldStampBinary -File (Join-Path $dir 'plain.txt')) | Should -BeFalse
+            (Test-SvnWouldStampBinary -File (Join-Path $dir 'zerobyte.bin')) | Should -BeTrue
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+}
