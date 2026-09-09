@@ -849,5 +849,72 @@ test_subsequent_pull_is_noop() {
     assertEquals 'no new commits from the follow-up pull' "$before" "$after"
 }
 
+# ── issue #180: a brand-new SVN tree starts out declared ───────────────────────
+#
+# Before this, a fresh repository's line endings were held together by the GIT-side pin alone: the
+# bridge is pinned to LF while the tree declares nothing, so what svn receives happens to be LF.
+# That guarantee only holds while every commit goes through this plugin -- anyone using another SVN
+# client puts CRLF straight in. Declaring at bootstrap makes SVN itself the guarantor, and a
+# repository created this way never needs the one-shot migration.
+#
+# There is nothing to decide about here, which is why it can be automatic: an empty tree has no
+# pre-existing files whose endings anyone has to look at. That is exactly what makes
+# /tp-init-svn-eol-style a preview-first, explicit-request-only command and this not.
+test_new_svn_tree_is_declared_from_the_first_commit() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    local root bridge out rc ap pin
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    printf 'alpha\nbeta\n' > "$root/app.txt"
+    printf '# notes\n'     > "$root/notes.md"
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
+    if ! make_svn_repo "$SB/svnrepo" 0; then startSkipping; return 0; fi
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")" 2>&1)"; rc=$?
+    assertEquals "bootstrap into an empty svn exits 0 (out: $out)" 0 "$rc"
+
+    bridge="$(bridge_path "$root")"
+    ap="$(svn propget --config-dir "$CFG" svn:auto-props "$bridge" 2>/dev/null)"
+    case "$ap" in *'svn:eol-style=native'*) assertTrue 'the tree declares svn:eol-style' 0 ;;
+        *) fail "a brand-new tree was not declared (svn:auto-props=[$ap])" ;; esac
+    # Derived from the project's own extensions, not a fixed list: svn:auto-props matches by
+    # filename and has no content heuristic, so `*` would put svn:eol-style on binaries.
+    case "$ap" in *'*.txt'*) assertTrue 'covers an extension the project actually has' 0 ;;
+        *) fail "patterns were not derived from the project (svn:auto-props=[$ap])" ;; esac
+
+    # Declaring FLIPS the bridge's mode, and the calls that ran earlier read the pre-declaration
+    # answer. Left pinned, the next `svn update` writes platform endings for the newly marked files
+    # while git still expects LF and the whole tree reads as modified -- silent until then.
+    pin="$(git -C "$bridge" config --worktree core.eol 2>/dev/null || true)"
+    assertEquals 'the LF pin is gone once the tree declares' '' "$pin"
+    assertTrue 'bridge worktree clean' "[ -z \"\$(git -C '$bridge' status --porcelain)\" ]"
+}
+
+# The control. Without it, "declares on a new tree" would pass just as happily if the bootstrap
+# declared unconditionally -- and declaring an EXISTING tree is precisely what must not happen
+# automatically: those files may be stored with CRLF, and deciding that is the migration's job,
+# behind a preview and an explicit request.
+test_existing_svn_tree_is_left_undeclared_by_the_bootstrap() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if [ "$HAS_DUMP" -ne 1 ]; then startSkipping; return 0; fi
+    local root bridge out rc ap pin
+    root="$SB/test-turbo-plugin"
+    init_repo_with_identity "$root"
+    printf 'alpha\nbeta\n' > "$root/app.txt"
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -m initial >/dev/null 2>&1
+    if ! make_svn_repo "$SB/svnrepo" 1; then startSkipping; return 0; fi
+
+    out="$(cd "$root" && bash "$SCRIPT_UNDER_TEST" --svn-url "$(svn_uri "$SB/svnrepo")/trunk" --granularity squash 2>&1)"; rc=$?
+    assertEquals "bootstrap into an existing svn exits 0 (out: $out)" 0 "$rc"
+
+    bridge="$(bridge_path "$root")"
+    ap="$(svn propget --config-dir "$CFG" svn:auto-props "$bridge" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'an existing tree is NOT declared by the bootstrap' '' "$ap"
+    pin="$(git -C "$bridge" config --worktree core.eol 2>/dev/null || true)"
+    assertEquals 'and the bridge stays pinned to LF' 'lf' "$pin"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

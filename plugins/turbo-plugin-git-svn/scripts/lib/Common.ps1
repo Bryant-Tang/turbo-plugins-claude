@@ -356,6 +356,30 @@ function Get-SvnEolCandidate {
     return $paths.ToArray()
 }
 
+# Build the svn:auto-props value that declares a tree, from a list of paths.
+#
+# svn:auto-props is SVN's counterpart to committing a .gitattributes: shared, versioned, and applied
+# at `svn add` time -- so it is what protects a repository from clients that are not this plugin.
+# SVN matches it by FILENAME PATTERN and has no content heuristic to fall back on, which is why the
+# patterns are derived from the extensions actually present rather than being a fixed list: `*` as a
+# pattern would put svn:eol-style on binaries and corrupt them.
+#
+# Two callers, one rule: the one-shot migration derives it from the bridge's text files, and the
+# bootstrap derives it from the project about to be imported. They must not drift -- the value this
+# produces is exactly what `Test-SvnTreeDeclaresEolStyle` later looks for.
+#
+# Returns '' when nothing qualifies.
+function Get-SvnAutoPropsValue {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Path)
+    $ext = @($Path |
+        ForEach-Object { [System.IO.Path]::GetExtension($_) } |
+        Where-Object { $_ } |
+        ForEach-Object { $_.ToLowerInvariant() } |
+        Sort-Object -Unique)
+    if ($ext.Count -eq 0) { return '' }
+    return (($ext | ForEach-Object { "*$_ = svn:eol-style=native" }) -join "`n")
+}
+
 # Would `svn add` decide this file is binary?
 #
 # svn has its own content heuristic, and it disagrees with git's. It skips a leading UTF-8 BOM,

@@ -230,15 +230,10 @@ try {
         # .gitattributes: shared, versioned, and applied at `svn add` time. Derived from the
         # extensions actually present, because SVN matches auto-props by filename pattern and has
         # no content heuristic to fall back on.
-        $extensions = @($candidates |
-            ForEach-Object { [System.IO.Path]::GetExtension($_) } |
-            Where-Object { $_ } |
-            ForEach-Object { $_.ToLowerInvariant() } |
-            Sort-Object -Unique)
+        $autoProps = Get-SvnAutoPropsValue -Path $candidates
         Push-Location -LiteralPath $bridge
         try {
-            if ($extensions.Count -gt 0) {
-                $autoProps = ($extensions | ForEach-Object { "*$_ = svn:eol-style=native" }) -join "`n"
+            if ($autoProps) {
                 & svn propset svn:auto-props $autoProps --quiet '.'
                 if ($LASTEXITCODE -ne 0) { throw 'Could not set svn:auto-props on the branch root.' }
             }
@@ -248,7 +243,7 @@ try {
             $batchIndex = 0
             $totalBatches = [int][math]::Ceiling($candidates.Count / [double]$BatchSize)
             $totalCommits = $totalBatches
-            if ($extensions.Count -gt 0) { $totalCommits = $totalBatches + 1 }
+            if ($autoProps) { $totalCommits = $totalBatches + 1 }
 
             # What to say when a commit does not answer. Everything here is downstream of one fact:
             # a timeout means "no reply", not "no commit" -- and the server can finish the
@@ -338,7 +333,7 @@ and each working copy gets its own platform's endings.
                 # Declared last, it would leave thousands of files carrying svn:eol-style while the
                 # bridge is still pinned to LF -- and the next update makes every one of them read
                 # as modified.
-                if ($extensions.Count -gt 0) {
+                if ($autoProps) {
                     $batchIndex = 1
                     Write-Output 'Declaring the tree: svn:auto-props on the branch root, so new files inherit the property.'
                     if (-not (Invoke-BatchCommit -Label 'the branch root [declaring the tree]' -Targets @('.') -MsgPath $msgFile -ChunkPath $chunkFile -Timeout $svnHttpTimeout)) {
