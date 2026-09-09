@@ -423,7 +423,12 @@ fi
 # behaves exactly as before; the push path still marks what it commits.
 AUTOPROPS=''
 if [[ "$MODE" == 'legacy-empty' ]]; then
-  AUTOPROPS="$(list_svn_eol_candidates "$MAIN_WORKTREE" | tr '\\' '/' | derive_svn_auto_props || true)"
+  # No `|| true`: under `set -euo pipefail` that would swallow a failure here and leave AUTOPROPS
+  # empty, so the tree would silently not be declared and the repository would quietly need a
+  # migration nobody knows to run -- the exact silent degradation this change exists to remove.
+  # A project with no text files is NOT a failure: git exits 0 with empty output and the derivation
+  # yields an empty value, which the caller already treats as "nothing to declare".
+  AUTOPROPS="$(list_svn_eol_candidates "$MAIN_WORKTREE" | tr '\\' '/' | derive_svn_auto_props)"
 fi
 (
   cd "$REMOTE_PATH"
