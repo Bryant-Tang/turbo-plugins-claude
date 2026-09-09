@@ -363,8 +363,20 @@ test_commit_failure_keeps_the_work_and_says_how_to_check() {
         # unrelated path -- and reading that as success is the direction that loses the migration
         # silently. Asserting the path-scoped question is what keeps the guidance from sliding
         # back to the repository one.
-        case "$out" in *'last-changed-revision'*) : ;;
+        case "$out" in *'THIS BRANCH PATH'*) : ;;
             *) echo "the check is not scoped to this branch path: $out" >&2; exit 1 ;; esac
+        # And the guidance has to say "wait" before it says "check". A large transaction can finish
+        # on the server minutes after it stopped answering -- reported in the wild, two hours later,
+        # after the user had already concluded it failed and reverted. Telling someone how to check
+        # without telling them not to check YET is the part that produced the wrong answer.
+        case "$out" in *'WAIT a few minutes'*) : ;;
+            *) echo "the guidance does not say to wait before concluding: $out" >&2; exit 1 ;; esac
+        case "$out" in *'Do NOT `svn revert`'*) : ;;
+            *) echo "the guidance does not warn against reverting too early: $out" >&2; exit 1 ;; esac
+        # The locks an interrupted commit leaves behind block every later svn operation, and the
+        # old message never mentioned them -- which is what made that state undiagnosable.
+        case "$out" in *'svn cleanup'*) : ;;
+            *) echo "the guidance does not mention the working-copy locks: $out" >&2; exit 1 ;; esac
         case "$out" in *'does NOT have to be repeated'*) : ;;
             *) echo "did not say the propset survives: $out" >&2; exit 1 ;; esac
 
@@ -380,6 +392,70 @@ test_commit_failure_keeps_the_work_and_says_how_to_check() {
     rm -rf "$tmp" 2>/dev/null || true
     [ "$rc" -eq 98 ] && { startSkipping; return 0; }
     assertEquals 'a failed commit keeps the staged properties and explains how to check SVN' 0 "$rc"
+}
+
+# issue #177: the migration is one pass over every text file in the tree, so on a big repository the
+# single transaction times out on the server. It commits in batches instead.
+#
+# --batch-size 1 on the fixture's two candidates gives three revisions: the declaring one plus one
+# per file. Three separate assertions matter, and each pins a different thing that went wrong or
+# could go wrong.
+test_migration_commits_in_batches() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-batch-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp")" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+        svnrepo="$tmp/svnrepo"
+
+        before="$(svnlook youngest "$svnrepo" | tr -d '[:space:]')"
+        bash "$SUT" --repo-root "$root" --batch-size 1 >/dev/null 2>&1 || exit 97
+        after="$(svnlook youngest "$svnrepo" | tr -d '[:space:]')"
+
+        # More than one revision is the whole point -- a single one means the batching did nothing.
+        if [ "$((after - before))" -lt 3 ]; then
+            echo "expected at least 3 revisions from batching, got $((after - before))" >&2; exit 1
+        fi
+
+        # The DECLARING revision must be first. svn:auto-props on the root is the signal the bridge
+        # reads to decide whether to pin git to LF; declared last, an interrupted run would leave
+        # thousands of files carrying svn:eol-style while the bridge is still pinned, and every one
+        # of them would read as modified after the next update.
+        ap="$(svnlook propget "$svnrepo" svn:auto-props trunk -r "$((before + 1))" 2>/dev/null || true)"
+        case "$ap" in *'svn:eol-style'*) : ;;
+            *) echo "the first new revision r$((before + 1)) did not declare the tree: [$ap]" >&2; exit 1 ;; esac
+
+        # Committing more than once leaves a MIXED-REVISION working copy unless something makes it
+        # uniform again, and the pull path reads "the" revision of the copy -- it would position
+        # everything back at the root's older one and undo the property changes on disk. svnversion
+        # prints `N:M` for a mixed copy and a single number for a uniform one.
+        ver="$(cd "$bridge" && svnversion . 2>/dev/null | tr -d '[:space:]')"
+        case "$ver" in *:*) echo "the working copy is left at mixed revisions: $ver" >&2; exit 1 ;; esac
+
+        # And the point of the exercise still holds: every candidate ended up marked.
+        if [ "$(svn_eol_prop "$bridge/plain.txt")" != 'native' ]; then
+            echo 'plain.txt did not get the property' >&2; exit 1
+        fi
+        if [ "$(svn_eol_prop "$bridge/wascrlf.txt")" != 'native' ]; then
+            echo 'wascrlf.txt did not get the property' >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'the migration commits in batches, declares first, and leaves one revision' 0 "$rc"
+}
+
+test_batch_size_must_be_a_positive_integer() {
+    local rc
+    bash "$SUT" --batch-size 0 >/dev/null 2>&1
+    rc=$?
+    assertNotEquals 'a batch size of 0 is refused' 0 "$rc"
+    bash "$SUT" --batch-size abc >/dev/null 2>&1
+    rc=$?
+    assertNotEquals 'a non-numeric batch size is refused' 0 "$rc"
 }
 
 # shellcheck disable=SC1090

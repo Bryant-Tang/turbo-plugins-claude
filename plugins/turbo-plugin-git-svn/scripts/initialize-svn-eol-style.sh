@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Usage: initialize-svn-eol-style.sh [--branch <branch>] [--repo-root <path>] [--preview]
+#                                    [--batch-size <n>] [--cleanup-locks]
 #
 # One-time migration: put svn:eol-style=native on every text file already in SVN, so the repository
 # stores LF and each working copy gets its own platform's line endings -- the arrangement git
@@ -14,9 +15,18 @@
 # line-ending list it prints is the part that needs a human, since those files are excluded
 # permanently and the reason is invisible afterwards.
 #
-# This makes ONE SVN commit that has no git counterpart. That is safe: the pull path's replay marks
-# a revision whose tree matches its parent and makes no git commit (svn_replay_commit's SKIP:empty),
-# and tp:last-aligned-rev tracks branch-to-trunk alignment, not git-to-SVN commit pairing.
+# The SVN commits it makes have no git counterpart. That is safe because they are PROPERTY-ONLY:
+# the pull path's replay marks a revision whose tree matches its parent and makes no git commit
+# (svn_replay_commit's SKIP:empty), and tp:last-aligned-rev tracks branch-to-trunk alignment, not
+# git-to-SVN commit pairing. Content must never ride along here -- that is what would reach SVN and
+# never come back into git.
+#
+# It commits in BATCHES (--batch-size, default 1000) rather than one transaction over the whole
+# tree. The file count is the size of the repository by design, and a transaction that large times
+# out on the server during `Committing transaction` -- after the data has transmitted, which is the
+# worst place for it: a timeout means "no answer", not "no commit" (issue #177). Smaller
+# transactions finish quickly, a failure costs only the batch it happened in, and the batches
+# already committed stay committed -- rerunning does what is left.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,15 +36,31 @@ source "$SCRIPT_DIR/lib/common.sh"
 BRANCH='main'
 REPO_ROOT=''
 PREVIEW=0
+# How many files go into each SVN commit. The whole point of this command is one pass over every
+# text file in the tree, so on a big repository the transaction is enormous and the server times
+# out in `Committing transaction` -- AFTER the data has transmitted, which is the worst place for
+# it because a timeout means "no answer", not "no commit" (issue #177). Smaller transactions finish
+# quickly, and the window in which nobody knows what happened shrinks with them.
+BATCH_SIZE=1000
+# Clear stale working-copy locks left behind by an interrupted commit. Off by default: it is a
+# local-only repair, but it is still a change the user did not ask for, so the SKILL asks first.
+CLEANUP_LOCKS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --branch)    [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
-    --repo-root) [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
-    --preview)   PREVIEW=1; shift ;;
+    --branch)     [[ $# -ge 2 ]] || { echo "Error: --branch requires a value" >&2; exit 1; }; BRANCH="$2"; shift 2 ;;
+    --repo-root)  [[ $# -ge 2 ]] || { echo "Error: --repo-root requires a value" >&2; exit 1; }; REPO_ROOT="$2"; shift 2 ;;
+    --preview)    PREVIEW=1; shift ;;
+    --batch-size) [[ $# -ge 2 ]] || { echo "Error: --batch-size requires a value" >&2; exit 1; }; BATCH_SIZE="$2"; shift 2 ;;
+    --cleanup-locks) CLEANUP_LOCKS=1; shift ;;
     *) echo "Unknown argument: '$1'" >&2; exit 1 ;;
   esac
 done
+
+case "$BATCH_SIZE" in
+  ''|*[!0-9]*) echo "Error: --batch-size must be a positive integer, got '$BATCH_SIZE'" >&2; exit 1 ;;
+esac
+if [[ "$BATCH_SIZE" -lt 1 ]]; then echo 'Error: --batch-size must be at least 1' >&2; exit 1; fi
 
 probe_git_version
 
@@ -63,7 +89,34 @@ if [[ -n "$GIT_DIRTY" ]]; then
   printf '%s\n' "$GIT_DIRTY" >&2
   exit 1
 fi
-SVN_DIRTY="$(cd "$REMOTE_PATH" && svn status | grep -v '^?' || true)"
+SVN_RAW_STATUS="$(cd "$REMOTE_PATH" && svn status || true)"
+
+# Locks first, and reported as their own thing. An interrupted commit leaves the working copy
+# locked -- column 3 of `svn status` is `L`, and a big interrupted commit leaves THOUSANDS of them
+# (1373 directories in the report behind issue #177). Every later svn operation is refused until
+# `svn cleanup` clears them. Folding that into "the bridge has pending SVN changes" is what made
+# this undiagnosable: the message named the wrong problem and the fix it implied does not work.
+SVN_LOCKED="$(printf '%s\n' "$SVN_RAW_STATUS" | awk 'substr($0, 3, 1) == "L"' || true)"
+if [[ -n "$SVN_LOCKED" ]]; then
+  SVN_LOCK_COUNT="$(printf '%s\n' "$SVN_LOCKED" | grep -c . || true)"
+  if [[ "$CLEANUP_LOCKS" == 1 ]]; then
+    echo "Clearing $SVN_LOCK_COUNT stale working-copy lock(s) left by an interrupted commit..."
+    ( cd "$REMOTE_PATH" && svn cleanup ) \
+      || { echo 'Error: svn cleanup failed. Run `svn cleanup` in the bridge worktree by hand.' >&2; exit 1; }
+    SVN_RAW_STATUS="$(cd "$REMOTE_PATH" && svn status || true)"
+  else
+    {
+      echo "Error: the bridge worktree holds $SVN_LOCK_COUNT stale working-copy lock(s)."
+      echo '       An interrupted svn commit leaves these behind, and every svn operation is'
+      echo '       refused until they are cleared. This is a LOCAL repair -- it does not touch SVN:'
+      echo "         svn cleanup   (run in $REMOTE_PATH)"
+      echo '       Or rerun this command with --cleanup-locks to have it done for you.'
+    } >&2
+    exit 1
+  fi
+fi
+
+SVN_DIRTY="$(printf '%s\n' "$SVN_RAW_STATUS" | grep -v '^?' | grep -v '^[[:space:]]*$' || true)"
 if [[ -n "$SVN_DIRTY" ]]; then
   echo "Error: the bridge worktree has pending SVN changes; resolve them first:" >&2
   printf '%s\n' "$SVN_DIRTY" >&2
@@ -167,7 +220,82 @@ fi
 
 # ---- apply ------------------------------------------------------------------
 MSG_FILE="$(mktemp)"
-trap 'rm -f "$CLASSIFIED" "$CANDIDATES" "${TARGETS:-}" "$MSG_FILE"' EXIT
+CHUNK_FILE="$(mktemp)"
+trap 'rm -f "$CLASSIFIED" "$CANDIDATES" "${TARGETS:-}" "$MSG_FILE" "$CHUNK_FILE"' EXIT
+
+SVN_HTTP_TIMEOUT=3600
+BATCH_INDEX=0
+TOTAL_BATCHES=$(( (CAND_COUNT + BATCH_SIZE - 1) / BATCH_SIZE ))
+# Set once svn:auto-props is known: the declaring revision is a commit too, and the count a user
+# sees has to match the number of revisions that actually appear.
+TOTAL_COMMITS="$TOTAL_BATCHES"
+
+# What to say when a commit does not answer. Everything here is downstream of one fact: a timeout
+# means "no reply", not "no commit" -- and the server can finish the transaction LONG after it gave
+# up talking. Reported in the wild: the script said the commit failed, an immediate check of the
+# path showed nothing had changed, and two hours later that same path carried this script's own
+# commit message. The commit had succeeded all along.
+#
+# So the guidance is deliberately NOT "here is how to check" -- it is "do not check yet".
+report_commit_failure() {
+  local batch="$1" url
+  url="$( ( cd "$REMOTE_PATH" && svn info --show-item url 2>/dev/null ) || true )"
+  {
+    echo "Error: svn commit failed on batch $batch of $TOTAL_COMMITS."
+    echo
+    if [[ "$BATCH_INDEX" -gt 1 ]]; then
+      echo "Batches 1 to $((batch - 1)) are already committed and are not affected. Only this one"
+      echo 'is in doubt, and rerunning this command will redo just what is left.'
+      echo
+    fi
+    echo 'THIS IS AN UNDETERMINED STATE. The commit may have succeeded or failed, and you cannot'
+    echo 'tell right now -- that is what a timeout [E175012] means. A large transaction can finish'
+    echo 'on the server minutes after it stopped answering, so anything you check at this moment'
+    echo 'only describes this moment.'
+    echo
+    echo 'Do this instead:'
+    echo '  1. WAIT a few minutes. Do not conclude anything yet.'
+    echo '  2. Then look at the newest log entry for THIS BRANCH PATH -- not at the repository.'
+    echo '     Revision numbers are shared repository-wide, so an unrelated commit by someone else'
+    echo '     moves the HEAD without your commit having landed:'
+    if [[ -n "$url" ]]; then
+      echo "       svn log --limit 1 \"$url\""
+    else
+      echo '       svn log --limit 1 <the branch URL>'
+    fi
+    echo '     If its message starts with "Set svn:eol-style=native", it is this command and the'
+    echo '     commit landed. That message is the identifier -- nothing else writes it.'
+    echo '  3. Landed  -> run `svn update` in the bridge and rerun this command for the rest.'
+    echo '     Did not -> rerun this command; the staged property changes are still there and the'
+    echo '                propset step does NOT have to be repeated.'
+    echo
+    echo 'Do NOT `svn revert` before you know which of the two it was: that throws away a pending'
+    echo 'set you may still need, and redoing it means propsetting every file again.'
+    echo
+    echo 'An interrupted commit also leaves working-copy locks behind, and every later svn'
+    echo 'operation is refused until they are cleared. That repair is local only and does not touch'
+    echo 'SVN: `svn cleanup` in the bridge, or rerun this command with --cleanup-locks.'
+  } >&2
+}
+
+# Commit one batch of paths. The message's first line is a fixed, recognisable string on purpose:
+# after a timeout it is the only thing that tells a user whether the revision on the server is
+# theirs.
+commit_batch() {
+  local label="$1"; shift
+  local -a targets=("$@")
+  write_svn_targets_file "$CHUNK_FILE" "${targets[@]}" \
+    || { echo 'Error: could not write the svn targets file.' >&2; return 1; }
+  # ASCII on purpose, like every other property and commit message this plugin writes: the message
+  # travels through svn's console codepage on the way back out.
+  write_utf8_no_bom "$MSG_FILE" "Set svn:eol-style=native on $label
+
+Line endings are now normalised by SVN on commit, so the repository stores LF
+and each working copy gets its own platform's endings."
+  # --depth empty keeps the root target from recursing; explicit file targets still commit.
+  ( cd "$REMOTE_PATH" && svn commit --file "$MSG_FILE" --encoding UTF-8 --depth empty \
+      --targets "$CHUNK_FILE" --config-option "servers:global:http-timeout=$SVN_HTTP_TIMEOUT" )
+}
 
 # svn:auto-props on this tree's root so files added later by ANY client -- not just through this
 # plugin -- get the property too. It is SVN's counterpart to committing a .gitattributes: shared,
@@ -177,63 +305,62 @@ AUTOPROPS="$(awk -F'/' '{ print $NF }' "$CANDIDATES" \
   | awk -F'.' 'NF > 1 { print "*." tolower($NF) }' \
   | LC_ALL=C sort -u \
   | sed 's/$/ = svn:eol-style=native/')"
+if [[ -n "$AUTOPROPS" ]]; then TOTAL_COMMITS=$((TOTAL_BATCHES + 1)); fi
+#
+# It goes out FIRST, in its own revision, before a single file batch. That ordering is load-bearing
+# once the run can be interrupted between batches: svn:auto-props on the root IS the signal the
+# bridge reads to decide whether to pin git to LF, so
+#   - declared first  -> the bridge follows the platform from the start, which is consistent with
+#     the files already marked and harmless for the ones not marked yet. It is exactly the
+#     "declared, converging file by file" state the push path is built for.
+#   - declared last   -> an interrupted run leaves thousands of files carrying svn:eol-style while
+#     the bridge is still pinned to LF. The next `svn update` writes platform endings for those
+#     files and git reads every one of them as modified.
+# The second state is created by the interruption itself, which is the thing batching makes
+# possible, so the ordering is part of the batching change and not a separate tidy-up.
 if [[ -n "$AUTOPROPS" ]]; then
   ( cd "$REMOTE_PATH" && svn propset svn:auto-props "$AUTOPROPS" --quiet '.' ) \
     || { echo 'Error: could not set svn:auto-props on the branch root.' >&2; exit 1; }
-  echo "Set svn:auto-props on the branch root so new files inherit the property."
+  echo "Declaring the tree: svn:auto-props on the branch root, so new files inherit the property."
+  BATCH_INDEX=1
+  if ! commit_batch 'the branch root [declaring the tree]' '.'; then
+    report_commit_failure 1
+    exit 1
+  fi
 fi
 
-# ASCII on purpose, like every other property and commit message this plugin writes: the message
-# travels through svn's console codepage on the way back out.
-write_utf8_no_bom "$MSG_FILE" "Set svn:eol-style=native on $SET_COUNT text file(s)
+echo "Committing the property changes in batches of $BATCH_SIZE..."
+CHUNK_PATHS=()
+flush_chunk() {
+  [[ "${#CHUNK_PATHS[@]}" -gt 0 ]] || return 0
+  BATCH_INDEX=$((BATCH_INDEX + 1))
+  local -a targets=()
+  local p
+  for p in "${CHUNK_PATHS[@]}"; do targets+=("$(svn_target "$p")"); done
+  CHUNK_PATHS=()
+  echo "  batch $BATCH_INDEX of $TOTAL_COMMITS: ${#targets[@]} file(s)"
+  if ! commit_batch "${#targets[@]} text file(s) [batch $BATCH_INDEX of $TOTAL_COMMITS]" "${targets[@]}"; then
+    report_commit_failure "$BATCH_INDEX"
+    exit 1
+  fi
+}
+while IFS= read -r cand_path; do
+  [[ -n "$cand_path" ]] || continue
+  CHUNK_PATHS+=("$cand_path")
+  if [[ "${#CHUNK_PATHS[@]}" -ge "$BATCH_SIZE" ]]; then flush_chunk; fi
+done < "$CANDIDATES"
+flush_chunk
 
-Line endings are now normalised by SVN on commit, so the repository stores LF
-and each working copy gets its own platform's endings."
-
-echo "Committing the property change to SVN..."
-# This command is a single commit touching every text file in the tree by design, so the file
-# count IS the size of the repository -- and the bigger the repository, the more it needs the
-# migration. On a tree of ~17k files the data transmits fine and the server then times out during
-# `Committing transaction`, which is the phase this raises the ceiling for. svn's built-in default
-# is short enough that a large tree hits it routinely, and the retry that works is simply the same
-# commit with a longer one (issue #177).
-SVN_HTTP_TIMEOUT=3600
-if ! ( cd "$REMOTE_PATH" && svn commit --file "$MSG_FILE" --encoding UTF-8 \
-         --config-option "servers:global:http-timeout=$SVN_HTTP_TIMEOUT" ); then
-  SVN_URL="$( ( cd "$REMOTE_PATH" && svn info --show-item url 2>/dev/null ) || true )"
-  {
-    echo 'Error: svn commit failed. The property changes are still pending in the bridge worktree.'
-    echo
-    echo 'Nothing was lost. The propset step does NOT have to be repeated -- rerunning this'
-    echo 'command, or just `svn commit` in the bridge worktree, will use the changes already'
-    echo 'staged there.'
-    echo
-    # A timeout means "no answer", not "no commit". After an operation that touches every file in
-    # the tree, "did it actually go through?" is the first thing that has to be settled, and the
-    # only place that can answer it is the server.
-    #
-    # Ask about THIS PATH, never about the repository. SVN revision numbers are shared by the
-    # whole repository, so an unrelated commit by someone else to another project in the same
-    # repository moves the HEAD while this commit failed -- and the two are indistinguishable from
-    # the HEAD alone. Reading that as success is the one direction that loses the migration
-    # silently: the user does not retry, and the tens of thousands of pending property changes just
-    # sit there. Observed in the wild, on the same day, on a second branch.
-    echo 'If this was a timeout [E175012], the data may still have reached the server: a timeout'
-    echo 'means no answer came back, not that nothing happened. Ask about THIS BRANCH PATH, not'
-    echo 'about the repository -- revision numbers are shared repository-wide, so someone else'
-    echo 'committing to an unrelated path moves the HEAD without your commit having landed:'
-    if [[ -n "$SVN_URL" ]]; then
-      echo "  svn info --show-item last-changed-revision \"$SVN_URL\""
-      echo "  svn log --limit 1 \"$SVN_URL\""
-    else
-      echo '  svn info --show-item last-changed-revision <the branch URL>'
-      echo '  svn log --limit 1 <the branch URL>'
-    fi
-    echo 'If the newest entry for that path is this migration message, it landed and the changes'
-    echo 'still pending in the bridge are already redundant.'
-  } >&2
-  exit 1
-fi
+# More than one commit leaves a MIXED-REVISION working copy: `svn commit` only bumps what it
+# committed, so the root sits at the declaring revision while the files sit at later ones. Anything
+# that then asks "what revision is this working copy at?" gets the root's answer -- the pull path
+# does exactly that, and it would position the whole copy back at that older revision, undoing the
+# property changes in the working copy and leaving every file reading as modified.
+#
+# One `svn update` makes the copy uniform. This was not needed while the migration was a single
+# commit, and it is the same mixed-revision trap that bit the first-push bootstrap before it.
+( cd "$REMOTE_PATH" && svn update --quiet ) \
+  || { echo 'Warning: svn update after the migration failed; run it in the bridge worktree so the working copy is at a single revision.' >&2; }
 
 echo
 echo "Done. $SET_COUNT file(s) now carry svn:eol-style=native."

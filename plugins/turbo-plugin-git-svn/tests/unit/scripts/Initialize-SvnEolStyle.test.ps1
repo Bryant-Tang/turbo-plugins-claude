@@ -63,6 +63,14 @@ BeforeAll {
         return "$v".Trim()
     }
 
+    function Get-NativeText {
+        param([scriptblock]$Block)
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $o = & $Block 2>$null } catch { $o = $null } finally { $ErrorActionPreference = $old }
+        return ((@($o) -join "`n").Trim())
+    }
+
     function Get-SvnMimeProp {
         param([string]$File)
         $old = $ErrorActionPreference
@@ -371,7 +379,16 @@ Describe 'Initialize-SvnEolStyle' {
             # repository, so "did the HEAD move?" answers yes when someone else committed to an
             # unrelated path -- and reading that as success is the direction that loses the
             # migration silently.
-            $r.Combined | Should -Match 'last-changed-revision'
+            $r.Combined | Should -Match 'THIS BRANCH PATH'
+            # And the guidance has to say "wait" before it says "check". A large transaction can
+            # finish on the server minutes after it stopped answering -- reported in the wild two
+            # hours later, after the user had already concluded it failed and reverted. Telling
+            # someone how to check without telling them not to check YET produced the wrong answer.
+            $r.Combined | Should -Match 'WAIT a few minutes'
+            $r.Combined | Should -Match 'Do NOT'
+            # The locks an interrupted commit leaves behind block every later svn operation, and
+            # the old message never mentioned them -- which is what made that state undiagnosable.
+            $r.Combined | Should -Match 'svn cleanup'
 
             # The opposite of the propset case: here the staged work is deliberately KEPT, because
             # the commit is what failed and rerunning it is the cheap fix.
@@ -379,6 +396,61 @@ Describe 'Initialize-SvnEolStyle' {
             $ErrorActionPreference = 'Continue'
             try { $st = @(& svn --non-interactive status $fx.Bridge 2>$null | Where-Object { $_ -and ($_ -notmatch '^\?') }) } finally { $ErrorActionPreference = $old }
             $st.Count | Should -BeGreaterThan 0
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # issue #177: the migration is one pass over every text file in the tree, so on a big repository
+    # the single transaction times out on the server. It commits in batches instead.
+    #
+    # -BatchSize 1 on the fixture's two candidates gives three revisions: the declaring one plus one
+    # per file. Mirrors initialize-svn-eol-style.test.sh.
+    It 'commits in batches, declares the tree first, and leaves one revision behind' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolbatch'
+        try {
+            $before = [int](Get-NativeText { & svnlook youngest $fx.SvnRepo })
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root, '-BatchSize', '1')
+            $r.ExitCode | Should -Be 0 -Because $r.Combined
+            $after = [int](Get-NativeText { & svnlook youngest $fx.SvnRepo })
+
+            # More than one revision is the whole point -- a single one means batching did nothing.
+            ($after - $before) | Should -BeGreaterOrEqual 3
+
+            # The DECLARING revision must be first. svn:auto-props on the root is the signal the
+            # bridge reads to decide whether to pin git to LF; declared last, an interrupted run
+            # would leave thousands of files carrying svn:eol-style while the bridge is still
+            # pinned, and every one of them would read as modified after the next update.
+            $ap = Get-NativeText { & svnlook propget $fx.SvnRepo 'svn:auto-props' 'trunk' -r ($before + 1) }
+            $ap | Should -Match 'svn:eol-style'
+
+            # Committing more than once leaves a MIXED-REVISION working copy unless something makes
+            # it uniform again, and the pull path reads "the" revision of the copy -- it would
+            # position everything back at the root's older one and undo the property changes on
+            # disk. svnversion prints `N:M` for a mixed copy and a single number for a uniform one.
+            $ver = Get-NativeText { Push-Location -LiteralPath $fx.Bridge; try { & svnversion . } finally { Pop-Location } }
+            $ver | Should -Not -Match ':'
+
+            (Get-SvnEolProp ([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'))) | Should -Be 'native'
+            (Get-SvnEolProp ([System.IO.Path]::Combine($fx.Bridge, 'wascrlf.txt'))) | Should -Be 'native'
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    It 'refuses a batch size below 1' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolbatch0'
+        try {
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root, '-BatchSize', '0')
+            $r.ExitCode | Should -Not -Be 0
         } finally {
             Remove-Sandbox -Dir $fx.Sandbox
         }
