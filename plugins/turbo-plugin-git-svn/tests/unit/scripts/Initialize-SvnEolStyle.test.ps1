@@ -294,6 +294,39 @@ Describe 'Initialize-SvnEolStyle' {
         }
     }
 
+    # The risk the pre-flight refresh introduces, asserted directly. Refreshing the mode before the
+    # guard runs `git add -A` when the mode actually changed, so genuine pending work in the bridge
+    # gets STAGED on the way past. Staged is still reported by `git status --porcelain`, so the
+    # guard must still fire -- but that is the whole safety argument for moving the refresh earlier,
+    # and it is not covered by the plain dirty-bridge case: that one dirties an unmigrated tree,
+    # where nothing declares and the refresh is a no-op.
+    It 'still refuses genuine pending work when the EOL mode changes' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eoldirtymode'
+        try {
+            (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)).ExitCode | Should -Be 0
+
+            # Back to the state an older version left behind, so the pre-flight really does change
+            # the mode this time...
+            Invoke-GitQuiet $fx.Bridge config --worktree core.autocrlf false
+            Invoke-GitQuiet $fx.Bridge config --worktree core.eol lf
+            # ...and a genuine edit on top of it, which must survive the refresh as a refusal.
+            $enc = New-Object Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'), "alpha`nbeta`ngamma`n", $enc)
+
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Not -Be 0
+            # The GIT guard specifically -- the svn one would also refuse, and passing for that
+            # reason would leave the git side untested.
+            $r.Combined | Should -Match 'uncommitted git changes'
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
     # Anyone who ran 0.8.0's migration already has the broken bridge, and the fix above only stops
     # it being created. Recovering must not require the guard to pass first -- it cannot: the
     # pre-flight refuses a git-dirty bridge, so the command that created the state could not clear

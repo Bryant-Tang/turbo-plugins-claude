@@ -275,6 +275,46 @@ test_migration_leaves_the_bridge_usable() {
     assertEquals 'the migration unpins the bridge and leaves untouched files alone' 0 "$rc"
 }
 
+# The risk the pre-flight refresh introduces, asserted directly. Refreshing the mode before the
+# guard runs `git add -A` when the mode actually changed, so genuine pending work in the bridge gets
+# STAGED on the way past. Staged is still reported by `git status --porcelain`, so the guard must
+# still fire -- but that is the whole safety argument for moving the refresh earlier, and it is not
+# covered by test_dirty_bridge_is_refused: that one dirties an unmigrated tree, where nothing
+# declares and the refresh is a no-op. This case is the combination that only exists after the move.
+test_real_pending_work_is_still_refused_when_the_mode_changes() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-dirtymode-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp")" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+        bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
+
+        # Back to the state an older version left behind, so the pre-flight really does change the
+        # mode this time...
+        git -C "$bridge" config --worktree core.autocrlf false || exit 97
+        git -C "$bridge" config --worktree core.eol lf || exit 97
+        # ...and a genuine edit on top of it, which must survive the refresh as a refusal.
+        printf 'alpha\nbeta\ngamma\n' > "$bridge/plain.txt"
+
+        out="$(bash "$SUT" --repo-root "$root" 2>&1)"
+        run_rc=$?
+        if [ "$run_rc" -eq 0 ]; then
+            echo "real pending work was accepted: $out" >&2; exit 1
+        fi
+        # The GIT guard specifically -- the svn one would also refuse, and passing for that reason
+        # would leave the git side untested.
+        case "$out" in
+            *'uncommitted git changes'*) exit 0 ;;
+            *) echo "refused, but not by the git guard: $out" >&2; exit 1 ;;
+        esac
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'genuine pending work is still refused when the EOL mode changes' 0 "$rc"
+}
+
 # Anyone who ran 0.8.0's migration already has the broken bridge, and the fix above only stops it
 # being created. Recovering must not require the guard to pass first -- it cannot: the pre-flight
 # refuses a git-dirty bridge, so the command that created the state could not clear it either, and
