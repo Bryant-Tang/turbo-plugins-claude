@@ -25,6 +25,7 @@ SCRIPT_UNDER_TEST="$PLUGIN_ROOT/scripts/remove-svn-file.sh"
 INIT_SCRIPT="$PLUGIN_ROOT/scripts/initialize-git-svn-bridge.sh"
 BUILD_SCRIPT="$PLUGIN_ROOT/scripts/build-svn-commit.sh"
 SUBMIT_SCRIPT="$PLUGIN_ROOT/scripts/submit-svn-commit.sh"
+EOL_SCRIPT="$PLUGIN_ROOT/scripts/initialize-svn-eol-style.sh"
 SHUNIT2="$PLUGIN_ROOT/tests/lib/shunit2"
 SANDBOX_BASE="$PLUGIN_ROOT/tests/.sandbox/sandboxes"
 
@@ -265,6 +266,43 @@ test_reject_orphaned_sync_ahead() {
     case "$out" in *"unmerged sync"*) assertTrue 'refuses on genuine orphaned sync' 0 ;; *) fail "did not refuse orphaned sync: $out" ;; esac
     # No svn mutation happened.
     if (cd "$BRIDGE" && svn list --config-dir "$CFG") | grep -q 'foo.csproj.user'; then assertTrue 'file still in svn' 0; else fail 'file deleted despite orphaned-sync refusal'; fi
+}
+
+# Whether the bridge is "dirty" has no answer until its EOL mode matches the tree: pinned to LF
+# while the tree declares svn:eol-style, git reads every marked file as modified, and that is
+# indistinguishable from real pending work. Migrations up to 0.8.0 left exactly that state behind,
+# and this command's pre-flight fired before the refresh that would have cleared it.
+#
+# Asserted on the REFUSAL TEXT rather than the exit code: the point is that the pre-flight must not
+# stop on a mode mismatch. What the removal itself then does is the subject of the cases above.
+test_a_bridge_left_pinned_by_an_older_migration_is_not_refused() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_bridge_with_files; then startSkipping; return 0; fi
+    if ! push_main; then startSkipping; return 0; fi
+    if ! bash "$EOL_SCRIPT" --repo-root "$ROOT" --branch main >/dev/null 2>&1; then startSkipping; return 0; fi
+
+    # A pending change of the migration's own would make the command refuse for a legitimate
+    # reason; committing it here is not an option, so skip instead of measuring the wrong thing.
+    if [ -n "$(git -C "$BRIDGE" status --porcelain 2>/dev/null || true)" ]; then startSkipping; return 0; fi
+
+    # Reconstruct what 0.8.0 left behind: the tree declares, the bridge is still pinned to LF.
+    git -C "$BRIDGE" config --worktree core.autocrlf false >/dev/null 2>&1
+    git -C "$BRIDGE" config --worktree core.eol lf >/dev/null 2>&1
+    # Re-pinning ALONE does not reproduce it: git's stat cache still believes these files are
+    # unmodified, so it never re-reads their bytes. `svn update` rewrites them in the real flow;
+    # touch invalidates the cache the same way.
+    touch "$BRIDGE/app.txt" "$BRIDGE/.gitignore" 2>/dev/null
+
+    # Fixture guard: where svn writes LF for `native` the bytes never differ and the mismatch
+    # cannot arise, so there would be nothing to measure.
+    if [ -z "$(git -C "$BRIDGE" status --porcelain 2>/dev/null || true)" ]; then startSkipping; return 0; fi
+
+    local out
+    out="$(cd "$ROOT" && bash "$SCRIPT_UNDER_TEST" --branch main --path app.txt 2>&1)"
+    case "$out" in
+        *'uncommitted changes'*) fail "refused a bridge that only needed its mode re-read: $out" ;;
+        *) assertTrue 'the pre-flight did not stop on a mode mismatch' 0 ;;
+    esac
 }
 
 # shellcheck disable=SC1090

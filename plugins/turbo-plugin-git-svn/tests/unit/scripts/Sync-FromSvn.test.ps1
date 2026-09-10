@@ -642,8 +642,8 @@ Describe 'Sync-FromSvn' {
     # the guard fired before the refresh that would have cleared it -- so pull refused, naming
     # changes the user never made. The refresh now runs first, which is what lets an already-broken
     # bridge recover without the user knowing any of this happened.
-    Context 'Case 17: a bridge left pinned by an older migration must not deadlock the pull' {
-        It 'pull refreshes the EOL mode before judging the bridge, and recovers' -Skip:(-not $script:HasSvn) {
+    Context 'Case 17: a bridge left pinned by an older migration must not deadlock pull or push' {
+        It 'pull and push refresh the EOL mode before judging the bridge, and recover' -Skip:(-not $script:HasSvn) {
             $sb = New-Sandbox -Tag 'pfs-17'
             try {
                 $ctx = New-PushedBridge -Sandbox $sb
@@ -686,6 +686,23 @@ Describe 'Sync-FromSvn' {
                 $pull.ExitCode | Should -Be 0 -Because $pull.Combined
                 # And it fixed the mode rather than merely tolerating the mismatch.
                 (Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')) | Should -BeNullOrEmpty
+
+                # Push, from the same reconstructed state. It is a separate script with the same
+                # one-line fix and no bridge fixture of its own; building a second one to assert
+                # the same property would double the cost of the slowest suite for nothing.
+                $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', 'core.autocrlf', 'false')
+                $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', 'core.eol', 'lf')
+                foreach ($f in (Get-ChildItem -LiteralPath $ctx.Bridge -Filter '*.txt' -File)) {
+                    $f.LastWriteTime = (Get-Date)
+                }
+                $enc = New-Object Text.UTF8Encoding($false)
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($ctx.Root, 'extra.txt'), "more`n", $enc)
+                $null = Run-Git -Cwd $ctx.Root -GitArgs @('add', 'extra.txt')
+                $null = Run-Git -Cwd $ctx.Root -GitArgs @('-c', 'commit.gpgsign=false', 'commit', '-m', 'feat: extend app')
+
+                $prep = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $prep.Combined | Should -Not -Match 'uncommitted git changes'
+                $prep.ExitCode | Should -Be 0 -Because $prep.Combined
             } finally { Remove-Sandbox -Dir $sb }
         }
     }

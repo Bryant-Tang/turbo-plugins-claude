@@ -32,6 +32,7 @@ BeforeAll {
     $script:InitScript      = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-GitSvnBridge.ps1')
     $script:BuildScript     = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Build-SvnCommit.ps1')
     $script:SubmitScript    = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Submit-SvnCommit.ps1')
+    $script:EolScript       = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-SvnEolStyle.ps1')
 
     . ([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'lib', 'ScriptsCommon.ps1'))
 
@@ -361,6 +362,56 @@ Describe 'Remove-SvnFile' {
                 $res.ExitCode | Should -Not -Be 0
                 $res.Combined | Should -Match 'unmerged sync'
                 (Svn-ListWc -WcPath $ctx.Bridge -ConfigDir $ctx.Cfg) | Should -Match 'foo\.csproj\.user'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    # Whether the bridge is "dirty" has no answer until its EOL mode matches the tree: pinned to LF
+    # while the tree declares svn:eol-style, git reads every marked file as modified, and that is
+    # indistinguishable from real pending work. Migrations up to 0.8.0 left exactly that state
+    # behind, and this command's pre-flight fired before the refresh that would have cleared it.
+    Context 'Case 11: a bridge left pinned by an older migration must not be refused' {
+        # Asserted on the REFUSAL TEXT rather than the exit code: the point is that the pre-flight
+        # must not stop on a mode mismatch. What the removal then does is the subject of the cases
+        # above.
+        It 'the pre-flight refreshes the EOL mode before judging the bridge' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'rmsvn-11'
+            try {
+                $ctx = New-BridgeWithFiles -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build bridge'; return }
+                if (-not (Push-Main -Root $ctx.Root)) { Set-ItResult -Skipped -Because 'could not push main'; return }
+
+                $mig = Invoke-PsScript -ScriptPath $script:EolScript -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                if ($mig.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'could not migrate the fixture tree'; return }
+
+                # A pending change of the migration's own would make the command refuse for a
+                # legitimate reason, and committing it here is not an option -- a non-merge commit
+                # ahead of main on the bridge branch is the orphaned-sync shape Case 10 covers.
+                if (-not [string]::IsNullOrWhiteSpace((Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('status', '--porcelain')))) {
+                    Set-ItResult -Skipped -Because 'the migration left a content change of its own; the mode cannot be isolated'
+                    return
+                }
+
+                # Reconstruct what 0.8.0 left behind: the tree declares, the bridge is still pinned.
+                $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', 'core.autocrlf', 'false')
+                $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', 'core.eol', 'lf')
+                # Re-pinning ALONE does not reproduce it: git's stat cache still believes the files
+                # are unmodified, so it never re-reads their bytes. `svn update` rewrites them in
+                # the real flow; bumping the timestamps does the same.
+                foreach ($f in (Get-ChildItem -LiteralPath $ctx.Bridge -Filter '*.txt' -File)) {
+                    $f.LastWriteTime = (Get-Date)
+                }
+
+                # Fixture guard: where svn writes LF for `native` the bytes never differ, so the
+                # mismatch cannot arise and there would be nothing to measure.
+                if ([string]::IsNullOrWhiteSpace((Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('status', '--porcelain')))) {
+                    Set-ItResult -Skipped -Because 'svn writes LF for native here, so the mismatch cannot arise'
+                    return
+                }
+
+                Untrack-OnMain -Root $ctx.Root -RelPath 'foo.csproj.user'
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main', '-Path', 'foo.csproj.user')
+                $res.Combined | Should -Not -Match 'uncommitted changes'
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
