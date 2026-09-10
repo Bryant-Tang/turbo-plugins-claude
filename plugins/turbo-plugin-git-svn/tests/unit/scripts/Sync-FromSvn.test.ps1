@@ -36,6 +36,7 @@ BeforeAll {
     $script:InitScript      = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-GitSvnBridge.ps1')
     $script:BuildScript     = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Build-SvnCommit.ps1')
     $script:SubmitScript    = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Submit-SvnCommit.ps1')
+    $script:EolScript       = [System.IO.Path]::Combine($pluginRoot, 'scripts', 'Initialize-SvnEolStyle.ps1')
     $script:ResetScript     = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'reset', 'Reset-Fixture.ps1'))
     $script:DumpPath        = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'fixtures', 'seed', 'svn-repo-r1-r20.dump'))
     $script:ScriptExists    = [System.IO.File]::Exists($script:ScriptUnderTest)
@@ -631,6 +632,50 @@ Describe 'Sync-FromSvn' {
                 $prep = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
                 $prep.Combined | Should -Not -Match 'not up to date'
                 $prep.ExitCode | Should -Be 0 -Because $prep.Combined
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
+    # Whether the bridge is "dirty" has no answer until its EOL mode matches the tree: pinned to LF
+    # while the tree declares svn:eol-style, git reads every marked file as modified, and that looks
+    # exactly like real pending work. Migrations up to 0.8.0 left precisely that state behind, and
+    # the guard fired before the refresh that would have cleared it -- so pull refused, naming
+    # changes the user never made. The refresh now runs first, which is what lets an already-broken
+    # bridge recover without the user knowing any of this happened.
+    Context 'Case 17: a bridge left pinned by an older migration must not deadlock the pull' {
+        It 'pull refreshes the EOL mode before judging the bridge, and recovers' -Skip:(-not $script:HasSvn) {
+            $sb = New-Sandbox -Tag 'pfs-17'
+            try {
+                $ctx = New-PushedBridge -Sandbox $sb
+                if ($null -eq $ctx) { Set-ItResult -Skipped -Because 'could not build/push bridge'; return }
+
+                $mig = Invoke-PsScript -ScriptPath $script:EolScript -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                if ($mig.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'could not migrate the fixture tree'; return }
+
+                # Reconstruct what 0.8.0 left behind: the tree declares, the bridge is still pinned.
+                $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', 'core.autocrlf', 'false')
+                $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', 'core.eol', 'lf')
+                # Re-pinning ALONE does not reproduce it: git's stat cache still believes the files
+                # are unmodified, so it never re-reads their bytes. The real flow ends with
+                # `svn update`, which REWRITES every marked file; bumping the timestamps does the
+                # same. Without this the test passes without entering the state it is about.
+                foreach ($f in (Get-ChildItem -LiteralPath $ctx.Bridge -Filter '*.txt' -File)) {
+                    $f.LastWriteTime = (Get-Date)
+                }
+
+                # Fixture guard: where svn writes LF for `native` nothing was rewritten and the
+                # mismatch cannot arise, so there would be nothing to measure.
+                $dirty = Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('status', '--porcelain')
+                if ([string]::IsNullOrWhiteSpace($dirty)) {
+                    Set-ItResult -Skipped -Because 'svn writes LF for native here, so the mismatch cannot arise'
+                    return
+                }
+
+                $pull = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
+                $pull.Combined | Should -Not -Match 'uncommitted changes'
+                $pull.ExitCode | Should -Be 0 -Because $pull.Combined
+                # And it fixed the mode rather than merely tolerating the mismatch.
+                (Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')) | Should -BeNullOrEmpty
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
