@@ -331,5 +331,65 @@ test_sibling_commit_does_not_deadlock() {
     assertEquals "push prepare must succeed (out: $prep)" 0 "$prc"
 }
 
+# Whether the bridge is "dirty" has no answer until its EOL mode matches the tree: pinned to LF
+# while the tree declares svn:eol-style, git reads every marked file as modified, and that looks
+# exactly like real pending work. Migrations up to 0.8.0 left precisely that state behind, and the
+# guard fired before the refresh that would have cleared it -- so pull and push both refused,
+# naming changes the user never made.
+#
+# Both commands are asserted from ONE reconstructed state on purpose. They are separate scripts
+# with the same one-line fix, and build-svn-commit has no bridge fixture of its own; building a
+# second one to assert the same property would double the cost of the slowest suite for nothing.
+test_a_bridge_left_pinned_by_an_older_migration_does_not_deadlock() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local spec root wt out rc prep prc dirty
+    spec="$(build_pushed_bridge "$SB")" || { startSkipping; return 0; }
+    root="${spec%%|*}"
+    wt="$root/.turbo-plugin/worktrees/remote-svn-main"
+
+    # The fixture pins the repo to core.autocrlf=false, which is its own broken combination once
+    # the tree declares (issue #183: svn writes native endings, git takes them as content, and the
+    # bridge is dirty for a reason no mode refresh can fix). That is NOT what this case is about,
+    # so put the repo on the setting a Windows user actually has before the tree declares anything.
+    git -C "$root" config core.autocrlf true >/dev/null 2>&1
+
+    bash "$SCRIPTS_DIR/initialize-svn-eol-style.sh" --repo-root "$root" --branch main >/dev/null 2>&1 \
+        || { startSkipping; return 0; }
+
+    # The migration must have left the bridge clean for this to mean anything: a pending change of
+    # its own would make both commands refuse for a legitimate reason. Committing it here is not an
+    # option -- a non-merge commit ahead of main on the bridge branch is the orphaned-sync shape the
+    # pull refuses on by design.
+    [ -z "$(git -C "$wt" status --porcelain 2>/dev/null || true)" ] || { startSkipping; return 0; }
+
+    # Reconstruct what 0.8.0 left behind: the tree declares, the bridge is still pinned to LF.
+    git -C "$wt" config --worktree core.autocrlf false >/dev/null 2>&1
+    git -C "$wt" config --worktree core.eol lf >/dev/null 2>&1
+    # Re-pinning ALONE does not reproduce it: git's stat cache still believes these files are
+    # unmodified, so it never re-reads their bytes. The real flow ends with `svn update`, which
+    # REWRITES every marked file; touch invalidates the cache the same way.
+    touch "$wt/app.txt" "$wt/.gitignore" 2>/dev/null
+
+    # Fixture guard: where svn writes LF for `native` the bytes never differ, so the mismatch
+    # cannot arise and there is nothing to measure. SKIP rather than report a vacuous pass.
+    dirty="$(git -C "$wt" status --porcelain 2>/dev/null || true)"
+    [ -n "$dirty" ] || { startSkipping; return 0; }
+
+    out="$(cd "$root" && bash "$SCRIPT" --branch main 2>&1)"; rc=$?
+    case "$out" in *"uncommitted changes"*) fail "pull refused a bridge that only needed its mode re-read: $out" ;; esac
+    assertEquals "pull must recover (out: $out)" 0 "$rc"
+
+    # And push, from the same state -- it has the same guard and the same fix.
+    git -C "$wt" config --worktree core.autocrlf false >/dev/null 2>&1
+    git -C "$wt" config --worktree core.eol lf >/dev/null 2>&1
+    touch "$wt/app.txt" "$wt/.gitignore" 2>/dev/null
+    printf 'more\n' >> "$root/app.txt"
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c commit.gpgsign=false commit -q -m 'feat: extend app' >/dev/null 2>&1
+    prep="$(cd "$root" && bash "$SCRIPTS_DIR/build-svn-commit.sh" --branch main 2>&1)"; prc=$?
+    case "$prep" in *"uncommitted git changes"*) fail "push refused a bridge that only needed its mode re-read: $prep" ;; esac
+    assertEquals "push prepare must recover (out: $prep)" 0 "$prc"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

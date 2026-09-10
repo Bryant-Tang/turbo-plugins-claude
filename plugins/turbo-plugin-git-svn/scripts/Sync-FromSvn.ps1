@@ -42,6 +42,13 @@ try {
     # (synced from main by New-RemoteBridge), so git ignores SVN's binary metadata and we no
     # longer hand-filter `.svn/*`; genuine manual edits are still caught and would otherwise be
     # packaged into the sync commit.
+    # The EOL mode has to be current before this question can be answered at all: a bridge pinned
+    # to LF while the tree declares svn:eol-style reads as "every file modified", which is
+    # indistinguishable here from real pending work. Migrations up to 0.8.0 left exactly that state
+    # behind [see Initialize-SvnEolStyle.ps1], so recovering from it must not require this guard to
+    # pass first. Memoised, so the later refresh before the replay costs nothing.
+    Set-BridgeEolModeOnce -Bridge $remote.Path
+
     $remoteStatus = (& git -C $remote.Path status --porcelain | Out-String).Trim()
     if ($remoteStatus) {
         throw "Remote worktree '$($remote.Path)' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling.`n$remoteStatus"

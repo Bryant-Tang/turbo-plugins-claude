@@ -12,6 +12,9 @@
 #   - binaries and mixed-ending files are excluded, and the mixed ones are NAMED
 #   - the apply path marks text files, commits, and SVN then stores LF
 #   - a dirty bridge is refused rather than swept into the property commit
+#   - the migration leaves the bridge USABLE: the LF pin is gone and untouched files read clean
+#   - a bridge left pinned by an older version recovers instead of blocking the command that
+#     would clear it
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
@@ -218,7 +221,18 @@ test_dirty_bridge_is_refused() {
 #
 # It drives the real chokepoint, `svn_position_wc_at_rev`, rather than calling the refresh directly:
 # the defect was never in the refresh, it was in nothing calling it.
-test_pull_after_migration_leaves_the_bridge_clean() {
+# The migration has to leave the bridge in a state the NEXT command can work with. It is the only
+# command that changes whether the tree declares svn:eol-style, so it is the only one that can flip
+# the bridge's EOL mode -- and up to 0.8.0 it never re-read it. Its closing `svn update` writes
+# platform endings for every file it just marked while git is still pinned to LF, so git reads the
+# whole tree as modified and every guard that asks "is this bridge clean?" refuses: pull, push, and
+# a rerun of this command itself.
+#
+# The earlier version of this test sourced the library and called svn_position_wc_at_rev, "to do
+# what a pull does". That is what a pull does AFTER its guards, and that helper refreshes the mode
+# itself -- so the test walked straight into the self-healing path and reported green while the
+# real entry point refused. Assert on what the migration alone leaves behind.
+test_migration_leaves_the_bridge_usable() {
     [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
     local tmp rc
     tmp="$(mktemp -d -t turbo-eolinit-pull-XXXXXX)"
@@ -235,35 +249,143 @@ test_pull_after_migration_leaves_the_bridge_clean() {
 
         bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
 
-        # Now do what a pull does. Sourcing the lib is the point: this is the chokepoint every
-        # SVN-content write funnels through, and it is where the mode refresh lives.
-        # shellcheck source=/dev/null
-        . "$PLUGIN_ROOT/scripts/lib/common.sh"
-        set +e +u +o pipefail
-        rev="$(cd "$bridge" && svn --non-interactive info --show-item revision | tr -d '\r\n')"
-        svn_position_wc_at_rev "$bridge" "$rev" >/dev/null 2>&1 || exit 96
+        # The pin has to go on EVERY platform once the tree declares -- svn is normalising now, so
+        # git must stop pinning and follow. This is the assertion that fails everywhere without the
+        # closing refresh; the one below only bites where svn rewrites the files.
+        pin="$(git -C "$bridge" config --worktree core.eol 2>/dev/null || true)"
+        if [ -n "$pin" ]; then
+            echo "the LF pin survived the migration: core.eol=$pin" >&2; exit 1
+        fi
 
         # Asserted on plain.txt, NOT on the whole tree, and the distinction is the point.
         # wascrlf.txt SHOULD show as modified afterwards: the migration really did rewrite it in
         # SVN, from CRLF to LF, and that is a genuine content change waiting to be synced into git.
         # A whole-tree "must be clean" assertion would call that correct behaviour a failure.
         # plain.txt's content nobody touched, so it may only appear if the MODE is wrong -- which
-        # is exactly the defect, and pre-fix it took the entire tree with it.
+        # is exactly the defect, and it took the entire tree with it.
         dirty="$(git -C "$bridge" status --porcelain -- plain.txt 2>/dev/null || true)"
         if [ -n "$dirty" ]; then
-            echo "an untouched file reads as modified after migrate-then-pull: [$dirty]" >&2; exit 1
-        fi
-        # And the pin really is gone -- otherwise "clean" might just mean nothing was rewritten.
-        pin="$(git -C "$bridge" config --worktree core.eol 2>/dev/null || true)"
-        if [ -n "$pin" ]; then
-            echo "the LF pin survived the migration: core.eol=$pin" >&2; exit 1
+            echo "an untouched file reads as modified after the migration: [$dirty]" >&2; exit 1
         fi
         exit 0
     )
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
     [ "$rc" -eq 98 ] && { startSkipping; return 0; }
-    assertEquals 'migrating and then pulling unpins the bridge and leaves untouched files alone' 0 "$rc"
+    assertEquals 'the migration unpins the bridge and leaves untouched files alone' 0 "$rc"
+}
+
+# The risk the pre-flight refresh introduces, asserted directly. Refreshing the mode before the
+# guard runs `git add -A` when the mode actually changed, so genuine pending work in the bridge gets
+# STAGED on the way past. Staged is still reported by `git status --porcelain`, so the guard must
+# still fire -- but that is the whole safety argument for moving the refresh earlier, and it is not
+# covered by test_dirty_bridge_is_refused: that one dirties an unmigrated tree, where nothing
+# declares and the refresh is a no-op. This case is the combination that only exists after the move.
+test_real_pending_work_is_still_refused_when_the_mode_changes() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-dirtymode-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp")" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+        bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
+
+        # Same reason as the recovery case: take the migration's own content change into git first,
+        # or on a platform where `native` is LF this would refuse over wascrlf.txt and pass without
+        # ever exercising the edit it plants below.
+        git -C "$bridge" add -A >/dev/null 2>&1 || exit 97
+        git -C "$bridge" -c commit.gpgsign=false commit -qm 'svn content after the migration' >/dev/null 2>&1 || true
+
+        # Back to the state an older version left behind, so the pre-flight really does change the
+        # mode this time...
+        git -C "$bridge" config --worktree core.autocrlf false || exit 97
+        git -C "$bridge" config --worktree core.eol lf || exit 97
+        # ...and a genuine edit on top of it, which must survive the refresh as a refusal.
+        printf 'alpha\nbeta\ngamma\ndelta\n' > "$bridge/plain.txt"
+
+        out="$(bash "$SUT" --repo-root "$root" 2>&1)"
+        run_rc=$?
+        if [ "$run_rc" -eq 0 ]; then
+            echo "real pending work was accepted: $out" >&2; exit 1
+        fi
+        # The GIT guard specifically -- the svn one would also refuse, and passing for that reason
+        # would leave the git side untested.
+        case "$out" in
+            *'uncommitted git changes'*) exit 0 ;;
+            *) echo "refused, but not by the git guard: $out" >&2; exit 1 ;;
+        esac
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'genuine pending work is still refused when the EOL mode changes' 0 "$rc"
+}
+
+# Anyone who ran 0.8.0's migration already has the broken bridge, and the fix above only stops it
+# being created. Recovering must not require the guard to pass first -- it cannot: the pre-flight
+# refuses a git-dirty bridge, so the command that created the state could not clear it either, and
+# pull and push refused for the same reason. This is the entry point that proves the pre-flight
+# refreshes the EOL mode BEFORE judging cleanliness.
+test_a_bridge_left_pinned_by_an_older_version_is_recovered() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-recover-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp")" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+        bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
+
+        # Take the migration's own content change into git first -- that is what the next pull
+        # does. Where `native` is LF the migration really does rewrite wascrlf.txt on disk (CRLF to
+        # LF), so the bridge is legitimately dirty afterwards and the rerun below would be refused
+        # for a reason that has nothing to do with the mode. Committing it makes the bridge clean
+        # on EVERY platform, so anything dirty after this point can only be the mode.
+        git -C "$bridge" add -A >/dev/null 2>&1 || exit 97
+        git -C "$bridge" -c commit.gpgsign=false commit -qm 'svn content after the migration' >/dev/null 2>&1 || true
+        if [ -n "$(git -C "$bridge" status --porcelain 2>/dev/null || true)" ]; then
+            echo "fixture: the bridge is still dirty before the state is reconstructed" >&2; exit 1
+        fi
+
+        # Reconstruct what 0.8.0 left behind: the tree declares svn:eol-style, but the bridge is
+        # still pinned to LF.
+        git -C "$bridge" config --worktree core.autocrlf false || exit 97
+        git -C "$bridge" config --worktree core.eol lf || exit 97
+        # Re-pinning ALONE does not reproduce it: git's stat cache still believes these files are
+        # unmodified, so it never re-reads their bytes and the bridge reads clean. The real flow
+        # ends with `svn update`, which REWRITES every marked file; touch invalidates the cache the
+        # same way. Without this the test passes without ever entering the state it is about.
+        touch "$bridge/plain.txt" "$bridge/wascrlf.txt" || exit 97
+
+        # Fixture guard. Where svn writes LF for `native` the on-disk bytes match what git expects
+        # under either setting, so the mismatch cannot arise at all and there is nothing to measure
+        # -- skip rather than report a pass, which is what a vacuous run would look like.
+        if [ -z "$(git -C "$bridge" status --porcelain 2>/dev/null || true)" ]; then exit 95; fi
+
+        out="$(bash "$SUT" --repo-root "$root" 2>&1)"
+        second_rc=$?
+        case "$out" in
+            *'uncommitted git changes'*)
+                echo "still blocked by the state an older version left behind: $out" >&2
+                exit 1 ;;
+        esac
+        if [ "$second_rc" -ne 0 ]; then
+            echo "recovery run exited $second_rc: $out" >&2; exit 1
+        fi
+        # Not just "exit 0" -- that is also what a run that silently did nothing looks like.
+        case "$out" in
+            *'Nothing to do'*) ;;
+            *) echo "recovery run did not report an already-migrated tree: $out" >&2; exit 1 ;;
+        esac
+        # And it really did fix the mode, rather than merely tolerating the mismatch.
+        pin="$(git -C "$bridge" config --worktree core.eol 2>/dev/null || true)"
+        if [ -n "$pin" ]; then echo "the pin survived recovery: core.eol=$pin" >&2; exit 1; fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    [ "$rc" -eq 95 ] && { startSkipping; return 0; }
+    assertEquals 'a bridge left pinned by an older version recovers on the next run' 0 "$rc"
 }
 
 # A file `svn add` stamps as binary even though it is plain text.

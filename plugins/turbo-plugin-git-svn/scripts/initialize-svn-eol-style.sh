@@ -79,6 +79,14 @@ if [[ ! -d "$REMOTE_PATH" ]]; then
 fi
 
 # ---- pre-flight -------------------------------------------------------------
+# Put the bridge in the EOL mode the tree actually calls for BEFORE asking whether it is clean.
+# "Is this bridge dirty?" has no answer until the mode is right: git reading platform endings while
+# pinned to LF reports every marked file as modified, and that is indistinguishable here from real
+# pending work. Versions up to 0.8.0 left exactly that state behind -- see the closing refresh at
+# the end of this script -- and the guard below then refused to run, so the command that creates
+# the state could not be used to clear it either.
+ensure_bridge_eol_mode_once "$REMOTE_PATH" || true
+
 # The bridge must be clean on BOTH sides. This commit is meant to contain property changes and
 # nothing else; pending work here would be swept into it, and a property-only revision is exactly
 # the kind the pull path skips -- so anything that rode along would reach SVN and never come back
@@ -196,7 +204,10 @@ if [[ "$MIXED_COUNT" -gt 0 ]]; then
   echo
   echo "These files have BOTH LF and CRLF line endings. svn refuses to commit such a file once"
   echo "svn:eol-style is set, so they are excluded and will keep whatever endings they have."
-  echo "Normalise them in git first if you want them covered:"
+  echo "To cover them: pick one ending for each in the MAIN worktree, commit, push with"
+  echo "/tp-push-to-svn, then run this command again. The change is a real one there -- these files"
+  echo "reached git through the bridge, which stores SVN's bytes as they are, so the mixed endings"
+  echo "are in the committed blob and not just in the working copy."
   printf '%s\n' "$MIXED_LIST" | sed 's/^/  /'
 fi
 
@@ -358,6 +369,20 @@ flush_chunk
 # commit, and it is the same mixed-revision trap that bit the first-push bootstrap before it.
 ( cd "$REMOTE_PATH" && svn update --quiet ) \
   || { echo 'Warning: svn update after the migration failed; run it in the bridge worktree so the working copy is at a single revision.' >&2; }
+
+# The tree now DECLARES svn:eol-style, which is the one thing that flips the bridge's EOL mode --
+# and this is the only command that can flip it. The update above just wrote platform endings
+# (CRLF on Windows) for every file it marked, while the bridge is still pinned to LF, so git reads
+# the whole tree as modified. Every guard that asks "is this bridge clean?" then fires at once:
+# measured on 0.8.0, a successful migration left `/tp-pull-from-svn`, `/tp-push-to-svn` AND a rerun
+# of this command all refusing, each naming changes the user never made.
+#
+# It has to be re-read here rather than left to the next command, for the same reason the bootstrap
+# re-reads it after declaring: the mode is a fact about the tree, and this script is what changed
+# the tree. Leaving the bridge in a state whose only exit is a git command nobody mentions is not a
+# successful migration, whatever the exit code says.
+ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH" \
+  || echo 'Warning: could not re-read the bridge line-ending mode. Run /tp-pull-from-svn to have it done.' >&2
 
 echo
 echo "Done. $SET_COUNT file(s) now carry svn:eol-style=native."

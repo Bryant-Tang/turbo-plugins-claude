@@ -253,7 +253,18 @@ Describe 'Initialize-SvnEolStyle' {
     #
     # It drives the real chokepoint, Set-SvnWcPosition, rather than calling the refresh directly:
     # the defect was never in the refresh, it was in nothing calling it.
-    It 'unpins the bridge and leaves untouched files alone when a pull follows the migration' {
+    # The migration has to leave the bridge in a state the NEXT command can work with. It is the
+    # only command that changes whether the tree declares svn:eol-style, so it is the only one that
+    # can flip the bridge's EOL mode -- and up to 0.8.0 it never re-read it. Its closing
+    # `svn update` writes platform endings for every file it just marked while git is still pinned
+    # to LF, so git reads the whole tree as modified and every guard that asks "is this bridge
+    # clean?" refuses: pull, push, and a rerun of this command itself.
+    #
+    # The earlier version of this test dot-sourced the library and called Set-SvnWcPosition, "to do
+    # what a pull does". That is what a pull does AFTER its guards, and that helper refreshes the
+    # mode itself -- so the test walked straight into the self-healing path and reported green
+    # while the real entry point refused. Assert on what the migration alone leaves behind.
+    It 'leaves the bridge usable: unpinned, with untouched files still clean' {
         if (-not $script:SvnAvailable) {
             Set-ItResult -Skipped -Because 'svn is not on PATH'
             return
@@ -267,20 +278,117 @@ Describe 'Initialize-SvnEolStyle' {
             $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
             $r.ExitCode | Should -Be 0
 
-            # Now do what a pull does. Dot-sourcing the lib is the point: this is the chokepoint
-            # every SVN-content write funnels through, and it is where the mode refresh lives.
-            . ([System.IO.Path]::Combine($script:PluginRoot, 'scripts', 'lib', 'Common.ps1'))
-            $rev = [int]((& svn --non-interactive info --show-item revision $fx.Bridge | Out-String).Trim())
-            Set-SvnWcPosition -RemotePath $fx.Bridge -Rev $rev
+            # The pin has to go once the tree declares -- svn is normalising now, so git must stop
+            # pinning and follow.
+            (Get-GitOutput $fx.Bridge config --worktree --get core.eol) | Should -BeNullOrEmpty
 
             # Asserted on plain.txt, NOT on the whole tree, and the distinction is the point.
             # wascrlf.txt SHOULD show as modified afterwards: the migration really did rewrite it in
             # SVN, from CRLF to LF, and that is a genuine content change waiting to be synced into
             # git. A whole-tree "must be clean" assertion would call that correct behaviour a
             # failure. plain.txt's content nobody touched, so it may only appear if the MODE is
-            # wrong -- which is exactly the defect, and pre-fix it took the entire tree with it.
+            # wrong -- which is exactly the defect, and it took the entire tree with it.
             (Get-GitOutput $fx.Bridge status --porcelain -- plain.txt) | Should -BeNullOrEmpty
-            # And the pin really is gone -- otherwise "clean" might just mean nothing was rewritten.
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # The risk the pre-flight refresh introduces, asserted directly. Refreshing the mode before the
+    # guard runs `git add -A` when the mode actually changed, so genuine pending work in the bridge
+    # gets STAGED on the way past. Staged is still reported by `git status --porcelain`, so the
+    # guard must still fire -- but that is the whole safety argument for moving the refresh earlier,
+    # and it is not covered by the plain dirty-bridge case: that one dirties an unmigrated tree,
+    # where nothing declares and the refresh is a no-op.
+    It 'still refuses genuine pending work when the EOL mode changes' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eoldirtymode'
+        try {
+            (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)).ExitCode | Should -Be 0
+
+            # Take the migration's own content change into git first -- that is what the next pull
+            # does. Where `native` is LF the migration really does rewrite wascrlf.txt on disk, so
+            # the bridge is legitimately dirty afterwards and this case would pass on that refusal
+            # without ever exercising the edit it plants below. `--all`, not `-A`: an advanced
+            # function with ValueFromRemainingArguments can bind a short flag to a common parameter
+            # instead of passing it through, and it does so silently.
+            Invoke-GitQuiet $fx.Bridge add --all
+            Invoke-GitQuiet $fx.Bridge -c commit.gpgsign=false commit -m 'svn content after the migration'
+
+            # Back to the state an older version left behind, so the pre-flight really does change
+            # the mode this time...
+            Invoke-GitQuiet $fx.Bridge config --worktree core.autocrlf false
+            Invoke-GitQuiet $fx.Bridge config --worktree core.eol lf
+            # ...and a genuine edit on top of it, which must survive the refresh as a refusal.
+            $enc = New-Object Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'), "alpha`nbeta`ngamma`ndelta`n", $enc)
+
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Not -Be 0
+            # The GIT guard specifically -- the svn one would also refuse, and passing for that
+            # reason would leave the git side untested.
+            $r.Combined | Should -Match 'uncommitted git changes'
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # Anyone who ran 0.8.0's migration already has the broken bridge, and the fix above only stops
+    # it being created. Recovering must not require the guard to pass first -- it cannot: the
+    # pre-flight refuses a git-dirty bridge, so the command that created the state could not clear
+    # it either, and pull and push refused for the same reason. This is the entry point that proves
+    # the pre-flight refreshes the EOL mode BEFORE judging cleanliness.
+    It 'recovers a bridge left pinned by an older version instead of refusing' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolrecover'
+        try {
+            (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)).ExitCode | Should -Be 0
+
+            # Take the migration's own content change into git first -- that is what the next pull
+            # does. Where `native` is LF the migration really does rewrite wascrlf.txt on disk (CRLF
+            # to LF), so the bridge is legitimately dirty afterwards and the rerun below would be
+            # refused for a reason that has nothing to do with the mode. Committing it makes the
+            # bridge clean on EVERY platform, so anything dirty after this point can only be the
+            # mode. `--all`, not `-A`: an advanced function with ValueFromRemainingArguments can
+            # bind a short flag to a common parameter instead of passing it through, silently.
+            Invoke-GitQuiet $fx.Bridge add --all
+            Invoke-GitQuiet $fx.Bridge -c commit.gpgsign=false commit -m 'svn content after the migration'
+            (Get-GitOutput $fx.Bridge status --porcelain) | Should -BeNullOrEmpty
+
+            # Reconstruct what 0.8.0 left behind: the tree declares svn:eol-style, but the bridge is
+            # still pinned to LF.
+            Invoke-GitQuiet $fx.Bridge config --worktree core.autocrlf false
+            Invoke-GitQuiet $fx.Bridge config --worktree core.eol lf
+            # Re-pinning ALONE does not reproduce it: git's stat cache still believes these files
+            # are unmodified, so it never re-reads their bytes and the bridge reads clean. The real
+            # flow ends with `svn update`, which REWRITES every marked file; bumping the timestamp
+            # invalidates the cache the same way. Without this the test passes without ever
+            # entering the state it is about.
+            foreach ($n in @('plain.txt', 'wascrlf.txt')) {
+                $p = [System.IO.Path]::Combine($fx.Bridge, $n)
+                if ([System.IO.File]::Exists($p)) { (Get-Item -LiteralPath $p).LastWriteTime = (Get-Date) }
+            }
+
+            # Fixture guard. Where svn writes LF for `native` nothing was rewritten, so this
+            # mismatch cannot arise at all and there is nothing to measure -- skip rather than
+            # report a pass, which is what a vacuous run would look like.
+            if ([string]::IsNullOrWhiteSpace((Get-GitOutput $fx.Bridge status --porcelain))) {
+                Set-ItResult -Skipped -Because 'svn writes LF for native here, so the mismatch cannot arise'
+                return
+            }
+
+            $again = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $again.Combined | Should -Not -Match 'uncommitted git changes'
+            $again.ExitCode | Should -Be 0
+            # Not just exit 0 -- that is also what a run that silently did nothing looks like.
+            $again.Combined | Should -Match 'Nothing to do'
+            # And it really did fix the mode, rather than merely tolerating the mismatch.
             (Get-GitOutput $fx.Bridge config --worktree --get core.eol) | Should -BeNullOrEmpty
         } finally {
             Remove-Sandbox -Dir $fx.Sandbox
