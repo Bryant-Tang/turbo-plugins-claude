@@ -652,6 +652,16 @@ Describe 'Sync-FromSvn' {
                 $mig = Invoke-PsScript -ScriptPath $script:EolScript -Cwd $ctx.Root -ScriptArgs @('-Branch', 'main')
                 if ($mig.ExitCode -ne 0) { Set-ItResult -Skipped -Because 'could not migrate the fixture tree'; return }
 
+                # The migration must have left the bridge clean for this case to mean anything: any
+                # pending change of its own would make the pull below refuse for a legitimate reason
+                # that has nothing to do with the EOL mode, and committing it here is not an option
+                # -- a non-merge commit ahead of main on the bridge branch is the orphaned-sync
+                # shape the pull refuses on by design.
+                if (-not [string]::IsNullOrWhiteSpace((Run-Git-Capture -Cwd $ctx.Bridge -GitArgs @('status', '--porcelain')))) {
+                    Set-ItResult -Skipped -Because 'the migration left a content change of its own here; the mode cannot be isolated'
+                    return
+                }
+
                 # Reconstruct what 0.8.0 left behind: the tree declares, the bridge is still pinned.
                 $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', 'core.autocrlf', 'false')
                 $null = Run-Git -Cwd $ctx.Bridge -GitArgs @('config', '--worktree', 'core.eol', 'lf')

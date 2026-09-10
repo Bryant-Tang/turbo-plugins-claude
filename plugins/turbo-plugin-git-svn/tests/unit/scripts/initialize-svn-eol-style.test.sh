@@ -290,12 +290,18 @@ test_real_pending_work_is_still_refused_when_the_mode_changes() {
         bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
         bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
 
+        # Same reason as the recovery case: take the migration's own content change into git first,
+        # or on a platform where `native` is LF this would refuse over wascrlf.txt and pass without
+        # ever exercising the edit it plants below.
+        git -C "$bridge" add -A >/dev/null 2>&1 || exit 97
+        git -C "$bridge" -c commit.gpgsign=false commit -qm 'svn content after the migration' >/dev/null 2>&1 || true
+
         # Back to the state an older version left behind, so the pre-flight really does change the
         # mode this time...
         git -C "$bridge" config --worktree core.autocrlf false || exit 97
         git -C "$bridge" config --worktree core.eol lf || exit 97
         # ...and a genuine edit on top of it, which must survive the refresh as a refusal.
-        printf 'alpha\nbeta\ngamma\n' > "$bridge/plain.txt"
+        printf 'alpha\nbeta\ngamma\ndelta\n' > "$bridge/plain.txt"
 
         out="$(bash "$SUT" --repo-root "$root" 2>&1)"
         run_rc=$?
@@ -329,6 +335,17 @@ test_a_bridge_left_pinned_by_an_older_version_is_recovered() {
         bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
         bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
 
+        # Take the migration's own content change into git first -- that is what the next pull
+        # does. Where `native` is LF the migration really does rewrite wascrlf.txt on disk (CRLF to
+        # LF), so the bridge is legitimately dirty afterwards and the rerun below would be refused
+        # for a reason that has nothing to do with the mode. Committing it makes the bridge clean
+        # on EVERY platform, so anything dirty after this point can only be the mode.
+        git -C "$bridge" add -A >/dev/null 2>&1 || exit 97
+        git -C "$bridge" -c commit.gpgsign=false commit -qm 'svn content after the migration' >/dev/null 2>&1 || true
+        if [ -n "$(git -C "$bridge" status --porcelain 2>/dev/null || true)" ]; then
+            echo "fixture: the bridge is still dirty before the state is reconstructed" >&2; exit 1
+        fi
+
         # Reconstruct what 0.8.0 left behind: the tree declares svn:eol-style, but the bridge is
         # still pinned to LF.
         git -C "$bridge" config --worktree core.autocrlf false || exit 97
@@ -339,8 +356,8 @@ test_a_bridge_left_pinned_by_an_older_version_is_recovered() {
         # same way. Without this the test passes without ever entering the state it is about.
         touch "$bridge/plain.txt" "$bridge/wascrlf.txt" || exit 97
 
-        # Fixture guard. Where svn writes LF for `native` (any platform whose native ending is LF)
-        # nothing was rewritten, so this mismatch cannot arise at all. There is nothing to measure
+        # Fixture guard. Where svn writes LF for `native` the on-disk bytes match what git expects
+        # under either setting, so the mismatch cannot arise at all and there is nothing to measure
         # -- skip rather than report a pass, which is what a vacuous run would look like.
         if [ -z "$(git -C "$bridge" status --porcelain 2>/dev/null || true)" ]; then exit 95; fi
 

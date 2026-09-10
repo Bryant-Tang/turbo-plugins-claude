@@ -309,13 +309,22 @@ Describe 'Initialize-SvnEolStyle' {
         try {
             (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)).ExitCode | Should -Be 0
 
+            # Take the migration's own content change into git first -- that is what the next pull
+            # does. Where `native` is LF the migration really does rewrite wascrlf.txt on disk, so
+            # the bridge is legitimately dirty afterwards and this case would pass on that refusal
+            # without ever exercising the edit it plants below. `--all`, not `-A`: an advanced
+            # function with ValueFromRemainingArguments can bind a short flag to a common parameter
+            # instead of passing it through, and it does so silently.
+            Invoke-GitQuiet $fx.Bridge add --all
+            Invoke-GitQuiet $fx.Bridge -c commit.gpgsign=false commit -m 'svn content after the migration'
+
             # Back to the state an older version left behind, so the pre-flight really does change
             # the mode this time...
             Invoke-GitQuiet $fx.Bridge config --worktree core.autocrlf false
             Invoke-GitQuiet $fx.Bridge config --worktree core.eol lf
             # ...and a genuine edit on top of it, which must survive the refresh as a refusal.
             $enc = New-Object Text.UTF8Encoding($false)
-            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'), "alpha`nbeta`ngamma`n", $enc)
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($fx.Bridge, 'plain.txt'), "alpha`nbeta`ngamma`ndelta`n", $enc)
 
             $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
             $r.ExitCode | Should -Not -Be 0
@@ -340,6 +349,17 @@ Describe 'Initialize-SvnEolStyle' {
         $fx = New-BridgeFixture 'eolrecover'
         try {
             (Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)).ExitCode | Should -Be 0
+
+            # Take the migration's own content change into git first -- that is what the next pull
+            # does. Where `native` is LF the migration really does rewrite wascrlf.txt on disk (CRLF
+            # to LF), so the bridge is legitimately dirty afterwards and the rerun below would be
+            # refused for a reason that has nothing to do with the mode. Committing it makes the
+            # bridge clean on EVERY platform, so anything dirty after this point can only be the
+            # mode. `--all`, not `-A`: an advanced function with ValueFromRemainingArguments can
+            # bind a short flag to a common parameter instead of passing it through, silently.
+            Invoke-GitQuiet $fx.Bridge add --all
+            Invoke-GitQuiet $fx.Bridge -c commit.gpgsign=false commit -m 'svn content after the migration'
+            (Get-GitOutput $fx.Bridge status --porcelain) | Should -BeNullOrEmpty
 
             # Reconstruct what 0.8.0 left behind: the tree declares svn:eol-style, but the bridge is
             # still pinned to LF.
