@@ -2,6 +2,24 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.9.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.8.0...turbo-plugin-git-svn--v0.9.0) (2026-09-10)
+
+
+### Added
+
+* **git-svn:** 全新的 SVN 樹在 bootstrap 就宣告行尾,不必再等使用者去跑遷移 ([7e1a49a](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7e1a49a0755d3389d5ab36bee7399d9a20d755e3)), closes [#180](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/180)
+* **git-svn:** 推送前先問「SVN 會把這幾個純文字檔當成 binary,要處理嗎」 ([6ad3d5a](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6ad3d5aa705ebf61f33f33783a48c5da4bde6018)), closes [#175](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/175)
+* **git-svn:** 遷移改成分批提交,並在逾時後叫使用者先不要急著查 ([f0113bf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f0113bfb6d2e6745df1ddeb4def9bf88a1480743))
+
+
+### Fixed
+
+* **git-svn:** PowerShell 的分批提交把 svn 輸出當成回傳值,失敗分支不可達 ([f496aba](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f496aba8d8780c8dfb82012e3951156621561744))
+* **git-svn:** tp-request-merge 的 description 不再寫死 main ([b104381](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/b104381a19dd8668588eb9ddd5895128583913b2)), closes [#165](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/165)
+* **git-svn:** 拿掉推導 auto-props 時的 `|| true`,別把失敗吞成「不宣告」 ([3ef57e9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3ef57e9358e7c590ad4a4b884ab58ff453a30955))
+* **git-svn:** 逾時後要問「這條分支路徑」而不是版本庫 HEAD ([0c83641](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0c8364185afdd9cc71230d02d1208cbaa1988034))
+* **git-svn:** 遷移腳本失敗後不再留下殘局,並說明 commit 逾時後怎麼確認 ([b13f2aa](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/b13f2aab99bca8a22e3aa13f586082ec51642f84)), closes [#176](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/176) [#177](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/177)
+
 ## [0.8.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.7.1...turbo-plugin-git-svn--v0.8.0) (2026-09-08)
 
 
