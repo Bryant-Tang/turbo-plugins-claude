@@ -336,6 +336,26 @@ list_svn_eol_candidates() {
   classify_svn_eol_paths "$1" | awk -F'\t' '$1 == "candidate" { sub(/^[^\t]*\t/, ""); print }'
 }
 
+# Build the svn:auto-props value that declares a tree, from a list of paths on stdin.
+#
+# svn:auto-props is SVN's counterpart to committing a .gitattributes: shared, versioned, and applied
+# at `svn add` time -- so it is what protects a repository from clients that are not this plugin.
+# SVN matches it by FILENAME PATTERN and has no content heuristic to fall back on, which is why the
+# patterns are derived from the extensions actually present rather than being a fixed list: `*` as a
+# pattern would put svn:eol-style on binaries and corrupt them.
+#
+# Two callers, one rule: the one-shot migration derives it from the bridge's text files, and the
+# bootstrap derives it from the project about to be imported. They must not drift -- the value this
+# produces is exactly what `svn_tree_declares_eol_style` later looks for.
+#
+# Reads repo-relative paths on stdin, echoes the property value (empty if nothing qualifies).
+derive_svn_auto_props() {
+  awk -F'/' '{ print $NF }' \
+    | awk -F'.' 'NF > 1 { print "*." tolower($NF) }' \
+    | LC_ALL=C sort -u \
+    | sed 's/$/ = svn:eol-style=native/'
+}
+
 # Would `svn add` decide this file is binary?
 #
 # svn has its own content heuristic, and it disagrees with git's. It skips a leading UTF-8 BOM,

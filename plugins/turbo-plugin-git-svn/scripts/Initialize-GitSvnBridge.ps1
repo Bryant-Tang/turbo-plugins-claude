@@ -462,16 +462,49 @@ try {
         # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs),
         # then `svn update` so the whole WC sits uniformly at SVN HEAD -- a subsequent
         # tp-pull-from-svn then resolves cur=HEAD and imports nothing (no double-import). ----
+        #
+        # A BRAND-NEW SVN tree also gets svn:eol-style declared here, in the same commit (#180).
+        # `legacy-empty` is exactly that case: the URL exists and has no history touching it, so
+        # there are no pre-existing files whose line endings anyone has to decide about -- which is
+        # the whole reason /tp-init-svn-eol-style is a deliberate, preview-first,
+        # explicit-request-only command. There is nothing to migrate here, so the repository can
+        # simply start out correct.
+        #
+        # Without this, a fresh repository's line endings are held together by the GIT-side pin
+        # alone: the bridge is pinned to LF while the tree declares nothing, so what svn receives
+        # happens to be LF. That guarantee only holds while every commit goes through this plugin
+        # -- anyone using another SVN client puts CRLF straight in, and nothing stops them.
+        #
+        # The patterns come from the project about to be imported, because svn:auto-props matches by
+        # filename and has no content heuristic. A project with no text files yet declares nothing
+        # and behaves exactly as before; the push path still marks what it commits.
+        $autoProps = ''
+        if ($mode -eq 'legacy-empty') {
+            $autoProps = Get-SvnAutoPropsValue -Path @(Get-SvnEolCandidate -Worktree $mainWorktree)
+        }
         Push-Location $remoteWorktreePath
         try {
             & svn propset svn:ignore '.git' '.'
             if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:ignore failed' }
+            if ($autoProps) {
+                & svn propset svn:auto-props $autoProps '.'
+                if ($LASTEXITCODE -ne 0) { throw 'svn propset svn:auto-props failed' }
+            }
             & svn commit -m 'svn:ignore=.git (turbo-plugin bridge)'
             if ($LASTEXITCODE -ne 0) { throw 'svn commit (svn:ignore) failed' }
             & svn update
             if ($LASTEXITCODE -ne 0) { throw 'svn update (normalize to HEAD) failed' }
         } finally {
             Pop-Location
+        }
+        if ($autoProps) {
+            Write-Output 'Declared svn:eol-style for this tree, so it never needs the one-shot migration.'
+            # Declaring FLIPS the bridge's mode: svn now writes platform endings for anything it
+            # marks, so the LF pin has to come off before any content is written. The earlier calls
+            # ran before this commit existed and read the pre-declaration answer. Getting this wrong
+            # is silent until the next update, at which point the whole tree reads as modified --
+            # the same ordering trap the migration has with auto-props going out in its first batch.
+            Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $remoteWorktreePath
         }
         $eaFinal = $ErrorActionPreference
         $ErrorActionPreference = 'SilentlyContinue'

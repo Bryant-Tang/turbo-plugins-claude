@@ -128,6 +128,20 @@ BeforeAll {
         return ($out | Out-String).Trim()
     }
 
+    # svn propget svn:auto-props on a working copy, isolated via --config-dir (KTD8). That property
+    # IS the "this tree declares svn:eol-style" signal the bridge reads.
+    function Get-SvnAutoProps {
+        param([string]$WcPath, [string]$ConfigDir)
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'SilentlyContinue'
+        try {
+            $out = & svn propget --config-dir $ConfigDir svn:auto-props $WcPath 2>$null
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+        return ($out | Out-String).Trim()
+    }
+
     # Does this URL resolve in the repository? Isolated via --config-dir (KTD8).
     function Test-SvnPathExists {
         param([string]$Url, [string]$ConfigDir)
@@ -1138,6 +1152,74 @@ Describe 'Initialize-GitSvnBridge' {
                 $pull.Stdout | Should -Match 'Already up to date'
                 $after = [int](Run-Git-Capture -Cwd $root -GitArgs @('rev-list', '--count', 'remote-svn/main'))
                 ($after - $before) | Should -Be 0
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    # issue #180: a brand-new SVN tree starts out declared.
+    #
+    # Before this, a fresh repository's line endings were held together by the GIT-side pin alone:
+    # the bridge is pinned to LF while the tree declares nothing, so what svn receives happens to be
+    # LF. That guarantee only holds while every commit goes through this plugin -- anyone using
+    # another SVN client puts CRLF straight in. Declaring at bootstrap makes SVN itself the
+    # guarantor, and a repository created this way never needs the one-shot migration.
+    #
+    # Mirrors initialize-git-svn-bridge.test.sh.
+    Context 'issue #180: a brand-new SVN tree is declared at bootstrap' {
+        It 'sets svn:auto-props from the project extensions and unpins the bridge' -Skip:(-not $SvnAvailable) {
+            $sb = New-Sandbox -Tag 'igsb-180a'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseBRepo -Root $root -Files @{ 'app.txt' = "alpha`nbeta`n"; 'notes.md' = "# notes`n" }
+                $uri = New-SvnRepo -Sandbox $sb
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build empty svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', $uri)
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+
+                $bridge = Get-BridgePath -Root $root
+                $ap = Get-SvnAutoProps -WcPath $bridge -ConfigDir $cfg
+                $ap | Should -Match 'svn:eol-style=native'
+                # Derived from the project's own extensions, not a fixed list: svn:auto-props
+                # matches by filename and has no content heuristic, so `*` would put svn:eol-style
+                # on binaries.
+                $ap | Should -Match '\*\.txt'
+
+                # Declaring FLIPS the bridge's mode, and the calls that ran earlier read the
+                # pre-declaration answer. Left pinned, the next `svn update` writes platform endings
+                # for the newly marked files while git still expects LF and the whole tree reads as
+                # modified -- silent until then.
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('config', '--worktree', 'core.eol')) | Should -BeNullOrEmpty
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain')) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    # The control. Without it, "declares on a new tree" would pass just as happily if the bootstrap
+    # declared unconditionally -- and declaring an EXISTING tree is precisely what must not happen
+    # automatically: those files may be stored with CRLF, and deciding that is the migration's job,
+    # behind a preview and an explicit request.
+    Context 'issue #180: an existing SVN tree is left undeclared' {
+        It 'sets no svn:auto-props and keeps the bridge pinned to LF' -Skip:(-not $SvnReady) {
+            $sb = New-Sandbox -Tag 'igsb-180b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'test-turbo-plugin')
+                $cfg  = [System.IO.Path]::Combine($sb, '.svnconfig')
+                New-CaseBRepo -Root $root -Files @{ 'app.txt' = "alpha`nbeta`n" }
+                $uri = New-SvnRepo -Sandbox $sb -Load
+                if ($null -eq $uri) { Set-ItResult -Skipped -Because 'could not build seeded svn repo'; return }
+
+                $res = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $root -ScriptArgs @('-SvnUrl', "$uri/trunk", '-Granularity', 'squash')
+                $res.ExitCode | Should -Be 0 -Because $res.Combined
+
+                $bridge = Get-BridgePath -Root $root
+                (Get-SvnAutoProps -WcPath $bridge -ConfigDir $cfg) | Should -BeNullOrEmpty
+                (Run-Git-Capture -Cwd $bridge -GitArgs @('config', '--worktree', 'core.eol')) | Should -BeExactly 'lf'
             } finally {
                 Remove-Sandbox -Dir $sb
             }

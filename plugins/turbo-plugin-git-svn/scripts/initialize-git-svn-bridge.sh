@@ -406,12 +406,48 @@ fi
 # ---- step 12: pin svn:ignore=.git on the SVN side and commit it (permanent; re-run absorbs), then
 # `svn update` so the whole WC sits uniformly at SVN HEAD -- a subsequent tp-pull-from-svn then
 # resolves cur=HEAD and imports nothing (no double-import; KTD4 mixed-revision floor). ----
+#
+# A BRAND-NEW SVN tree also gets svn:eol-style declared here, in the same commit (issue #180).
+# `legacy-empty` is exactly that case: the URL exists and has no history touching it, so there are
+# no pre-existing files whose line endings anyone has to decide about -- which is the whole reason
+# /tp-init-svn-eol-style is a deliberate, preview-first, explicit-request-only command. There is
+# nothing to migrate here, so the repository can simply start out correct.
+#
+# Without this, a fresh repository's line endings are held together by the GIT-side pin alone: the
+# bridge is pinned to LF while the tree declares nothing, so what svn receives happens to be LF.
+# That guarantee only holds while every commit goes through this plugin -- anyone using another SVN
+# client puts CRLF straight in, and nothing stops them.
+#
+# The patterns come from the project about to be imported, because svn:auto-props matches by
+# filename and has no content heuristic. A project with no text files yet declares nothing and
+# behaves exactly as before; the push path still marks what it commits.
+AUTOPROPS=''
+if [[ "$MODE" == 'legacy-empty' ]]; then
+  # No `|| true`: under `set -euo pipefail` that would swallow a failure here and leave AUTOPROPS
+  # empty, so the tree would silently not be declared and the repository would quietly need a
+  # migration nobody knows to run -- the exact silent degradation this change exists to remove.
+  # A project with no text files is NOT a failure: git exits 0 with empty output and the derivation
+  # yields an empty value, which the caller already treats as "nothing to declare".
+  AUTOPROPS="$(list_svn_eol_candidates "$MAIN_WORKTREE" | tr '\\' '/' | derive_svn_auto_props)"
+fi
 (
   cd "$REMOTE_PATH"
   svn propset svn:ignore '.git' '.'
+  if [[ -n "$AUTOPROPS" ]]; then
+    svn propset svn:auto-props "$AUTOPROPS" '.'
+  fi
   svn commit -m 'svn:ignore=.git (turbo-plugin bridge)'
   svn update
 )
+if [[ -n "$AUTOPROPS" ]]; then
+  echo "Declared svn:eol-style for this tree, so it never needs the one-shot migration."
+  # Declaring FLIPS the bridge's mode: svn now writes platform endings for anything it marks, so
+  # the LF pin has to come off before any content is written. The earlier calls ran before this
+  # commit existed and read the pre-declaration answer. Getting this wrong is silent until the next
+  # update, at which point the whole tree reads as modified -- the same ordering trap the migration
+  # has with auto-props going out in its first batch.
+  ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH"
+fi
 SVN_REV="$(svn info --show-item revision "$REMOTE_PATH" 2>/dev/null | tr -d '[:space:]' || true)"
 
 # All bridge-creation steps succeeded; disable the rollback trap before the merge.
