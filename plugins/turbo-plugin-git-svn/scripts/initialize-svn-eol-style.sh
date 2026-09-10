@@ -204,7 +204,10 @@ if [[ "$MIXED_COUNT" -gt 0 ]]; then
   echo
   echo "These files have BOTH LF and CRLF line endings. svn refuses to commit such a file once"
   echo "svn:eol-style is set, so they are excluded and will keep whatever endings they have."
-  echo "Normalise them in git first if you want them covered:"
+  echo "To cover them: pick one ending for each in the MAIN worktree, commit, push with"
+  echo "/tp-push-to-svn, then run this command again. The change is a real one there -- these files"
+  echo "reached git through the bridge, which stores SVN's bytes as they are, so the mixed endings"
+  echo "are in the committed blob and not just in the working copy."
   printf '%s\n' "$MIXED_LIST" | sed 's/^/  /'
 fi
 

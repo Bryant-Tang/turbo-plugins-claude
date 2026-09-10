@@ -201,7 +201,10 @@ try {
         Write-Output ''
         Write-Output 'These files have BOTH LF and CRLF line endings. svn refuses to commit such a file once'
         Write-Output 'svn:eol-style is set, so they are excluded and will keep whatever endings they have.'
-        Write-Output 'Normalise them in git first if you want them covered:'
+        Write-Output 'To cover them: pick one ending for each in the MAIN worktree, commit, push with'
+        Write-Output '/tp-push-to-svn, then run this command again. The change is a real one there -- these files'
+        Write-Output "reached git through the bridge, which stores SVN's bytes as they are, so the mixed endings"
+        Write-Output 'are in the committed blob and not just in the working copy.'
         foreach ($m in $mixedPaths) { Write-Output "  $m" }
     }
 
