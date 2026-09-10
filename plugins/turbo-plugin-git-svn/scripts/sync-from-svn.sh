@@ -58,6 +58,13 @@ ORIGINAL_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD)"
 # (synced from main by new-remote-bridge), so git ignores SVN's binary metadata and the
 # manual `.svn/*` filter is gone; genuine manual edits are still caught and would otherwise
 # be packaged into the sync commit.
+# The EOL mode has to be current before this question can be answered at all: a bridge pinned to LF
+# while the tree declares svn:eol-style reads as "every file modified", which is indistinguishable
+# here from real pending work. Migrations up to 0.8.0 left exactly that state behind (see
+# initialize-svn-eol-style.sh), so recovering from it must not require this guard to pass first.
+# Memoised, so the later refresh before the replay costs nothing.
+ensure_bridge_eol_mode_once "$REMOTE_PATH" || true
+
 REMOTE_DIRTY="$(git -C "$REMOTE_PATH" status --porcelain)"
 if [[ -n "$REMOTE_DIRTY" ]]; then
   echo "Error: Remote worktree '$REMOTE_PATH' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling." >&2

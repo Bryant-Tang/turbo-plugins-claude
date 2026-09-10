@@ -65,6 +65,13 @@ try {
         exit 0
     }
 
+    # The EOL mode has to be current before this question can be answered at all: a bridge pinned
+    # to LF while the tree declares svn:eol-style reads as "every file modified", which is
+    # indistinguishable here from real pending work. Migrations up to 0.8.0 left exactly that state
+    # behind [see Initialize-SvnEolStyle.ps1], so recovering from it must not require this guard to
+    # pass first.
+    Set-BridgeEolModeOnce -Bridge $remote.Path
+
     $remoteGitStatus = (& git -C $remote.Path status --porcelain | Out-String).Trim()
     if ($remoteGitStatus) {
         throw "Remote worktree '$($remote.Name)' has uncommitted git changes. Resolve before pushing."

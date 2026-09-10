@@ -49,6 +49,13 @@ try {
 
     # ---- pre-flight (ALL checks + classification BEFORE any svn delete) ----
 
+    # The EOL mode has to be current before this question can be answered at all: a bridge pinned
+    # to LF while the tree declares svn:eol-style reads as "every file modified", which is
+    # indistinguishable here from real pending work. Migrations up to 0.8.0 left exactly that state
+    # behind [see Initialize-SvnEolStyle.ps1], so recovering from it must not require this guard to
+    # pass first. Memoised, so the later refresh on the reconcile path costs nothing.
+    Set-BridgeEolModeOnce -Bridge $remotePath
+
     # The bridge must be clean before we mutate it: a dirty bridge means uncommitted state that a
     # later `git add -A` (reconcile path) would wrongly package into the sync commit.
     $bridgeStatus = (& git -C $remotePath status --porcelain | Out-String).Trim()
