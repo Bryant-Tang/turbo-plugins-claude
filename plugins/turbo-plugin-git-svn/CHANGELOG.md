@@ -2,6 +2,34 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.9.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.8.0...turbo-plugin-git-svn--v0.9.0) (2026-09-30)
+
+
+### Added
+
+* **git-svn:** 全新的 SVN 樹在 bootstrap 就宣告行尾,不必再等使用者去跑遷移 ([7e1a49a](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7e1a49a0755d3389d5ab36bee7399d9a20d755e3)), closes [#180](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/180)
+* **git-svn:** 推送前先問「SVN 會把這幾個純文字檔當成 binary,要處理嗎」 ([6ad3d5a](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6ad3d5aa705ebf61f33f33783a48c5da4bde6018)), closes [#175](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/175)
+* **git-svn:** 遷移改成分批提交,並在逾時後叫使用者先不要急著查 ([f0113bf](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f0113bfb6d2e6745df1ddeb4def9bf88a1480743))
+
+
+### Fixed
+
+* **git-svn:** PowerShell 的分批提交把 svn 輸出當成回傳值,失敗分支不可達 ([f496aba](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f496aba8d8780c8dfb82012e3951156621561744))
+* **git-svn:** svn 只改了行尾的檔案不再擋住下一次推送、拉取與遷移 ([60c86f4](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/60c86f4b0ee64729ec6c14a31fab5407000840d7))
+* **git-svn:** tp-request-merge 的 description 不再寫死 main ([b104381](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/b104381a19dd8668588eb9ddd5895128583913b2)), closes [#165](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/165)
+* **git-svn:** 拿掉推導 auto-props 時的 `|| true`,別把失敗吞成「不宣告」 ([3ef57e9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/3ef57e9358e7c590ad4a4b884ab58ff453a30955))
+* **git-svn:** 推送只剩本機 git commit 失敗時，訊息不再誤報 SVN 狀態 ([fd31cc6](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/fd31cc63c8121cd49f53c293e815480779213650))
+* **git-svn:** 推送在 SVN 那一步失敗後可以重跑接續，不再回 Nothing to push ([87414b4](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/87414b4d9522bf9abbd48311663ebf044388ebd8)), closes [#187](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/187)
+* **git-svn:** 版本庫 auto-props 涵蓋的新增檔被 svn 判成 binary 時，不再在 svn add 就失敗 ([e164576](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/e1645768ba412f7e0ef0f1482c2f976fcd4b204e)), closes [#186](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/186)
+* **git-svn:** 行尾混雜的檔案在主 worktree 就能正規化,別再說它做不到 ([4aa34f6](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/4aa34f6462875c4a9e36ae8d2e79895249dd288e))
+* **git-svn:** 逾時後要問「這條分支路徑」而不是版本庫 HEAD ([0c83641](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/0c8364185afdd9cc71230d02d1208cbaa1988034))
+* **git-svn:** 遷移腳本失敗後不再留下殘局,並說明 commit 逾時後怎麼確認 ([b13f2aa](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/b13f2aab99bca8a22e3aa13f586082ec51642f84)), closes [#176](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/176) [#177](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/177)
+
+
+### Documentation
+
+* **git-svn:** README 說明遷移後被擋住的真正成因是 index 記錄的大小過期 ([2b7ddf2](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/2b7ddf294e164342cf375224d1f828ec6a9a5d91))
+
 ## [0.8.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.7.1...turbo-plugin-git-svn--v0.8.0) (2026-09-08)
 
 
