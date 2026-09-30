@@ -848,6 +848,14 @@ svn_status_xml() {
 # LC_ALL=C so index/substr split on the literal tab byte: UTF-8 never encodes a tab
 # as a trailing byte of a multibyte char, so CJK paths pass through untouched and
 # comparison stays byte-wise, matching the `grep -F` semantics it replaces.
+#
+# A path INSIDE a directory the snapshot listed as unversioned ('?') is not drift (issue #187).
+# svn status collapses a new directory to one '?' line, so the snapshot never names the files in
+# it -- but once a push attempt has run `svn add`, the same files are listed one by one as 'A'.
+# A retry after a failed push has to be able to get past this check, and those files are exactly
+# the prepared ones. Nothing is lost by it: a file that appears in such a directory after prepare
+# was never visible to this check anyway, because status showed only the directory. Separators are
+# compared as '/', since svn reports Windows paths with '\'.
 svn_status_drift_paths() {
   local snapshot_file="$1"
   LC_ALL=C awk '
@@ -855,14 +863,23 @@ svn_status_drift_paths() {
       i = index($0, "\t")
       # A snapshot line with no tab has no path column; keep the whole line as the
       # key (what the previous `cut -f2-` did) rather than dropping it.
-      snap[i ? substr($0, i + 1) : $0] = 1
+      p = i ? substr($0, i + 1) : $0
+      snap[p] = 1
+      if (i && substr($0, 1, i - 1) == "?") { q = p; gsub(/\\/, "/", q); unversioned_dir[q] = 1 }
       next
     }
     {
       i = index($0, "\t")
       if (i == 0) next
       p = substr($0, i + 1)
-      if (p != "" && !(p in snap)) print p
+      if (p == "" || (p in snap)) next
+      q = p; gsub(/\\/, "/", q)
+      inside = 0
+      while (match(q, /\/[^\/]*$/)) {
+        q = substr(q, 1, RSTART - 1)
+        if (q in unversioned_dir) { inside = 1; break }
+      }
+      if (!inside) print p
     }
   ' "$snapshot_file" -
 }

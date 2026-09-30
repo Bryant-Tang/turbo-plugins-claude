@@ -2007,6 +2007,26 @@ test_status_drift_still_reports_real_arrivals_at_scale() {
 build/output-added-after-prepare.log' "$out"
 }
 
+# issue #187: a retry after a failed push meets files that `svn add` has already scheduled one by
+# one inside a directory the snapshot listed only as '?'. Those are the prepared files, not drift;
+# a genuinely new path elsewhere, and a sibling whose name merely starts the same, still are.
+test_status_drift_ignores_files_inside_a_snapshot_unversioned_dir() {
+    local tmp out rc
+    tmp="$(mktemp -d -t turbo-drift-XXXXXX)"
+    printf '?\tdocs\nM\tapp.txt\n' > "$tmp/snapshot"
+    out="$(drift_paths_via_pipe "$tmp/snapshot" "A	docs
+A	docs/notes.md
+A	docs\\sub\\deep.md
+M	app.txt
+A	docsx/other.md
+?	late.txt")"; rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+
+    assertEquals 'drift detection exits 0' 0 "$rc"
+    assertEquals 'only the paths outside the snapshot directory' 'docsx/other.md
+late.txt' "$out"
+}
+
 test_status_drift_compares_non_ascii_paths_byte_wise() {
     local tmp current out
     tmp="$(mktemp -d -t turbo-drift-XXXXXX)"

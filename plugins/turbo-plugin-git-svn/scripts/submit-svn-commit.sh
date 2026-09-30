@@ -150,11 +150,16 @@ if [[ -n "$TP_CUR_ALIGNED" && -n "$TP_NEW_ALIGNED" && "$TP_NEW_ALIGNED" -gt "$TP
   TP_ADVANCE=1
 fi
 
-echo "Finalising merge commit..."
-if ! git -C "$REMOTE_PATH" commit --no-edit; then
-  echo "Error: git commit failed when finalising the prepared merge." >&2
-  exit 1
-fi
+# The prepared merge is committed on the git side only AFTER svn has accepted the changeset (issue
+# #187). It used to be committed first, so any svn step failing afterwards -- `svn add`, the binary
+# guard, eol-style, the commit itself -- left MERGE_HEAD gone and SVN unchanged. A re-run then saw
+# no pending merge and an empty range and answered "Nothing to push", which reads as success.
+# Committing last keeps MERGE_HEAD until SVN has the change, so a failure lands back on the existing
+# PENDING_MERGE_DETECTED path, and a retry still reuses the merge (what #34 wanted to keep).
+finalise_git_merge() {
+  echo "Finalising merge commit..."
+  git -C "$REMOTE_PATH" commit --no-edit
+}
 
 MSG_FILE="$(mktemp)"
 # --targets files for the add / delete / commit steps (issue #35). Created OUT here, not inside the
@@ -261,6 +266,7 @@ set +e
 
   if [[ ${#COMMIT_TARGETS[@]} -eq 0 ]]; then
     echo "No changes to commit to SVN (all pending changes are git-ignored)"
+    finalise_git_merge || exit 3
     svn update > /dev/null || echo 'Warning: svn update on no-commit path failed. Remote worktree may be stale.' >&2
     exit 0
   fi
@@ -347,6 +353,9 @@ set +e
   echo "Committing to SVN..."
   write_svn_targets_file "$TARGETS_COMMIT" "${COMMIT_TARGETS[@]}" || exit 1
   COMMIT_OUT="$(svn commit ${DEPTH_ARGS[@]+"${DEPTH_ARGS[@]}"} --file "$MSG_FILE" --encoding UTF-8 --targets "$TARGETS_COMMIT" ${DOT_TARGET[@]+"${DOT_TARGET[@]}"})" || exit 1
+  # SVN has it now. Exit 3, not 1, if the git side then fails: the push itself went through, and
+  # the half-done guidance below (retry / unwind) would be wrong for that state.
+  finalise_git_merge || exit 3
   # issue #79: print OUR OWN path list rather than svn's. svn renders its per-path progress lines in
   # the console codepage, so on a zh-TW host a non-ASCII filename arrives as '?' -- and this listing
   # is the one place the user sees WHAT was just written permanently, at the moment it became
@@ -388,32 +397,49 @@ if [[ $svn_commit_status -eq 0 ]]; then
   rm -f "$SHA_FILE" 2>/dev/null || true
   rm -f "$SVN_STATUS_FILE" 2>/dev/null || true
   rm -f "$BODY_FILE" 2>/dev/null || true
+elif [[ $svn_commit_status -eq 3 ]]; then
+  # SVN accepted the changeset; only the git-side commit of the prepared merge failed. The pins are
+  # no longer needed for anything -- there is nothing left to retry on the SVN side -- but the merge
+  # is still staged, so the one thing to do is commit it.
+  rm -f "$SHA_FILE" "$SVN_STATUS_FILE" "$BODY_FILE" 2>/dev/null || true
+  {
+    echo ''
+    echo 'TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN'
+    echo 'The change IS in SVN. Only the local git commit of the prepared merge failed, so the bridge'
+    echo 'still holds it staged. Fix the git error above, then finish it with:'
+    echo "  git -C \"$REMOTE_PATH\" commit --no-edit"
+    echo 'Do NOT re-run /tp-push-to-svn or abort the merge first: SVN already has this change.'
+  } >&2
+  exit 1
 else
-  # A failed svn commit leaves a half-finished state that nothing else reports: the merge commit was
-  # already made above, the adds/deletes are still SCHEDULED in the bridge working copy, and the pins
-  # are deliberately kept so a retry need not redo the merge. Previously the script said none of this
-  # and the user was left to reverse-engineer it (issue #34).
+  # A failed svn step leaves the push half-way, and nothing else would report it (issue #34). Since
+  # issue #187 the half is the git side staying UNcommitted: the merge is still pending (MERGE_HEAD
+  # kept), svn may have some adds/deletes/properties scheduled in the bridge working copy, and the
+  # pins are kept -- so a re-run of /tp-push-to-svn lands on PENDING_MERGE_DETECTED and "continue"
+  # finishes the push without redoing the merge.
   #
   # No automatic rollback: whether to retry or unwind depends on WHY svn refused, and the script
   # cannot tell. A transient failure (network, lock, credentials) should be retried -- unwinding it
   # would throw away a correct merge. A rejected commit needs unwinding -- retrying just fails again.
   # So state the position plainly and give both exits.
-  MERGE_SHA="$(git -C "$REMOTE_PATH" rev-parse --verify -q HEAD 2>/dev/null || true)"
   {
     echo ''
     echo 'TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE'
-    echo 'The SVN commit failed. Nothing reached SVN (an svn commit is atomic), but locally:'
-    echo '  - the merge commit has already been made on the bridge branch'
-    echo '  - the add/delete are still scheduled in the bridge working copy'
+    echo 'The push to SVN failed. Nothing reached SVN (an svn commit is atomic), and locally:'
+    echo '  - the merge is prepared on the bridge branch but NOT committed (it stays pending)'
+    echo '  - some add/delete/property changes may be scheduled in the bridge working copy'
     echo '  - the prepare pins are kept, so a retry does not have to redo the merge'
     echo ''
-    echo 'RETRY (transient cause -- network, lock, credentials): fix the cause, re-run /tp-push-to-svn.'
+    echo 'RETRY (the cause is fixed, or was transient -- network, lock, credentials): re-run'
+    echo '  /tp-push-to-svn; it reports the pending merge, and continuing finishes this push.'
     echo 'UNWIND (the commit was rejected and would be rejected again):'
     echo "  1. svn revert -R \"$REMOTE_PATH\""
-    echo "  2. git -C \"$REMOTE_PATH\" reset --hard ${MERGE_SHA:-<merge-sha>}^1"
+    echo "  2. git -C \"$REMOTE_PATH\" reset --hard HEAD"
     echo "  3. rm -f \"$SHA_FILE\" \"$SVN_STATUS_FILE\" \"$BODY_FILE\""
-    echo '  ORDER MATTERS: revert BEFORE reset. The other way round deletes the files from disk while'
-    echo '  svn still has them scheduled, which is harder to clean up than the state you are in now.'
+    echo '  ORDER MATTERS: revert BEFORE the reset. The other way round deletes the files from disk'
+    echo '  while svn still has them scheduled, which is harder to clean up than this state.'
+    echo '  (reset, not `git merge --abort`: after the revert the working files no longer match the'
+    echo '  staged merge, and merge --abort refuses to run over that.)'
   } >&2
   exit $svn_commit_status
 fi

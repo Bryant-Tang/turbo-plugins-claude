@@ -718,5 +718,66 @@ test_new_binary_file_inside_a_new_directory_pushes_with_the_flag() {
     assertEquals 'the sibling never got a mime type' '0' "$sib"
 }
 
+# ── issue #187: a push that fails on the svn side must be retryable ──
+#
+# The git side of the merge used to be committed before any svn step, so a failure afterwards left
+# MERGE_HEAD gone and SVN unchanged: a re-run answered "Nothing to push" and the change never
+# reached SVN. The refusal from the binary guard is the realistic trigger -- it is exactly what the
+# issue hit -- and fixing its cause is what the user does next.
+#
+# $1: 'file' puts the binary-looking file at the root; 'dir' puts it in a directory new to SVN,
+# which is what makes the retry meet `svn add`-scheduled paths the prepare snapshot never listed.
+assert_failed_push_is_retryable() {
+    local where="$1" rel out rc prepare_out bridge_gitdir eol parents
+    if ! declare_eol_style_with_md_on_branch; then startSkipping; return 0; fi
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    if [ "$where" = 'dir' ]; then
+        mkdir -p "$ROOT/docs"
+        rel='docs/notes.md'
+        printf 'plain\n' > "$ROOT/docs/readme.md"
+    else
+        rel='notes.md'
+    fi
+    if ! write_svn_binary_mime_file "$ROOT/$rel"; then startSkipping; return 0; fi
+    git -C "$ROOT" add -A >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'docs: add notes' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' 2>&1 )"; rc=$?
+    assertNotEquals 'the first attempt is refused by the binary guard' 0 "$rc"
+
+    # The merge must still be pending: that is what lets a re-run find it.
+    assertTrue "the merge stays pending after the svn side failed (out: $out)" \
+        "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+
+    prepare_out="$( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x 2>&1 )"
+    case "$prepare_out" in *'PENDING_MERGE_DETECTED'*) : ;; *) fail "re-run did not report the pending merge: $prepare_out" ;; esac
+    case "$prepare_out" in *'Nothing to push'*) fail "re-run claims there is nothing to push: $prepare_out" ;; esac
+
+    # "Continue" in the SKILL: submit again, now with the user's yes to clearing the mark.
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' --clear-binary-mime 2>&1 )"; rc=$?
+    assertEquals "the retry finishes the push (out: $out)" 0 "$rc"
+    eol="$(svn propget svn:eol-style "$BRANCH_URL/$rel" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the file reached SVN, marked' 'native' "$eol"
+
+    assertFalse 'no merge is left pending' "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+    parents="$(git -C "$FEAT_BRIDGE" rev-list --parents -n 1 HEAD | wc -w | tr -d '[:space:]')"
+    assertEquals 'the bridge HEAD is the merge commit' '3' "$parents"
+    bridge_gitdir="$(git -C "$FEAT_BRIDGE" rev-parse --absolute-git-dir)"
+    assertFalse 'the pins are cleaned up' "ls '$bridge_gitdir'/MERGE_HEAD.tp_* >/dev/null 2>&1"
+}
+
+test_failed_push_of_a_new_file_is_retryable() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    assert_failed_push_is_retryable file
+}
+
+test_failed_push_of_a_new_directory_is_retryable() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    assert_failed_push_is_retryable dir
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

@@ -866,4 +866,75 @@ Describe 'Submit-SvnCommit' {
             $script:NbEol3 | Should -Be 'native'
         }
     }
+
+    # ── issue #187: a push that fails on the svn side must be retryable ──
+    #
+    # The git side of the merge used to be committed before any svn step, so a failure afterwards
+    # left MERGE_HEAD gone and SVN unchanged, and a re-run answered "Nothing to push". Mirrors
+    # submit-svn-commit.test.sh: the binary guard's refusal is the trigger, once for a file at the
+    # root and once inside a directory new to SVN -- the latter is what makes the retry meet paths
+    # that `svn add` scheduled but the prepare snapshot never listed.
+    Context 'issue #187: a failed push is retryable' {
+        BeforeAll {
+            $script:RtCases = @{}
+            $rtSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $rtSvnOk = ($LASTEXITCODE -eq 0) } catch { $rtSvnOk = $false }
+            foreach ($where in @('file', 'dir')) {
+                $c = @{ Sb = $null; Rc1 = 0; Pending = $false; Prep = ''; Rc2 = 1; Out2 = ''; Eol = 'unset'; PendingAfter = $true; Parents = 0; Pins = 1 }
+                $script:RtCases[$where] = $c
+                if (-not $rtSvnOk) { continue }
+                $c.Sb = New-Sandbox -Tag "ptsc-rt-$where"
+                $fx = New-FeatureBridge -Sandbox $c.Sb
+                if (-not $fx) { continue }
+                $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                Set-TreeDeclaresEol -IncludeMd -Bridge $bridge
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                $rel = 'notes.md'
+                if ($where -eq 'dir') {
+                    $docs = [System.IO.Path]::Combine($fx.Root, 'docs')
+                    $null = New-Item -ItemType Directory -Path $docs -Force
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($docs, 'readme.md')) -Value 'plain'
+                    $rel = 'docs/notes.md'
+                }
+                New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fx.Root, $rel))
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '-A')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'docs: add notes')
+
+                $c.Rc1 = (Invoke-FeatPushResult -Root $fx.Root -Title 'docs: add notes').ExitCode
+                $c.Pending = ((Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) -eq 0)
+                $c.Prep = (Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')).Combined
+                # "Continue" in the SKILL: submit again, now with the user's yes to clearing the mark.
+                $r2 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'docs: add notes', '-ClearBinaryMime')
+                $c.Rc2 = $r2.ExitCode
+                $c.Out2 = $r2.Combined
+                $c.Eol = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/$rel"
+                $c.PendingAfter = ((Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) -eq 0)
+                $parentLine = Run-Git-Capture -Cwd $bridge -GitArgs @('rev-list', '--parents', '-n', '1', 'HEAD')
+                $c.Parents = @($parentLine -split '\s+' | Where-Object { $_ }).Count
+                $gitDir = Run-Git-Capture -Cwd $bridge -GitArgs @('rev-parse', '--absolute-git-dir')
+                $c.Pins = @(Get-ChildItem -LiteralPath $gitDir -Filter 'MERGE_HEAD.tp_*' -Force -ErrorAction SilentlyContinue).Count
+            }
+        }
+        AfterAll {
+            foreach ($k in @($script:RtCases.Keys)) { if ($script:RtCases[$k].Sb) { Remove-Sandbox -Dir $script:RtCases[$k].Sb } }
+        }
+
+        It '<_>: the first attempt is refused and the merge stays pending' -Skip:(-not $script:SvnReady) -ForEach @('file', 'dir') {
+            $script:RtCases[$_].Rc1 | Should -Not -Be 0
+            $script:RtCases[$_].Pending | Should -BeTrue
+        }
+        It '<_>: a re-run reports the pending merge instead of "Nothing to push"' -Skip:(-not $script:SvnReady) -ForEach @('file', 'dir') {
+            $script:RtCases[$_].Prep | Should -Match 'PENDING_MERGE_DETECTED'
+            $script:RtCases[$_].Prep | Should -Not -Match 'Nothing to push'
+        }
+        It '<_>: continuing finishes the push' -Skip:(-not $script:SvnReady) -ForEach @('file', 'dir') {
+            $script:RtCases[$_].Rc2 | Should -Be 0 -Because $script:RtCases[$_].Out2
+            $script:RtCases[$_].Eol | Should -Be 'native'
+        }
+        It '<_>: and leaves a committed merge with no pins behind' -Skip:(-not $script:SvnReady) -ForEach @('file', 'dir') {
+            $script:RtCases[$_].PendingAfter | Should -BeFalse
+            $script:RtCases[$_].Parents | Should -Be 3
+            $script:RtCases[$_].Pins | Should -Be 0
+        }
+    }
 }
