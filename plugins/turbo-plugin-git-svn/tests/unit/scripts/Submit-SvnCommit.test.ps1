@@ -110,10 +110,14 @@ BeforeAll {
     # Turn the fixture's tree into a migrated one -- exactly what /tp-init-svn-eol-style leaves
     # behind, and the precondition for any of this being reachable.
     function Set-TreeDeclaresEol {
-        param([string]$Bridge)
+        param([string]$Bridge, [switch]$IncludeMd)
+        # -IncludeMd: auto-props also cover `*.md`, which is what /tp-init-svn-eol-style derives for
+        # a tree holding .md files and the precondition for issue #186.
+        $autoProps = '*.txt = svn:eol-style=native'
+        if ($IncludeMd) { $autoProps = "*.md = svn:eol-style=native`n" + $autoProps }
         Push-Location $Bridge
         try {
-            & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+            & svn --non-interactive propset svn:auto-props $autoProps -q '.' 2>$null | Out-Null
             & svn --non-interactive commit -m 'declare svn:eol-style for the tree' 2>$null | Out-Null
         } finally { Pop-Location }
     }
@@ -774,6 +778,246 @@ Describe 'Submit-SvnCommit' {
             # a correct implementation. The bash twin made exactly that mistake.
             $script:PrepOutPlain | Should -Not -Match "new`tnotes\.md"
             $script:PrepOutPlain | Should -Not -Match "existing`tnotes\.md"
+        }
+    }
+
+    # ── issue #186: a NEW file svn calls binary, on a tree whose auto-props cover its extension ──
+    #
+    # The cases above declare `*.txt` only, so `svn add` never tries eol-style on the .md fixture.
+    # With `*.md` declared too, a plain add applies eol-style and the binary mime type in one step
+    # and dies with E200009 before the guard runs. Mirrors submit-svn-commit.test.sh.
+    Context 'issue #186: a new binary-looking file under .md auto-props' {
+        BeforeAll {
+            $script:NbSb = $null; $script:NbRc = 0; $script:NbOut = ''
+            $script:NbRevBefore = 'a'; $script:NbRevAfter = 'b'
+            $script:NbSb2 = $null; $script:NbRc2 = 1; $script:NbOut2 = ''; $script:NbEol2 = 'unset'
+            $script:NbSb3 = $null; $script:NbRc3 = 1; $script:NbOut3 = ''; $script:NbEol3 = 'unset'
+            $nbSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $nbSvnOk = ($LASTEXITCODE -eq 0) } catch { $nbSvnOk = $false }
+            if ($nbSvnOk) {
+                # Without the switch: refused by the guard, not by svn add.
+                $script:NbSb = New-Sandbox -Tag 'ptsc-nb1'
+                $fx1 = New-FeatureBridge -Sandbox $script:NbSb
+                if ($fx1) {
+                    Set-TreeDeclaresEol -IncludeMd -Bridge ([System.IO.Path]::Combine($fx1.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fx1.Root -GitArgs @('checkout', 'feat-x')
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fx1.Root, 'notes.md'))
+                    $null = Run-Git -Cwd $fx1.Root -GitArgs @('add', '--', 'notes.md')
+                    $null = Run-Git -Cwd $fx1.Root -GitArgs @('commit', '-m', 'docs: add a file svn will call binary')
+                    $script:NbRevBefore = Get-BranchRev -BranchUrl $fx1.BranchUrl
+                    $r1 = Invoke-FeatPushResult -Root $fx1.Root -Title 'docs: add notes'
+                    $script:NbRc = $r1.ExitCode
+                    $script:NbOut = $r1.Combined
+                    $script:NbRevAfter = Get-BranchRev -BranchUrl $fx1.BranchUrl
+                }
+                # With the switch: goes through.
+                $script:NbSb2 = New-Sandbox -Tag 'ptsc-nb2'
+                $fx2 = New-FeatureBridge -Sandbox $script:NbSb2
+                if ($fx2) {
+                    Set-TreeDeclaresEol -IncludeMd -Bridge ([System.IO.Path]::Combine($fx2.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('checkout', 'feat-x')
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fx2.Root, 'notes.md'))
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('add', '--', 'notes.md')
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('commit', '-m', 'docs: add a file svn will call binary')
+                    $r2 = Invoke-FeatPushResult -Root $fx2.Root -Title 'docs: add notes' -Extra @('-ClearBinaryMime')
+                    $script:NbRc2 = $r2.ExitCode
+                    $script:NbOut2 = $r2.Combined
+                    $script:NbEol2 = Get-SvnValue propget svn:eol-style "$($fx2.BranchUrl)/notes.md"
+                }
+                # Inside a directory that is new to SVN: status shows only the directory.
+                $script:NbSb3 = New-Sandbox -Tag 'ptsc-nb3'
+                $fx3 = New-FeatureBridge -Sandbox $script:NbSb3
+                if ($fx3) {
+                    Set-TreeDeclaresEol -IncludeMd -Bridge ([System.IO.Path]::Combine($fx3.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('checkout', 'feat-x')
+                    $docs = [System.IO.Path]::Combine($fx3.Root, 'docs')
+                    $null = New-Item -ItemType Directory -Path $docs -Force
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($docs, 'notes.md'))
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($docs, 'readme.md')) -Value 'plain'
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('add', '--', 'docs')
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('commit', '-m', 'docs: add a docs folder')
+                    $r3 = Invoke-FeatPushResult -Root $fx3.Root -Title 'docs: add docs' -Extra @('-ClearBinaryMime')
+                    $script:NbRc3 = $r3.ExitCode
+                    $script:NbOut3 = $r3.Combined
+                    $script:NbEol3 = Get-SvnValue propget svn:eol-style "$($fx3.BranchUrl)/docs/notes.md"
+                }
+            }
+        }
+        AfterAll {
+            foreach ($sb in @($script:NbSb, $script:NbSb2, $script:NbSb3)) { if ($sb) { Remove-Sandbox -Dir $sb } }
+        }
+
+        It 'without the switch the push is refused' -Skip:(-not $script:SvnReady) {
+            $script:NbRc | Should -Not -Be 0
+        }
+        It 'by the guard, not by svn add' -Skip:(-not $script:SvnReady) {
+            $script:NbOut | Should -Not -Match 'E200009'
+            $script:NbOut | Should -Match 'ClearBinaryMime'
+        }
+        It 'and nothing reached SVN' -Skip:(-not $script:SvnReady) {
+            $script:NbRevAfter | Should -Be $script:NbRevBefore
+        }
+        It 'with the switch the push goes through' -Skip:(-not $script:SvnReady) {
+            $script:NbRc2 | Should -Be 0 -Because $script:NbOut2
+            $script:NbEol2 | Should -Be 'native'
+        }
+        It 'and a new directory holding such a file goes through too' -Skip:(-not $script:SvnReady) {
+            $script:NbRc3 | Should -Be 0 -Because $script:NbOut3
+            $script:NbEol3 | Should -Be 'native'
+        }
+    }
+
+    # ── issue #187: a push that fails on the svn side must be retryable ──
+    #
+    # The git side of the merge used to be committed before any svn step, so a failure afterwards
+    # left MERGE_HEAD gone and SVN unchanged, and a re-run answered "Nothing to push". Mirrors
+    # submit-svn-commit.test.sh: the binary guard's refusal is the trigger, once for a file at the
+    # root and once inside a directory new to SVN -- the latter is what makes the retry meet paths
+    # that `svn add` scheduled but the prepare snapshot never listed.
+    Context 'issue #187: a failed push is retryable' {
+        BeforeAll {
+            $script:RtCases = @{}
+            $rtSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $rtSvnOk = ($LASTEXITCODE -eq 0) } catch { $rtSvnOk = $false }
+            foreach ($where in @('file', 'dir')) {
+                $c = @{ Sb = $null; Rc1 = 0; Pending = $false; Prep = ''; Rc2 = 1; Out2 = ''; Eol = 'unset'; PendingAfter = $true; Parents = 0; Pins = 1 }
+                $script:RtCases[$where] = $c
+                if (-not $rtSvnOk) { continue }
+                $c.Sb = New-Sandbox -Tag "ptsc-rt-$where"
+                $fx = New-FeatureBridge -Sandbox $c.Sb
+                if (-not $fx) { continue }
+                $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                Set-TreeDeclaresEol -IncludeMd -Bridge $bridge
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                $rel = 'notes.md'
+                if ($where -eq 'dir') {
+                    $docs = [System.IO.Path]::Combine($fx.Root, 'docs')
+                    $null = New-Item -ItemType Directory -Path $docs -Force
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($docs, 'readme.md')) -Value 'plain'
+                    $rel = 'docs/notes.md'
+                }
+                New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fx.Root, $rel))
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '-A')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'docs: add notes')
+
+                $c.Rc1 = (Invoke-FeatPushResult -Root $fx.Root -Title 'docs: add notes').ExitCode
+                $c.Pending = ((Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) -eq 0)
+                $c.Prep = (Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')).Combined
+                # "Continue" in the SKILL: submit again, now with the user's yes to clearing the mark.
+                $r2 = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'docs: add notes', '-ClearBinaryMime')
+                $c.Rc2 = $r2.ExitCode
+                $c.Out2 = $r2.Combined
+                $c.Eol = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/$rel"
+                $c.PendingAfter = ((Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) -eq 0)
+                $parentLine = Run-Git-Capture -Cwd $bridge -GitArgs @('rev-list', '--parents', '-n', '1', 'HEAD')
+                $c.Parents = @($parentLine -split '\s+' | Where-Object { $_ }).Count
+                $gitDir = Run-Git-Capture -Cwd $bridge -GitArgs @('rev-parse', '--absolute-git-dir')
+                $c.Pins = @(Get-ChildItem -LiteralPath $gitDir -Filter 'MERGE_HEAD.tp_*' -Force -ErrorAction SilentlyContinue).Count
+            }
+        }
+        AfterAll {
+            foreach ($k in @($script:RtCases.Keys)) { if ($script:RtCases[$k].Sb) { Remove-Sandbox -Dir $script:RtCases[$k].Sb } }
+        }
+
+        It '<_>: the first attempt is refused and the merge stays pending' -Skip:(-not $script:SvnReady) -ForEach @('file', 'dir') {
+            $script:RtCases[$_].Rc1 | Should -Not -Be 0
+            $script:RtCases[$_].Pending | Should -BeTrue
+        }
+        It '<_>: a re-run reports the pending merge instead of "Nothing to push"' -Skip:(-not $script:SvnReady) -ForEach @('file', 'dir') {
+            $script:RtCases[$_].Prep | Should -Match 'PENDING_MERGE_DETECTED'
+            $script:RtCases[$_].Prep | Should -Not -Match 'Nothing to push'
+        }
+        It '<_>: continuing finishes the push' -Skip:(-not $script:SvnReady) -ForEach @('file', 'dir') {
+            $script:RtCases[$_].Rc2 | Should -Be 0 -Because $script:RtCases[$_].Out2
+            $script:RtCases[$_].Eol | Should -Be 'native'
+        }
+        It '<_>: and leaves a committed merge with no pins behind' -Skip:(-not $script:SvnReady) -ForEach @('file', 'dir') {
+            $script:RtCases[$_].PendingAfter | Should -BeFalse
+            $script:RtCases[$_].Parents | Should -Be 3
+            $script:RtCases[$_].Pins | Should -Be 0
+        }
+    }
+
+    # The git commit of the merge now runs LAST, so it can fail in a state the half-done guidance
+    # would be wrong about: nothing is left to send to SVN. A failing pre-commit hook is the trigger.
+    # Mirrors submit-svn-commit.test.sh.
+    Context 'a git-only failure after the svn steps' {
+        BeforeAll {
+            function Install-FailingPreCommitHook {
+                param([string]$Root)
+                $common = Run-Git-Capture -Cwd $Root -GitArgs @('rev-parse', '--git-common-dir')
+                # --git-common-dir may answer a RELATIVE path; resolve it against the repo, never
+                # against the caller's cwd (the plugin's own checkout).
+                if (-not [System.IO.Path]::IsPathRooted($common)) { $common = [System.IO.Path]::Combine($Root, $common) }
+                $hooks = [System.IO.Path]::Combine($common, 'hooks')
+                $null = New-Item -ItemType Directory -Path $hooks -Force
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($hooks, 'pre-commit'), "#!/bin/sh`necho 'hook: refusing' >&2`nexit 1`n")
+                # PSEdition first: $IsWindows does not exist on 5.1, and StrictMode throws on reading it.
+                if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { & chmod +x ([System.IO.Path]::Combine($hooks, 'pre-commit')) }
+            }
+            $script:GoCases = @{}
+            $goSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $goSvnOk = ($LASTEXITCODE -eq 0) } catch { $goSvnOk = $false }
+            foreach ($kind in @('sent', 'nothing')) {
+                $c = @{ Sb = $null; Rc = 0; Out = ''; Pending = $false; Pins = 1; RevBefore = 'a'; RevAfter = 'b'; WcRev = 'x' }
+                $script:GoCases[$kind] = $c
+                if (-not $goSvnOk) { continue }
+                $c.Sb = New-Sandbox -Tag "ptsc-go-$kind"
+                $fx = New-FeatureBridge -Sandbox $c.Sb
+                if (-not $fx) { continue }
+                $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                $app = [System.IO.Path]::Combine($fx.Root, 'app.txt')
+                Set-Content -LiteralPath $app -Value 'app-v2'
+                if ($kind -eq 'nothing') { Add-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, '.gitignore')) -Value '*.log' }
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-qam', 'feat: edit app')
+                if ($kind -eq 'nothing') {
+                    # A first push brings the bridge in step, then two commits that cancel out: a
+                    # merge is prepared but the tree is unchanged, and the only thing svn sees is a
+                    # git-ignored build output, which the push skips.
+                    if (-not (Invoke-FeatPush -Root $fx.Root -Title 'edit app')) { continue }
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($bridge, 'build.log')) -Value 'noise'
+                    Set-Content -LiteralPath $app -Value 'app-tmp'
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-qam', 'chore: try something')
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('revert', '--no-edit', 'HEAD')
+                }
+                $c.RevBefore = Get-BranchRev -BranchUrl $fx.BranchUrl
+                $null = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                Install-FailingPreCommitHook -Root $fx.Root
+                $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'edit app')
+                $c.Rc = $r.ExitCode
+                $c.Out = $r.Combined
+                $c.RevAfter = Get-BranchRev -BranchUrl $fx.BranchUrl
+                $c.WcRev = Get-SvnValue info --show-item revision $bridge
+                $c.Pending = ((Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) -eq 0)
+                $gitDir = Run-Git-Capture -Cwd $bridge -GitArgs @('rev-parse', '--absolute-git-dir')
+                $c.Pins = @(Get-ChildItem -LiteralPath $gitDir -Filter 'MERGE_HEAD.tp_*' -Force -ErrorAction SilentlyContinue).Count
+            }
+        }
+        AfterAll {
+            foreach ($k in @($script:GoCases.Keys)) { if ($script:GoCases[$k].Sb) { Remove-Sandbox -Dir $script:GoCases[$k].Sb } }
+        }
+
+        It '<_>: reports the git-only failure, not the half-done one' -Skip:(-not $script:SvnReady) -ForEach @('sent', 'nothing') {
+            $script:GoCases[$_].Rc | Should -Not -Be 0
+            $script:GoCases[$_].Out | Should -Match 'TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN'
+            $script:GoCases[$_].Out | Should -Not -Match 'SVN_COMMIT_FAILED_HALF_DONE'
+        }
+        It '<_>: keeps the merge staged and drops the pins' -Skip:(-not $script:SvnReady) -ForEach @('sent', 'nothing') {
+            $script:GoCases[$_].Pending | Should -BeTrue
+            $script:GoCases[$_].Pins | Should -Be 0
+        }
+        It 'sent: says SVN has it, reports the revision, and still resyncs the working copy' -Skip:(-not $script:SvnReady) {
+            $c = $script:GoCases['sent']
+            $c.Out | Should -Match 'IS in SVN'
+            $c.Out | Should -Match ("Pushed to SVN r" + $c.RevAfter)
+            $c.WcRev | Should -Be $c.RevAfter
+        }
+        It 'nothing: does not claim SVN has a change it never got' -Skip:(-not $script:SvnReady) {
+            $c = $script:GoCases['nothing']
+            $c.Out | Should -Match 'Nothing needed sending to SVN'
+            $c.Out | Should -Not -Match 'IS in SVN'
+            $c.RevAfter | Should -Be $c.RevBefore
         }
     }
 }

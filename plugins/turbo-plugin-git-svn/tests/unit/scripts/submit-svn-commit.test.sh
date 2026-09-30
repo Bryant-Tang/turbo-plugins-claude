@@ -646,5 +646,212 @@ test_prepare_says_nothing_while_the_tree_declares_nothing() {
     case "$out" in *"existing	notes.md"*) fail "notes.md was reported on an unmigrated tree: $out" ;; esac
 }
 
+# ── issue #186: a NEW file svn calls binary, on a tree whose auto-props cover its extension ──
+#
+# Every case above declares `*.txt` only, so `svn add` never tries to put svn:eol-style on the .md
+# fixture. That is exactly the gap #186 fell through: once auto-props also cover `*.md` -- which is
+# what /tp-init-svn-eol-style derives for a tree holding .md files -- `svn add` applies eol-style and
+# the binary mime type in one step, fails with E200009, and the binary guard is never reached.
+declare_eol_style_with_md_on_branch() {
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" propset svn:auto-props "$(printf '*.md = svn:eol-style=native\n*.txt = svn:eol-style=native')" -q '.' ) >/dev/null 2>&1 || return 1
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" commit -m 'declare svn:eol-style for .md and .txt' ) >/dev/null 2>&1 || return 1
+}
+
+test_new_binary_file_under_md_auto_props_reaches_the_guard() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_with_md_on_branch; then startSkipping; return 0; fi
+    local rev_before rev_after out rc
+    if ! commit_binary_mime_file_on_feat; then startSkipping; return 0; fi
+
+    rev_before="$(branch_rev)"
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' 2>&1 )"; rc=$?
+
+    assertNotEquals 'the push is still refused without the flag' 0 "$rc"
+    # The refusal must come from the guard, which names the way out -- not from `svn add`.
+    case "$out" in *'E200009'*) fail "svn add died before the guard: $out" ;; esac
+    case "$out" in *'--clear-binary-mime'*) : ;; *) fail "the guard was not reached: $out" ;; esac
+    rev_after="$(branch_rev)"
+    assertEquals 'nothing may reach SVN when the push is refused' "$rev_before" "$rev_after"
+}
+
+test_new_binary_file_under_md_auto_props_pushes_with_the_flag() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_with_md_on_branch; then startSkipping; return 0; fi
+    local eol mime out rc
+    if ! commit_binary_mime_file_on_feat; then startSkipping; return 0; fi
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' --clear-binary-mime 2>&1 )"; rc=$?
+    assertEquals "the push must go through (out: $out)" 0 "$rc"
+
+    mime="$(svn propget svn:mime-type "$BRANCH_URL/notes.md" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the binary mark is gone in SVN' '' "$mime"
+    eol="$(svn propget svn:eol-style "$BRANCH_URL/notes.md" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the file carries eol-style like every other .md' 'native' "$eol"
+}
+
+# The same file inside a directory that is new to SVN. `svn status` shows only the directory, so the
+# prediction has to look inside it; and the siblings must still get their auto-props, which is what
+# proves the --no-auto-props add stayed limited to the predicted file.
+test_new_binary_file_inside_a_new_directory_pushes_with_the_flag() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_with_md_on_branch; then startSkipping; return 0; fi
+    local eol sib out rc
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    mkdir -p "$ROOT/docs"
+    if ! write_svn_binary_mime_file "$ROOT/docs/notes.md"; then startSkipping; return 0; fi
+    printf 'plain\n' > "$ROOT/docs/readme.md"
+    git -C "$ROOT" add -- docs >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'docs: add a docs folder' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add docs' --clear-binary-mime 2>&1 )"; rc=$?
+    assertEquals "the push must go through (out: $out)" 0 "$rc"
+
+    eol="$(svn propget svn:eol-style "$BRANCH_URL/docs/notes.md" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the predicted file ends up marked' 'native' "$eol"
+    sib="$(svn proplist "$BRANCH_URL/docs/readme.md" --config-dir "$CFG" 2>/dev/null | grep -c 'svn:mime-type')"
+    assertEquals 'the sibling never got a mime type' '0' "$sib"
+}
+
+# ── issue #187: a push that fails on the svn side must be retryable ──
+#
+# The git side of the merge used to be committed before any svn step, so a failure afterwards left
+# MERGE_HEAD gone and SVN unchanged: a re-run answered "Nothing to push" and the change never
+# reached SVN. The refusal from the binary guard is the realistic trigger -- it is exactly what the
+# issue hit -- and fixing its cause is what the user does next.
+#
+# $1: 'file' puts the binary-looking file at the root; 'dir' puts it in a directory new to SVN,
+# which is what makes the retry meet `svn add`-scheduled paths the prepare snapshot never listed.
+assert_failed_push_is_retryable() {
+    local where="$1" rel out rc prepare_out bridge_gitdir eol parents
+    if ! declare_eol_style_with_md_on_branch; then startSkipping; return 0; fi
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    if [ "$where" = 'dir' ]; then
+        mkdir -p "$ROOT/docs"
+        rel='docs/notes.md'
+        printf 'plain\n' > "$ROOT/docs/readme.md"
+    else
+        rel='notes.md'
+    fi
+    if ! write_svn_binary_mime_file "$ROOT/$rel"; then startSkipping; return 0; fi
+    git -C "$ROOT" add -A >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'docs: add notes' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' 2>&1 )"; rc=$?
+    assertNotEquals 'the first attempt is refused by the binary guard' 0 "$rc"
+
+    # The merge must still be pending: that is what lets a re-run find it.
+    assertTrue "the merge stays pending after the svn side failed (out: $out)" \
+        "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+
+    prepare_out="$( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x 2>&1 )"
+    case "$prepare_out" in *'PENDING_MERGE_DETECTED'*) : ;; *) fail "re-run did not report the pending merge: $prepare_out" ;; esac
+    case "$prepare_out" in *'Nothing to push'*) fail "re-run claims there is nothing to push: $prepare_out" ;; esac
+
+    # "Continue" in the SKILL: submit again, now with the user's yes to clearing the mark.
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' --clear-binary-mime 2>&1 )"; rc=$?
+    assertEquals "the retry finishes the push (out: $out)" 0 "$rc"
+    eol="$(svn propget svn:eol-style "$BRANCH_URL/$rel" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the file reached SVN, marked' 'native' "$eol"
+
+    assertFalse 'no merge is left pending' "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+    parents="$(git -C "$FEAT_BRIDGE" rev-list --parents -n 1 HEAD | wc -w | tr -d '[:space:]')"
+    assertEquals 'the bridge HEAD is the merge commit' '3' "$parents"
+    bridge_gitdir="$(git -C "$FEAT_BRIDGE" rev-parse --absolute-git-dir)"
+    assertFalse 'the pins are cleaned up' "ls '$bridge_gitdir'/MERGE_HEAD.tp_* >/dev/null 2>&1"
+}
+
+test_failed_push_of_a_new_file_is_retryable() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    assert_failed_push_is_retryable file
+}
+
+test_failed_push_of_a_new_directory_is_retryable() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    assert_failed_push_is_retryable dir
+}
+
+# The git commit of the merge now runs LAST, so it can fail in a state the half-done guidance
+# would be wrong about: nothing is left to send to SVN. A failing pre-commit hook is the trigger --
+# it is the one realistic way `git commit --no-edit` refuses a prepared merge.
+install_failing_pre_commit_hook() {
+    local hooks
+    # Resolved to an absolute path from inside ROOT: --git-common-dir may answer a RELATIVE `.git`,
+    # which would otherwise be read against the caller's cwd -- the plugin's own checkout.
+    hooks="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)/hooks" || return 1
+    case "$hooks" in "$SB"/*) : ;; *) return 1 ;; esac
+    mkdir -p "$hooks"
+    printf '#!/bin/sh\necho "hook: refusing" >&2\nexit 1\n' > "$hooks/pre-commit"
+    chmod +x "$hooks/pre-commit"
+}
+
+assert_git_only_failure_is_reported() {
+    # $1 = submit output, $2 = rc, $3 = what the message must say about SVN
+    local out="$1" rc="$2" said="$3" bridge_gitdir
+    assertNotEquals 'the push reports the failure' 0 "$rc"
+    case "$out" in *'TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN'*) : ;; *) fail "no git-only token: $out" ;; esac
+    case "$out" in *'SVN_COMMIT_FAILED_HALF_DONE'*) fail "half-done guidance given for a git-only failure: $out" ;; esac
+    case "$out" in *"$said"*) : ;; *) fail "the message does not say '$said': $out" ;; esac
+    assertTrue 'the merge stays staged to be committed' "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+    bridge_gitdir="$(git -C "$FEAT_BRIDGE" rev-parse --absolute-git-dir)"
+    assertFalse 'the pins are cleaned up' "ls '$bridge_gitdir'/MERGE_HEAD.tp_* >/dev/null 2>&1"
+}
+
+test_git_commit_failing_after_svn_says_svn_has_it() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc wc_rev
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add -- app.txt >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: edit app' >/dev/null 2>&1
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    install_failing_pre_commit_hook || { fail 'fixture: could not install the hook inside the sandbox'; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'edit app' 2>&1 )"; rc=$?
+
+    assert_git_only_failure_is_reported "$out" "$rc" 'IS in SVN'
+    case "$out" in *"Pushed to SVN r$(branch_rev)"*) : ;; *) fail "the new revision is not reported: $out" ;; esac
+    # The working copy was resynced even though git failed: the next prepare must not see it stale.
+    wc_rev="$(svn info --show-item revision "$FEAT_BRIDGE" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'svn update still ran' "$(branch_rev)" "$wc_rev"
+}
+
+test_git_commit_failing_with_nothing_to_send_does_not_claim_svn_has_it() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc rev_before
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    # A first push carries whatever the fixture has not pushed yet (its .gitignore), so the bridge
+    # starts this case in step with the branch.
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    printf '*.log\n' >> "$ROOT/.gitignore"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'feat: edit app' >/dev/null 2>&1
+    if ! push_feat 'edit app'; then startSkipping; return 0; fi
+    # Then two commits that cancel out: the range is not empty, so a merge is prepared, but the tree
+    # it produces is unchanged. The only thing svn sees is a git-ignored build output, which the push
+    # skips -- the path the script calls "all pending changes are git-ignored".
+    printf 'noise\n' > "$FEAT_BRIDGE/build.log"
+    printf 'app-tmp\n' > "$ROOT/app.txt"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'chore: try something' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false revert --no-edit HEAD >/dev/null 2>&1
+    rev_before="$(branch_rev)"
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    install_failing_pre_commit_hook || { fail 'fixture: could not install the hook inside the sandbox'; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'try and revert' 2>&1 )"; rc=$?
+
+    case "$out" in *'No changes to commit to SVN'*) : ;; *) fail "fixture: expected the nothing-to-send path: $out"; return 0 ;; esac
+    assert_git_only_failure_is_reported "$out" "$rc" 'Nothing needed sending to SVN'
+    case "$out" in *'IS in SVN'*) fail "claims SVN has a change it never got: $out" ;; esac
+    assertEquals 'nothing reached SVN' "$rev_before" "$(branch_rev)"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

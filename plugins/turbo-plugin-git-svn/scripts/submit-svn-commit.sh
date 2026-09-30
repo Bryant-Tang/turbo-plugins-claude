@@ -150,11 +150,20 @@ if [[ -n "$TP_CUR_ALIGNED" && -n "$TP_NEW_ALIGNED" && "$TP_NEW_ALIGNED" -gt "$TP
   TP_ADVANCE=1
 fi
 
-echo "Finalising merge commit..."
-if ! git -C "$REMOTE_PATH" commit --no-edit; then
-  echo "Error: git commit failed when finalising the prepared merge." >&2
-  exit 1
-fi
+# The prepared merge is committed on the git side only AFTER svn has accepted the changeset (issue
+# #187). It used to be committed first, so any svn step failing afterwards -- `svn add`, the binary
+# guard, eol-style, the commit itself -- left MERGE_HEAD gone and SVN unchanged. A re-run then saw
+# no pending merge and an empty range and answered "Nothing to push", which reads as success.
+# Committing last keeps MERGE_HEAD until SVN has the change, so a failure lands back on the existing
+# PENDING_MERGE_DETECTED path, and a retry still reuses the merge (what #34 wanted to keep).
+finalise_git_merge() {
+  echo "Finalising merge commit..."
+  git -C "$REMOTE_PATH" commit --no-edit
+}
+# Exit codes the commit subshell below uses to say the git commit failed in a state where the
+# half-done retry/unwind guidance would be WRONG. Anything else non-zero is the half-done state.
+readonly EXIT_GIT_FAILED_AFTER_SVN=3   # SVN has the change; only the git commit is missing
+readonly EXIT_GIT_FAILED_NOTHING_SENT=4  # nothing needed sending to SVN; only the git commit is missing
 
 MSG_FILE="$(mktemp)"
 # --targets files for the add / delete / commit steps (issue #35). Created OUT here, not inside the
@@ -175,6 +184,8 @@ set +e
   cd "$REMOTE_PATH"
 
   TO_ADD=()
+  # The same '?' paths without the peg escape, for the binary prediction below (issue #186).
+  TO_ADD_RAW=()
   TO_DEL=()
   MODIFIED_TO_COMMIT=()
   # issue #79: our own copy of "what is being committed", as `<status>\t<UTF-8 path>` entries.
@@ -199,7 +210,8 @@ set +e
     # checks out fine, but passing it as a TARGET makes svn read everything after the last '@' as a
     # revision (issue #34). Escaped here at collection time so every downstream svn call gets it.
     case "$status" in
-      '?') TO_ADD+=("$(svn_target "$filepath")") ;;
+      '?') TO_ADD+=("$(svn_target "$filepath")")
+           TO_ADD_RAW+=("$filepath") ;;
       '!') TO_DEL+=("$(svn_target "$filepath")") ;;
       'M') MODIFIED_TO_COMMIT+=("$(svn_target "$filepath")")
            COMMIT_DISPLAY+=("M	$filepath") ;;
@@ -212,12 +224,29 @@ set +e
   # paths -- a targets file is peg-parsed line by line exactly like argv.
   if [[ ${#TO_ADD[@]} -gt 0 ]]; then
     echo "SVN adding ${#TO_ADD[@]} new file(s)..."
-    write_svn_targets_file "$TARGETS_ADD" "${TO_ADD[@]}" || exit 1
     # --quiet: svn echoes one "A <path>" line per file here, in the console codepage -- the same
     # mojibake as the commit listing (issue #79). The count is already announced above and every
     # path is listed as UTF-8 after the commit, so this output is redundant as well as unreadable.
     # Errors still reach stderr.
-    svn add --quiet --parents --targets "$TARGETS_ADD" || exit 1
+    #
+    # Files svn will stamp binary go in FIRST and without auto-props (issue #186): on a tree whose
+    # svn:auto-props sets svn:eol-style for their extension, a plain add dies with E200009 and never
+    # reaches the binary guard below. The main add then needs --force, because --parents has
+    # already versioned any new directory those files live in; --force makes it recurse into that
+    # directory and add the rest instead of refusing it as already versioned. Only in that case --
+    # an ordinary push runs the exact same add as before.
+    ADD_FORCE=()
+    NO_AUTOPROPS_FILES=()
+    while IFS= read -r nb_path; do
+      [[ -n "$nb_path" ]] && NO_AUTOPROPS_FILES+=("$(svn_target "$nb_path")")
+    done < <(list_new_svn_binary_files "$REMOTE_PATH" "${TO_ADD_RAW[@]}")
+    if [[ ${#NO_AUTOPROPS_FILES[@]} -gt 0 ]]; then
+      write_svn_targets_file "$TARGETS_ADD" "${NO_AUTOPROPS_FILES[@]}" || exit 1
+      svn add --quiet --parents --no-auto-props --targets "$TARGETS_ADD" || exit 1
+      ADD_FORCE=(--force)
+    fi
+    write_svn_targets_file "$TARGETS_ADD" "${TO_ADD[@]}" || exit 1
+    svn add --quiet --parents ${ADD_FORCE[@]+"${ADD_FORCE[@]}"} --targets "$TARGETS_ADD" || exit 1
   fi
   if [[ ${#TO_DEL[@]} -gt 0 ]]; then
     echo "SVN deleting ${#TO_DEL[@]} removed file(s)..."
@@ -241,6 +270,7 @@ set +e
 
   if [[ ${#COMMIT_TARGETS[@]} -eq 0 ]]; then
     echo "No changes to commit to SVN (all pending changes are git-ignored)"
+    finalise_git_merge || exit "$EXIT_GIT_FAILED_NOTHING_SENT"
     svn update > /dev/null || echo 'Warning: svn update on no-commit path failed. Remote worktree may be stale.' >&2
     exit 0
   fi
@@ -357,8 +387,14 @@ set +e
   if [[ "$BRANCH" == "main" && "$NEW_REV" =~ ^[0-9]+$ ]]; then
     svn_rev_mark_set "$MAIN_WORKTREE" "$NEW_REV" "$(git -C "$MAIN_WORKTREE" rev-parse "$BRANCH")"
   fi
+  # SVN has it now. If the git side then fails, the push itself still went through: resync the
+  # working copy and report the revision as usual, then leave with EXIT_GIT_FAILED_AFTER_SVN so the
+  # half-done guidance below (retry / unwind) is not given for a state it would be wrong about.
+  GIT_FINALISED=1
+  finalise_git_merge || GIT_FINALISED=0
   svn update > /dev/null || echo 'Warning: svn update after commit failed. Remote worktree may be stale.' >&2
   echo "Pushed to SVN r$NEW_REV"
+  [[ "$GIT_FINALISED" == 1 ]] || exit "$EXIT_GIT_FAILED_AFTER_SVN"
 )
 svn_commit_status=$?
 set -e
@@ -368,32 +404,54 @@ if [[ $svn_commit_status -eq 0 ]]; then
   rm -f "$SHA_FILE" 2>/dev/null || true
   rm -f "$SVN_STATUS_FILE" 2>/dev/null || true
   rm -f "$BODY_FILE" 2>/dev/null || true
+elif [[ $svn_commit_status -eq $EXIT_GIT_FAILED_AFTER_SVN || $svn_commit_status -eq $EXIT_GIT_FAILED_NOTHING_SENT ]]; then
+  # Only the git-side commit of the prepared merge failed. Nothing is left to retry on the SVN side,
+  # so the pins go; the merge stays staged, and the one thing to do is commit it.
+  rm -f "$SHA_FILE" "$SVN_STATUS_FILE" "$BODY_FILE" 2>/dev/null || true
+  {
+    echo ''
+    echo 'TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN'
+    if [[ $svn_commit_status -eq $EXIT_GIT_FAILED_AFTER_SVN ]]; then
+      echo 'The change IS in SVN (see the revision above). Only the local git commit of the prepared'
+      echo 'merge failed, so the bridge still holds it staged.'
+    else
+      echo 'Nothing needed sending to SVN (every change was git-ignored). Only the local git commit of'
+      echo 'the prepared merge failed, so the bridge still holds it staged.'
+    fi
+    echo 'Fix the git error above, then finish it with:'
+    echo "  git -C \"$REMOTE_PATH\" commit --no-edit"
+    echo 'Do NOT re-run /tp-push-to-svn or abort the merge first.'
+  } >&2
+  exit 1
 else
-  # A failed svn commit leaves a half-finished state that nothing else reports: the merge commit was
-  # already made above, the adds/deletes are still SCHEDULED in the bridge working copy, and the pins
-  # are deliberately kept so a retry need not redo the merge. Previously the script said none of this
-  # and the user was left to reverse-engineer it (issue #34).
+  # A failed svn step leaves the push half-way, and nothing else would report it (issue #34). Since
+  # issue #187 the half is the git side staying UNcommitted: the merge is still pending (MERGE_HEAD
+  # kept), svn may have some adds/deletes/properties scheduled in the bridge working copy, and the
+  # pins are kept -- so a re-run of /tp-push-to-svn lands on PENDING_MERGE_DETECTED and "continue"
+  # finishes the push without redoing the merge.
   #
   # No automatic rollback: whether to retry or unwind depends on WHY svn refused, and the script
   # cannot tell. A transient failure (network, lock, credentials) should be retried -- unwinding it
   # would throw away a correct merge. A rejected commit needs unwinding -- retrying just fails again.
   # So state the position plainly and give both exits.
-  MERGE_SHA="$(git -C "$REMOTE_PATH" rev-parse --verify -q HEAD 2>/dev/null || true)"
   {
     echo ''
     echo 'TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE'
-    echo 'The SVN commit failed. Nothing reached SVN (an svn commit is atomic), but locally:'
-    echo '  - the merge commit has already been made on the bridge branch'
-    echo '  - the add/delete are still scheduled in the bridge working copy'
+    echo 'The push to SVN failed. Nothing reached SVN (an svn commit is atomic), and locally:'
+    echo '  - the merge is prepared on the bridge branch but NOT committed (it stays pending)'
+    echo '  - some add/delete/property changes may be scheduled in the bridge working copy'
     echo '  - the prepare pins are kept, so a retry does not have to redo the merge'
     echo ''
-    echo 'RETRY (transient cause -- network, lock, credentials): fix the cause, re-run /tp-push-to-svn.'
+    echo 'RETRY (the cause is fixed, or was transient -- network, lock, credentials): re-run'
+    echo '  /tp-push-to-svn; it reports the pending merge, and continuing finishes this push.'
     echo 'UNWIND (the commit was rejected and would be rejected again):'
     echo "  1. svn revert -R \"$REMOTE_PATH\""
-    echo "  2. git -C \"$REMOTE_PATH\" reset --hard ${MERGE_SHA:-<merge-sha>}^1"
+    echo "  2. git -C \"$REMOTE_PATH\" reset --hard HEAD"
     echo "  3. rm -f \"$SHA_FILE\" \"$SVN_STATUS_FILE\" \"$BODY_FILE\""
-    echo '  ORDER MATTERS: revert BEFORE reset. The other way round deletes the files from disk while'
-    echo '  svn still has them scheduled, which is harder to clean up than the state you are in now.'
+    echo '  ORDER MATTERS: revert BEFORE the reset. The other way round deletes the files from disk'
+    echo '  while svn still has them scheduled, which is harder to clean up than this state.'
+    echo '  (reset, not `git merge --abort`: after the revert the working files no longer match the'
+    echo '  staged merge, and merge --abort refuses to run over that.)'
   } >&2
   exit $svn_commit_status
 fi

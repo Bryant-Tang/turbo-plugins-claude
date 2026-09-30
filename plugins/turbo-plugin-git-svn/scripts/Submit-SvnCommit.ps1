@@ -105,16 +105,32 @@ try {
     $snapshotLines = @((Get-Content -LiteralPath $svnStatusFile -Encoding UTF8) | Where-Object { $_ -match '\S' })
     $currentSvnLines = @((& svn status $remote.Path) | Where-Object { $_ -match '\S' })
     $snapshotPaths = @{}
+    # Directories the snapshot listed as unversioned ('?'), with '/' separators (issue #187). A path
+    # inside one is not drift: svn status collapses a new directory to one line, so the snapshot
+    # never names its files, but after a push attempt has run `svn add` they are listed one by one.
+    # A retry after a failed push has to get past this check, and those are the prepared files. A
+    # file appearing there after prepare was never visible to this check anyway. Same rule as
+    # svn_status_drift_paths in common.sh.
+    $snapshotUnversionedDirs = @{}
     foreach ($line in $snapshotLines) {
-        if ($line -match '^.\s+(.+)$') { $snapshotPaths[$Matches[1].Trim()] = $true }
+        if ($line -match '^(.)\s+(.+)$') {
+            $snapPath = $Matches[2].Trim()
+            $snapshotPaths[$snapPath] = $true
+            if ($Matches[1] -eq '?') { $snapshotUnversionedDirs[($snapPath -replace '\\', '/')] = $true }
+        }
     }
     $driftedFiles = @()
     foreach ($line in $currentSvnLines) {
         if ($line -match '^.\s+(.+)$') {
             $path = $Matches[1].Trim()
-            if (-not $snapshotPaths.ContainsKey($path)) {
-                $driftedFiles += $path
+            if ($snapshotPaths.ContainsKey($path)) { continue }
+            $inside = $false
+            $parent = $path -replace '\\', '/'
+            while ($parent.LastIndexOf('/') -gt 0) {
+                $parent = $parent.Substring(0, $parent.LastIndexOf('/'))
+                if ($snapshotUnversionedDirs.ContainsKey($parent)) { $inside = $true; break }
             }
+            if (-not $inside) { $driftedFiles += $path }
         }
     }
     if ($driftedFiles.Count -gt 0) {
@@ -154,11 +170,15 @@ try {
         $tpAdvance = $true
     }
 
-    Write-Output "Finalising merge commit..."
-    & git -C $remote.Path commit --no-edit
-    if ($LASTEXITCODE -ne 0) {
-        throw "git commit failed when finalising the prepared merge."
-    }
+    # The prepared merge is committed on the git side only AFTER svn has accepted the changeset
+    # (issue #187; full rationale in submit-svn-commit.sh). Committing it first meant any svn step
+    # failing afterwards left MERGE_HEAD gone and SVN unchanged, and a re-run answered "Nothing to
+    # push". Committing last keeps MERGE_HEAD until SVN has the change, so a failure lands back on
+    # PENDING_MERGE_DETECTED and a retry still reuses the merge.
+    # $gitFinaliseFailed is set only when the git commit itself failed, after every svn step: that
+    # state needs different guidance from the half-done one below.
+    $gitFinaliseFailed = $false
+    $svnCommitted = $false
 
     $newRev = '?'
     $noCommit = $false
@@ -175,6 +195,8 @@ try {
 
         $svnStatusLines = & svn status
         $toAdd = @()
+        # The same '?' paths without the peg escape, for the binary prediction below (issue #186).
+        $toAddRaw = @()
         $toDel = @()
         $modifiedToCommit = @()
         # issue #79: our own record of "what is being committed". Collected from the SAME status
@@ -204,7 +226,10 @@ try {
             # the last '@' as a revision (issue #34). Escaped here at collection time so every
             # downstream svn call gets it.
             switch ($statusChar) {
-                '?' { $toAdd += (ConvertTo-SvnTarget -Path $filePath) }
+                '?' {
+                    $toAdd += (ConvertTo-SvnTarget -Path $filePath)
+                    $toAddRaw += $filePath
+                }
                 '!' { $toDel += (ConvertTo-SvnTarget -Path $filePath) }
                 'M' {
                     $modifiedToCommit += (ConvertTo-SvnTarget -Path $filePath)
@@ -220,12 +245,28 @@ try {
         # file carries the same escaped paths -- a targets file is peg-parsed line by line like argv.
         if ($toAdd.Count -gt 0) {
             Write-Output "SVN adding $($toAdd.Count) new file(s)..."
-            Write-SvnTargetsFile -Path $targetsAdd -Targets $toAdd
             # --quiet: svn echoes one "A <path>" line per file here, in the console codepage -- the
             # same mojibake as the commit listing (issue #79). The count is already announced above
             # and every path is listed after the commit, so this output is redundant as well as
             # unreadable. Errors still reach stderr.
-            & svn add --quiet --parents --targets $targetsAdd
+            #
+            # Files svn will stamp binary go in FIRST and without auto-props (issue #186): on a tree
+            # whose svn:auto-props sets svn:eol-style for their extension, a plain add dies with
+            # E200009 and never reaches the binary guard below. The main add then needs --force,
+            # because --parents has already versioned any new directory those files live in; --force
+            # makes it recurse into that directory and add the rest instead of refusing it as
+            # already versioned. Only in that case -- an ordinary push runs the same add as before.
+            $addForce = @()
+            $noAutoProps = @(Get-SvnNewBinaryFile -Bridge $remote.Path -Path $toAddRaw |
+                ForEach-Object { ConvertTo-SvnTarget -Path $_ })
+            if ($noAutoProps.Count -gt 0) {
+                Write-SvnTargetsFile -Path $targetsAdd -Targets $noAutoProps
+                & svn add --quiet --parents --no-auto-props --targets $targetsAdd
+                if ($LASTEXITCODE -ne 0) { throw 'svn add failed' }
+                $addForce = @('--force')
+            }
+            Write-SvnTargetsFile -Path $targetsAdd -Targets $toAdd
+            & svn add --quiet --parents @addForce --targets $targetsAdd
             if ($LASTEXITCODE -ne 0) { throw 'svn add failed' }
         }
         if ($toDel.Count -gt 0) {
@@ -322,44 +363,8 @@ wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
             Write-Output "Committing to SVN..."
             Write-SvnTargetsFile -Path $targetsCommit -Targets $commitTargets
             $commitLines = & svn commit @depthArgs --file $msgFile --encoding UTF-8 --targets $targetsCommit @dotTarget
-            if ($LASTEXITCODE -ne 0) {
-                # A failed svn commit leaves a half-finished state that nothing else reports: the
-                # merge commit was already made above, the adds/deletes are still SCHEDULED in the
-                # bridge working copy, and the pins are deliberately kept so a retry need not redo
-                # the merge. Previously the script said none of this and the user was left to
-                # reverse-engineer it (issue #34).
-                #
-                # No automatic rollback: whether to retry or unwind depends on WHY svn refused, and
-                # the script cannot tell. A transient failure (network, lock, credentials) should be
-                # retried -- unwinding would throw away a correct merge. A rejected commit needs
-                # unwinding -- retrying just fails again. So state the position and give both exits.
-                # Read-Git rather than try/catch around an inline `2>$null` call (issue #128). The
-                # catch was not dead code being tidied away: under EAP=Stop a `2>` redirection turns
-                # any stderr write into a throw, so on a git that merely WARNS both reads landed in
-                # their catch and the recovery instructions below degraded to a `<merge-sha>`
-                # placeholder and an empty pin dir -- at the exact moment the user needs the real
-                # values to unwind a half-done push.
-                $mergeSha = (Read-Git -Cwd $remote.Path -GitArgs @('rev-parse', '--verify', '-q', 'HEAD')).Text.Trim()
-                if ([string]::IsNullOrWhiteSpace($mergeSha)) { $mergeSha = '<merge-sha>' }
-                $pinDir = (Read-Git -Cwd $remote.Path -GitArgs @('rev-parse', '--absolute-git-dir')).Text.Trim()
-                [Console]::Error.WriteLine(@"
-
-TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE
-The SVN commit failed. Nothing reached SVN (an svn commit is atomic), but locally:
-  - the merge commit has already been made on the bridge branch
-  - the add/delete are still scheduled in the bridge working copy
-  - the prepare pins are kept, so a retry does not have to redo the merge
-
-RETRY (transient cause -- network, lock, credentials): fix the cause, re-run /tp-push-to-svn.
-UNWIND (the commit was rejected and would be rejected again):
-  1. svn revert -R "$($remote.Path)"
-  2. git -C "$($remote.Path)" reset --hard $mergeSha^1
-  3. remove the three MERGE_HEAD.tp_* files in "$pinDir"
-  ORDER MATTERS: revert BEFORE reset. The other way round deletes the files from disk while
-  svn still has them scheduled, which is harder to clean up than the state you are in now.
-"@)
-                throw 'svn commit failed'
-            }
+            if ($LASTEXITCODE -ne 0) { throw 'svn commit failed' }
+            $svnCommitted = $true
             # issue #79: print OUR OWN path list rather than svn's. svn renders its per-path progress
             # lines in the console codepage, so a filename it cannot represent there arrives as '?'
             # -- and this listing is the one place the user sees WHAT was just written permanently,
@@ -446,6 +451,73 @@ UNWIND (the commit was rejected and would be rejected again):
         if ($svnUpdateExit -ne 0) {
             [Console]::Error.WriteLine('Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.')
         }
+        # Last, after SVN has the change and the working copy is resynced. A failure here is not the
+        # half-done state -- nothing is left to send -- so it is flagged for the catch below, and
+        # the revision is still reported, as it went through.
+        Write-Output "Finalising merge commit..."
+        & git -C $remote.Path commit --no-edit
+        if ($LASTEXITCODE -ne 0) {
+            $gitFinaliseFailed = $true
+            if ($svnCommitted) { Write-Output "Pushed to SVN r$newRev" }
+            throw 'git commit failed when finalising the prepared merge.'
+        }
+    } catch {
+        # Read-Git rather than an inline `2>$null` call (issue #128): under EAP=Stop a `2>`
+        # redirection turns any stderr write into a throw, and this is the moment the user needs the
+        # real pin directory to act on.
+        $pinDir = (Read-Git -Cwd $remote.Path -GitArgs @('rev-parse', '--absolute-git-dir')).Text.Trim()
+        if ($gitFinaliseFailed) {
+            # Only the git commit of the prepared merge failed -- after SVN accepted the changeset,
+            # or when every change was git-ignored and nothing needed sending. Nothing is left to
+            # retry on the SVN side, so the pins go; the merge stays staged to be committed.
+            foreach ($pin in @('MERGE_HEAD.tp_branch_sha', 'MERGE_HEAD.tp_svn_status', 'MERGE_HEAD.tp_svn_body')) {
+                try { [System.IO.File]::Delete([System.IO.Path]::Combine($pinDir, $pin)) } catch { }
+            }
+            if ($svnCommitted) {
+                $where = "The change IS in SVN (see the revision above). Only the local git commit of the prepared`nmerge failed, so the bridge still holds it staged."
+            } else {
+                $where = "Nothing needed sending to SVN (every change was git-ignored). Only the local git commit of`nthe prepared merge failed, so the bridge still holds it staged."
+            }
+            [Console]::Error.WriteLine(@"
+
+TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN
+$where
+Fix the git error above, then finish it with:
+  git -C "$($remote.Path)" commit --no-edit
+Do NOT re-run /tp-push-to-svn or abort the merge first.
+"@)
+        } elseif (-not $svnCommitted) {
+            # A failed svn step leaves the push half-way, and nothing else would report it (issue
+            # #34). Since issue #187 the half is the git side staying UNcommitted: the merge is still
+            # pending, svn may have adds/deletes/properties scheduled in the bridge working copy, and
+            # the pins are kept -- so a re-run lands on PENDING_MERGE_DETECTED and "continue"
+            # finishes the push without redoing the merge.
+            #
+            # No automatic rollback: whether to retry or unwind depends on WHY svn refused, and the
+            # script cannot tell. A transient failure should be retried -- unwinding would throw away
+            # a correct merge. A rejected commit needs unwinding -- retrying just fails again. So
+            # state the position and give both exits. Same wording as submit-svn-commit.sh.
+            [Console]::Error.WriteLine(@"
+
+TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE
+The push to SVN failed. Nothing reached SVN (an svn commit is atomic), and locally:
+  - the merge is prepared on the bridge branch but NOT committed (it stays pending)
+  - some add/delete/property changes may be scheduled in the bridge working copy
+  - the prepare pins are kept, so a retry does not have to redo the merge
+
+RETRY (the cause is fixed, or was transient -- network, lock, credentials): re-run
+  /tp-push-to-svn; it reports the pending merge, and continuing finishes this push.
+UNWIND (the commit was rejected and would be rejected again):
+  1. svn revert -R "$($remote.Path)"
+  2. git -C "$($remote.Path)" reset --hard HEAD
+  3. remove the three MERGE_HEAD.tp_* files in "$pinDir"
+  ORDER MATTERS: revert BEFORE the reset. The other way round deletes the files from disk
+  while svn still has them scheduled, which is harder to clean up than this state.
+  (reset, not ``git merge --abort``: after the revert the working files no longer match the
+  staged merge, and merge --abort refuses to run over that.)
+"@)
+        }
+        throw
     } finally {
         Pop-Location
         foreach ($tmp in @($msgFile, $targetsAdd, $targetsDel, $targetsCommit)) {

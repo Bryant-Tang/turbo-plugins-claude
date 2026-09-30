@@ -93,13 +93,14 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--re
 - `PENDING_MERGE_DETECTED <remote-path>` → Script 輸出此 token 並 exit 0;SKILL 進入下方三選一 prompt
 - `TP_TOKEN:BRANCH_MISMATCH_WARNING current=<current> requested=<requested>` → Build-SvnCommit 的 backstop(主要偵測已在 Step 0 pre-flight;此為正常 push 路徑上的二次防線),token 同以 `TP_TOKEN:` 前綴,**觸發條件與 pre-flight 完全相同**(`<requested>` 沒有被任何工作目錄打開著)。Script 輸出此 token 並**繼續執行**;SKILL 進入下方確認 prompt
 - `Error: a path in this commit uses characters your system codepage (CP<n>) cannot represent` → 這次推送裡有檔名用到**你這台機器的字碼頁裝不下的文字**(例如繁中 cp950 系統上的日文假名或 emoji)。這不是 bug,是這台主機傳不進 svn 的字元。**在 SVN 端零寫入**。用白話說明:那個檔名在這台電腦上沒辦法送進 SVN,請改檔名,或依 `/tp-setup` 的編碼說明改用 PowerShell 7+ / 開啟 Windows UTF-8 設定。**不要**照唸 codepage 代號給使用者聽,講「你目前的系統語言設定」即可
-- `TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE` → **svn commit 失敗,但本機留下半完成狀態**(merge commit 已建、新增/刪除仍排程在 bridge、pin 檔保留)。token 後面幾行是腳本印的兩條出路與還原步驟。**這個 token 與那幾行都不可原樣丟給使用者** → 進入下方「commit 失敗處理」
+- `TP_TOKEN:SVN_COMMIT_FAILED_HALF_DONE` → **送 SVN 的過程失敗,本機留在半路上**(merge 已準備好但**還沒 commit**、仍是 pending;部分新增/刪除/屬性可能已排程在 bridge;pin 檔保留)。token 後面幾行是腳本印的兩條出路與還原步驟。**這個 token 與那幾行都不可原樣丟給使用者** → 進入下方「commit 失敗處理」
+- `TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN` → SVN 那側已經沒有事要做(**已收到這次的變更**,或這次的變更全被 git-ignore、本來就沒有東西要送),只有本機 git 那側完成 merge commit 失敗。token 下一行會說是哪一種,照實用白話轉述:前者講「推送其實已經成功,只差本機收尾」,後者講「SVN 這次沒有東西要送,只差本機收尾」。請使用者處理 git 的錯誤後跑腳本印出的那一行 `git -C <bridge> commit --no-edit`。**不要**重跑 `/tp-push-to-svn`,也**不要** abort merge
 
 **commit 失敗處理(`SVN_COMMIT_FAILED_HALF_DONE`)** — 腳本**不會**自動還原,因為「該重試還是該還原」取決於 svn 為什麼拒絕,腳本判斷不了:暫時性原因(網路、鎖、憑證)重試就好,還原反而白白丟掉一次正確的 merge;真的被拒絕則重試幾次都一樣。所以由**你**看 svn 的錯誤訊息判斷,再用白話講給使用者:
 
-1. **先講清楚現在的狀態**(白話,不要露出 token / pin 檔名):「東西沒有送上 SVN(SVN 那邊完全沒變),但本機這邊已經先把這次要推的內容合好了,還留在半路上。」
-2. **看得出是暫時性原因**(連不上伺服器、被鎖、認證失敗)→ 建議修掉原因後**重跑 `/tp-push-to-svn`**,不需要清任何東西。
-3. **看得出是被拒絕**(權限不足、路徑不存在、檔名不被接受等)→ 說明重跑也會再失敗一次,詢問使用者要不要**還原到推送前**。使用者同意才執行腳本印出的三個步驟,**順序不可調換**——一定先 `svn revert -R`、再 `git reset --hard <merge>^1`、最後清 pin 檔。反過來會先把檔案從磁碟刪掉、而 svn 還排程著這些新增,狀態更難收拾。
+1. **先講清楚現在的狀態**(白話,不要露出 token / pin 檔名):「東西沒有送上 SVN(SVN 那邊完全沒變),本機這次要推的內容已經準備好、還沒定案,停在半路上。」
+2. **看得出是暫時性原因**(連不上伺服器、被鎖、認證失敗),或**原因已經排除**(例如使用者剛同意拿掉 SVN 誤判的 binary 標記)→ 建議**重跑 `/tp-push-to-svn`**,不需要清任何東西:prepare 會回報 pending merge,選「繼續送出」就會接著把這次推完,不必重做 merge。
+3. **看得出是被拒絕**(權限不足、路徑不存在、檔名不被接受等)→ 說明重跑也會再失敗一次,詢問使用者要不要**還原到推送前**。使用者同意才執行腳本印出的三個步驟,**順序不可調換**——一定先 `svn revert -R`、再 `git reset --hard HEAD`、最後清 pin 檔。反過來會先把檔案從磁碟刪掉、而 svn 還排程著這些新增,狀態更難收拾。
 4. **判斷不出來** → 把 svn 的原始錯誤訊息**照實**轉述給使用者(那是 svn 講的,不是內部 token),讓他決定,並附上兩條出路。
 
 **BRANCH_MISMATCH_WARNING 處理** — 當 prepare 輸出含以 `TP_TOKEN:BRANCH_MISMATCH_WARNING` 開頭的行時,在繼續解析其他輸出之前,`AskUserQuestion` 詢問:
@@ -111,8 +112,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-push-preflight.sh" --branch <name> [--re
 2. **No, cancel**:跑 `git -C <remote-path> merge --abort` 清掉 prepare 已 stage 的 merge,結束 skill
 
 **PENDING_MERGE_DETECTED 處理** — 當 prepare 輸出以 `PENDING_MERGE_DETECTED` 開頭時,`AskUserQuestion` 提示三選一:
-1. **Abort + re-prepare**:跑 `git -C <remote-path> merge --abort`,再次跑 prepare(返回本 Step,得到新的 `BODY` / `FILES` 輸出)
-2. **Continue to commit**:略過 prepare,直接進 Step 3(使用既有 staged merge)。**注意**:此路徑沒有新的 prepare 輸出可顯示 `BODY` / `FILES`;直接請 agent propose title 進 Step 4。commit 腳本會讀既有 prepare 寫下的 `MERGE_HEAD.tp_svn_body`;若該 pin 不存在會 fail-closed,要求 abort + 重 prepare
+1. **Abort + re-prepare**:依序跑 `svn revert -R <remote-path>`、`git -C <remote-path> reset --hard HEAD`,再次跑 prepare(返回本 Step,得到新的 `BODY` / `FILES` 輸出)。**順序不可調換**,理由同「commit 失敗處理」第 3 點:上一次送出失敗時 svn 可能已排程了新增/刪除。不用 `git merge --abort`——svn revert 之後工作檔與 staged merge 不一致,merge --abort 會拒跑
+2. **Continue to commit**:略過 prepare,直接進 Step 3(使用既有 staged merge)。上一次送出在 SVN 那一步失敗、原因已排除時,**這就是重試的路**。**注意**:此路徑沒有新的 prepare 輸出可顯示 `BODY` / `FILES`;直接請 agent propose title 進 Step 4。commit 腳本會讀既有 prepare 寫下的 `MERGE_HEAD.tp_svn_body`;若該 pin 不存在會 fail-closed,要求 abort + 重 prepare
 3. **Cancel**:結束 skill,不做任何清理
 
 ### Step 3 —(agent 內部準備:解析 prepare 輸出 + 寫 title;**不對使用者輸出任何東西**)
@@ -200,9 +201,9 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Submit-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/submit-svn-commit.sh`)帶 `--branch <name> --title "<那一行 title>"`(**只傳 title,不傳 body / message**);**只有使用者在 Step 4 選了第 5 個選項時才多帶 `--clear-binary-mime` / `-ClearBinaryMime`**——沒有使用者明講就不要帶,那個旗標會改掉 SVN 對那幾個檔案的認定。Script 會:
 - 再次 re-validate SVN HEAD + SHA pin + svn-status drift(防止 race condition)
 - 讀 `MERGE_HEAD.tp_svn_body`(鎖定 body;缺檔則 fail-closed 要求重 prepare),把 title collapse 成單行,自組 `title` + 換行 + `body`(**兩者之間不空行**,與 Step 4 預覽逐字一致)寫入 UTF-8 no-BOM temp 檔
-- `git commit --no-edit` 完成 stage merge
-- 處理 `?` `!` `M` 的 svn add / delete
+- 處理 `?` `!` `M` 的 svn add / delete(會被 SVN 判成 binary 的新增檔先不套 auto-props 單獨加入,交給 binary 守門處理)
 - `svn commit --file <tmp> --encoding UTF-8` push(避免中文 Big5 mangle)
+- **SVN 成功之後**才 `git commit --no-edit` 完成 stage merge——任何 SVN 步驟失敗時 merge 都還 pending,重跑能接續
 - `svn update` 同步 working copy revision
 
 Script 輸出 `Pushed to SVN r<rev>` 或 `No changes to commit to SVN`(全被 git-ignore 篩掉)。

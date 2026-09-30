@@ -477,6 +477,43 @@ list_svn_eol_blockers() {
   return 0
 }
 
+# The files about to be `svn add`ed that svn will stamp binary, so `svn add` must not apply
+# svn:auto-props to them (issue #186).
+#
+# On a tree whose svn:auto-props declares svn:eol-style for, say, `*.md`, `svn add` applies that
+# property and the content heuristic's svn:mime-type in the same step -- and the two cannot coexist,
+# so the add itself dies with E200009 before anything later in the push can look at the file. The
+# binary guard below it (list_svn_eol_blockers + --clear-binary-mime) was never reached for a NEW
+# file; it only ever covered files already in SVN.
+#
+# Adding these few files with --no-auto-props lets the add succeed: svn still stamps the mime type
+# (auto-props do not control the heuristic), and the guard then sees it like any other blocker.
+# The push path sets svn:eol-style on the changeset itself, so the auto-props are not needed for
+# it. Everything else keeps its auto-props; only the predicted files lose the rest of them.
+#
+# The arguments are `svn status` '?' paths, so an unversioned DIRECTORY arrives as one entry and is
+# expanded to the files inside it -- `svn add` recurses into it and hits the same error on any one
+# of them. Git-ignored files inside are skipped: they are not git text candidates, so
+# list_svn_eol_blockers would not report them anyway.
+#
+# $1: bridge worktree path. Remaining args: repo-relative '?' paths (no peg escape).
+# Echoes one repo-relative file path per line. Empty on a tree that declares no svn:eol-style.
+list_new_svn_binary_files() {
+  local bridge="$1"; shift
+  [ "$#" -gt 0 ] || return 0
+  local p _st kind rel
+  for p in "$@"; do
+    [ -n "$p" ] || continue
+    if [ -d "$bridge/$p" ]; then
+      while IFS='|' read -r _st kind rel; do
+        if [ "$kind" = 'tracked' ] && [ -n "$rel" ]; then printf '?\t%s\n' "$rel"; fi
+      done < <(expand_unversioned_dir "$bridge" "$p")
+    else
+      printf '?\t%s\n' "$p"
+    fi
+  done | list_svn_eol_blockers "$bridge" | awk -F'\t' '$1 == "new" { sub(/^[^\t]*\t/, ""); print }'
+}
+
 # Take svn:mime-type off the given paths so svn:eol-style can be set on them.
 #
 # Deliberately narrow: this exists so a user who has been SHOWN the list and said yes can act on
@@ -811,6 +848,14 @@ svn_status_xml() {
 # LC_ALL=C so index/substr split on the literal tab byte: UTF-8 never encodes a tab
 # as a trailing byte of a multibyte char, so CJK paths pass through untouched and
 # comparison stays byte-wise, matching the `grep -F` semantics it replaces.
+#
+# A path INSIDE a directory the snapshot listed as unversioned ('?') is not drift (issue #187).
+# svn status collapses a new directory to one '?' line, so the snapshot never names the files in
+# it -- but once a push attempt has run `svn add`, the same files are listed one by one as 'A'.
+# A retry after a failed push has to be able to get past this check, and those files are exactly
+# the prepared ones. Nothing is lost by it: a file that appears in such a directory after prepare
+# was never visible to this check anyway, because status showed only the directory. Separators are
+# compared as '/', since svn reports Windows paths with '\'.
 svn_status_drift_paths() {
   local snapshot_file="$1"
   LC_ALL=C awk '
@@ -818,14 +863,23 @@ svn_status_drift_paths() {
       i = index($0, "\t")
       # A snapshot line with no tab has no path column; keep the whole line as the
       # key (what the previous `cut -f2-` did) rather than dropping it.
-      snap[i ? substr($0, i + 1) : $0] = 1
+      p = i ? substr($0, i + 1) : $0
+      snap[p] = 1
+      if (i && substr($0, 1, i - 1) == "?") { q = p; gsub(/\\/, "/", q); unversioned_dir[q] = 1 }
       next
     }
     {
       i = index($0, "\t")
       if (i == 0) next
       p = substr($0, i + 1)
-      if (p != "" && !(p in snap)) print p
+      if (p == "" || (p in snap)) next
+      q = p; gsub(/\\/, "/", q)
+      inside = 0
+      while (match(q, /\/[^\/]*$/)) {
+        q = substr(q, 1, RSTART - 1)
+        if (q in unversioned_dir) { inside = 1; break }
+      }
+      if (!inside) print p
     }
   ' "$snapshot_file" -
 }
