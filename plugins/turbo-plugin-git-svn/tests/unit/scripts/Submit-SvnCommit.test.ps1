@@ -110,10 +110,14 @@ BeforeAll {
     # Turn the fixture's tree into a migrated one -- exactly what /tp-init-svn-eol-style leaves
     # behind, and the precondition for any of this being reachable.
     function Set-TreeDeclaresEol {
-        param([string]$Bridge)
+        param([string]$Bridge, [switch]$IncludeMd)
+        # -IncludeMd: auto-props also cover `*.md`, which is what /tp-init-svn-eol-style derives for
+        # a tree holding .md files and the precondition for issue #186.
+        $autoProps = '*.txt = svn:eol-style=native'
+        if ($IncludeMd) { $autoProps = "*.md = svn:eol-style=native`n" + $autoProps }
         Push-Location $Bridge
         try {
-            & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+            & svn --non-interactive propset svn:auto-props $autoProps -q '.' 2>$null | Out-Null
             & svn --non-interactive commit -m 'declare svn:eol-style for the tree' 2>$null | Out-Null
         } finally { Pop-Location }
     }
@@ -774,6 +778,92 @@ Describe 'Submit-SvnCommit' {
             # a correct implementation. The bash twin made exactly that mistake.
             $script:PrepOutPlain | Should -Not -Match "new`tnotes\.md"
             $script:PrepOutPlain | Should -Not -Match "existing`tnotes\.md"
+        }
+    }
+
+    # ── issue #186: a NEW file svn calls binary, on a tree whose auto-props cover its extension ──
+    #
+    # The cases above declare `*.txt` only, so `svn add` never tries eol-style on the .md fixture.
+    # With `*.md` declared too, a plain add applies eol-style and the binary mime type in one step
+    # and dies with E200009 before the guard runs. Mirrors submit-svn-commit.test.sh.
+    Context 'issue #186: a new binary-looking file under .md auto-props' {
+        BeforeAll {
+            $script:NbSb = $null; $script:NbRc = 0; $script:NbOut = ''
+            $script:NbRevBefore = 'a'; $script:NbRevAfter = 'b'
+            $script:NbSb2 = $null; $script:NbRc2 = 1; $script:NbOut2 = ''; $script:NbEol2 = 'unset'
+            $script:NbSb3 = $null; $script:NbRc3 = 1; $script:NbOut3 = ''; $script:NbEol3 = 'unset'
+            $nbSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $nbSvnOk = ($LASTEXITCODE -eq 0) } catch { $nbSvnOk = $false }
+            if ($nbSvnOk) {
+                # Without the switch: refused by the guard, not by svn add.
+                $script:NbSb = New-Sandbox -Tag 'ptsc-nb1'
+                $fx1 = New-FeatureBridge -Sandbox $script:NbSb
+                if ($fx1) {
+                    Set-TreeDeclaresEol -IncludeMd -Bridge ([System.IO.Path]::Combine($fx1.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fx1.Root -GitArgs @('checkout', 'feat-x')
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fx1.Root, 'notes.md'))
+                    $null = Run-Git -Cwd $fx1.Root -GitArgs @('add', '--', 'notes.md')
+                    $null = Run-Git -Cwd $fx1.Root -GitArgs @('commit', '-m', 'docs: add a file svn will call binary')
+                    $script:NbRevBefore = Get-BranchRev -BranchUrl $fx1.BranchUrl
+                    $r1 = Invoke-FeatPushResult -Root $fx1.Root -Title 'docs: add notes'
+                    $script:NbRc = $r1.ExitCode
+                    $script:NbOut = $r1.Combined
+                    $script:NbRevAfter = Get-BranchRev -BranchUrl $fx1.BranchUrl
+                }
+                # With the switch: goes through.
+                $script:NbSb2 = New-Sandbox -Tag 'ptsc-nb2'
+                $fx2 = New-FeatureBridge -Sandbox $script:NbSb2
+                if ($fx2) {
+                    Set-TreeDeclaresEol -IncludeMd -Bridge ([System.IO.Path]::Combine($fx2.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('checkout', 'feat-x')
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($fx2.Root, 'notes.md'))
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('add', '--', 'notes.md')
+                    $null = Run-Git -Cwd $fx2.Root -GitArgs @('commit', '-m', 'docs: add a file svn will call binary')
+                    $r2 = Invoke-FeatPushResult -Root $fx2.Root -Title 'docs: add notes' -Extra @('-ClearBinaryMime')
+                    $script:NbRc2 = $r2.ExitCode
+                    $script:NbOut2 = $r2.Combined
+                    $script:NbEol2 = Get-SvnValue propget svn:eol-style "$($fx2.BranchUrl)/notes.md"
+                }
+                # Inside a directory that is new to SVN: status shows only the directory.
+                $script:NbSb3 = New-Sandbox -Tag 'ptsc-nb3'
+                $fx3 = New-FeatureBridge -Sandbox $script:NbSb3
+                if ($fx3) {
+                    Set-TreeDeclaresEol -IncludeMd -Bridge ([System.IO.Path]::Combine($fx3.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('checkout', 'feat-x')
+                    $docs = [System.IO.Path]::Combine($fx3.Root, 'docs')
+                    $null = New-Item -ItemType Directory -Path $docs -Force
+                    New-SvnBinaryMimeFile -Path ([System.IO.Path]::Combine($docs, 'notes.md'))
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($docs, 'readme.md')) -Value 'plain'
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('add', '--', 'docs')
+                    $null = Run-Git -Cwd $fx3.Root -GitArgs @('commit', '-m', 'docs: add a docs folder')
+                    $r3 = Invoke-FeatPushResult -Root $fx3.Root -Title 'docs: add docs' -Extra @('-ClearBinaryMime')
+                    $script:NbRc3 = $r3.ExitCode
+                    $script:NbOut3 = $r3.Combined
+                    $script:NbEol3 = Get-SvnValue propget svn:eol-style "$($fx3.BranchUrl)/docs/notes.md"
+                }
+            }
+        }
+        AfterAll {
+            foreach ($sb in @($script:NbSb, $script:NbSb2, $script:NbSb3)) { if ($sb) { Remove-Sandbox -Dir $sb } }
+        }
+
+        It 'without the switch the push is refused' -Skip:(-not $script:SvnReady) {
+            $script:NbRc | Should -Not -Be 0
+        }
+        It 'by the guard, not by svn add' -Skip:(-not $script:SvnReady) {
+            $script:NbOut | Should -Not -Match 'E200009'
+            $script:NbOut | Should -Match 'ClearBinaryMime'
+        }
+        It 'and nothing reached SVN' -Skip:(-not $script:SvnReady) {
+            $script:NbRevAfter | Should -Be $script:NbRevBefore
+        }
+        It 'with the switch the push goes through' -Skip:(-not $script:SvnReady) {
+            $script:NbRc2 | Should -Be 0 -Because $script:NbOut2
+            $script:NbEol2 | Should -Be 'native'
+        }
+        It 'and a new directory holding such a file goes through too' -Skip:(-not $script:SvnReady) {
+            $script:NbRc3 | Should -Be 0 -Because $script:NbOut3
+            $script:NbEol3 | Should -Be 'native'
         }
     }
 }

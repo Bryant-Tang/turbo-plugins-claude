@@ -175,6 +175,8 @@ try {
 
         $svnStatusLines = & svn status
         $toAdd = @()
+        # The same '?' paths without the peg escape, for the binary prediction below (issue #186).
+        $toAddRaw = @()
         $toDel = @()
         $modifiedToCommit = @()
         # issue #79: our own record of "what is being committed". Collected from the SAME status
@@ -204,7 +206,10 @@ try {
             # the last '@' as a revision (issue #34). Escaped here at collection time so every
             # downstream svn call gets it.
             switch ($statusChar) {
-                '?' { $toAdd += (ConvertTo-SvnTarget -Path $filePath) }
+                '?' {
+                    $toAdd += (ConvertTo-SvnTarget -Path $filePath)
+                    $toAddRaw += $filePath
+                }
                 '!' { $toDel += (ConvertTo-SvnTarget -Path $filePath) }
                 'M' {
                     $modifiedToCommit += (ConvertTo-SvnTarget -Path $filePath)
@@ -220,12 +225,28 @@ try {
         # file carries the same escaped paths -- a targets file is peg-parsed line by line like argv.
         if ($toAdd.Count -gt 0) {
             Write-Output "SVN adding $($toAdd.Count) new file(s)..."
-            Write-SvnTargetsFile -Path $targetsAdd -Targets $toAdd
             # --quiet: svn echoes one "A <path>" line per file here, in the console codepage -- the
             # same mojibake as the commit listing (issue #79). The count is already announced above
             # and every path is listed after the commit, so this output is redundant as well as
             # unreadable. Errors still reach stderr.
-            & svn add --quiet --parents --targets $targetsAdd
+            #
+            # Files svn will stamp binary go in FIRST and without auto-props (issue #186): on a tree
+            # whose svn:auto-props sets svn:eol-style for their extension, a plain add dies with
+            # E200009 and never reaches the binary guard below. The main add then needs --force,
+            # because --parents has already versioned any new directory those files live in; --force
+            # makes it recurse into that directory and add the rest instead of refusing it as
+            # already versioned. Only in that case -- an ordinary push runs the same add as before.
+            $addForce = @()
+            $noAutoProps = @(Get-SvnNewBinaryFile -Bridge $remote.Path -Path $toAddRaw |
+                ForEach-Object { ConvertTo-SvnTarget -Path $_ })
+            if ($noAutoProps.Count -gt 0) {
+                Write-SvnTargetsFile -Path $targetsAdd -Targets $noAutoProps
+                & svn add --quiet --parents --no-auto-props --targets $targetsAdd
+                if ($LASTEXITCODE -ne 0) { throw 'svn add failed' }
+                $addForce = @('--force')
+            }
+            Write-SvnTargetsFile -Path $targetsAdd -Targets $toAdd
+            & svn add --quiet --parents @addForce --targets $targetsAdd
             if ($LASTEXITCODE -ne 0) { throw 'svn add failed' }
         }
         if ($toDel.Count -gt 0) {

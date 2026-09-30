@@ -175,6 +175,8 @@ set +e
   cd "$REMOTE_PATH"
 
   TO_ADD=()
+  # The same '?' paths without the peg escape, for the binary prediction below (issue #186).
+  TO_ADD_RAW=()
   TO_DEL=()
   MODIFIED_TO_COMMIT=()
   # issue #79: our own copy of "what is being committed", as `<status>\t<UTF-8 path>` entries.
@@ -199,7 +201,8 @@ set +e
     # checks out fine, but passing it as a TARGET makes svn read everything after the last '@' as a
     # revision (issue #34). Escaped here at collection time so every downstream svn call gets it.
     case "$status" in
-      '?') TO_ADD+=("$(svn_target "$filepath")") ;;
+      '?') TO_ADD+=("$(svn_target "$filepath")")
+           TO_ADD_RAW+=("$filepath") ;;
       '!') TO_DEL+=("$(svn_target "$filepath")") ;;
       'M') MODIFIED_TO_COMMIT+=("$(svn_target "$filepath")")
            COMMIT_DISPLAY+=("M	$filepath") ;;
@@ -212,12 +215,29 @@ set +e
   # paths -- a targets file is peg-parsed line by line exactly like argv.
   if [[ ${#TO_ADD[@]} -gt 0 ]]; then
     echo "SVN adding ${#TO_ADD[@]} new file(s)..."
-    write_svn_targets_file "$TARGETS_ADD" "${TO_ADD[@]}" || exit 1
     # --quiet: svn echoes one "A <path>" line per file here, in the console codepage -- the same
     # mojibake as the commit listing (issue #79). The count is already announced above and every
     # path is listed as UTF-8 after the commit, so this output is redundant as well as unreadable.
     # Errors still reach stderr.
-    svn add --quiet --parents --targets "$TARGETS_ADD" || exit 1
+    #
+    # Files svn will stamp binary go in FIRST and without auto-props (issue #186): on a tree whose
+    # svn:auto-props sets svn:eol-style for their extension, a plain add dies with E200009 and never
+    # reaches the binary guard below. The main add then needs --force, because --parents has
+    # already versioned any new directory those files live in; --force makes it recurse into that
+    # directory and add the rest instead of refusing it as already versioned. Only in that case --
+    # an ordinary push runs the exact same add as before.
+    ADD_FORCE=()
+    NO_AUTOPROPS_FILES=()
+    while IFS= read -r nb_path; do
+      [[ -n "$nb_path" ]] && NO_AUTOPROPS_FILES+=("$(svn_target "$nb_path")")
+    done < <(list_new_svn_binary_files "$REMOTE_PATH" "${TO_ADD_RAW[@]}")
+    if [[ ${#NO_AUTOPROPS_FILES[@]} -gt 0 ]]; then
+      write_svn_targets_file "$TARGETS_ADD" "${NO_AUTOPROPS_FILES[@]}" || exit 1
+      svn add --quiet --parents --no-auto-props --targets "$TARGETS_ADD" || exit 1
+      ADD_FORCE=(--force)
+    fi
+    write_svn_targets_file "$TARGETS_ADD" "${TO_ADD[@]}" || exit 1
+    svn add --quiet --parents ${ADD_FORCE[@]+"${ADD_FORCE[@]}"} --targets "$TARGETS_ADD" || exit 1
   fi
   if [[ ${#TO_DEL[@]} -gt 0 ]]; then
     echo "SVN deleting ${#TO_DEL[@]} removed file(s)..."

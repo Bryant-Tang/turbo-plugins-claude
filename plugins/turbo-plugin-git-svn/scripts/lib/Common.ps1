@@ -508,6 +508,38 @@ function Get-SvnEolBlocker {
     return $out.ToArray()
 }
 
+# The files about to be `svn add`ed that svn will stamp binary, so `svn add` must not apply
+# svn:auto-props to them (issue #186). Full rationale on list_new_svn_binary_files in common.sh:
+# with auto-props declaring svn:eol-style for their extension, a plain add dies with E200009 before
+# the binary guard can look at the file.
+#
+# -Path takes `svn status` '?' paths, so an unversioned DIRECTORY is expanded to the files inside
+# it; git-ignored files there are skipped (they are not git text candidates anyway).
+# Returns repo-relative file paths. Empty on a tree that declares no svn:eol-style.
+function Get-SvnNewBinaryFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Bridge,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Path
+    )
+    $entries = New-Object System.Collections.Generic.List[string]
+    foreach ($p in $Path) {
+        if ([string]::IsNullOrEmpty($p)) { continue }
+        if (Test-Path -LiteralPath ([System.IO.Path]::Combine($Bridge, $p)) -PathType Container) {
+            foreach ($line in @(Get-UnversionedDirectoryFiles -RemotePath $Bridge -RelativeDir $p)) {
+                $parts = $line.Split([char]'|', 3)
+                if ($parts.Count -eq 3 -and $parts[1] -eq 'tracked' -and $parts[2]) {
+                    $entries.Add("?`t" + $parts[2])
+                }
+            }
+        } else {
+            $entries.Add("?`t" + $p)
+        }
+    }
+    if ($entries.Count -eq 0) { return @() }
+    return @(Get-SvnEolBlocker -Bridge $Bridge -Entry $entries.ToArray() |
+        Where-Object { $_.Why -eq 'new' } | ForEach-Object { $_.Path })
+}
+
 # Take svn:mime-type off the given paths so svn:eol-style can be set on them.
 #
 # Deliberately narrow: this exists so a user who has been SHOWN the list and said yes can act on

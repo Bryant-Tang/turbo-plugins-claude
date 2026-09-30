@@ -646,5 +646,77 @@ test_prepare_says_nothing_while_the_tree_declares_nothing() {
     case "$out" in *"existing	notes.md"*) fail "notes.md was reported on an unmigrated tree: $out" ;; esac
 }
 
+# ── issue #186: a NEW file svn calls binary, on a tree whose auto-props cover its extension ──
+#
+# Every case above declares `*.txt` only, so `svn add` never tries to put svn:eol-style on the .md
+# fixture. That is exactly the gap #186 fell through: once auto-props also cover `*.md` -- which is
+# what /tp-init-svn-eol-style derives for a tree holding .md files -- `svn add` applies eol-style and
+# the binary mime type in one step, fails with E200009, and the binary guard is never reached.
+declare_eol_style_with_md_on_branch() {
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" propset svn:auto-props "$(printf '*.md = svn:eol-style=native\n*.txt = svn:eol-style=native')" -q '.' ) >/dev/null 2>&1 || return 1
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" commit -m 'declare svn:eol-style for .md and .txt' ) >/dev/null 2>&1 || return 1
+}
+
+test_new_binary_file_under_md_auto_props_reaches_the_guard() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_with_md_on_branch; then startSkipping; return 0; fi
+    local rev_before rev_after out rc
+    if ! commit_binary_mime_file_on_feat; then startSkipping; return 0; fi
+
+    rev_before="$(branch_rev)"
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' 2>&1 )"; rc=$?
+
+    assertNotEquals 'the push is still refused without the flag' 0 "$rc"
+    # The refusal must come from the guard, which names the way out -- not from `svn add`.
+    case "$out" in *'E200009'*) fail "svn add died before the guard: $out" ;; esac
+    case "$out" in *'--clear-binary-mime'*) : ;; *) fail "the guard was not reached: $out" ;; esac
+    rev_after="$(branch_rev)"
+    assertEquals 'nothing may reach SVN when the push is refused' "$rev_before" "$rev_after"
+}
+
+test_new_binary_file_under_md_auto_props_pushes_with_the_flag() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_with_md_on_branch; then startSkipping; return 0; fi
+    local eol mime out rc
+    if ! commit_binary_mime_file_on_feat; then startSkipping; return 0; fi
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add notes' --clear-binary-mime 2>&1 )"; rc=$?
+    assertEquals "the push must go through (out: $out)" 0 "$rc"
+
+    mime="$(svn propget svn:mime-type "$BRANCH_URL/notes.md" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the binary mark is gone in SVN' '' "$mime"
+    eol="$(svn propget svn:eol-style "$BRANCH_URL/notes.md" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the file carries eol-style like every other .md' 'native' "$eol"
+}
+
+# The same file inside a directory that is new to SVN. `svn status` shows only the directory, so the
+# prediction has to look inside it; and the siblings must still get their auto-props, which is what
+# proves the --no-auto-props add stayed limited to the predicted file.
+test_new_binary_file_inside_a_new_directory_pushes_with_the_flag() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_with_md_on_branch; then startSkipping; return 0; fi
+    local eol sib out rc
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    mkdir -p "$ROOT/docs"
+    if ! write_svn_binary_mime_file "$ROOT/docs/notes.md"; then startSkipping; return 0; fi
+    printf 'plain\n' > "$ROOT/docs/readme.md"
+    git -C "$ROOT" add -- docs >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'docs: add a docs folder' >/dev/null 2>&1
+
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'docs: add docs' --clear-binary-mime 2>&1 )"; rc=$?
+    assertEquals "the push must go through (out: $out)" 0 "$rc"
+
+    eol="$(svn propget svn:eol-style "$BRANCH_URL/docs/notes.md" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the predicted file ends up marked' 'native' "$eol"
+    sib="$(svn proplist "$BRANCH_URL/docs/readme.md" --config-dir "$CFG" 2>/dev/null | grep -c 'svn:mime-type')"
+    assertEquals 'the sibling never got a mime type' '0' "$sib"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

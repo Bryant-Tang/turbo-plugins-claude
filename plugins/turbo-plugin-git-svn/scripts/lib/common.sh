@@ -477,6 +477,43 @@ list_svn_eol_blockers() {
   return 0
 }
 
+# The files about to be `svn add`ed that svn will stamp binary, so `svn add` must not apply
+# svn:auto-props to them (issue #186).
+#
+# On a tree whose svn:auto-props declares svn:eol-style for, say, `*.md`, `svn add` applies that
+# property and the content heuristic's svn:mime-type in the same step -- and the two cannot coexist,
+# so the add itself dies with E200009 before anything later in the push can look at the file. The
+# binary guard below it (list_svn_eol_blockers + --clear-binary-mime) was never reached for a NEW
+# file; it only ever covered files already in SVN.
+#
+# Adding these few files with --no-auto-props lets the add succeed: svn still stamps the mime type
+# (auto-props do not control the heuristic), and the guard then sees it like any other blocker.
+# The push path sets svn:eol-style on the changeset itself, so the auto-props are not needed for
+# it. Everything else keeps its auto-props; only the predicted files lose the rest of them.
+#
+# The arguments are `svn status` '?' paths, so an unversioned DIRECTORY arrives as one entry and is
+# expanded to the files inside it -- `svn add` recurses into it and hits the same error on any one
+# of them. Git-ignored files inside are skipped: they are not git text candidates, so
+# list_svn_eol_blockers would not report them anyway.
+#
+# $1: bridge worktree path. Remaining args: repo-relative '?' paths (no peg escape).
+# Echoes one repo-relative file path per line. Empty on a tree that declares no svn:eol-style.
+list_new_svn_binary_files() {
+  local bridge="$1"; shift
+  [ "$#" -gt 0 ] || return 0
+  local p _st kind rel
+  for p in "$@"; do
+    [ -n "$p" ] || continue
+    if [ -d "$bridge/$p" ]; then
+      while IFS='|' read -r _st kind rel; do
+        if [ "$kind" = 'tracked' ] && [ -n "$rel" ]; then printf '?\t%s\n' "$rel"; fi
+      done < <(expand_unversioned_dir "$bridge" "$p")
+    else
+      printf '?\t%s\n' "$p"
+    fi
+  done | list_svn_eol_blockers "$bridge" | awk -F'\t' '$1 == "new" { sub(/^[^\t]*\t/, ""); print }'
+}
+
 # Take svn:mime-type off the given paths so svn:eol-style can be set on them.
 #
 # Deliberately narrow: this exists so a user who has been SHOWN the list and said yes can act on
