@@ -937,4 +937,86 @@ Describe 'Submit-SvnCommit' {
             $script:RtCases[$_].Pins | Should -Be 0
         }
     }
+
+    # The git commit of the merge now runs LAST, so it can fail in a state the half-done guidance
+    # would be wrong about: nothing is left to send to SVN. A failing pre-commit hook is the trigger.
+    # Mirrors submit-svn-commit.test.sh.
+    Context 'a git-only failure after the svn steps' {
+        BeforeAll {
+            function Install-FailingPreCommitHook {
+                param([string]$Root)
+                $common = Run-Git-Capture -Cwd $Root -GitArgs @('rev-parse', '--git-common-dir')
+                # --git-common-dir may answer a RELATIVE path; resolve it against the repo, never
+                # against the caller's cwd (the plugin's own checkout).
+                if (-not [System.IO.Path]::IsPathRooted($common)) { $common = [System.IO.Path]::Combine($Root, $common) }
+                $hooks = [System.IO.Path]::Combine($common, 'hooks')
+                $null = New-Item -ItemType Directory -Path $hooks -Force
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($hooks, 'pre-commit'), "#!/bin/sh`necho 'hook: refusing' >&2`nexit 1`n")
+                if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { & chmod +x ([System.IO.Path]::Combine($hooks, 'pre-commit')) }
+            }
+            $script:GoCases = @{}
+            $goSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $goSvnOk = ($LASTEXITCODE -eq 0) } catch { $goSvnOk = $false }
+            foreach ($kind in @('sent', 'nothing')) {
+                $c = @{ Sb = $null; Rc = 0; Out = ''; Pending = $false; Pins = 1; RevBefore = 'a'; RevAfter = 'b'; WcRev = 'x' }
+                $script:GoCases[$kind] = $c
+                if (-not $goSvnOk) { continue }
+                $c.Sb = New-Sandbox -Tag "ptsc-go-$kind"
+                $fx = New-FeatureBridge -Sandbox $c.Sb
+                if (-not $fx) { continue }
+                $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                $app = [System.IO.Path]::Combine($fx.Root, 'app.txt')
+                Set-Content -LiteralPath $app -Value 'app-v2'
+                if ($kind -eq 'nothing') { Add-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, '.gitignore')) -Value '*.log' }
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-qam', 'feat: edit app')
+                if ($kind -eq 'nothing') {
+                    # A first push brings the bridge in step, then two commits that cancel out: a
+                    # merge is prepared but the tree is unchanged, and the only thing svn sees is a
+                    # git-ignored build output, which the push skips.
+                    if (-not (Invoke-FeatPush -Root $fx.Root -Title 'edit app')) { continue }
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($bridge, 'build.log')) -Value 'noise'
+                    Set-Content -LiteralPath $app -Value 'app-tmp'
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-qam', 'chore: try something')
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('revert', '--no-edit', 'HEAD')
+                }
+                $c.RevBefore = Get-BranchRev -BranchUrl $fx.BranchUrl
+                $null = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                Install-FailingPreCommitHook -Root $fx.Root
+                $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'edit app')
+                $c.Rc = $r.ExitCode
+                $c.Out = $r.Combined
+                $c.RevAfter = Get-BranchRev -BranchUrl $fx.BranchUrl
+                $c.WcRev = Get-SvnValue info --show-item revision $bridge
+                $c.Pending = ((Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) -eq 0)
+                $gitDir = Run-Git-Capture -Cwd $bridge -GitArgs @('rev-parse', '--absolute-git-dir')
+                $c.Pins = @(Get-ChildItem -LiteralPath $gitDir -Filter 'MERGE_HEAD.tp_*' -Force -ErrorAction SilentlyContinue).Count
+            }
+        }
+        AfterAll {
+            foreach ($k in @($script:GoCases.Keys)) { if ($script:GoCases[$k].Sb) { Remove-Sandbox -Dir $script:GoCases[$k].Sb } }
+        }
+
+        It '<_>: reports the git-only failure, not the half-done one' -Skip:(-not $script:SvnReady) -ForEach @('sent', 'nothing') {
+            $script:GoCases[$_].Rc | Should -Not -Be 0
+            $script:GoCases[$_].Out | Should -Match 'TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN'
+            $script:GoCases[$_].Out | Should -Not -Match 'SVN_COMMIT_FAILED_HALF_DONE'
+        }
+        It '<_>: keeps the merge staged and drops the pins' -Skip:(-not $script:SvnReady) -ForEach @('sent', 'nothing') {
+            $script:GoCases[$_].Pending | Should -BeTrue
+            $script:GoCases[$_].Pins | Should -Be 0
+        }
+        It 'sent: says SVN has it, reports the revision, and still resyncs the working copy' -Skip:(-not $script:SvnReady) {
+            $c = $script:GoCases['sent']
+            $c.Out | Should -Match 'IS in SVN'
+            $c.Out | Should -Match ("Pushed to SVN r" + $c.RevAfter)
+            $c.WcRev | Should -Be $c.RevAfter
+        }
+        It 'nothing: does not claim SVN has a change it never got' -Skip:(-not $script:SvnReady) {
+            $c = $script:GoCases['nothing']
+            $c.Out | Should -Match 'Nothing needed sending to SVN'
+            $c.Out | Should -Not -Match 'IS in SVN'
+            $c.RevAfter | Should -Be $c.RevBefore
+        }
+    }
 }

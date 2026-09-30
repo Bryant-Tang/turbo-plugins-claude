@@ -175,8 +175,8 @@ try {
     # failing afterwards left MERGE_HEAD gone and SVN unchanged, and a re-run answered "Nothing to
     # push". Committing last keeps MERGE_HEAD until SVN has the change, so a failure lands back on
     # PENDING_MERGE_DETECTED and a retry still reuses the merge.
-    # $gitFinaliseFailed is set only when SVN already has the change and the git commit then failed:
-    # that state needs different guidance from the half-done one below.
+    # $gitFinaliseFailed is set only when the git commit itself failed, after every svn step: that
+    # state needs different guidance from the half-done one below.
     $gitFinaliseFailed = $false
     $svnCommitted = $false
 
@@ -290,9 +290,6 @@ try {
         if ($commitTargets.Count -eq 0) {
             Write-Output "No changes to commit to SVN (all pending changes are git-ignored)"
             $noCommit = $true
-            Write-Output "Finalising merge commit..."
-            & git -C $remote.Path commit --no-edit
-            if ($LASTEXITCODE -ne 0) { $gitFinaliseFailed = $true; throw 'git commit failed when finalising the prepared merge.' }
         } else {
             # Every text file in this changeset must carry svn:eol-style before the commit, because
             # that property is the only reason SVN normalises line endings on the way in. Without it
@@ -368,11 +365,6 @@ wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
             $commitLines = & svn commit @depthArgs --file $msgFile --encoding UTF-8 --targets $targetsCommit @dotTarget
             if ($LASTEXITCODE -ne 0) { throw 'svn commit failed' }
             $svnCommitted = $true
-            # SVN has it now. A git failure from here on is a different state from the half-done
-            # one -- the push went through -- so it is flagged for the catch below.
-            Write-Output "Finalising merge commit..."
-            & git -C $remote.Path commit --no-edit
-            if ($LASTEXITCODE -ne 0) { $gitFinaliseFailed = $true; throw 'git commit failed when finalising the prepared merge.' }
             # issue #79: print OUR OWN path list rather than svn's. svn renders its per-path progress
             # lines in the console codepage, so a filename it cannot represent there arrives as '?'
             # -- and this listing is the one place the user sees WHAT was just written permanently,
@@ -459,24 +451,40 @@ wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
         if ($svnUpdateExit -ne 0) {
             [Console]::Error.WriteLine('Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.')
         }
+        # Last, after SVN has the change and the working copy is resynced. A failure here is not the
+        # half-done state -- nothing is left to send -- so it is flagged for the catch below, and
+        # the revision is still reported, as it went through.
+        Write-Output "Finalising merge commit..."
+        & git -C $remote.Path commit --no-edit
+        if ($LASTEXITCODE -ne 0) {
+            $gitFinaliseFailed = $true
+            if ($svnCommitted) { Write-Output "Pushed to SVN r$newRev" }
+            throw 'git commit failed when finalising the prepared merge.'
+        }
     } catch {
         # Read-Git rather than an inline `2>$null` call (issue #128): under EAP=Stop a `2>`
         # redirection turns any stderr write into a throw, and this is the moment the user needs the
         # real pin directory to act on.
         $pinDir = (Read-Git -Cwd $remote.Path -GitArgs @('rev-parse', '--absolute-git-dir')).Text.Trim()
         if ($gitFinaliseFailed) {
-            # SVN accepted the changeset; only the git commit of the prepared merge failed. Nothing
-            # is left to retry on the SVN side, so the pins go; the merge stays staged to be committed.
+            # Only the git commit of the prepared merge failed -- after SVN accepted the changeset,
+            # or when every change was git-ignored and nothing needed sending. Nothing is left to
+            # retry on the SVN side, so the pins go; the merge stays staged to be committed.
             foreach ($pin in @('MERGE_HEAD.tp_branch_sha', 'MERGE_HEAD.tp_svn_status', 'MERGE_HEAD.tp_svn_body')) {
                 try { [System.IO.File]::Delete([System.IO.Path]::Combine($pinDir, $pin)) } catch { }
+            }
+            if ($svnCommitted) {
+                $where = "The change IS in SVN (see the revision above). Only the local git commit of the prepared`nmerge failed, so the bridge still holds it staged."
+            } else {
+                $where = "Nothing needed sending to SVN (every change was git-ignored). Only the local git commit of`nthe prepared merge failed, so the bridge still holds it staged."
             }
             [Console]::Error.WriteLine(@"
 
 TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN
-The change IS in SVN. Only the local git commit of the prepared merge failed, so the bridge
-still holds it staged. Fix the git error above, then finish it with:
+$where
+Fix the git error above, then finish it with:
   git -C "$($remote.Path)" commit --no-edit
-Do NOT re-run /tp-push-to-svn or abort the merge first: SVN already has this change.
+Do NOT re-run /tp-push-to-svn or abort the merge first.
 "@)
         } elseif (-not $svnCommitted) {
             # A failed svn step leaves the push half-way, and nothing else would report it (issue

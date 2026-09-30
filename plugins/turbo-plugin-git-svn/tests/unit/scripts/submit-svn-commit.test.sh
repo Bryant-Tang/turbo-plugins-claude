@@ -779,5 +779,79 @@ test_failed_push_of_a_new_directory_is_retryable() {
     assert_failed_push_is_retryable dir
 }
 
+# The git commit of the merge now runs LAST, so it can fail in a state the half-done guidance
+# would be wrong about: nothing is left to send to SVN. A failing pre-commit hook is the trigger --
+# it is the one realistic way `git commit --no-edit` refuses a prepared merge.
+install_failing_pre_commit_hook() {
+    local hooks
+    # Resolved to an absolute path from inside ROOT: --git-common-dir may answer a RELATIVE `.git`,
+    # which would otherwise be read against the caller's cwd -- the plugin's own checkout.
+    hooks="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)/hooks" || return 1
+    case "$hooks" in "$SB"/*) : ;; *) return 1 ;; esac
+    mkdir -p "$hooks"
+    printf '#!/bin/sh\necho "hook: refusing" >&2\nexit 1\n' > "$hooks/pre-commit"
+    chmod +x "$hooks/pre-commit"
+}
+
+assert_git_only_failure_is_reported() {
+    # $1 = submit output, $2 = rc, $3 = what the message must say about SVN
+    local out="$1" rc="$2" said="$3" bridge_gitdir
+    assertNotEquals 'the push reports the failure' 0 "$rc"
+    case "$out" in *'TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN'*) : ;; *) fail "no git-only token: $out" ;; esac
+    case "$out" in *'SVN_COMMIT_FAILED_HALF_DONE'*) fail "half-done guidance given for a git-only failure: $out" ;; esac
+    case "$out" in *"$said"*) : ;; *) fail "the message does not say '$said': $out" ;; esac
+    assertTrue 'the merge stays staged to be committed' "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+    bridge_gitdir="$(git -C "$FEAT_BRIDGE" rev-parse --absolute-git-dir)"
+    assertFalse 'the pins are cleaned up' "ls '$bridge_gitdir'/MERGE_HEAD.tp_* >/dev/null 2>&1"
+}
+
+test_git_commit_failing_after_svn_says_svn_has_it() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc wc_rev
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add -- app.txt >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: edit app' >/dev/null 2>&1
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    install_failing_pre_commit_hook || { fail 'fixture: could not install the hook inside the sandbox'; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'edit app' 2>&1 )"; rc=$?
+
+    assert_git_only_failure_is_reported "$out" "$rc" 'IS in SVN'
+    case "$out" in *"Pushed to SVN r$(branch_rev)"*) : ;; *) fail "the new revision is not reported: $out" ;; esac
+    # The working copy was resynced even though git failed: the next prepare must not see it stale.
+    wc_rev="$(svn info --show-item revision "$FEAT_BRIDGE" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'svn update still ran' "$(branch_rev)" "$wc_rev"
+}
+
+test_git_commit_failing_with_nothing_to_send_does_not_claim_svn_has_it() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc rev_before
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    # A first push carries whatever the fixture has not pushed yet (its .gitignore), so the bridge
+    # starts this case in step with the branch.
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    printf '*.log\n' >> "$ROOT/.gitignore"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'feat: edit app' >/dev/null 2>&1
+    if ! push_feat 'edit app'; then startSkipping; return 0; fi
+    # Then two commits that cancel out: the range is not empty, so a merge is prepared, but the tree
+    # it produces is unchanged. The only thing svn sees is a git-ignored build output, which the push
+    # skips -- the path the script calls "all pending changes are git-ignored".
+    printf 'noise\n' > "$FEAT_BRIDGE/build.log"
+    printf 'app-tmp\n' > "$ROOT/app.txt"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'chore: try something' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false revert --no-edit HEAD >/dev/null 2>&1
+    rev_before="$(branch_rev)"
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+    install_failing_pre_commit_hook || { fail 'fixture: could not install the hook inside the sandbox'; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'try and revert' 2>&1 )"; rc=$?
+
+    case "$out" in *'No changes to commit to SVN'*) : ;; *) fail "fixture: expected the nothing-to-send path: $out"; return 0 ;; esac
+    assert_git_only_failure_is_reported "$out" "$rc" 'Nothing needed sending to SVN'
+    case "$out" in *'IS in SVN'*) fail "claims SVN has a change it never got: $out" ;; esac
+    assertEquals 'nothing reached SVN' "$rev_before" "$(branch_rev)"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"

@@ -160,6 +160,10 @@ finalise_git_merge() {
   echo "Finalising merge commit..."
   git -C "$REMOTE_PATH" commit --no-edit
 }
+# Exit codes the commit subshell below uses to say the git commit failed in a state where the
+# half-done retry/unwind guidance would be WRONG. Anything else non-zero is the half-done state.
+readonly EXIT_GIT_FAILED_AFTER_SVN=3   # SVN has the change; only the git commit is missing
+readonly EXIT_GIT_FAILED_NOTHING_SENT=4  # nothing needed sending to SVN; only the git commit is missing
 
 MSG_FILE="$(mktemp)"
 # --targets files for the add / delete / commit steps (issue #35). Created OUT here, not inside the
@@ -266,7 +270,7 @@ set +e
 
   if [[ ${#COMMIT_TARGETS[@]} -eq 0 ]]; then
     echo "No changes to commit to SVN (all pending changes are git-ignored)"
-    finalise_git_merge || exit 3
+    finalise_git_merge || exit "$EXIT_GIT_FAILED_NOTHING_SENT"
     svn update > /dev/null || echo 'Warning: svn update on no-commit path failed. Remote worktree may be stale.' >&2
     exit 0
   fi
@@ -353,9 +357,6 @@ set +e
   echo "Committing to SVN..."
   write_svn_targets_file "$TARGETS_COMMIT" "${COMMIT_TARGETS[@]}" || exit 1
   COMMIT_OUT="$(svn commit ${DEPTH_ARGS[@]+"${DEPTH_ARGS[@]}"} --file "$MSG_FILE" --encoding UTF-8 --targets "$TARGETS_COMMIT" ${DOT_TARGET[@]+"${DOT_TARGET[@]}"})" || exit 1
-  # SVN has it now. Exit 3, not 1, if the git side then fails: the push itself went through, and
-  # the half-done guidance below (retry / unwind) would be wrong for that state.
-  finalise_git_merge || exit 3
   # issue #79: print OUR OWN path list rather than svn's. svn renders its per-path progress lines in
   # the console codepage, so on a zh-TW host a non-ASCII filename arrives as '?' -- and this listing
   # is the one place the user sees WHAT was just written permanently, at the moment it became
@@ -386,8 +387,14 @@ set +e
   if [[ "$BRANCH" == "main" && "$NEW_REV" =~ ^[0-9]+$ ]]; then
     svn_rev_mark_set "$MAIN_WORKTREE" "$NEW_REV" "$(git -C "$MAIN_WORKTREE" rev-parse "$BRANCH")"
   fi
+  # SVN has it now. If the git side then fails, the push itself still went through: resync the
+  # working copy and report the revision as usual, then leave with EXIT_GIT_FAILED_AFTER_SVN so the
+  # half-done guidance below (retry / unwind) is not given for a state it would be wrong about.
+  GIT_FINALISED=1
+  finalise_git_merge || GIT_FINALISED=0
   svn update > /dev/null || echo 'Warning: svn update after commit failed. Remote worktree may be stale.' >&2
   echo "Pushed to SVN r$NEW_REV"
+  [[ "$GIT_FINALISED" == 1 ]] || exit "$EXIT_GIT_FAILED_AFTER_SVN"
 )
 svn_commit_status=$?
 set -e
@@ -397,18 +404,23 @@ if [[ $svn_commit_status -eq 0 ]]; then
   rm -f "$SHA_FILE" 2>/dev/null || true
   rm -f "$SVN_STATUS_FILE" 2>/dev/null || true
   rm -f "$BODY_FILE" 2>/dev/null || true
-elif [[ $svn_commit_status -eq 3 ]]; then
-  # SVN accepted the changeset; only the git-side commit of the prepared merge failed. The pins are
-  # no longer needed for anything -- there is nothing left to retry on the SVN side -- but the merge
-  # is still staged, so the one thing to do is commit it.
+elif [[ $svn_commit_status -eq $EXIT_GIT_FAILED_AFTER_SVN || $svn_commit_status -eq $EXIT_GIT_FAILED_NOTHING_SENT ]]; then
+  # Only the git-side commit of the prepared merge failed. Nothing is left to retry on the SVN side,
+  # so the pins go; the merge stays staged, and the one thing to do is commit it.
   rm -f "$SHA_FILE" "$SVN_STATUS_FILE" "$BODY_FILE" 2>/dev/null || true
   {
     echo ''
     echo 'TP_TOKEN:GIT_COMMIT_FAILED_AFTER_SVN'
-    echo 'The change IS in SVN. Only the local git commit of the prepared merge failed, so the bridge'
-    echo 'still holds it staged. Fix the git error above, then finish it with:'
+    if [[ $svn_commit_status -eq $EXIT_GIT_FAILED_AFTER_SVN ]]; then
+      echo 'The change IS in SVN (see the revision above). Only the local git commit of the prepared'
+      echo 'merge failed, so the bridge still holds it staged.'
+    else
+      echo 'Nothing needed sending to SVN (every change was git-ignored). Only the local git commit of'
+      echo 'the prepared merge failed, so the bridge still holds it staged.'
+    fi
+    echo 'Fix the git error above, then finish it with:'
     echo "  git -C \"$REMOTE_PATH\" commit --no-edit"
-    echo 'Do NOT re-run /tp-push-to-svn or abort the merge first: SVN already has this change.'
+    echo 'Do NOT re-run /tp-push-to-svn or abort the merge first.'
   } >&2
   exit 1
 else
