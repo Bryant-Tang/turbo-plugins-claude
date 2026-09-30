@@ -779,6 +779,64 @@ test_failed_push_of_a_new_directory_is_retryable() {
     assert_failed_push_is_retryable dir
 }
 
+# Once the tree declares svn:eol-style, svn writes marked files with the platform's endings, and
+# git -- unpinned now, under core.autocrlf=true -- writes them with CRLF when it merges. Whenever the
+# two disagree about a file's endings, its size on disk stops matching what git's index recorded
+# while its content is unchanged. git then reports it as modified with an empty `git diff`, the
+# push's clean-bridge guard believed that, and so does `git merge` ["local changes would be
+# overwritten"].
+#
+# On Linux the first push produces that state on its own: the merge writes app.txt with CRLF and
+# svn's closing update rewrites it with LF, since `native` is LF there. On Windows both write CRLF,
+# and the phantom comes instead from svn writing CRLF over a file git wrote LF -- the migration's
+# closing update does it to every file it marks. Where the push did not leave one, the case makes
+# it by flipping the file's endings, which is exactly that rewrite.
+test_a_file_svn_rewrote_does_not_block_the_next_push() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_on_branch; then startSkipping; return 0; fi
+    # The Git for Windows system default, and what an unpinned bridge inherits there.
+    git -C "$ROOT" config core.autocrlf true
+
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'feat: v2' >/dev/null 2>&1
+    if ! push_feat 'v2'; then fail 'fixture: the first push failed'; return 0; fi
+    if [ -n "$(git -C "$FEAT_BRIDGE" config --worktree core.eol 2>/dev/null)" ]; then
+        fail 'fixture: the bridge is still pinned after the first push'; return 0
+    fi
+    if [ -z "$(git -C "$FEAT_BRIDGE" status --porcelain -- app.txt)" ]; then
+        if tr -dc '\r' < "$FEAT_BRIDGE/app.txt" | grep -q .; then
+            tr -d '\r' < "$FEAT_BRIDGE/app.txt" > "$FEAT_BRIDGE/app.tmp"
+        else
+            sed 's/$/\r/' "$FEAT_BRIDGE/app.txt" > "$FEAT_BRIDGE/app.tmp"
+        fi
+        mv "$FEAT_BRIDGE/app.tmp" "$FEAT_BRIDGE/app.txt"
+        touch -d '+5 seconds' "$FEAT_BRIDGE/app.txt"
+    fi
+    # Fixture guards: the bridge has to read as modified, and only as a phantom -- a real
+    # difference here would make "the push went through" mean "the push swept it up".
+    if [ -z "$(git -C "$FEAT_BRIDGE" status --porcelain -- app.txt)" ] || ! git -C "$FEAT_BRIDGE" diff --quiet; then
+        fail "fixture: app.txt is not a phantom modification [$(git -C "$FEAT_BRIDGE" status --porcelain | tr '\n' ';')]"; return 0
+    fi
+
+    # The same file changes again, so the merge itself would trip over a phantom left behind.
+    printf 'app-v3\n' > "$ROOT/app.txt"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'feat: v3' >/dev/null 2>&1
+    local before out
+    before="$(branch_rev)"
+    out="$( ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) 2>&1 )"
+    if printf '%s' "$out" | grep -q 'uncommitted git changes'; then
+        fail "prepare refused on a file svn rewrote: $out"; return 0
+    fi
+    if ! ( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'v3' ) >/dev/null 2>&1; then
+        fail "the push did not go through after prepare: $out"; return 0
+    fi
+    assertNotEquals 'the push reached SVN' "$before" "$(branch_rev)"
+    assertEquals 'SVN has the new content' 'app-v3' \
+        "$(svn cat "$BRANCH_URL/app.txt" --config-dir "$CFG" 2>/dev/null | tr -d '\r\n')"
+}
+
 # The git commit of the merge now runs LAST, so it can fail in a state the half-done guidance
 # would be wrong about: nothing is left to send to SVN. A failing pre-commit hook is the trigger --
 # it is the one realistic way `git commit --no-edit` refuses a prepared merge.

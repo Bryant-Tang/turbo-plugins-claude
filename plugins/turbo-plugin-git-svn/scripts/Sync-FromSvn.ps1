@@ -42,6 +42,10 @@ try {
     # (synced from main by New-RemoteBridge), so git ignores SVN's binary metadata and we no
     # longer hand-filter `.svn/*`; genuine manual edits are still caught and would otherwise be
     # packaged into the sync commit.
+    # Before asking whether the bridge is clean, make sure the answer means something: files svn
+    # rewrote without changing their content read as modified until the index is refreshed.
+    # Update-BridgeBeforeGuard explains; real changes are left alone and still stop this.
+    Update-BridgeBeforeGuard -Bridge $remote.Path
     $remoteStatus = (& git -C $remote.Path status --porcelain | Out-String).Trim()
     if ($remoteStatus) {
         throw "Remote worktree '$($remote.Path)' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling.`n$remoteStatus"

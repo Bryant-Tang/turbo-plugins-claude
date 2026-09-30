@@ -64,6 +64,10 @@ if (-not (Test-Path -LiteralPath $bridge -PathType Container)) {
 # nothing else; pending work here would be swept into it, and a property-only revision is exactly
 # the kind the pull path skips -- so anything that rode along would reach SVN and never come back
 # into git.
+# Before asking whether the bridge is clean, make sure the answer means something: files svn
+# rewrote without changing their content read as modified until the index is refreshed.
+# Update-BridgeBeforeGuard explains; real changes are left alone and still stop this.
+Update-BridgeBeforeGuard -Bridge $bridge
 $gitDirty = (Read-Git -Cwd $bridge -GitArgs @('status', '--porcelain')).Text.Trim()
 if (-not [string]::IsNullOrWhiteSpace($gitDirty)) {
     throw "The bridge worktree has uncommitted git changes; resolve them first:`n$gitDirty"
@@ -393,6 +397,22 @@ and each working copy gets its own platform's endings.
         }
     } finally {
         Remove-Item -LiteralPath $msgFile -Force -ErrorAction SilentlyContinue
+    }
+
+    # Leave the bridge usable. This run is what declared the tree, so the git side has to be told
+    # now, not by whichever command happens to run next: the EOL mode is read again [unmemoised --
+    # it was read once at the start, before the declaration existed], and the closing update just
+    # rewrote every marked file, which on Windows changes their size but not their content --
+    # exactly the phantom Update-BridgeIndex clears. Without both, the next pull, push or rerun
+    # stops on "uncommitted changes" the user never made. A failure here does not undo the
+    # migration, so it only warns.
+    $refreshed = $false
+    try {
+        Set-BridgeEolMode -MainWorktree $mainWorktree -Bridge $bridge
+        $refreshed = Update-BridgeIndex -Bridge $bridge
+    } catch { $refreshed = $false }
+    if (-not $refreshed) {
+        Write-Warning 'Could not refresh the bridge after the migration; the next pull or push may report changes that are not there.'
     }
 
     Write-Output ''

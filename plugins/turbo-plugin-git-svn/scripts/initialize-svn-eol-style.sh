@@ -83,6 +83,10 @@ fi
 # nothing else; pending work here would be swept into it, and a property-only revision is exactly
 # the kind the pull path skips -- so anything that rode along would reach SVN and never come back
 # into git.
+# Before asking whether the bridge is clean, make sure the answer means something: files svn
+# rewrote without changing their content read as modified until the index is refreshed.
+# settle_bridge_before_guard explains; real changes are left alone and still stop this.
+settle_bridge_before_guard "$REMOTE_PATH"
 GIT_DIRTY="$(git -C "$REMOTE_PATH" status --porcelain 2>/dev/null || true)"
 if [[ -n "$GIT_DIRTY" ]]; then
   echo "Error: the bridge worktree has uncommitted git changes; resolve them first:" >&2
@@ -361,6 +365,16 @@ flush_chunk
 # commit, and it is the same mixed-revision trap that bit the first-push bootstrap before it.
 ( cd "$REMOTE_PATH" && svn update --quiet ) \
   || { echo 'Warning: svn update after the migration failed; run it in the bridge worktree so the working copy is at a single revision.' >&2; }
+
+# Leave the bridge usable. This run is what declared the tree, so the git side has to be told now,
+# not by whichever command happens to run next: the EOL mode is read again [unmemoised -- it was
+# read once at the start, before the declaration existed], and the update above just rewrote every
+# marked file, which on Windows changes their size but not their content -- exactly the phantom
+# settle_bridge_index clears. Without both, the next pull, push or rerun stops on "uncommitted
+# changes" the user never made. A failure here does not undo the migration, so it only warns.
+if ! ensure_bridge_eol_mode "$MAIN_WORKTREE" "$REMOTE_PATH" || ! settle_bridge_index "$REMOTE_PATH"; then
+  echo 'Warning: could not refresh the bridge after the migration; the next pull or push may report changes that are not there.' >&2
+fi
 
 echo
 echo "Done. $SET_COUNT file(s) now carry svn:eol-style=native."

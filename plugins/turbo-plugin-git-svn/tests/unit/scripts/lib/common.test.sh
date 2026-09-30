@@ -1642,6 +1642,142 @@ test_bridge_eol_leaves_repo_settings_alone() {
     assertEquals "the repository's own EOL settings are left alone" 0 "$rc"
 }
 
+# ─── settle_bridge_index — a file svn rewrote is not a file someone changed ──────────────────
+# The phantom needs a conversion that changes a file's size without changing its blob. On Windows
+# that is svn writing CRLF under core.autocrlf=true; here it is built directly, so the cases run on
+# every platform instead of only where svn's `native` happens to be CRLF.
+# $1 = directory to build in. Leaves $1/repo with a linked worktree $1/bridge; non-zero on failure.
+make_phantom_fixture() {
+    local root="$1/repo" bridge="$1/bridge"
+    git init -q -b main "$root" >/dev/null 2>&1 || return 1
+    git -C "$root" config user.email 'test@turbo-plugin' || return 1
+    git -C "$root" config user.name 'turbo-plugin-test' || return 1
+    printf 'a\nb\n' > "$root/f.txt" || return 1
+    printf 'x\n' > "$root/g.txt" || return 1
+    git -C "$root" add -A >/dev/null 2>&1 || return 1
+    git -C "$root" -c commit.gpgsign=false commit -qm seed >/dev/null 2>&1 || return 1
+    git -C "$root" worktree add -q "$bridge" -b bridge >/dev/null 2>&1 || return 1
+    [ -e "$bridge/.git" ] || return 1
+    # Set AFTER the checkout, so the index records the LF sizes -- the state a bridge is in when
+    # svn then rewrites the file.
+    git -C "$root" config core.autocrlf true || return 1
+}
+
+# What `svn update` does on Windows to a file it marks native: same text, CRLF, new mtime.
+rewrite_as_crlf() {
+    local f="$1"
+    sed 's/$/\r/' "$f" > "$f.tp-tmp" && mv "$f.tp-tmp" "$f" || return 1
+    touch -d '+5 seconds' "$f"
+}
+
+test_settle_bridge_index_clears_a_phantom_and_keeps_the_tree() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-settle-XXXXXX)"
+    (
+        make_phantom_fixture "$tmp" || exit 98
+        b="$tmp/bridge"
+        head_tree="$(git -C "$b" rev-parse 'HEAD^{tree}')"
+        rewrite_as_crlf "$b/f.txt" || exit 97
+        # Fixture guards: the phantom has to be there, and it has to be a phantom -- a real
+        # difference here would make "cleared" mean "staged someone's work".
+        [ -n "$(git -C "$b" status --porcelain)" ] || { echo 'fixture: no phantom' >&2; exit 1; }
+        git -C "$b" diff --quiet || { echo 'fixture: git diff is not empty' >&2; exit 1; }
+
+        settle_bridge_index "$b" || { echo 'settle returned non-zero' >&2; exit 1; }
+
+        st="$(git -C "$b" status --porcelain)"
+        [ -z "$st" ] || { echo "still reads as modified: [$st]" >&2; exit 1; }
+        [ "$(git -C "$b" write-tree)" = "$head_tree" ] || { echo 'the index no longer matches HEAD' >&2; exit 1; }
+        ls "$(git -C "$b" rev-parse --absolute-git-dir)" | grep -q 'tp-settle-index' \
+            && { echo 'the throwaway index was left behind' >&2; exit 1; }
+        grep -qxF '.svn/' "$tmp/repo/.git/info/exclude" || { echo '.svn/ was not excluded first' >&2; exit 1; }
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'a size-only rewrite is cleared and the tree is unchanged' 0 "$rc"
+}
+
+# The other half of the contract, and the one that matters more: real work is never staged, and an
+# untracked file never becomes tracked, just because a guard wanted to know whether it was there.
+test_settle_bridge_index_leaves_real_work_alone() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-settlereal-XXXXXX)"
+    (
+        make_phantom_fixture "$tmp" || exit 98
+        b="$tmp/bridge"
+        rewrite_as_crlf "$b/f.txt" || exit 97
+        printf 'y\n' > "$b/g.txt"
+        printf 'new\n' > "$b/u.txt"
+
+        settle_bridge_index "$b" || { echo 'settle returned non-zero' >&2; exit 1; }
+
+        git -C "$b" diff --cached --quiet || { echo 'something was staged' >&2; exit 1; }
+        st="$(git -C "$b" status --porcelain)"
+        printf '%s\n' "$st" | grep -qx ' M g.txt' || { echo "the real edit is not reported: [$st]" >&2; exit 1; }
+        printf '%s\n' "$st" | grep -qx '?? u.txt' || { echo "the untracked file is not untracked: [$st]" >&2; exit 1; }
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'real edits and untracked files are left exactly as they were' 0 "$rc"
+}
+
+# During a pending merge the index holds the merge, not HEAD; refreshing it is not ours to do.
+test_settle_bridge_index_leaves_a_pending_merge_alone() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-settlemerge-XXXXXX)"
+    (
+        make_phantom_fixture "$tmp" || exit 98
+        b="$tmp/bridge"
+        git -C "$tmp/repo" checkout -q -b other >/dev/null 2>&1 || exit 97
+        printf 'z\n' > "$tmp/repo/h.txt"
+        git -C "$tmp/repo" add h.txt >/dev/null 2>&1 || exit 97
+        git -C "$tmp/repo" -c commit.gpgsign=false commit -qm other >/dev/null 2>&1 || exit 97
+        git -C "$b" merge --no-commit --no-ff other >/dev/null 2>&1 || exit 97
+        rewrite_as_crlf "$b/f.txt" || exit 97
+        before="$(git -C "$b" status --porcelain)"
+
+        settle_bridge_index "$b" || { echo 'settle returned non-zero' >&2; exit 1; }
+
+        after="$(git -C "$b" status --porcelain)"
+        [ "$before" = "$after" ] || { echo "the merge index was touched: [$before] -> [$after]" >&2; exit 1; }
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'a pending merge is left alone' 0 "$rc"
+}
+
+# Every "is the bridge clean?" guard must settle first, in both languages. The helper only helps
+# where it is called, and the guards are four separate scripts per language -- a new guard written
+# without it would bring the phantom back for that one command, with no test of its own noticing.
+test_every_bridge_guard_settles_first() {
+    local scripts_dir="$PLUGIN_ROOT/scripts" checked=0 entry file guard call gl cl
+    for entry in \
+        'build-svn-commit.sh|REMOTE_GIT_STATUS="$(git -C "$REMOTE_PATH" status --porcelain)"|settle_bridge_before_guard "$REMOTE_PATH"' \
+        'sync-from-svn.sh|REMOTE_DIRTY="$(git -C "$REMOTE_PATH" status --porcelain)"|settle_bridge_before_guard "$REMOTE_PATH"' \
+        'remove-svn-file.sh|BRIDGE_STATUS="$(git -C "$REMOTE_PATH" status --porcelain)"|settle_bridge_before_guard "$REMOTE_PATH"' \
+        'initialize-svn-eol-style.sh|GIT_DIRTY="$(git -C "$REMOTE_PATH" status --porcelain|settle_bridge_before_guard "$REMOTE_PATH"' \
+        'Build-SvnCommit.ps1|$remoteGitStatus = (& git -C $remote.Path status --porcelain|Update-BridgeBeforeGuard -Bridge $remote.Path' \
+        'Sync-FromSvn.ps1|$remoteStatus = (& git -C $remote.Path status --porcelain|Update-BridgeBeforeGuard -Bridge $remote.Path' \
+        'Remove-SvnFile.ps1|$bridgeStatus = (& git -C $remotePath status --porcelain|Update-BridgeBeforeGuard -Bridge $remotePath' \
+        'Initialize-SvnEolStyle.ps1|$gitDirty = (Read-Git -Cwd $bridge -GitArgs @('"'"'status'"'"', '"'"'--porcelain'"'"')|Update-BridgeBeforeGuard -Bridge $bridge'
+    do
+        IFS='|' read -r file guard call <<<"$entry"
+        gl="$(grep -nF -- "$guard" "$scripts_dir/$file" | head -1 | cut -d: -f1)"
+        cl="$(grep -nF -- "$call" "$scripts_dir/$file" | head -1 | cut -d: -f1)"
+        if [ -z "$gl" ]; then fail "$file: guard not found -- update this test with the new form"; continue; fi
+        if [ -z "$cl" ]; then fail "$file: the bridge guard does not settle first"; continue; fi
+        [ "$cl" -lt "$gl" ] || fail "$file: settles on line $cl, after the guard on line $gl"
+        checked=$((checked + 1))
+    done
+    assertEquals 'every bridge guard was located' 8 "$checked"
+}
+
 # ─── list_svn_eol_candidates — who may carry svn:eol-style ───────────────────────────────────
 # The two exclusions are the point of the function, and both are silent when wrong: a binary that
 # gets svn:eol-style comes back corrupted, and a mixed-ending file makes `svn commit` fail

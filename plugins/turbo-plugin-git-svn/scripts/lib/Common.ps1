@@ -274,6 +274,91 @@ function Set-BridgeEolMode {
     }
 }
 
+# Clear the "modified" git reports for bridge files svn rewrote without changing what git stores.
+#
+# `svn update` rewrites working files behind git's back. When that changes a file's SIZE but not
+# the blob git would make from it, `git status` reports the file as modified while `git diff` is
+# empty and the tree is identical to HEAD. The everyday case is Windows: a file with
+# svn:eol-style=native is written with CRLF, its blob is LF, and git normalises on add. The
+# migration's closing `svn update` does it to every file it just marked, and any later update can
+# do it again.
+#
+# git decides "modified" from the size alone once it differs from what the index recorded, without
+# reading the content. That is why `git update-index --refresh` does not clear it and `git add -A`
+# does. It is not cosmetic: every guard that asks "is this bridge clean?" believes status, and
+# `git merge` refuses on it ("local changes would be overwritten").
+#
+# So the decision is made on CONTENT: stage everything into a throwaway copy of the index and
+# compare that with HEAD.
+#   - Equal: nothing is really there, and the same `git add -A` on the real index only refreshes
+#     its stat data. The tree stays identical.
+#   - Different: real work. The real index is left exactly as it was -- nothing staged, nothing
+#     untracked turned tracked -- so the guard that runs next reports it as before.
+#
+# Skipped while a merge is pending: the index then holds the merge, not HEAD. `.svn/` is excluded
+# before any `git add -A` here, because unexcluded it pulls the working copy's pristine store
+# through git's filters and corrupts it (see New-RemoteBridge.ps1).
+#
+# Returns $true when it ran to the end, $false when git itself failed; callers treat $false as
+# "could not settle" and let their own guard decide. Mirrors settle_bridge_index in common.sh.
+function Update-BridgeIndex {
+    param([Parameter(Mandatory = $true)][string]$Bridge)
+
+    if ((Read-Git -Cwd $Bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')).Code -eq 0) { return $true }
+    $status = Read-Git -Cwd $Bridge -GitArgs @('status', '--porcelain')
+    if ($status.Code -ne 0) { return $false }
+    if ([string]::IsNullOrWhiteSpace($status.Text)) { return $true }
+
+    $mainWorktree = Get-MainWorktree -RepoRoot $Bridge
+    if ([string]::IsNullOrWhiteSpace($mainWorktree)) { return $false }
+    Set-SvnGitExcluded -MainWorktree $mainWorktree
+
+    $gitDir = (Read-Git -Cwd $Bridge -GitArgs @('rev-parse', '--absolute-git-dir')).Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($gitDir)) { return $false }
+    $realIndex = [System.IO.Path]::Combine($gitDir, 'index')
+    if (-not [System.IO.File]::Exists($realIndex)) { return $true }
+
+    # Next to the real index, so it is on the same volume and in a directory git already owns.
+    $tmpIndex = [System.IO.Path]::Combine($gitDir, ('tp-settle-index.' + [System.Guid]::NewGuid().ToString('N')))
+    $hadIndexVar = Test-Path -LiteralPath 'Env:GIT_INDEX_FILE'
+    $prevIndexVar = $env:GIT_INDEX_FILE
+    $ok = $true
+    try {
+        [System.IO.File]::Copy($realIndex, $tmpIndex)
+        $env:GIT_INDEX_FILE = $tmpIndex
+        $same = ((Read-Git -Cwd $Bridge -GitArgs @('add', '-A')).Code -eq 0) -and
+            ((Read-Git -Cwd $Bridge -GitArgs @('diff', '--cached', '--quiet', 'HEAD', '--')).Code -eq 0)
+        if ($hadIndexVar) { $env:GIT_INDEX_FILE = $prevIndexVar } else { Remove-Item -LiteralPath 'Env:GIT_INDEX_FILE' }
+        if ($same) {
+            $ok = ((Read-Git -Cwd $Bridge -GitArgs @('add', '-A')).Code -eq 0)
+        }
+    } finally {
+        if ($hadIndexVar) { $env:GIT_INDEX_FILE = $prevIndexVar }
+        elseif (Test-Path -LiteralPath 'Env:GIT_INDEX_FILE') { Remove-Item -LiteralPath 'Env:GIT_INDEX_FILE' }
+        if ([System.IO.File]::Exists($tmpIndex)) { [System.IO.File]::Delete($tmpIndex) }
+    }
+    return $ok
+}
+
+# What every "is the bridge clean?" guard runs first, so the question has a real answer.
+#
+# Two things can make the bridge LOOK dirty when it is not, and they are fixed in this order:
+#   1. The EOL mode no longer matches the tree -- /tp-init-svn-eol-style declared it, but the git
+#      pin still expects LF. The files are then read through the wrong rules.
+#   2. svn rewrote files whose content git would store unchanged (Update-BridgeIndex above).
+# Neither changes a single byte of content, so what still shows afterwards is real work, and the
+# guard refuses on it exactly as it did before.
+#
+# Failures are swallowed: this corrects what the guard sees, and must not turn a command that
+# would otherwise run into a hard error. The guard itself still decides. Mirrors
+# settle_bridge_before_guard in common.sh.
+function Update-BridgeBeforeGuard {
+    param([Parameter(Mandatory = $true)][string]$Bridge)
+
+    Set-BridgeEolModeOnce -Bridge $Bridge
+    try { $null = Update-BridgeIndex -Bridge $Bridge } catch { }
+}
+
 # Which working-copy paths may carry svn:eol-style, decided by git's own EOL classification.
 #
 # `svn:eol-style=native` is what makes SVN behave the way GitHub does: the repository stores LF,

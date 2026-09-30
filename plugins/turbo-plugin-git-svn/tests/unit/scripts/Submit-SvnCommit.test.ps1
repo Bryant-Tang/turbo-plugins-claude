@@ -938,6 +938,81 @@ Describe 'Submit-SvnCommit' {
         }
     }
 
+    # Once the tree declares svn:eol-style, git -- unpinned, under core.autocrlf=true -- and svn can
+    # disagree about a file's endings. Its size on disk then stops matching what git's index
+    # recorded while its content is unchanged: `git status` says modified, `git diff` is empty, and
+    # the push's clean-bridge guard and `git merge` both believed status. Mirrors
+    # test_a_file_svn_rewrote_does_not_block_the_next_push in submit-svn-commit.test.sh.
+    #
+    # The first push is what unpins the bridge; the phantom has to exist only AFTER it, or the mode
+    # switch's own `git add -A` clears it by coincidence. On Linux that push leaves one on its own
+    # [git writes CRLF, svn's native LF]; on Windows both write CRLF, so the case flips the file's
+    # endings itself -- the same rewrite svn does when it writes CRLF over a file git wrote LF.
+    Context 'a file svn rewrote does not block the next push' {
+        BeforeAll {
+            $script:PhSb = $null; $script:PhFirst = $false; $script:PhPinned = 'unset'; $script:PhPhantom = $false
+            $script:PhBuild = $null; $script:PhSubmitRc = -1; $script:PhRevBefore = 'a'; $script:PhRevAfter = 'a'; $script:PhContent = ''
+            $phSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $phSvnOk = ($LASTEXITCODE -eq 0) } catch { $phSvnOk = $false }
+            if ($phSvnOk) {
+                $script:PhSb = New-Sandbox -Tag 'ptsc-phantom'
+                $fx = New-FeatureBridge -Sandbox $script:PhSb
+                if ($fx) {
+                    $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                    Set-TreeDeclaresEol -Bridge $bridge
+                    # The Git for Windows system default, and what an unpinned bridge inherits there.
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('config', 'core.autocrlf', 'true')
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                    $app = [System.IO.Path]::Combine($fx.Root, 'app.txt')
+                    [System.IO.File]::WriteAllText($app, "app-v2`n")
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-qam', 'feat: v2')
+                    $script:PhFirst = Invoke-FeatPush -Root $fx.Root -Title 'v2'
+                    $script:PhPinned = Run-Git-Capture -Cwd $bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')
+
+                    $bridgeApp = [System.IO.Path]::Combine($bridge, 'app.txt')
+                    if (-not (Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain', '--', 'app.txt'))) {
+                        $text = [System.IO.File]::ReadAllText($bridgeApp)
+                        if ($text.Contains("`r")) { $text = $text.Replace("`r", '') } else { $text = $text -replace "`n", "`r`n" }
+                        [System.IO.File]::WriteAllText($bridgeApp, $text)
+                        [System.IO.File]::SetLastWriteTimeUtc($bridgeApp, [DateTime]::UtcNow.AddSeconds(5))
+                    }
+                    $script:PhPhantom = [bool](Run-Git-Capture -Cwd $bridge -GitArgs @('status', '--porcelain', '--', 'app.txt')) -and
+                        ((Run-Git -Cwd $bridge -GitArgs @('diff', '--quiet')) -eq 0)
+
+                    # The same file changes again, so the merge itself would trip over a phantom left behind.
+                    [System.IO.File]::WriteAllText($app, "app-v3`n")
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-qam', 'feat: v3')
+                    $script:PhRevBefore = Get-BranchRev -BranchUrl $fx.BranchUrl
+                    $script:PhBuild = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                    if ($script:PhBuild.ExitCode -eq 0) {
+                        $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'v3')
+                        $script:PhSubmitRc = $s.ExitCode
+                    }
+                    $script:PhRevAfter = Get-BranchRev -BranchUrl $fx.BranchUrl
+                    $script:PhContent = (Get-SvnValue cat "$($fx.BranchUrl)/app.txt").Replace("`r", '')
+                }
+            }
+        }
+        AfterAll { if ($script:PhSb) { Remove-Sandbox -Dir $script:PhSb } }
+
+        It 'the first push goes through and unpins the bridge' -Skip:(-not $script:SvnReady) {
+            $script:PhFirst | Should -BeTrue
+            $script:PhPinned | Should -BeNullOrEmpty
+        }
+        It 'app.txt then reads as modified with an empty diff, so the case proves something' -Skip:(-not $script:SvnReady) {
+            $script:PhPhantom | Should -BeTrue
+        }
+        It 'prepare is not refused on it' -Skip:(-not $script:SvnReady) {
+            $script:PhBuild.Combined | Should -Not -Match 'uncommitted git changes'
+            $script:PhBuild.ExitCode | Should -Be 0
+        }
+        It 'and the push reaches SVN with the new content' -Skip:(-not $script:SvnReady) {
+            $script:PhSubmitRc | Should -Be 0
+            $script:PhRevAfter | Should -Not -Be $script:PhRevBefore
+            $script:PhContent | Should -Be 'app-v3'
+        }
+    }
+
     # The git commit of the merge now runs LAST, so it can fail in a state the half-done guidance
     # would be wrong about: nothing is left to send to SVN. A failing pre-commit hook is the trigger.
     # Mirrors submit-svn-commit.test.sh.
