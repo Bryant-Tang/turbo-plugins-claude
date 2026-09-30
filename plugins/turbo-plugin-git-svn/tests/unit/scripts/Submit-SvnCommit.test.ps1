@@ -952,7 +952,8 @@ Describe 'Submit-SvnCommit' {
                 $hooks = [System.IO.Path]::Combine($common, 'hooks')
                 $null = New-Item -ItemType Directory -Path $hooks -Force
                 [System.IO.File]::WriteAllText([System.IO.Path]::Combine($hooks, 'pre-commit'), "#!/bin/sh`necho 'hook: refusing' >&2`nexit 1`n")
-                if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { & chmod +x ([System.IO.Path]::Combine($hooks, 'pre-commit')) }
+                # PSEdition first: $IsWindows does not exist on 5.1, and StrictMode throws on reading it.
+                if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { & chmod +x ([System.IO.Path]::Combine($hooks, 'pre-commit')) }
             }
             $script:GoCases = @{}
             $goSvnOk = $false
