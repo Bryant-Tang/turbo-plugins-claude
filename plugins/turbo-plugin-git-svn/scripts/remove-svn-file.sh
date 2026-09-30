@@ -54,6 +54,10 @@ fi
 
 # The bridge must be clean: a dirty bridge means uncommitted state a later `git add -A` (reconcile
 # path) would wrongly package into the sync commit.
+# Before asking whether the bridge is clean, make sure the answer means something: files svn
+# rewrote without changing their content read as modified until the index is refreshed.
+# settle_bridge_before_guard explains; real changes are left alone and still stop this.
+settle_bridge_before_guard "$REMOTE_PATH"
 BRIDGE_STATUS="$(git -C "$REMOTE_PATH" status --porcelain)"
 if [[ -n "$BRIDGE_STATUS" ]]; then
   echo "Error: remote worktree '$REMOTE_PATH' has uncommitted changes; resolve before removing a path." >&2

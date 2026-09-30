@@ -307,6 +307,45 @@ Describe 'Initialize-SvnEolStyle' {
         }
     }
 
+    # svn rewrites a file with different line endings but the same content: the size no longer
+    # matches the index, so git calls it modified without looking at the bytes, and the pre-flight
+    # refused to rerun. The pre-flight now settles such files first, keeping real changes.
+    It 'does not refuse a rerun over a file svn rewrote without changing its content' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolphantom'
+        try {
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Be 0
+            # The migration really changed wascrlf.txt in SVN [CRLF -> LF]; that is a genuine pending
+            # change, and the next pull is what would take it. Take it here so the only thing left is
+            # the rewrite this case is about.
+            Invoke-GitQuiet $fx.Bridge add -A
+            Invoke-GitQuiet $fx.Bridge -c commit.gpgsign=false commit -q -m 'take the migration'
+            (Get-GitOutput $fx.Bridge status --porcelain) | Should -BeNullOrEmpty
+
+            # Flip the endings in whichever direction changes the size, then move the timestamp so
+            # git cannot treat the file as unchanged from its stat data alone.
+            $plain = [System.IO.Path]::Combine($fx.Bridge, 'plain.txt')
+            $text = [System.IO.File]::ReadAllText($plain)
+            if ($text.Contains("`r")) { $text = $text.Replace("`r`n", "`n") } else { $text = $text.Replace("`n", "`r`n") }
+            [System.IO.File]::WriteAllText($plain, $text, (New-Object System.Text.UTF8Encoding($false)))
+            [System.IO.File]::SetLastWriteTimeUtc($plain, [DateTime]::UtcNow.AddSeconds(5))
+            # Fixture guards: git must see the phantom, and it must be only a phantom.
+            (Get-GitOutput $fx.Bridge status --porcelain -- plain.txt) | Should -Not -BeNullOrEmpty
+            (Get-GitOutput $fx.Bridge diff --stat) | Should -BeNullOrEmpty
+
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.Combined | Should -Not -Match 'uncommitted git changes'
+            $r.ExitCode | Should -Be 0
+            (Get-GitOutput $fx.Bridge status --porcelain) | Should -BeNullOrEmpty
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
     # issue #176: propset stops partway, and everything it staged before that point stayed staged.
     # The message said "nothing was committed", which is true of SVN and quite wrong about the
     # working copy -- the bridge was left holding thousands of pending property changes, the

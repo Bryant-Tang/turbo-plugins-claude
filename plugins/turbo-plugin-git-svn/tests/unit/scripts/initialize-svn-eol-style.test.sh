@@ -266,6 +266,60 @@ test_pull_after_migration_leaves_the_bridge_clean() {
     assertEquals 'migrating and then pulling unpins the bridge and leaves untouched files alone' 0 "$rc"
 }
 
+# After the migration, svn writes every marked file with the platform's endings. On Windows that is
+# CRLF over an LF blob: the same content at a different size, which git reports as modified while
+# `git diff` is empty. Every "is the bridge clean?" guard used to believe it, so the next pull, push
+# or rerun stopped on changes nobody made. This builds that rewrite directly, so it runs the same on
+# every platform, and asks the migration's own guard -- the entry point this fixture can drive.
+test_a_rewrite_by_svn_does_not_block_the_next_run() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-phantom-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp")" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+        out="$(bash "$SUT" --repo-root "$root" 2>&1)" || { echo "fixture: the first run failed: $out" >&2; exit 97; }
+        # The migration really changed wascrlf.txt in SVN [CRLF -> LF]; that is a genuine pending
+        # change, and the next pull is what would take it. Take it here so the only thing left is
+        # the rewrite this test is about. Whether git sees it at all depends on the platform's
+        # endings, so commit only when something was staged.
+        git -C "$bridge" add -A >/dev/null 2>&1 || { echo 'fixture: git add failed' >&2; exit 97; }
+        if ! git -C "$bridge" diff --cached --quiet; then
+            git -C "$bridge" -c commit.gpgsign=false commit -qm 'take the migration' >/dev/null 2>&1 \
+                || { echo 'fixture: could not commit the migration' >&2; exit 97; }
+        fi
+        [ -z "$(git -C "$bridge" status --porcelain)" ] || { echo 'fixture: bridge not clean before the rewrite' >&2; exit 1; }
+
+        # Flip the endings in whichever direction changes the size: svn has already written this
+        # file with the platform's endings, and what matters is only that the bytes on disk now
+        # differ in length from what the index recorded while normalising to the same blob.
+        if tr -dc '\r' < "$bridge/plain.txt" | grep -q .; then
+            tr -d '\r' < "$bridge/plain.txt" > "$bridge/plain.tmp"
+        else
+            sed 's/$/\r/' "$bridge/plain.txt" > "$bridge/plain.tmp"
+        fi
+        mv "$bridge/plain.tmp" "$bridge/plain.txt"
+        touch -d '+5 seconds' "$bridge/plain.txt"
+        # Fixture guards: git must see the phantom, and it must be only a phantom.
+        [ -n "$(git -C "$bridge" status --porcelain -- plain.txt)" ] || { echo 'fixture: no phantom' >&2; exit 1; }
+        git -C "$bridge" diff --quiet || { echo 'fixture: git diff is not empty' >&2; exit 1; }
+
+        out="$(bash "$SUT" --repo-root "$root" 2>&1)"
+        rc=$?
+        if printf '%s' "$out" | grep -q 'uncommitted git changes'; then
+            echo "the rerun was refused on a file svn rewrote: $out" >&2; exit 1
+        fi
+        [ "$rc" -eq 0 ] || { echo "the rerun failed: $out" >&2; exit 1; }
+        st="$(git -C "$bridge" status --porcelain)"
+        [ -z "$st" ] || { echo "the bridge still reads as modified: [$st]" >&2; exit 1; }
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'a file svn rewrote without changing its content does not block the next run' 0 "$rc"
+}
+
 # A file `svn add` stamps as binary even though it is plain text.
 #
 # svn reads the first 1024 bytes (after skipping a UTF-8 BOM) and calls the file binary when fewer

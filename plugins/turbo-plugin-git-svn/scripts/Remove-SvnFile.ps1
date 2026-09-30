@@ -51,6 +51,10 @@ try {
 
     # The bridge must be clean before we mutate it: a dirty bridge means uncommitted state that a
     # later `git add -A` (reconcile path) would wrongly package into the sync commit.
+    # Before asking whether the bridge is clean, make sure the answer means something: files svn
+    # rewrote without changing their content read as modified until the index is refreshed.
+    # Update-BridgeBeforeGuard explains; real changes are left alone and still stop this.
+    Update-BridgeBeforeGuard -Bridge $remotePath
     $bridgeStatus = (& git -C $remotePath status --porcelain | Out-String).Trim()
     if ($bridgeStatus) {
         throw "Remote worktree '$remotePath' has uncommitted changes; resolve before removing a path.`n$bridgeStatus"

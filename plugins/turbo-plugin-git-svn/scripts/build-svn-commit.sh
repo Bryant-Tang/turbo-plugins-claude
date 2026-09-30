@@ -60,6 +60,10 @@ if git -C "$REMOTE_PATH" rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1; then
   exit 0
 fi
 
+# Before asking whether the bridge is clean, make sure the answer means something: files svn
+# rewrote without changing their content read as modified until the index is refreshed.
+# settle_bridge_before_guard explains; real changes are left alone and still stop this.
+settle_bridge_before_guard "$REMOTE_PATH"
 REMOTE_GIT_STATUS="$(git -C "$REMOTE_PATH" status --porcelain)"
 if [[ -n "$REMOTE_GIT_STATUS" ]]; then
   echo "Error: remote worktree '$REMOTE_NAME' has uncommitted git changes." >&2; exit 1

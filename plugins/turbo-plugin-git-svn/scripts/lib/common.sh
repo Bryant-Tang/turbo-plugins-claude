@@ -277,6 +277,72 @@ ensure_bridge_eol_mode() {
   return 0
 }
 
+# Clear the "modified" git reports for bridge files svn rewrote without changing what git stores.
+#
+# `svn update` rewrites working files behind git's back. When that changes a file's SIZE but not
+# the blob git would make from it, `git status` reports the file as modified while `git diff` is
+# empty and the tree is identical to HEAD. The everyday case is Windows: a file with
+# svn:eol-style=native is written with CRLF, its blob is LF, and git normalises on add. The
+# migration's closing `svn update` does it to every file it just marked, and any later update can
+# do it again.
+#
+# git decides "modified" from the size alone once it differs from what the index recorded, without
+# reading the content. That is why `git update-index --refresh` does not clear it and `git add -A`
+# does. It is not cosmetic: every guard that asks "is this bridge clean?" believes status, and
+# `git merge` refuses on it ("local changes would be overwritten").
+#
+# So the decision is made on CONTENT: stage everything into a throwaway copy of the index and
+# compare that with HEAD.
+#   - Equal: nothing is really there, and the same `git add -A` on the real index only refreshes
+#     its stat data. The tree stays identical.
+#   - Different: real work. The real index is left exactly as it was -- nothing staged, nothing
+#     untracked turned tracked -- so the guard that runs next reports it as before.
+#
+# Skipped while a merge is pending: the index then holds the merge, not HEAD. `.svn/` is excluded
+# before any `git add -A` here, because unexcluded it pulls the working copy's pristine store
+# through git's filters and corrupts it (see new-remote-bridge.sh).
+#
+# $1: bridge worktree path. Non-zero only when git itself failed; callers treat that as "could not
+# settle" and let their own guard decide.
+settle_bridge_index() {
+  local bridge="$1" main_wt git_dir tmp_index rc=0
+  git -C "$bridge" rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1 && return 0
+  [ -n "$(git -C "$bridge" status --porcelain 2>/dev/null)" ] || return 0
+  main_wt="$(get_main_worktree "$bridge" 2>/dev/null)" || return 1
+  [ -n "$main_wt" ] || return 1
+  ensure_svn_git_excluded "$main_wt" || return 1
+  git_dir="$(git -C "$bridge" rev-parse --absolute-git-dir)" || return 1
+  [ -f "$git_dir/index" ] || return 0
+  # Next to the real index, not in /tmp: git on Windows is a native program and cannot follow an
+  # MSYS path handed to it through an environment variable.
+  tmp_index="$(mktemp "$git_dir/tp-settle-index.XXXXXX")" || return 1
+  if cp "$git_dir/index" "$tmp_index" \
+    && GIT_INDEX_FILE="$tmp_index" git -C "$bridge" add -A >/dev/null 2>&1 \
+    && GIT_INDEX_FILE="$tmp_index" git -C "$bridge" diff --cached --quiet HEAD --; then
+    git -C "$bridge" add -A >/dev/null 2>&1 || rc=1
+  fi
+  rm -f "$tmp_index"
+  return "$rc"
+}
+
+# What every "is the bridge clean?" guard runs first, so the question has a real answer.
+#
+# Two things can make the bridge LOOK dirty when it is not, and they are fixed in this order:
+#   1. The EOL mode no longer matches the tree -- /tp-init-svn-eol-style declared it, but the git
+#      pin still expects LF. The files are then read through the wrong rules.
+#   2. svn rewrote files whose content git would store unchanged (settle_bridge_index above).
+# Neither changes a single byte of content, so what still shows afterwards is real work, and the
+# guard refuses on it exactly as it did before.
+#
+# Failures are swallowed: this corrects what the guard sees, and must not turn a command that
+# would otherwise run into a hard error. The guard itself still decides.
+settle_bridge_before_guard() {
+  local bridge="$1"
+  ensure_bridge_eol_mode_once "$bridge" >/dev/null 2>&1 || true
+  settle_bridge_index "$bridge" >/dev/null 2>&1 || true
+  return 0
+}
+
 # Which working-copy paths may carry svn:eol-style, decided by git's own EOL classification.
 #
 # `svn:eol-style=native` is what makes SVN behave the way GitHub does: the repository stores LF,

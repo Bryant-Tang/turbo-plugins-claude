@@ -1715,6 +1715,115 @@ Describe 'Set-BridgeEolMode' {
     }
 }
 
+# ─── Update-BridgeIndex — a file svn rewrote is not a file someone changed ───────────────────
+# Mirrors the settle_bridge_index cases in common.test.sh. The phantom needs a conversion that
+# changes a file's size without changing its blob; on Windows that is svn writing CRLF under
+# core.autocrlf=true, and here it is built directly so the cases run on every platform.
+Describe 'Update-BridgeIndex' {
+
+    BeforeAll {
+        function New-PhantomFixture {
+            param([string]$Tag = 'settle')
+            $dir = New-IsolatedRepoRoot $Tag
+            Invoke-GitSilent $dir init -q -b main
+            # false while seeding and checking out, whatever the machine says: Git for Windows
+            # ships autocrlf=true system-wide, the checkout would then already write CRLF, and the
+            # rewrite below would change nothing.
+            Invoke-GitSilent $dir config core.autocrlf false
+            Invoke-GitSilent $dir config user.email 'test@turbo-plugin'
+            Invoke-GitSilent $dir config user.name 'turbo-plugin-test'
+            Write-Utf8NoBom -Path (Join-Path $dir 'f.txt') -Content "a`nb`n"
+            Write-Utf8NoBom -Path (Join-Path $dir 'g.txt') -Content "x`n"
+            Invoke-GitSilent $dir add -A
+            Invoke-GitSilent $dir commit -q -m 'seed'
+            $bridge = Join-Path $dir 'bridge'
+            Invoke-GitSilent $dir worktree add -q $bridge -b bridge
+            if (-not (Test-Path -LiteralPath (Join-Path $bridge '.git'))) {
+                throw "fixture: bridge worktree was not created at $bridge"
+            }
+            # Set AFTER the checkout, so the index records the LF sizes -- the state a bridge is
+            # in when svn then rewrites the file.
+            Invoke-GitSilent $dir config core.autocrlf true
+            return $dir
+        }
+
+        # What `svn update` does on Windows to a file it marks native: same text, CRLF, new mtime.
+        function Set-FileAsCrlf {
+            param([string]$Path)
+            $text = [System.IO.File]::ReadAllText($Path) -replace "`r?`n", "`r`n"
+            [System.IO.File]::WriteAllText($Path, $text)
+            [System.IO.File]::SetLastWriteTimeUtc($Path, [DateTime]::UtcNow.AddSeconds(5))
+        }
+
+        function Get-BridgeStatus {
+            param([string]$Bridge)
+            return (Read-Git -Cwd $Bridge -GitArgs @('status', '--porcelain')).Text.TrimEnd()
+        }
+    }
+
+    It 'clears a size-only rewrite and leaves the tree as it was' {
+        $dir = New-PhantomFixture 'settle'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            $headTree = (Read-Git -Cwd $bridge -GitArgs @('rev-parse', 'HEAD^{tree}')).Text.Trim()
+            Set-FileAsCrlf (Join-Path $bridge 'f.txt')
+            # Fixture guards: the phantom has to be there, and it has to be only a phantom.
+            Get-BridgeStatus $bridge | Should -Not -BeNullOrEmpty
+            (Read-Git -Cwd $bridge -GitArgs @('diff', '--quiet')).Code | Should -Be 0
+
+            Update-BridgeIndex -Bridge $bridge | Should -BeTrue
+
+            Get-BridgeStatus $bridge | Should -BeNullOrEmpty
+            (Read-Git -Cwd $bridge -GitArgs @('write-tree')).Text.Trim() | Should -Be $headTree
+            $gitDir = (Read-Git -Cwd $bridge -GitArgs @('rev-parse', '--absolute-git-dir')).Text.Trim()
+            @(Get-ChildItem -LiteralPath $gitDir -Filter 'tp-settle-index*' -Force).Count | Should -Be 0
+            Test-Path -LiteralPath 'Env:GIT_INDEX_FILE' | Should -BeFalse
+            [System.IO.File]::ReadAllLines((Join-Path $dir '.git/info/exclude')) | Should -Contain '.svn/'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'leaves real edits and untracked files exactly as they were' {
+        $dir = New-PhantomFixture 'settlereal'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            Set-FileAsCrlf (Join-Path $bridge 'f.txt')
+            Write-Utf8NoBom -Path (Join-Path $bridge 'g.txt') -Content "y`n"
+            Write-Utf8NoBom -Path (Join-Path $bridge 'u.txt') -Content "new`n"
+
+            Update-BridgeIndex -Bridge $bridge | Should -BeTrue
+
+            (Read-Git -Cwd $bridge -GitArgs @('diff', '--cached', '--quiet')).Code | Should -Be 0
+            $lines = @((Get-BridgeStatus $bridge) -split "`r?`n")
+            $lines | Should -Contain ' M g.txt'
+            $lines | Should -Contain '?? u.txt'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    It 'leaves a pending merge alone' {
+        $dir = New-PhantomFixture 'settlemerge'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            Invoke-GitSilent $dir checkout -q -b other
+            Write-Utf8NoBom -Path (Join-Path $dir 'h.txt') -Content "z`n"
+            Invoke-GitSilent $dir add h.txt
+            Invoke-GitSilent $dir commit -q -m 'other'
+            Invoke-GitSilent $bridge merge --no-commit --no-ff other
+            Set-FileAsCrlf (Join-Path $bridge 'f.txt')
+            $before = Get-BridgeStatus $bridge
+
+            Update-BridgeIndex -Bridge $bridge | Should -BeTrue
+
+            Get-BridgeStatus $bridge | Should -Be $before
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+}
+
 # ─── Get-SvnEolCandidate — who may carry svn:eol-style ───────────────────────────────────────
 # The two exclusions are the point of the function, and both fail silently when wrong: a binary
 # that gets svn:eol-style comes back corrupted, and a mixed-ending file makes `svn commit` fail

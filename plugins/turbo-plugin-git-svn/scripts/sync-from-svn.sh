@@ -58,6 +58,10 @@ ORIGINAL_BRANCH="$(git -C "$MAIN_WORKTREE" rev-parse --abbrev-ref HEAD)"
 # (synced from main by new-remote-bridge), so git ignores SVN's binary metadata and the
 # manual `.svn/*` filter is gone; genuine manual edits are still caught and would otherwise
 # be packaged into the sync commit.
+# Before asking whether the bridge is clean, make sure the answer means something: files svn
+# rewrote without changing their content read as modified until the index is refreshed.
+# settle_bridge_before_guard explains; real changes are left alone and still stop this.
+settle_bridge_before_guard "$REMOTE_PATH"
 REMOTE_DIRTY="$(git -C "$REMOTE_PATH" status --porcelain)"
 if [[ -n "$REMOTE_DIRTY" ]]; then
   echo "Error: Remote worktree '$REMOTE_PATH' has uncommitted changes — these would be packaged into the sync commit. Resolve before pulling." >&2

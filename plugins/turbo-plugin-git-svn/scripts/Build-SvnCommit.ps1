@@ -65,6 +65,10 @@ try {
         exit 0
     }
 
+    # Before asking whether the bridge is clean, make sure the answer means something: files svn
+    # rewrote without changing their content read as modified until the index is refreshed.
+    # Update-BridgeBeforeGuard explains; real changes are left alone and still stop this.
+    Update-BridgeBeforeGuard -Bridge $remote.Path
     $remoteGitStatus = (& git -C $remote.Path status --porcelain | Out-String).Trim()
     if ($remoteGitStatus) {
         throw "Remote worktree '$($remote.Name)' has uncommitted git changes. Resolve before pushing."
