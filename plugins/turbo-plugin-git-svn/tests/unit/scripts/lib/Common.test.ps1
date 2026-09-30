@@ -1726,6 +1726,10 @@ Describe 'Update-BridgeIndex' {
             param([string]$Tag = 'settle')
             $dir = New-IsolatedRepoRoot $Tag
             Invoke-GitSilent $dir init -q -b main
+            # false while seeding and checking out, whatever the machine says: Git for Windows
+            # ships autocrlf=true system-wide, the checkout would then already write CRLF, and the
+            # rewrite below would change nothing.
+            Invoke-GitSilent $dir config core.autocrlf false
             Invoke-GitSilent $dir config user.email 'test@turbo-plugin'
             Invoke-GitSilent $dir config user.name 'turbo-plugin-test'
             Write-Utf8NoBom -Path (Join-Path $dir 'f.txt') -Content "a`nb`n"

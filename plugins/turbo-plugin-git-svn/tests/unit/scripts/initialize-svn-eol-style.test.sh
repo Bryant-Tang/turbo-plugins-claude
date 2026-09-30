@@ -278,12 +278,16 @@ test_a_rewrite_by_svn_does_not_block_the_next_run() {
     (
         root="$(make_bridge_fixture "$tmp")" || exit 98
         bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
-        bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
+        out="$(bash "$SUT" --repo-root "$root" 2>&1)" || { echo "fixture: the first run failed: $out" >&2; exit 97; }
         # The migration really changed wascrlf.txt in SVN [CRLF -> LF]; that is a genuine pending
         # change, and the next pull is what would take it. Take it here so the only thing left is
-        # the rewrite this test is about.
-        git -C "$bridge" add -A >/dev/null 2>&1 || exit 97
-        git -C "$bridge" -c commit.gpgsign=false commit -qm 'take the migration' >/dev/null 2>&1 || exit 97
+        # the rewrite this test is about. Whether git sees it at all depends on the platform's
+        # endings, so commit only when something was staged.
+        git -C "$bridge" add -A >/dev/null 2>&1 || { echo 'fixture: git add failed' >&2; exit 97; }
+        if ! git -C "$bridge" diff --cached --quiet; then
+            git -C "$bridge" -c commit.gpgsign=false commit -qm 'take the migration' >/dev/null 2>&1 \
+                || { echo 'fixture: could not commit the migration' >&2; exit 97; }
+        fi
         [ -z "$(git -C "$bridge" status --porcelain)" ] || { echo 'fixture: bridge not clean before the rewrite' >&2; exit 1; }
 
         # Flip the endings in whichever direction changes the size: svn has already written this

@@ -1650,6 +1650,10 @@ test_bridge_eol_leaves_repo_settings_alone() {
 make_phantom_fixture() {
     local root="$1/repo" bridge="$1/bridge"
     git init -q -b main "$root" >/dev/null 2>&1 || return 1
+    # false while seeding and checking out, whatever the machine says: Git for Windows ships
+    # autocrlf=true system-wide, the checkout would then already write CRLF, and the rewrite below
+    # would change nothing.
+    git -C "$root" config core.autocrlf false || return 1
     git -C "$root" config user.email 'test@turbo-plugin' || return 1
     git -C "$root" config user.name 'turbo-plugin-test' || return 1
     printf 'a\nb\n' > "$root/f.txt" || return 1
@@ -1666,7 +1670,8 @@ make_phantom_fixture() {
 # What `svn update` does on Windows to a file it marks native: same text, CRLF, new mtime.
 rewrite_as_crlf() {
     local f="$1"
-    sed 's/$/\r/' "$f" > "$f.tp-tmp" && mv "$f.tp-tmp" "$f" || return 1
+    # awk, not sed: the output must be CRLF even where the tools translate line endings.
+    tr -d '\r' < "$f" | awk 'BEGIN { ORS = "\r\n" } { print }' > "$f.tp-tmp" && mv "$f.tp-tmp" "$f" || return 1
     touch -d '+5 seconds' "$f"
 }
 
