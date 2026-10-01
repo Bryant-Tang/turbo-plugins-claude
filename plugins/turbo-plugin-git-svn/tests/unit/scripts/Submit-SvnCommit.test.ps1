@@ -1013,6 +1013,63 @@ Describe 'Submit-SvnCommit' {
         }
     }
 
+    # issue #189: commits that cancel out, with nothing else in the bridge, leave `svn status` empty,
+    # and prepare used to throw on writing the empty snapshot -- after the merge was staged, with
+    # two of the three pins missing. Mirrors test_prepare_with_empty_svn_status_writes_every_pin in
+    # submit-svn-commit.test.sh.
+    Context 'svn status is empty at prepare' {
+        BeforeAll {
+            $script:EsSb = $null; $script:EsBuild = $null; $script:EsStatus = 'unset'; $script:EsPins = @()
+            $script:EsSubmit = $null; $script:EsRevBefore = 'a'; $script:EsRevAfter = 'b'; $script:EsPending = $true
+            $esSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $esSvnOk = ($LASTEXITCODE -eq 0) } catch { $esSvnOk = $false }
+            if ($esSvnOk) {
+                $script:EsSb = New-Sandbox -Tag 'ptsc-empty-status'
+                $fx = New-FeatureBridge -Sandbox $script:EsSb
+                if ($fx) {
+                    $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                    $app = [System.IO.Path]::Combine($fx.Root, 'app.txt')
+                    Set-Content -LiteralPath $app -Value 'app-v2'
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-qam', 'feat: edit app')
+                    if (Invoke-FeatPush -Root $fx.Root -Title 'edit app') {
+                        Set-Content -LiteralPath $app -Value 'app-tmp'
+                        $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-qam', 'chore: try something')
+                        $null = Run-Git -Cwd $fx.Root -GitArgs @('revert', '--no-edit', 'HEAD')
+                        $script:EsRevBefore = Get-BranchRev -BranchUrl $fx.BranchUrl
+                        $script:EsBuild = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x')
+                        $script:EsStatus = Get-SvnValue status $bridge
+                        $gitDir = Run-Git-Capture -Cwd $bridge -GitArgs @('rev-parse', '--absolute-git-dir')
+                        $script:EsPins = @(Get-ChildItem -LiteralPath $gitDir -Filter 'MERGE_HEAD.tp_*' -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+                        $script:EsSubmit = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'try and revert')
+                        $script:EsRevAfter = Get-BranchRev -BranchUrl $fx.BranchUrl
+                        $script:EsPending = ((Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) -eq 0)
+                    }
+                }
+            }
+        }
+        AfterAll { if ($script:EsSb) { Remove-Sandbox -Dir $script:EsSb } }
+
+        It 'prepare succeeds' -Skip:(-not $script:SvnReady) {
+            $script:EsBuild | Should -Not -BeNullOrEmpty
+            $script:EsBuild.Combined | Should -Not -Match 'Cannot bind argument'
+            $script:EsBuild.ExitCode | Should -Be 0
+        }
+        It 'svn status is empty, so the case proves something' -Skip:(-not $script:SvnReady) {
+            $script:EsStatus | Should -BeNullOrEmpty
+        }
+        It 'and writes all three pins' -Skip:(-not $script:SvnReady) {
+            $script:EsPins | Should -Contain 'MERGE_HEAD.tp_branch_sha'
+            $script:EsPins | Should -Contain 'MERGE_HEAD.tp_svn_status'
+            $script:EsPins | Should -Contain 'MERGE_HEAD.tp_svn_body'
+        }
+        It 'the push then finishes without touching SVN' -Skip:(-not $script:SvnReady) {
+            $script:EsSubmit.ExitCode | Should -Be 0
+            $script:EsRevAfter | Should -Be $script:EsRevBefore
+            $script:EsPending | Should -BeFalse
+        }
+    }
+
     # The git commit of the merge now runs LAST, so it can fail in a state the half-done guidance
     # would be wrong about: nothing is left to send to SVN. A failing pre-commit hook is the trigger.
     # Mirrors submit-svn-commit.test.sh.
