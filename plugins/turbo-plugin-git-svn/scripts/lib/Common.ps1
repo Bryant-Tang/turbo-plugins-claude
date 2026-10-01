@@ -216,8 +216,9 @@ function Set-BridgeEolModeOnce {
 #   SVN has no eol-style   -> `svn update` writes the stored bytes verbatim, i.e. LF. git must be
 #                             pinned to LF, or `core.autocrlf=true` (the Git for Windows SYSTEM
 #                             default) makes it expect CRLF and report the entire tree as modified.
-#   SVN has eol-style      -> `svn update` writes the platform's endings, CRLF on Windows. The pin
-#                             must go, or git expects LF and reports the entire tree as modified.
+#   SVN has eol-style      -> `svn update` writes the platform's endings, CRLF on Windows. The LF
+#                             pin must go, or git expects LF and reports the entire tree as
+#                             modified; core.autocrlf is set to match the platform instead.
 #
 # Neither failure is subtle once it happens -- every guard that asks "is this bridge clean?" fires
 # at once -- but picking the mode from ambient assumptions rather than from the tree is how you get
@@ -248,9 +249,18 @@ function Set-BridgeEolMode {
     $beforeEol = (Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')).Text.Trim()
 
     if ($declared) {
+        # Set explicitly, never inherited from the repository [issue #183]: svn now writes the
+        # platform's endings, so git has to normalise them on add and write the same endings on
+        # checkout -- autocrlf=true on Windows [CRLF], input elsewhere [LF]. A repository with
+        # core.autocrlf=false would otherwise make the bridge read svn's CRLF as content and stage
+        # it on the next `git add -A`.
+        # $env:OS rather than $IsWindows: the latter does not exist on 5.1 and StrictMode throws.
+        $declaredAutoCrlf = 'input'
+        if ($env:OS -eq 'Windows_NT') { $declaredAutoCrlf = 'true' }
+        & git -C $Bridge config --worktree core.autocrlf $declaredAutoCrlf
+        if ($LASTEXITCODE -ne 0) { throw "Could not set core.autocrlf=$declaredAutoCrlf on the bridge worktree." }
         # `--unset` on a key that is not set exits 5, the ordinary case for a bridge never pinned;
         # Read-Git swallows it rather than letting EAP=Stop turn a normal outcome into a throw.
-        $null = Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--unset', 'core.autocrlf')
         $null = Read-Git -Cwd $Bridge -GitArgs @('config', '--worktree', '--unset', 'core.eol')
     } else {
         & git -C $Bridge config --worktree core.autocrlf false
@@ -326,11 +336,17 @@ function Update-BridgeIndex {
     try {
         [System.IO.File]::Copy($realIndex, $tmpIndex)
         $env:GIT_INDEX_FILE = $tmpIndex
-        $same = ((Read-Git -Cwd $Bridge -GitArgs @('add', '-A')).Code -eq 0) -and
+        # `read-tree -m HEAD` first, so the copy starts from HEAD's blobs and keeps the stat cache.
+        # A file whose index entry already holds CRLF is never normalised by `git add` [git skips
+        # the conversion when the index has CR], and such entries are exactly what a bridge that
+        # once read svn's CRLF as content was left with [issue #183]. Starting from HEAD lets them
+        # normalise; when the result equals HEAD, the copy replaces the real index.
+        $same = ((Read-Git -Cwd $Bridge -GitArgs @('read-tree', '-m', 'HEAD')).Code -eq 0) -and
+            ((Read-Git -Cwd $Bridge -GitArgs @('add', '-A')).Code -eq 0) -and
             ((Read-Git -Cwd $Bridge -GitArgs @('diff', '--cached', '--quiet', 'HEAD', '--')).Code -eq 0)
         if ($hadIndexVar) { $env:GIT_INDEX_FILE = $prevIndexVar } else { Remove-Item -LiteralPath 'Env:GIT_INDEX_FILE' }
         if ($same) {
-            $ok = ((Read-Git -Cwd $Bridge -GitArgs @('add', '-A')).Code -eq 0)
+            [System.IO.File]::Copy($tmpIndex, $realIndex, $true)
         }
     } finally {
         if ($hadIndexVar) { $env:GIT_INDEX_FILE = $prevIndexVar }

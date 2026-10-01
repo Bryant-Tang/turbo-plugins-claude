@@ -31,7 +31,7 @@ oneTimeSetUp() {
 # the directory is a git worktree, then `svn checkout --force` to overlay SVN's content and
 # metadata, then a git checkout to bring the tracked files onto disk.
 make_bridge_fixture() {
-    local sandbox="$1"
+    local sandbox="$1" autocrlf="${2:-true}"
     local root="$sandbox/repo"
     local svnrepo="$sandbox/svnrepo"
     local bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
@@ -61,7 +61,8 @@ make_bridge_fixture() {
     # actually inherits on a real user's machine. Pinning the fixture to false would quietly make
     # "unpinned" mean "still expects raw bytes", and the migrate-then-pull case below would be
     # measuring a platform nobody has.
-    git -C "$root" config core.autocrlf true || return 1
+    # $2 overrides it for the user who turned that default off [issue #183].
+    git -C "$root" config core.autocrlf "$autocrlf" || return 1
     echo init > "$root/init.txt"
     git -C "$root" add -A >/dev/null 2>&1 || return 1
     git -C "$root" -c commit.gpgsign=false commit -qm initial >/dev/null 2>&1 || return 1
@@ -218,12 +219,12 @@ test_dirty_bridge_is_refused() {
 #
 # It drives the real chokepoint, `svn_position_wc_at_rev`, rather than calling the refresh directly:
 # the defect was never in the refresh, it was in nothing calling it.
-test_pull_after_migration_leaves_the_bridge_clean() {
-    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+assert_pull_after_migration_leaves_the_bridge_clean() {
+    local autocrlf="$1"
     local tmp rc
     tmp="$(mktemp -d -t turbo-eolinit-pull-XXXXXX)"
     (
-        root="$(make_bridge_fixture "$tmp")" || exit 98
+        root="$(make_bridge_fixture "$tmp" "$autocrlf")" || exit 98
         bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
 
         # The fixture already built this as a pre-migration bridge: pinned to LF from before any
@@ -263,7 +264,20 @@ test_pull_after_migration_leaves_the_bridge_clean() {
     rc=$?
     rm -rf "$tmp" 2>/dev/null || true
     [ "$rc" -eq 98 ] && { startSkipping; return 0; }
-    assertEquals 'migrating and then pulling unpins the bridge and leaves untouched files alone' 0 "$rc"
+    assertEquals "core.autocrlf=$autocrlf: migrating and then pulling unpins the bridge and leaves untouched files alone" 0 "$rc"
+}
+
+test_pull_after_migration_leaves_the_bridge_clean() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    assert_pull_after_migration_leaves_the_bridge_clean true
+}
+
+# issue #183: a user who turned core.autocrlf off. On Windows svn writes the marked files with CRLF,
+# and a bridge that took its EOL handling from the repository read those CRLF bytes as content, so
+# every marked file stayed modified and every pull was refused.
+test_pull_after_migration_leaves_the_bridge_clean_with_autocrlf_false() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    assert_pull_after_migration_leaves_the_bridge_clean false
 }
 
 # After the migration, svn writes every marked file with the platform's endings. On Windows that is

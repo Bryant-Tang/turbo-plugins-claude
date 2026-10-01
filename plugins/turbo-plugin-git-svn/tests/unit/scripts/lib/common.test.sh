@@ -1607,9 +1607,16 @@ test_bridge_eol_unpins_once_svn_declares_eol_style() {
         rm -f "$tmp/bridge/f.txt"
         git -C "$tmp/bridge" checkout -- f.txt >/dev/null 2>&1 || exit 96
         cr="$(count_cr_bytes "$tmp/bridge/f.txt")"
-        # 3 CRLF lines: the bridge now follows the repo's own setting, like any other worktree.
-        if [ "$cr" -ne 3 ]; then
-            echo "bridge is still pinned: $cr CR bytes, expected 3" >&2; exit 1
+        # The bridge now writes what svn writes on this platform [issue #183]: CRLF on Windows
+        # [3 lines], LF elsewhere. The explicit setting itself is asserted in the next case.
+        want=0
+        case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) want=3 ;; esac
+        if [ "$cr" -ne "$want" ]; then
+            echo "bridge wrote $cr CR bytes, expected $want" >&2; exit 1
+        fi
+        pin="$(git -C "$tmp/bridge" config --worktree --get core.eol 2>/dev/null || true)"
+        if [ -n "$pin" ]; then
+            echo "the LF pin survived: core.eol=$pin" >&2; exit 1
         fi
         exit 0
     )
@@ -1617,6 +1624,36 @@ test_bridge_eol_unpins_once_svn_declares_eol_style() {
     rm -rf "$tmp" 2>/dev/null || true
     [ "$rc" -eq 98 ] && { startSkipping; return 0; }
     assertEquals 'once svn:eol-style is declared the pin is removed' 0 "$rc"
+}
+
+# issue #183: once declared, core.autocrlf is set on the bridge to what svn writes on this platform,
+# not inherited. The fixture's repository says false -- the setting that broke -- so inheriting it
+# would leave Windows bridges reading svn's CRLF as content.
+test_bridge_eol_sets_autocrlf_for_the_platform_once_declared() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-eolexplicit-XXXXXX)"
+    (
+        make_eol_fixture "$tmp" || exit 98
+        svnadmin create "$tmp/svnrepo" >/dev/null 2>&1 || exit 98
+        url="file:///$(cygpath -m "$tmp/svnrepo" 2>/dev/null || echo "$tmp/svnrepo")"
+        svn --non-interactive checkout -q --force "$url" "$tmp/bridge" >/dev/null 2>&1 || exit 98
+        ( cd "$tmp/bridge" && svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' ) >/dev/null 2>&1 || exit 98
+
+        ensure_bridge_eol_mode "$tmp" "$tmp/bridge" || exit 97
+
+        expected=input
+        case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) expected=true ;; esac
+        got="$(git -C "$tmp/bridge" config --worktree --get core.autocrlf 2>/dev/null || true)"
+        if [ "$got" != "$expected" ]; then
+            echo "bridge core.autocrlf is '$got', expected '$expected'" >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'once declared, core.autocrlf is set for the platform rather than inherited' 0 "$rc"
 }
 
 # Whichever mode it picks is scoped to the bridge; the settings the user chose for the repository
@@ -1702,6 +1739,36 @@ test_settle_bridge_index_clears_a_phantom_and_keeps_the_tree() {
     rm -rf "$tmp" 2>/dev/null || true
     [ "$rc" -eq 98 ] && { startSkipping; return 0; }
     assertEquals 'a size-only rewrite is cleared and the tree is unchanged' 0 "$rc"
+}
+
+# issue #183: a bridge that once read svn's CRLF as content has it STAGED, and `git add` never
+# normalises a file whose index entry already holds CRLF. Settling has to clear that too, since the
+# content is still the same as HEAD.
+test_settle_bridge_index_clears_crlf_staged_as_content() {
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-common-settlestaged-XXXXXX)"
+    (
+        make_phantom_fixture "$tmp" || exit 98
+        b="$tmp/bridge"
+        head_tree="$(git -C "$b" rev-parse 'HEAD^{tree}')"
+        rewrite_as_crlf "$b/f.txt" || exit 97
+        git -C "$b" -c core.autocrlf=false add f.txt >/dev/null 2>&1 || exit 97
+        # Fixture guards: the CRLF is staged, and a plain `git add -A` does not clear it.
+        git -C "$b" diff --cached --quiet && { echo 'fixture: nothing staged' >&2; exit 1; }
+        git -C "$b" add -A >/dev/null 2>&1 || exit 97
+        git -C "$b" diff --cached --quiet && { echo 'fixture: git add -A already clears it' >&2; exit 1; }
+
+        settle_bridge_index "$b" || { echo 'settle returned non-zero' >&2; exit 1; }
+
+        st="$(git -C "$b" status --porcelain)"
+        [ -z "$st" ] || { echo "still reads as modified: [$st]" >&2; exit 1; }
+        [ "$(git -C "$b" write-tree)" = "$head_tree" ] || { echo 'the index no longer matches HEAD' >&2; exit 1; }
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'CRLF staged as content is cleared when the tree equals HEAD' 0 "$rc"
 }
 
 # The other half of the contract, and the one that matters more: real work is never staged, and an

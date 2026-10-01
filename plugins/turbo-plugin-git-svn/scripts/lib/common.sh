@@ -221,8 +221,9 @@ ensure_bridge_eol_mode_once() {
 #   SVN has no eol-style   -> `svn update` writes the stored bytes verbatim, i.e. LF. git must be
 #                             pinned to LF, or `core.autocrlf=true` (the Git for Windows SYSTEM
 #                             default) makes it expect CRLF and report the entire tree as modified.
-#   SVN has eol-style      -> `svn update` writes the platform's endings, CRLF on Windows. The pin
-#                             must go, or git expects LF and reports the entire tree as modified.
+#   SVN has eol-style      -> `svn update` writes the platform's endings, CRLF on Windows. The LF
+#                             pin must go, or git expects LF and reports the entire tree as
+#                             modified; core.autocrlf is set to match the platform instead.
 #
 # Neither failure is subtle once it happens -- every guard that asks "is this bridge clean?" fires
 # at once -- but picking the mode from ambient assumptions rather than from the tree is how you get
@@ -253,9 +254,15 @@ ensure_bridge_eol_mode() {
   before_eol="$(git -C "$bridge" config --worktree --get core.eol 2>/dev/null || true)"
 
   if [ "$declared" -eq 1 ]; then
-    # `--unset` on a key that is not set exits 5, which is the ordinary case for a bridge that
-    # was never pinned.
-    git -C "$bridge" config --worktree --unset core.autocrlf >/dev/null 2>&1 || true
+    # Set explicitly, never inherited from the repository [issue #183]: svn now writes the
+    # platform's endings, so git has to normalise them on add and write the same endings on
+    # checkout -- autocrlf=true on Windows [CRLF], input elsewhere [LF]. A repository with
+    # core.autocrlf=false would otherwise make the bridge read svn's CRLF as content and stage it
+    # on the next `git add -A`.
+    local declared_autocrlf=input
+    case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) declared_autocrlf=true ;; esac
+    git -C "$bridge" config --worktree core.autocrlf "$declared_autocrlf" || return 1
+    # `--unset` on a key that is not set exits 5, the ordinary case for a bridge never pinned.
     git -C "$bridge" config --worktree --unset core.eol >/dev/null 2>&1 || true
   else
     git -C "$bridge" config --worktree core.autocrlf false || return 1
@@ -316,10 +323,16 @@ settle_bridge_index() {
   # Next to the real index, not in /tmp: git on Windows is a native program and cannot follow an
   # MSYS path handed to it through an environment variable.
   tmp_index="$(mktemp "$git_dir/tp-settle-index.XXXXXX")" || return 1
+  # `read-tree -m HEAD` first, so the copy starts from HEAD's blobs and keeps the stat cache. A
+  # file whose index entry already holds CRLF is never normalised by `git add` [git skips the
+  # conversion when the index has CR], and such entries are exactly what a bridge that once read
+  # svn's CRLF as content was left with [issue #183]. Starting from HEAD lets them normalise; when
+  # the result equals HEAD, the copy replaces the real index rather than re-adding into it.
   if cp "$git_dir/index" "$tmp_index" \
+    && GIT_INDEX_FILE="$tmp_index" git -C "$bridge" read-tree -m HEAD >/dev/null 2>&1 \
     && GIT_INDEX_FILE="$tmp_index" git -C "$bridge" add -A >/dev/null 2>&1 \
     && GIT_INDEX_FILE="$tmp_index" git -C "$bridge" diff --cached --quiet HEAD --; then
-    git -C "$bridge" add -A >/dev/null 2>&1 || rc=1
+    mv -f "$tmp_index" "$git_dir/index" || rc=1
   fi
   rm -f "$tmp_index"
   return "$rc"
