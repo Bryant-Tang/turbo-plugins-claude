@@ -911,5 +911,35 @@ test_git_commit_failing_with_nothing_to_send_does_not_claim_svn_has_it() {
     assertEquals 'nothing reached SVN' "$rev_before" "$(branch_rev)"
 }
 
+# issue #189: commits that cancel out, with nothing else in the bridge, leave `svn status` empty.
+# Prepare must still write all three pins, and the push must finish without touching SVN.
+# Mirrors the 'svn status is empty at prepare' Context in Submit-SvnCommit.test.ps1.
+test_prepare_with_empty_svn_status_writes_every_pin() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc rev_before bridge_gitdir pin
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'feat: edit app' >/dev/null 2>&1
+    if ! push_feat 'edit app'; then startSkipping; return 0; fi
+    printf 'app-tmp\n' > "$ROOT/app.txt"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'chore: try something' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false revert --no-edit HEAD >/dev/null 2>&1
+    rev_before="$(branch_rev)"
+    out="$( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x 2>&1 )"; rc=$?
+
+    assertEquals "prepare succeeds: $out" 0 "$rc"
+    assertEquals 'svn status is empty, so the case proves something' '' "$(svn status "$FEAT_BRIDGE" 2>/dev/null)"
+    bridge_gitdir="$(git -C "$FEAT_BRIDGE" rev-parse --absolute-git-dir)"
+    for pin in tp_branch_sha tp_svn_status tp_svn_body; do
+        assertTrue "pin MERGE_HEAD.$pin is written" "[ -f '$bridge_gitdir/MERGE_HEAD.$pin' ]"
+    done
+
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'try and revert' 2>&1 )"; rc=$?
+    assertEquals "the push finishes: $out" 0 "$rc"
+    assertEquals 'nothing reached SVN' "$rev_before" "$(branch_rev)"
+    assertFalse 'the merge is committed' "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"
