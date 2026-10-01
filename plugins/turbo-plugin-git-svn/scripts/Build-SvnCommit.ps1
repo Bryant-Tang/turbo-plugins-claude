@@ -162,7 +162,15 @@ try {
     } finally {
         [Console]::OutputEncoding = $prevEnc
     }
-    Write-Utf8NoBom -Path $svnStatusFile -Content $svnStatusSnap
+    # svn status prints nothing when the merge brought in nothing svn can see -- commits that
+    # cancel out, or changes only to git-ignored files (issue #189). Write-Utf8NoBom's -Content is
+    # Mandatory and PowerShell refuses to bind an empty string to it, so write the empty pin
+    # directly; submit reads an empty snapshot as "no lines", same as the bash empty file.
+    if ([string]::IsNullOrEmpty($svnStatusSnap)) {
+        [System.IO.File]::WriteAllText($svnStatusFile, '', (New-Object System.Text.UTF8Encoding($false)))
+    } else {
+        Write-Utf8NoBom -Path $svnStatusFile -Content $svnStatusSnap
+    }
 
     # Persist the LOCKED body alongside the other prepare-time pins. push-to-svn-commit reads this
     # back (body-from-file) and combines it with the agent's title; the agent never sees a free

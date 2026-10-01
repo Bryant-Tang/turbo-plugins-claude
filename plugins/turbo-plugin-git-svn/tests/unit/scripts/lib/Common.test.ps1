@@ -1695,8 +1695,44 @@ Describe 'Set-BridgeEolMode' {
             Set-BridgeEolMode -MainWorktree $dir -Bridge $bridge
 
             Reset-FileFromIndex -WorktreeDir $bridge -Name 'f.txt'
-            # 3 CRLF lines: the bridge now follows the repo's own setting, like any other worktree.
-            Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be 3
+            # The bridge now writes what svn writes on this platform [issue #183]: CRLF on Windows
+            # [3 lines], LF elsewhere. The explicit setting itself is asserted in the next case.
+            $want = 0
+            if ($env:OS -eq 'Windows_NT') { $want = 3 }
+            Measure-CrBytes (Join-Path $bridge 'f.txt') | Should -Be $want
+            (Read-Git -Cwd $bridge -GitArgs @('config', '--worktree', '--get', 'core.eol')).Text.Trim() | Should -BeNullOrEmpty
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    # issue #183: once declared, core.autocrlf is set on the bridge to what svn writes on this
+    # platform, not inherited. The fixture's repository says false -- the setting that broke -- so
+    # inheriting it would leave Windows bridges reading svn's CRLF as content.
+    It 'sets core.autocrlf for the platform once the SVN side declares svn:eol-style' {
+        if (-not $script:EolSvnReady) {
+            Set-ItResult -Skipped -Because 'svn / svnadmin are not on PATH'
+            return
+        }
+        $dir = New-EolFixture 'eolexplicit'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            $svnrepo = Join-Path $dir 'svnrepo'
+            & svnadmin create $svnrepo 2>$null | Out-Null
+            $url = 'file:///' + ($svnrepo -replace '\\', '/')
+            & svn --non-interactive checkout -q --force $url $bridge 2>$null | Out-Null
+            Push-Location -LiteralPath $bridge
+            try {
+                & svn --non-interactive propset svn:auto-props '*.txt = svn:eol-style=native' -q '.' 2>$null | Out-Null
+            } finally {
+                Pop-Location
+            }
+
+            Set-BridgeEolMode -MainWorktree $dir -Bridge $bridge
+
+            $expected = 'input'
+            if ($env:OS -eq 'Windows_NT') { $expected = 'true' }
+            (Read-Git -Cwd $bridge -GitArgs @('config', '--worktree', '--get', 'core.autocrlf')).Text.Trim() | Should -Be $expected
         } finally {
             Remove-IsolatedRepoRoot $dir
         }
@@ -1779,6 +1815,30 @@ Describe 'Update-BridgeIndex' {
             @(Get-ChildItem -LiteralPath $gitDir -Filter 'tp-settle-index*' -Force).Count | Should -Be 0
             Test-Path -LiteralPath 'Env:GIT_INDEX_FILE' | Should -BeFalse
             [System.IO.File]::ReadAllLines((Join-Path $dir '.git/info/exclude')) | Should -Contain '.svn/'
+        } finally {
+            Remove-IsolatedRepoRoot $dir
+        }
+    }
+
+    # issue #183: a bridge that once read svn's CRLF as content has it STAGED, and `git add` never
+    # normalises a file whose index entry already holds CRLF. Settling has to clear that too, since
+    # the content is still the same as HEAD. Mirrors test_settle_bridge_index_clears_crlf_staged_as_content.
+    It 'clears CRLF staged as content when the tree equals HEAD' {
+        $dir = New-PhantomFixture 'settlestaged'
+        try {
+            $bridge = Join-Path $dir 'bridge'
+            $headTree = (Read-Git -Cwd $bridge -GitArgs @('rev-parse', 'HEAD^{tree}')).Text.Trim()
+            Set-FileAsCrlf (Join-Path $bridge 'f.txt')
+            $null = Read-Git -Cwd $bridge -GitArgs @('-c', 'core.autocrlf=false', 'add', 'f.txt')
+            # Fixture guards: the CRLF is staged, and a plain `git add -A` does not clear it.
+            (Read-Git -Cwd $bridge -GitArgs @('diff', '--cached', '--quiet')).Code | Should -Not -Be 0
+            $null = Read-Git -Cwd $bridge -GitArgs @('add', '-A')
+            (Read-Git -Cwd $bridge -GitArgs @('diff', '--cached', '--quiet')).Code | Should -Not -Be 0
+
+            Update-BridgeIndex -Bridge $bridge | Should -BeTrue
+
+            Get-BridgeStatus $bridge | Should -BeNullOrEmpty
+            (Read-Git -Cwd $bridge -GitArgs @('write-tree')).Text.Trim() | Should -Be $headTree
         } finally {
             Remove-IsolatedRepoRoot $dir
         }

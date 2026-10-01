@@ -101,7 +101,7 @@ BeforeAll {
     # the directory is a git worktree, then `svn checkout --force` to overlay SVN's content and
     # metadata, then a git commit that takes SVN's bytes as the git content.
     function New-BridgeFixture {
-        param([string]$Tag = 'eolinit')
+        param([string]$Tag = 'eolinit', [string]$AutoCrlf = 'true')
         $sandbox = New-Sandbox $Tag
         $root = [System.IO.Path]::Combine($sandbox, 'repo')
         $svnrepo = [System.IO.Path]::Combine($sandbox, 'svnrepo')
@@ -136,7 +136,8 @@ BeforeAll {
         # true, not false: this is the Git for Windows SYSTEM default, so it is what an unpinned
         # bridge actually inherits on a real user's machine. Pinning the fixture to false would
         # quietly make "unpinned" mean "still expects raw bytes" -- a platform nobody has.
-        Invoke-GitQuiet $root config core.autocrlf true
+        # -AutoCrlf overrides it for the user who turned that default off [issue #183].
+        Invoke-GitQuiet $root config core.autocrlf $AutoCrlf
         [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, 'init.txt'), "init`n", $enc)
         Invoke-GitQuiet $root add -A
         Invoke-GitQuiet $root -c commit.gpgsign=false commit -q -m 'initial'
@@ -253,12 +254,16 @@ Describe 'Initialize-SvnEolStyle' {
     #
     # It drives the real chokepoint, Set-SvnWcPosition, rather than calling the refresh directly:
     # the defect was never in the refresh, it was in nothing calling it.
-    It 'unpins the bridge and leaves untouched files alone when a pull follows the migration' {
+    # The false case is issue #183: on Windows svn writes the marked files with CRLF, and a bridge
+    # that took its EOL handling from a repository with core.autocrlf=false read those CRLF bytes as
+    # content, so every marked file stayed modified and every pull was refused.
+    It 'core.autocrlf=<_>: unpins the bridge and leaves untouched files alone when a pull follows the migration' -ForEach @('true', 'false') {
+        $autoCrlf = $_
         if (-not $script:SvnAvailable) {
             Set-ItResult -Skipped -Because 'svn is not on PATH'
             return
         }
-        $fx = New-BridgeFixture 'eolpull'
+        $fx = New-BridgeFixture -Tag 'eolpull' -AutoCrlf $autoCrlf
         try {
             # The fixture already built this as a pre-migration bridge: pinned to LF from before any
             # content landed, which is the state a real upgrading user is in.
