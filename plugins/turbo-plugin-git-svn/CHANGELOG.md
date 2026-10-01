@@ -2,6 +2,14 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.9.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.9.0...turbo-plugin-git-svn--v0.9.1) (2026-10-01)
+
+
+### Fixed
+
+* **git-svn:** core.autocrlf=false 的 repo 遷移後 bridge 不再永久是髒的 ([68e509d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/68e509dfb0c2d37608860b84bc421548d72c1f4c)), closes [#183](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/183)
+* **git-svn:** prepare 時 svn status 為空不再讓 PowerShell 版中途丟例外 ([168fce4](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/168fce401e96c52c3d082b87c80efd25f2641ccc)), closes [#189](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/189)
+
 ## [0.9.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.8.0...turbo-plugin-git-svn--v0.9.0) (2026-09-30)
 
 
