@@ -391,6 +391,32 @@ Describe 'Publish-Web' {
         }
     }
 
+    # issue #185: Visual Studio writes the SOLUTION spelling `Any CPU` into <LastUsedPlatform>, but
+    # publish always targets a csproj, which only accepts `AnyCPU`. Passed through unchanged it
+    # failed with "BaseOutputPath/OutputPath property is not set".
+    Context 'issue #185 - a pubxml Any CPU reaches MSBuild as AnyCPU' {
+        BeforeAll {
+            $script:sbpAny = New-PublishArgFixture 'publish-anycpu' -PubxmlNodes '<LastUsedBuildConfiguration>Release</LastUsedBuildConfiguration><LastUsedPlatform>Any CPU</LastUsedPlatform>'
+            $script:rpAny = Invoke-Script -WorkDir $script:sbpAny
+            $script:sbpX64 = New-PublishArgFixture 'publish-x64' -PubxmlNodes '<LastUsedPlatform>x64</LastUsedPlatform>'
+            $script:rpX64 = Invoke-Script -WorkDir $script:sbpX64
+        }
+        AfterAll { Remove-Sandbox $script:sbpAny; Remove-Sandbox $script:sbpX64 }
+
+        It 'passes AnyCPU, not the pubxml spelling' {
+            $script:rpAny.Exit | Should -Be 0
+            $script:rpAny.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=AnyCPU'
+            $script:rpAny.Stdout | Should -Not -Match 'MSBUILD_ARGS:.*/p:Platform=Any CPU'
+        }
+        It 'states the conversion on stdout' {
+            $script:rpAny.Stdout | Should -Match ([regex]::Escape("platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'"))
+        }
+        It 'leaves x64 alone' {
+            $script:rpX64.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=x64'
+            $script:rpX64.Stdout | Should -Not -Match '已依'
+        }
+    }
+
     # issue #45: publish had no way to pass one extra MSBuild property, so the only workaround for
     # anything the script does not model was to abandon the plugin and hand-run MSBuild.
     Context 'issue #45 - extra MSBuild properties can be passed through' {

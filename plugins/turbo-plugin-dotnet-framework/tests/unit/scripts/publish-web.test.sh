@@ -166,6 +166,31 @@ EOF
     echo "$out" | grep -q '/p:Configuration=Release'; assertTrue 'case4b: pubxml Configuration reaches MSBuild' $?
 }
 
+# Case 4c (issue #185): Visual Studio writes `Any CPU` -- the SOLUTION spelling -- into
+# <LastUsedPlatform>, but publish always targets a csproj, which only accepts `AnyCPU`.
+test_arg_pubxml_anycpu_respelled_stub() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb out e
+    sb="$(new_sb 'publish-sh-anycpu')"
+    write_csproj "$sb"
+    mkdir -p "$sb/Properties/PublishProfiles"
+    cat > "$sb/Properties/PublishProfiles/FolderProfile.pubxml" <<'EOF'
+<Project><PropertyGroup><WebPublishMethod>FileSystem</WebPublishMethod><LastUsedPlatform>Any CPU</LastUsedPlatform><PublishUrl>bin\app.publish\</PublishUrl></PropertyGroup></Project>
+EOF
+    mkdir -p "$sb/.turbo-plugin"
+    printf '[publish]\nproject = "HelloApp.csproj"\n' > "$sb/.turbo-plugin/config.toml"
+    printf '[tools]\nmsbuild_path = "msbuild-stub.bat"\n' > "$sb/.turbo-plugin/config.local.toml"
+    printf '@echo off\r\necho MSBUILD_ARGS: %%*\r\n' > "$sb/msbuild-stub.bat"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    rm_sb "$sb"
+    assertEquals 'case4c: stub publish exit 0' 0 "$e"
+    echo "$out" | grep -q 'MSBUILD_ARGS:.*/p:Platform=AnyCPU'; assertTrue 'case4c: pubxml Any CPU reaches MSBuild as AnyCPU' $?
+    echo "$out" | grep -q 'MSBUILD_ARGS:.*/p:Platform=Any CPU'; assertFalse 'case4c: Any CPU never reaches a csproj' $?
+    echo "$out" | grep -q "platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'"; assertTrue 'case4c: conversion stated' $?
+}
+
 # Case 5: real MSBuild publish deferred to Phase 2 (always SKIP).
 test_real_publish_deferred() {
     startSkipping

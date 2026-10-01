@@ -425,6 +425,49 @@ function Resolve-SolutionDir {
     return ($RepoRoot.TrimEnd('\') + '\')
 }
 
+# The /p:Platform value MSBuild accepts for THIS target, from whatever spelling config / CLI / pubxml
+# supplied (issue #185).
+#
+# MSBuild spells the neutral platform two ways and accepts only one per target type:
+#
+#   .sln / .slnx   `Any CPU` (with a space) -- the SOLUTION platform. `AnyCPU` fails with MSB4126
+#                  ("the specified solution configuration 'Debug|AnyCPU' is invalid").
+#   project files  `AnyCPU` (no space) -- what csproj conditions test for. `Any CPU` matches none of
+#                  them, so OutputPath stays unset and the build dies with "BaseOutputPath/OutputPath
+#                  property is not set", which reads like a broken csproj rather than a bad argument.
+#
+# So one shared `[build] platform` could never serve both a .sln and a .csproj of the same sub-
+# project, and a VS-written pubxml (`<LastUsedPlatform>Any CPU</LastUsedPlatform>`) broke publish of
+# the csproj it belongs to. Visual Studio performs exactly this conversion itself.
+#
+# ONLY that one pair is rewritten, case-insensitively. Solution platform names are user-defined
+# (`Mixed Platforms`, custom names), and x64 / x86 are spelled the same on both sides, so a general
+# "make it fit" rule would be guessing. Everything else passes through untouched.
+#
+# Returns Value (what to pass), Original (what was supplied) and Note -- '' when nothing changed,
+# otherwise a line stating the conversion. The note exists so the MSBuild args line and the config
+# file can disagree VISIBLY: a silent rewrite would be one more place where what ran is not what
+# was written.
+function ConvertTo-MsbuildPlatform {
+    param(
+        [string]$Platform = '',
+        [Parameter(Mandatory = $true)][string]$TargetPath
+    )
+
+    $result = [PSCustomObject]@{ Value = $Platform; Original = $Platform; Note = '' }
+    if ([string]::IsNullOrWhiteSpace($Platform)) { return $result }
+    if ($Platform.Trim() -notmatch '^any ?cpu$') { return $result }
+
+    $ext = ([System.IO.Path]::GetExtension($TargetPath)).ToLowerInvariant()
+    $canonical = if ($ext -eq '.sln' -or $ext -eq '.slnx') { 'Any CPU' } else { 'AnyCPU' }
+    $result.Value = $canonical
+    if ($canonical -cne $Platform) {
+        $kind = if ([string]::IsNullOrWhiteSpace($ext)) { '專案檔' } else { $ext }
+        $result.Note = "platform '$Platform' 已依 $kind 轉為 '$canonical'"
+    }
+    return $result
+}
+
 # ─── per-project config groups ─────────────────────────────────────────────────
 # `[<section>."<project path>"]` scopes a section's settings to one sub-project. Introduced for
 # [frontend] (issue #125) and extended to [build] / [publish] (issue #133) unchanged: one repo
@@ -715,6 +758,9 @@ function Format-BuildResultLines {
         [Parameter(Mandatory = $true)][string]$ResolvedTarget,
         [string]$Configuration = '',
         [string]$Platform = '',
+        # ConvertTo-MsbuildPlatform's Note: when the configured spelling was rewritten for this
+        # target, the template says so, or its Platform line silently disagrees with config.toml.
+        [string]$PlatformNote = '',
         $FrontendGroup = $null,
         $BuildGroup = $null,
         [switch]$IsSolution
@@ -723,7 +769,9 @@ function Format-BuildResultLines {
     $lines = @()
     $lines += if ($IsSolution) { "Target: $ResolvedTarget (整個 solution)" } else { "Target: $ResolvedTarget" }
     $lines += if ([string]::IsNullOrWhiteSpace($Configuration)) { "Configuration: $note" } else { "Configuration: $Configuration" }
-    $lines += if ([string]::IsNullOrWhiteSpace($Platform)) { "Platform: $note" } else { "Platform: $Platform" }
+    $platformLine = if ([string]::IsNullOrWhiteSpace($Platform)) { "Platform: $note" } else { "Platform: $Platform" }
+    if (-not [string]::IsNullOrWhiteSpace($PlatformNote)) { $platformLine += " ($PlatformNote)" }
+    $lines += $platformLine
     $groupLine = Format-ConfigGroupLine -Group $BuildGroup -Label '設定分組'
     if ($null -ne $groupLine) { $lines += $groupLine }
     $lines += Format-FrontendStatusLine -Group $FrontendGroup

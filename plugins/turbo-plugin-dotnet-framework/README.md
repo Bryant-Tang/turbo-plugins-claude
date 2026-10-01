@@ -115,6 +115,12 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
   結果模板多一行 `設定分組:`,說明這次用了哪一組、或「有分組但沒有一組對應這個專案」(後者仍然會用
   共用設定建置成功,所以不講的話看不出來)。沒有任何分組的 repo 不會多這一行,行為也完全不變。
 
+  **`platform` 的 `Any CPU` / `AnyCPU` 不必分兩組寫**:MSBuild 對 `.sln` 只收 `Any CPU`(有空格)、對
+  csproj 只收 `AnyCPU`(無空格),所以同一個值以前必然讓其中一種 target 失敗。build / publish 組
+  `/p:Platform` 前會**只針對這一對**依 target 類型換成對的寫法(pubxml `<LastUsedPlatform>` 讀到的
+  `Any CPU` 也一樣),有轉換時 stdout 與 build 結果模板會印出「platform 'Any CPU' 已依 .csproj 轉為
+  'AnyCPU'」;`x64`、`x86`、`Mixed Platforms` 等其它名稱一律原樣傳。
+
   **`[run]` 目前不支援分組**,只有 `[frontend]` / `[build]` / `[publish]` 三個區塊有。寫成
   `[run."proj-1"]` 的話,底下的 `configuration` / `arguments` / `working_directory` **不會**生效
   (仍然讀不帶鍵的 `[run]`);而因為 run 在沒設定 `[run] project` 時會退回讀 `[build] project`,

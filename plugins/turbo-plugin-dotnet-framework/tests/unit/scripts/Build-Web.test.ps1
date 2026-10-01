@@ -329,6 +329,44 @@ Describe 'Build-Web' {
         }
     }
 
+    # issue #185: MSBuild takes `Any CPU` only for a .sln and `AnyCPU` only for a project file, so a
+    # shared [build] platform used to break whichever kind of target it was not written for. The
+    # assertions anchor on the stub's MSBUILD_ARGS line, because the conversion note itself quotes
+    # the original spelling.
+    Context 'issue #185 - the Any CPU / AnyCPU pair is respelled per target type' {
+        BeforeAll {
+            $script:sbPlat = New-BuildArgFixture 'build-platform-anycpu' -WithSolution -ConfigToml "[build]`r`nplatform = `"Any CPU`"`r`n"
+            $script:rPlatProj = Invoke-Script -WorkDir $script:sbPlat -ExtraArgs @('-Project', 'HelloApp.csproj')
+            $script:rPlatSln = Invoke-Script -WorkDir $script:sbPlat -ExtraArgs @('-Project', 'HelloApp.sln')
+            $script:rPlatCliSln = Invoke-Script -WorkDir $script:sbPlat -ExtraArgs @('-Project', 'HelloApp.sln', '-Platform', 'AnyCPU')
+            $script:rPlatX64 = Invoke-Script -WorkDir $script:sbPlat -ExtraArgs @('-Project', 'HelloApp.csproj', '-Platform', 'x64')
+        }
+        AfterAll { Remove-Sandbox $script:sbPlat }
+
+        It 'a .csproj gets AnyCPU from a shared Any CPU' {
+            $script:rPlatProj.Exit | Should -Be 0
+            $script:rPlatProj.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=AnyCPU'
+            $script:rPlatProj.Stdout | Should -Not -Match 'MSBUILD_ARGS:.*/p:Platform=Any CPU'
+        }
+        It 'says so on stdout and in the result template' {
+            $script:rPlatProj.Stdout | Should -Match ([regex]::Escape("platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'"))
+            $script:rPlatProj.Stdout | Should -Match ([regex]::Escape("Platform: AnyCPU (platform 'Any CPU'"))
+        }
+        It 'the .sln of the same repo keeps Any CPU, with no note' {
+            $script:rPlatSln.Exit | Should -Be 0
+            $script:rPlatSln.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=Any CPU'
+            $script:rPlatSln.Stdout | Should -Not -Match '已依'
+        }
+        It 'a .sln gets Any CPU from AnyCPU (the MSB4126 direction)' {
+            $script:rPlatCliSln.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=Any CPU'
+            $script:rPlatCliSln.Stdout | Should -Match ([regex]::Escape("platform 'AnyCPU' 已依 .sln 轉為 'Any CPU'"))
+        }
+        It 'any other platform name passes through untouched' {
+            $script:rPlatX64.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=x64'
+            $script:rPlatX64.Stdout | Should -Not -Match '已依'
+        }
+    }
+
     # Publish is where issue #132 was reported, because publish only ever takes a csproj. Build has
     # the same hole whenever the agent builds a single csproj instead of the .sln -- which the SKILL
     # explicitly tells it to do for a small change. Same helper, so the two can no longer diverge.

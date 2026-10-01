@@ -919,6 +919,56 @@ Describe 'Resolve-SolutionDir (mono-repo SolutionDir, issue #132)' {
     }
 }
 
+# =============================================================================
+# ConvertTo-MsbuildPlatform (issue #185)
+# =============================================================================
+#
+# MSBuild accepts `Any CPU` only for a solution and `AnyCPU` only for a project file, so one shared
+# platform value broke whichever kind of target it was not written for -- and the csproj failure
+# ("BaseOutputPath/OutputPath property is not set") points at the project, not at the argument.
+Describe 'ConvertTo-MsbuildPlatform (issue #185)' {
+
+    It 'respells Any CPU as AnyCPU for a .csproj' {
+        (ConvertTo-MsbuildPlatform -Platform 'Any CPU' -TargetPath 'C:\r\Web\Web.csproj').Value | Should -BeExactly 'AnyCPU'
+    }
+    It 'respells AnyCPU as Any CPU for a .sln' {
+        (ConvertTo-MsbuildPlatform -Platform 'AnyCPU' -TargetPath 'C:\r\App.sln').Value | Should -BeExactly 'Any CPU'
+    }
+    It 'treats every other project-file extension like a csproj' {
+        (ConvertTo-MsbuildPlatform -Platform 'Any CPU' -TargetPath 'C:\r\Lib.vbproj').Value | Should -BeExactly 'AnyCPU'
+    }
+    It 'matches the pair case-insensitively' {
+        (ConvertTo-MsbuildPlatform -Platform 'anycpu' -TargetPath 'C:\r\App.sln').Value | Should -BeExactly 'Any CPU'
+        (ConvertTo-MsbuildPlatform -Platform 'ANY CPU' -TargetPath 'C:\r\Web.csproj').Value | Should -BeExactly 'AnyCPU'
+    }
+    # Solution platform names are user-defined, and x64 / x86 are spelled the same on both sides,
+    # so generalising beyond the one pair would be guessing.
+    It 'leaves every other platform name untouched, with no note' {
+        foreach ($p in @('x64', 'x86', 'Mixed Platforms', 'ARM64')) {
+            foreach ($t in @('C:\r\App.sln', 'C:\r\Web.csproj')) {
+                $r = ConvertTo-MsbuildPlatform -Platform $p -TargetPath $t
+                $r.Value | Should -BeExactly $p
+                $r.Note | Should -BeNullOrEmpty
+            }
+        }
+    }
+    It 'passes an empty platform through, so the caller still omits /p:Platform' {
+        $r = ConvertTo-MsbuildPlatform -Platform '' -TargetPath 'C:\r\Web.csproj'
+        $r.Value | Should -BeNullOrEmpty
+        $r.Note | Should -BeNullOrEmpty
+    }
+    It 'says nothing when the value is already the right spelling' {
+        (ConvertTo-MsbuildPlatform -Platform 'AnyCPU' -TargetPath 'C:\r\Web.csproj').Note | Should -BeNullOrEmpty
+        (ConvertTo-MsbuildPlatform -Platform 'Any CPU' -TargetPath 'C:\r\App.sln').Note | Should -BeNullOrEmpty
+    }
+    # The note is what keeps "MSBuild args disagree with config.toml" from being another silent gap.
+    It 'states the conversion when one happened, naming both spellings and the target kind' {
+        $r = ConvertTo-MsbuildPlatform -Platform 'Any CPU' -TargetPath 'C:\r\Web.csproj'
+        $r.Original | Should -BeExactly 'Any CPU'
+        $r.Note | Should -BeExactly "platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'"
+    }
+}
+
 Describe 'Resolve-FrontendGroup (multi-project [frontend], issue #125)' {
 
     # BeforeAll, not the Describe body: under Pester 5 a function defined directly in a Describe
@@ -1568,6 +1618,16 @@ Describe 'Result-template family (KTD5)' {
             $joined | Should -Match 'Platform:.*MSBuild'
             # Must NOT fabricate a concrete value the executor did not pass.
             $joined | Should -Not -Match 'Configuration: Debug'
+        }
+        # issue #185: when the configured spelling was respelled for this target, the Platform line
+        # says so -- otherwise the template silently disagrees with config.toml.
+        It 'appends the platform conversion note to the Platform line' {
+            $lines = Format-BuildResultLines -ResolvedTarget 'Web.csproj' -Platform 'AnyCPU' -PlatformNote "platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'"
+            ($lines -join "`n") | Should -Match ([regex]::Escape("Platform: AnyCPU (platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU')"))
+        }
+        It 'keeps the Platform line bare when nothing was converted' {
+            $lines = Format-BuildResultLines -ResolvedTarget 'Web.csproj' -Platform 'x64'
+            @($lines | Where-Object { $_ -like 'Platform:*' })[0] | Should -BeExactly 'Platform: x64'
         }
         It 'flags a solution target' {
             $lines = Format-BuildResultLines -ResolvedTarget 'App.sln' -IsSolution

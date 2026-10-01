@@ -118,11 +118,14 @@ publish **成功後**,讀並遵循 `${CLAUDE_PLUGIN_ROOT}/assets/memory-save-bac
   一種情況:**有分組而你沒指定專案時,執行器拒跑並列出有哪幾組**——那時 `AskUserQuestion` 問使用者這次
   要發哪一個(白話講子專案,別丟設定 key 名),**不要自己挑**。分組存在就代表沒有唯一答案,而發佈是會
   送到部署環境的動作,挑錯的代價不可逆。
-- **`Any CPU` 與 `AnyCPU` 只差一個空格,但三個地方各該用哪一種是固定的,不要互相代換**:pubxml 寫的是
-  `Any CPU`(**有**空格),csproj 的條件是 `'$(Configuration)|$(Platform)' == 'Release|AnyCPU'`(**無**
-  空格),命令列要傳的是**無**空格那個。也就是兩種拼法、三個情境,而 pubxml 是唯一用有空格版本的。在 VS 裡按發行遇不到(VS 自己做轉換),只有走 MSBuild 命令列才會浮出來。傳錯的失敗
-  訊息是「未設定專案 'X.csproj' 的 BaseOutputPath/OutputPath 屬性。設定='Release' 平臺='Any CPU'。」
-  ——**看起來像專案設定壞了,其實是參數帶錯**。看到這句話先核對 `MSBuild args:` 那行的 `/p:Platform`。
+- **`Any CPU` 與 `AnyCPU` 只差一個空格,執行器會自己換成對的那個,你不用處理**:MSBuild 對 `.sln` 只收
+  `Any CPU`(**有**空格),對 csproj 只收 `AnyCPU`(**無**空格),而 Visual Studio 寫進 pubxml
+  `<LastUsedPlatform>` 的是有空格那個。執行器組 `/p:Platform` 前只針對這一對依 target 類型換寫法
+  (publish 一律是 csproj → `AnyCPU`;`x64` / `x86` 等其它名稱一律原樣),有轉換時 stdout 會印一行
+  `platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'`,讓 `MSBuild args:` 和 pubxml / 設定檔的差異看得到。
+  所以**不要**為了這件事去改 pubxml、改 `[publish] platform`,也不要用 `--msbuild-property Platform=...`
+  繞(那個逃生口排在最後、會蓋掉轉換結果)。若仍看到「未設定專案 'X.csproj' 的 BaseOutputPath/OutputPath
+  屬性」——**看起來像專案設定壞了,其實多半是參數帶錯**——先核對 `MSBuild args:` 那行的 `/p:Platform`。
 - Frontend pack 是 publish 鏈的一部份;**不要在 SKILL 內額外呼叫** `pack-content`,script 已包含。
 - **MSBuild 找不到** → script fail loudly,提示在 `.turbo-plugin/config.local.toml` 的 `[tools]` 設 `msbuild_path`。
 - **一整片 `CS0246`「找不到類型或命名空間名稱」→ 先當成套件沒還原**:`/p:DeployOnBuild=true` 會**建置**

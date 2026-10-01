@@ -143,6 +143,43 @@ EOF
     rm_sb "$target"; rm_sb "$elsewhere"
 }
 
+# Case 4c (issue #185): `Any CPU` is valid only for a .sln and `AnyCPU` only for a project file, so a
+# shared [build] platform is respelled per target -- and the respelling is stated, not silent.
+# Assertions anchor on the stub's MSBUILD_ARGS line: the note itself quotes the original spelling.
+test_platform_anycpu_respelled_per_target() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb out_proj out_sln out_x64 e_proj e_sln
+    sb="$(new_sb 'build-sh-anycpu')"
+    cat > "$sb/HelloApp.csproj" <<'EOF'
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+  </PropertyGroup>
+</Project>
+EOF
+    : > "$sb/HelloApp.sln"
+    mkdir -p "$sb/.turbo-plugin"
+    printf '[build]\nplatform = "Any CPU"\n' > "$sb/.turbo-plugin/config.toml"
+    printf '[tools]\nmsbuild_path = "msbuild-stub.bat"\n' > "$sb/.turbo-plugin/config.local.toml"
+    printf '@echo off\r\necho MSBUILD_ARGS: %%*\r\n' > "$sb/msbuild-stub.bat"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+
+    out_proj="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" --project HelloApp.csproj 2>&1)"; e_proj=$?
+    out_sln="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" --project HelloApp.sln 2>&1)"; e_sln=$?
+    out_x64="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" --project HelloApp.csproj --platform x64 2>&1)"
+    rm_sb "$sb"
+
+    assertEquals 'case4c: csproj build exit 0' 0 "$e_proj"
+    echo "$out_proj" | grep -q 'MSBUILD_ARGS:.*/p:Platform=AnyCPU'; assertTrue 'case4c: csproj gets AnyCPU' $?
+    echo "$out_proj" | grep -q 'MSBUILD_ARGS:.*/p:Platform=Any CPU'; assertFalse 'case4c: csproj never gets Any CPU' $?
+    echo "$out_proj" | grep -q "platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'"; assertTrue 'case4c: conversion stated' $?
+    assertEquals 'case4c: sln build exit 0' 0 "$e_sln"
+    echo "$out_sln" | grep -q 'MSBUILD_ARGS:.*/p:Platform=Any CPU'; assertTrue 'case4c: sln keeps Any CPU' $?
+    echo "$out_sln" | grep -q '已依'; assertFalse 'case4c: no note when nothing changed' $?
+    echo "$out_x64" | grep -q 'MSBUILD_ARGS:.*/p:Platform=x64'; assertTrue 'case4c: x64 passes through' $?
+    echo "$out_x64" | grep -q '已依'; assertFalse 'case4c: x64 not converted' $?
+}
+
 # Case 5: real MSBuild deferred to Phase 2 SKILL-level test (always skipped here).
 test_real_msbuild_deferred() {
     startSkipping
