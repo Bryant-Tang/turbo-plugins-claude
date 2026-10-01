@@ -166,6 +166,62 @@ EOF
     echo "$out" | grep -q '/p:Configuration=Release'; assertTrue 'case4b: pubxml Configuration reaches MSBuild' $?
 }
 
+# Case 4c (issue #185): Visual Studio writes `Any CPU` -- the SOLUTION spelling -- into
+# <LastUsedPlatform>, but publish always targets a csproj, which only accepts `AnyCPU`.
+test_arg_pubxml_anycpu_respelled_stub() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb out e
+    sb="$(new_sb 'publish-sh-anycpu')"
+    write_csproj "$sb"
+    mkdir -p "$sb/Properties/PublishProfiles"
+    cat > "$sb/Properties/PublishProfiles/FolderProfile.pubxml" <<'EOF'
+<Project><PropertyGroup><WebPublishMethod>FileSystem</WebPublishMethod><LastUsedPlatform>Any CPU</LastUsedPlatform><PublishUrl>bin\app.publish\</PublishUrl></PropertyGroup></Project>
+EOF
+    mkdir -p "$sb/.turbo-plugin"
+    printf '[publish]\nproject = "HelloApp.csproj"\n' > "$sb/.turbo-plugin/config.toml"
+    printf '[tools]\nmsbuild_path = "msbuild-stub.bat"\n' > "$sb/.turbo-plugin/config.local.toml"
+    printf '@echo off\r\necho MSBUILD_ARGS: %%*\r\n' > "$sb/msbuild-stub.bat"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init) >/dev/null 2>&1
+
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" 2>&1)"; e=$?
+    rm_sb "$sb"
+    assertEquals 'case4c: stub publish exit 0' 0 "$e"
+    echo "$out" | grep -q 'MSBUILD_ARGS:.*/p:Platform=AnyCPU'; assertTrue 'case4c: pubxml Any CPU reaches MSBuild as AnyCPU' $?
+    echo "$out" | grep -q 'MSBUILD_ARGS:.*/p:Platform=Any CPU'; assertFalse 'case4c: Any CPU never reaches a csproj' $?
+    echo "$out" | grep -q "platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'"; assertTrue 'case4c: conversion stated' $?
+}
+
+# Case 4d (issue #184): publish goes through the same target check as build -- a --project inside
+# another worktree is refused rather than published with the wrong [publish] settings.
+test_target_in_other_worktree_refused() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb nested out e out_fixed e_fixed
+    sb="$(new_sb 'publish-sh-otherwt')"
+    write_csproj "$sb"
+    mkdir -p "$sb/Properties/PublishProfiles"
+    cat > "$sb/Properties/PublishProfiles/FolderProfile.pubxml" <<'EOF'
+<Project><PropertyGroup><WebPublishMethod>FileSystem</WebPublishMethod><PublishUrl>bin\app.publish\</PublishUrl></PropertyGroup></Project>
+EOF
+    mkdir -p "$sb/.turbo-plugin"
+    printf '[publish]\nproject = "HelloApp.csproj"\n' > "$sb/.turbo-plugin/config.toml"
+    printf '[tools]\nmsbuild_path = "msbuild-stub.bat"\n' > "$sb/.turbo-plugin/config.local.toml"
+    printf '@echo off\r\necho MSBUILD_ARGS: %%*\r\n' > "$sb/msbuild-stub.bat"
+    printf '.claude/\n' > "$sb/.gitignore"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init && git worktree add -q -b tst .claude/worktrees/tst) >/dev/null 2>&1
+    nested="$sb/.claude/worktrees/tst"
+
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" --project .claude/worktrees/tst/HelloApp.csproj 2>&1)"; e=$?
+    out_fixed="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" --repo-root "$nested" 2>&1)"; e_fixed=$?
+    [ -f "$nested/HelloApp.csproj" ]; assertTrue 'case4d: fixture has the linked worktree' $?
+    rm_sb "$sb"
+
+    assertNotEquals 'case4d: target in another worktree is refused' 0 "$e"
+    echo "$out" | grep -q 'MSBUILD_ARGS'; assertFalse 'case4d: MSBuild never ran' $?
+    echo "$out" | grep -q -- '--repo-root'; assertTrue 'case4d: message names --repo-root' $?
+    echo "$out" | grep -Eq 'worktrees.tst'; assertTrue 'case4d: message names the target worktree' $?
+    assertEquals "case4d: --repo-root at that worktree publishes (out=${out_fixed:0:200})" 0 "$e_fixed"
+}
+
 # Case 5: real MSBuild publish deferred to Phase 2 (always SKIP).
 test_real_publish_deferred() {
     startSkipping

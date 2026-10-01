@@ -43,6 +43,12 @@ try {
     $isSolution = ($target.Type -eq 'sln')
     $solutionDir = Resolve-SolutionDir -RepoRoot $repoRoot -TargetPath $projectFile -IsSolution:$isSolution
 
+    # `Any CPU` is valid only for a .sln and `AnyCPU` only for a project file, so a platform shared
+    # by both kinds of target has to be respelled per target (issue #185). Only that one pair is
+    # touched; see ConvertTo-MsbuildPlatform.
+    $platformFix = ConvertTo-MsbuildPlatform -Platform $buildPlatform -TargetPath $projectFile
+    $buildPlatform = $platformFix.Value
+
     # /restore + /p:RestorePackagesConfig=true — both are load-bearing for packages.config projects:
     #
     #   * /restore must stay the SWITCH. Never rewrite it as `/t:Restore;Build`. packages.config
@@ -63,6 +69,7 @@ try {
     # in the field it told the user to go fetch nuget.exe, for a build that had already restored.
     # Printing the args makes this script's behaviour self-evident to whoever reads stdout.
     Write-Output "Running MSBuild for $projectFile"
+    if (-not [string]::IsNullOrWhiteSpace($platformFix.Note)) { Write-Output "  $($platformFix.Note)" }
     Write-Output "  MSBuild args: $($msbuildArgs -join ' ')"
     & $msbuildPath @msbuildArgs
     # Backstop only: under EAP=Stop a real MSBuild failure that writes stderr throws a terminating
@@ -93,7 +100,7 @@ try {
     # the user sees which project/solution was built). Configuration/Platform left unspecified are
     # shown as MSBuild/solution-decided, never fabricated.
     Write-Output 'BUILD_OUTPUT (relay these lines to the user as the build result):'
-    $buildLines = Format-BuildResultLines -ResolvedTarget $projectFile -Configuration $buildConfiguration -Platform $buildPlatform -FrontendGroup $frontendGroup -BuildGroup $buildGroup -IsSolution:$isSolution
+    $buildLines = Format-BuildResultLines -ResolvedTarget $projectFile -Configuration $buildConfiguration -Platform $buildPlatform -PlatformNote $platformFix.Note -FrontendGroup $frontendGroup -BuildGroup $buildGroup -IsSolution:$isSolution
     foreach ($l in $buildLines) { Write-Output $l }
 }
 catch {

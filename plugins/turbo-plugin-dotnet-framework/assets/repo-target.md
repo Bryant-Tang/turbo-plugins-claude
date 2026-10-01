@@ -25,6 +25,24 @@
 
 **② 使用者點名的專案不是當前目錄所在的那個。** 用 `--repo-root` 指名它。
 
+**③ 要動的專案在另一個 git worktree 裡。** 例如 session 停在主 worktree，要建 / 發佈的卻是
+`.claude/worktrees/<name>/` 底下那份（或反過來、或旁邊另一個 worktree）。這時**專案根就是那個
+worktree**，用 `--repo-root "<那個 worktree 的根>"` 指名它，`--project` 寫相對於它的路徑。
+
+> **build / publish 會直接拒跑**「`--project` 指到另一個 worktree、`--repo-root` 卻是這一個」的組合，
+> 錯誤訊息會寫出該用的 worktree 根。原因：`.turbo-plugin/config.toml` 與 `[build."<路徑>"]` /
+> `[publish."<路徑>"]` / `[frontend."<路徑>"]` 的分組鍵都從專案根讀、以專案根解析，目標在別的
+> worktree 時分組**永遠對不到**，平台等設定會靜默落回共用值，讀到的還是另一條分支的 `config.toml`
+> （issue #184：x64 專案因此用 AnyCPU 建，炸在很後面的 ASPNETCOMPILER，看起來像環境壞了）。
+> 明確傳了 `--repo-root` 也一樣拒跑，不會被目標路徑靜默改寫。看到這個錯誤就照訊息改用
+> `--repo-root` 重跑，並在確認行裡講出新的專案根。
+>
+> 只有 build / publish 有這道檢查。run / stop 本來就設計成能跨 worktree 找到同一個站台，不受影響。
+>
+> 目標**不在任何 git worktree 裡**、或和專案根在**同一個** worktree（專案根是 repo 裡的子資料夾）時
+> 不拒跑；但若設定檔有分組而目標在專案根之外，結果模板的 `設定分組:` 行會變成**警告**——分組鍵
+> 對不到那裡，多半是 `--repo-root` 指錯了。
+
 ## 會動到外部狀態的指令：動手前先把目標講出來
 
 `run`（起 IIS Express）、`stop`、`publish`（產出可能被 CD 消費）、`cleanup-orphan-iis`（會砍程序）

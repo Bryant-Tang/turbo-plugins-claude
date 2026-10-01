@@ -329,6 +329,44 @@ Describe 'Build-Web' {
         }
     }
 
+    # issue #185: MSBuild takes `Any CPU` only for a .sln and `AnyCPU` only for a project file, so a
+    # shared [build] platform used to break whichever kind of target it was not written for. The
+    # assertions anchor on the stub's MSBUILD_ARGS line, because the conversion note itself quotes
+    # the original spelling.
+    Context 'issue #185 - the Any CPU / AnyCPU pair is respelled per target type' {
+        BeforeAll {
+            $script:sbPlat = New-BuildArgFixture 'build-platform-anycpu' -WithSolution -ConfigToml "[build]`r`nplatform = `"Any CPU`"`r`n"
+            $script:rPlatProj = Invoke-Script -WorkDir $script:sbPlat -ExtraArgs @('-Project', 'HelloApp.csproj')
+            $script:rPlatSln = Invoke-Script -WorkDir $script:sbPlat -ExtraArgs @('-Project', 'HelloApp.sln')
+            $script:rPlatCliSln = Invoke-Script -WorkDir $script:sbPlat -ExtraArgs @('-Project', 'HelloApp.sln', '-Platform', 'AnyCPU')
+            $script:rPlatX64 = Invoke-Script -WorkDir $script:sbPlat -ExtraArgs @('-Project', 'HelloApp.csproj', '-Platform', 'x64')
+        }
+        AfterAll { Remove-Sandbox $script:sbPlat }
+
+        It 'a .csproj gets AnyCPU from a shared Any CPU' {
+            $script:rPlatProj.Exit | Should -Be 0
+            $script:rPlatProj.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=AnyCPU'
+            $script:rPlatProj.Stdout | Should -Not -Match 'MSBUILD_ARGS:.*/p:Platform=Any CPU'
+        }
+        It 'says so on stdout and in the result template' {
+            $script:rPlatProj.Stdout | Should -Match ([regex]::Escape("platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'"))
+            $script:rPlatProj.Stdout | Should -Match ([regex]::Escape("Platform: AnyCPU (platform 'Any CPU'"))
+        }
+        It 'the .sln of the same repo keeps Any CPU, with no note' {
+            $script:rPlatSln.Exit | Should -Be 0
+            $script:rPlatSln.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=Any CPU'
+            $script:rPlatSln.Stdout | Should -Not -Match '已依'
+        }
+        It 'a .sln gets Any CPU from AnyCPU (the MSB4126 direction)' {
+            $script:rPlatCliSln.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=Any CPU'
+            $script:rPlatCliSln.Stdout | Should -Match ([regex]::Escape("platform 'AnyCPU' 已依 .sln 轉為 'Any CPU'"))
+        }
+        It 'any other platform name passes through untouched' {
+            $script:rPlatX64.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=x64'
+            $script:rPlatX64.Stdout | Should -Not -Match '已依'
+        }
+    }
+
     # Publish is where issue #132 was reported, because publish only ever takes a csproj. Build has
     # the same hole whenever the agent builds a single csproj instead of the .sln -- which the SKILL
     # explicitly tells it to do for a small change. Same helper, so the two can no longer diverge.
@@ -370,6 +408,71 @@ Describe 'Build-Web' {
         }
         It 'does NOT pass the repo root (the regression)' {
             $script:rBMono.Stdout | Should -Not -Match ('/p:SolutionDir=' + [regex]::Escape($script:sbBMono) + '\\ ')
+        }
+    }
+
+    # issue #184, end to end. The session sits in the main worktree and --project points into a
+    # linked worktree nested under it (`.claude/worktrees/<name>`). The group key resolves against
+    # the main worktree, so it never matched, and the x64 project silently built as AnyCPU. The
+    # script must now refuse and say which -RepoRoot to use instead.
+    Context 'issue #184 - a target in another git worktree is refused, not silently mis-configured' {
+        BeforeAll {
+            $script:sbWt = New-Sandbox 'build-other-worktree'
+            $utf8 = New-Object System.Text.UTF8Encoding($false)
+            $webDir = [System.IO.Path]::Combine($script:sbWt, 'proj-x64', 'Web')
+            $null = New-Item -ItemType Directory -Path $webDir -Force
+            [System.IO.File]::WriteAllText((Join-Path $webDir 'Web.csproj'), $script:CsprojConditional, $utf8)
+            $tpDir = Join-Path $script:sbWt '.turbo-plugin'
+            $null = New-Item -ItemType Directory -Path $tpDir -Force
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.toml'),
+                ("[build]`r`nplatform = `"AnyCPU`"`r`n" +
+                 "[build.`"proj-x64/Web`"]`r`nplatform = `"x64`"`r`n"), $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.local.toml'),
+                "[tools]`r`nmsbuild_path = `"msbuild-stub.bat`"`r`n", $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $script:sbWt 'msbuild-stub.bat'),
+                "@echo off`r`necho MSBUILD_ARGS: %*`r`n", $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $script:sbWt '.gitignore'), ".claude/`r`n", $utf8)
+
+            Push-Location -LiteralPath $script:sbWt
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                Invoke-GitSilent add -A
+                & git -c commit.gpgsign=false commit -q -m init *>$null
+                Invoke-GitSilent worktree add -q -b tst .claude/worktrees/tst
+            } finally { Pop-Location }
+            $script:sbWtNested = [System.IO.Path]::Combine($script:sbWt, '.claude', 'worktrees', 'tst')
+
+            $script:rWtRefused = Invoke-Script -WorkDir $script:sbWt -ExtraArgs @('-Project', '.claude/worktrees/tst/proj-x64/Web/Web.csproj')
+            $script:rWtRefusedCombined = $script:rWtRefused.Stdout + "`n" + $script:rWtRefused.Stderr
+            # Explicit -RepoRoot at the main worktree: still refused, never silently rewritten.
+            $script:rWtExplicit = Invoke-Script -WorkDir $script:sbWt -ExtraArgs @('-RepoRoot', $script:sbWt, '-Project', '.claude/worktrees/tst/proj-x64/Web/Web.csproj')
+            # The remedy the message names: -RepoRoot at the target's worktree.
+            $script:rWtFixed = Invoke-Script -WorkDir $script:sbWt -ExtraArgs @('-RepoRoot', $script:sbWtNested, '-Project', 'proj-x64/Web/Web.csproj')
+        }
+        AfterAll { Remove-Sandbox $script:sbWt }
+
+        It 'the fixture really has the linked worktree (so the refusal below is about it)' {
+            (Test-Path -LiteralPath ([System.IO.Path]::Combine($script:sbWtNested, 'proj-x64', 'Web', 'Web.csproj')) -PathType Leaf) |
+                Should -BeTrue
+        }
+        It 'refuses, before MSBuild runs' {
+            ($script:rWtRefused.Exit -ne 0) | Should -BeTrue
+            $script:rWtRefused.Stdout | Should -Not -Match 'MSBUILD_ARGS'
+        }
+        It 'names the worktree to point -RepoRoot at' {
+            $script:rWtRefusedCombined | Should -Match '--repo-root'
+            $script:rWtRefusedCombined | Should -Match 'worktrees.tst'
+        }
+        It 'an explicit -RepoRoot gets the same refusal' {
+            ($script:rWtExplicit.Exit -ne 0) | Should -BeTrue
+            $script:rWtExplicit.Stdout | Should -Not -Match 'MSBUILD_ARGS'
+        }
+        It 'with -RepoRoot at that worktree the group matches and x64 reaches MSBuild' {
+            $script:rWtFixed.Exit | Should -Be 0
+            $script:rWtFixed.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=x64'
+            $script:rWtFixed.Stdout | Should -Match '設定分組.*proj-x64/Web'
         }
     }
 

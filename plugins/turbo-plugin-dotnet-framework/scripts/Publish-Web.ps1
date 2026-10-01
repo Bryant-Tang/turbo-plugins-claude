@@ -111,6 +111,12 @@ try {
     if ([string]::IsNullOrWhiteSpace($publishPlatform)) {
         $publishPlatform = Get-MsbuildProperty -Path $pubxmlAbsPath -Name 'LastUsedPlatform'
     }
+    # The pubxml fallback above is exactly where `Any CPU` comes from: Visual Studio writes the
+    # SOLUTION spelling into <LastUsedPlatform>, while publish always targets a csproj, which only
+    # accepts `AnyCPU` -- passing it through broke publish with "BaseOutputPath/OutputPath property
+    # is not set" (issue #185). VS converts it on its own; the command line has to as well.
+    $platformFix = ConvertTo-MsbuildPlatform -Platform $publishPlatform -TargetPath $projectFile
+    $publishPlatform = $platformFix.Value
 
     # Read [frontend] dir for the result template. Publish is the costlier place for a silently
     # skipped frontend pack: the output can reach a deployed environment, so "was the frontend
@@ -132,6 +138,7 @@ try {
     Write-Output "Running MSBuild Publish for $projectFile"
     Write-Output "  Publish profile: $publishProfileName"
     Write-Output "  Profile root:    $publishProfileDir"
+    if (-not [string]::IsNullOrWhiteSpace($platformFix.Note)) { Write-Output "  $($platformFix.Note)" }
 
     # SolutionDir, same helper Build-Web uses. Publish only ever takes a csproj, so this is always
     # the walk-up-to-the-nearest-.sln path -- which is the whole point: anchoring on the repo root
@@ -145,7 +152,7 @@ try {
     # Without restore here, a packages.config project fails on first publish.
     #
     # /p:Configuration carries the agent's value or, failing that, the pubxml's (resolved above).
-    # /p:Platform is passed only when the agent supplied one.
+    # /p:Platform likewise carries the agent's value or the pubxml's, respelled for a csproj.
     $publishArgs = @(
         $projectFile,
         '/restore',

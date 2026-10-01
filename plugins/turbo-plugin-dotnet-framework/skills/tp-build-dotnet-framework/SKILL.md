@@ -51,6 +51,10 @@ IIS 已停用 (.turbo-plugin/config.toml [iis] enabled = false)。
 
 - 預設**不要**傳 `--configuration` / `--platform`——讓 MSBuild / `.sln` / `Directory.Build.props` 自己決定(對齊 VS,VS 也沒要你選 config 才能 build)。
 - 只有使用者明確指定、或記憶(`[build].configuration` / `[build].platform`)有值時才傳。
+- **`Any CPU` / `AnyCPU` 照使用者或記憶的寫法傳就好**:MSBuild 對 `.sln` 只收 `Any CPU`、對 csproj 只收
+  `AnyCPU`,執行器組 `/p:Platform` 前會只針對這一對依 target 類型換寫法(`x64`、`Mixed Platforms` 等其它
+  名稱原樣傳),並在結果模板的 `Platform:` 行後面註明「platform 'Any CPU' 已依 .csproj 轉為 'AnyCPU'」。
+  這個轉換**不是**你換了選擇,記憶存回時照你傳入的值比對,不要因為那行註記去改記憶。
 
 ### Step 1.5 — 前端打包偵測(**沒設定就要問,不要默默略過**)
 
