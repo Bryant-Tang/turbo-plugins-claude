@@ -2,6 +2,14 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.4.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.4.0...turbo-plugin-dotnet-framework--v0.4.1) (2026-10-01)
+
+
+### Fixed
+
+* **dotnet-framework:** build 與 publish 依 target 類型把 platform 的 Any CPU / AnyCPU 換成 MSBuild 接受的寫法 ([6b603a9](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6b603a953f1bc765aed94a7e9ea068953798c8d4)), closes [#185](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/185)
+* **dotnet-framework:** build 與 publish 拒絕對另一個 git worktree 裡的目標動手，不再靜默套用錯的分組設定 ([6401d10](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6401d1057de973fe9246ab5bf6edc05376df03ab)), closes [#184](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/184)
+
 ## [0.4.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.3.0...turbo-plugin-dotnet-framework--v0.4.0) (2026-09-01)
 
 
