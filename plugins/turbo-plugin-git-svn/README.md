@@ -178,7 +178,12 @@ bridge 是**唯一一個被兩套工具同時寫入**的目錄，所以它的 gi
 | SVN 樹的狀態 | `svn update` 寫出 | bridge 的 git 設定 |
 |---|---|---|
 | 沒有 `svn:eol-style`（遷移前） | LF（原樣） | **釘成 LF**（`core.autocrlf=false` + `core.eol=lf`） |
-| 有 `svn:eol-style`（遷移後） | 平台行尾（Windows 上 CRLF） | **移除釘選**，跟著平台走 |
+| 有 `svn:eol-style`（遷移後） | 平台行尾（Windows 上 CRLF） | **移除 LF 釘選、明確設定跟平台一致**（Windows 上 `core.autocrlf=true`，其他平台 `input`） |
+
+遷移後的設定**一定明確寫在 bridge 上，不繼承 repo 的 `core.autocrlf`**。早期版本只是移除釘選、讓
+bridge 跟著 repo 走，這只有在 repo 是 Git for Windows 的預設 `core.autocrlf=true` 時才對；設成
+`false` 的 repo 會把 svn 寫出的 CRLF 讀成內容，整棵樹被 staged 成修改、pull 永遠被拒（#183）。已經
+陷入這個狀態的 bridge，下一次 pull 或 push 前的整理會自己清掉。
 
 弄反的後果不隱晦——整棵樹會被 git 判定為已修改，每一道「bridge 乾淨嗎」的守門同時開火。但
 **用環境假設去猜、而不是去讀樹的狀態**，就會弄反。所以這件事每次都從樹上讀，不從假設推。
@@ -192,7 +197,8 @@ pull、push、連重跑遷移本身都被自己的守門擋住，三個訊息都
 變了。git 看到大小不同就直接判定已修改、不去比內容，`git diff` 是空的，`update-index --refresh`
 也清不掉；這就是遷移後擋住 pull / push 的「幻影修改」。所以每道守門在讀模式之後，還會再整理一次
 index（`settle_bridge_index` / `Update-BridgeIndex`）：在暫存的 index 副本上確認內容跟 HEAD 完全
-相同，才真正刷新；有真實變更或合併進行中就不動，守門照常擋下。遷移結束時也會先整理一次。
+相同，才真正換上；有真實變更或合併進行中就不動，守門照常擋下。遷移結束時也會先整理一次。
+副本是從 HEAD 出發的，所以先前被當成內容 staged 進去的 CRLF 也一併清掉。
 
 > 0.7.x 一律釘成 LF，那對一個沒有任何 `svn:eol-style` 的 repo 是對的。`/tp-init-svn-eol-style`
 > 是把 repo 從一種模式移到另一種的那個動作;之後每次呼叫都會自動切到正確的模式，包含**主動

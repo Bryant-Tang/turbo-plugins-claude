@@ -258,11 +258,12 @@ Describe 'Initialize-SvnEolStyle' {
     # that took its EOL handling from a repository with core.autocrlf=false read those CRLF bytes as
     # content, so every marked file stayed modified and every pull was refused.
     It 'core.autocrlf=<_>: unpins the bridge and leaves untouched files alone when a pull follows the migration' -ForEach @('true', 'false') {
+        $autoCrlf = $_
         if (-not $script:SvnAvailable) {
             Set-ItResult -Skipped -Because 'svn is not on PATH'
             return
         }
-        $fx = New-BridgeFixture -Tag 'eolpull' -AutoCrlf $_
+        $fx = New-BridgeFixture -Tag 'eolpull' -AutoCrlf $autoCrlf
         try {
             # The fixture already built this as a pre-migration bridge: pinned to LF from before any
             # content landed, which is the state a real upgrading user is in.
