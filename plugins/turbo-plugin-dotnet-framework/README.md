@@ -115,6 +115,14 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
   結果模板多一行 `設定分組:`,說明這次用了哪一組、或「有分組但沒有一組對應這個專案」(後者仍然會用
   共用設定建置成功,所以不講的話看不出來)。沒有任何分組的 repo 不會多這一行,行為也完全不變。
 
+  **分組鍵以專案根解析,所以 build / publish 會拒絕「目標在另一個 git worktree」的組合**:當下目錄是
+  主 worktree、`--project` 卻指到 `.claude/worktrees/<name>/` 底下(或反過來)時,分組永遠對不到、
+  讀到的還是另一條分支的 `config.toml`,以前會靜默落回共用值。現在直接報錯並寫出該用的 worktree 根,
+  請用 `--repo-root` 指它(明確傳了 `--repo-root` 也一樣拒跑,不會被目標路徑改寫)。目標不在任何
+  git worktree 裡、或專案根只是 repo 的子資料夾時不拒跑,但目標在專案根之外而設定有分組時,
+  `設定分組:` 那行會升級成警告。run / stop 不受影響(它們本來就跨 worktree 運作)。判準見
+  `assets/repo-target.md`。
+
   **`platform` 的 `Any CPU` / `AnyCPU` 不必分兩組寫**:MSBuild 對 `.sln` 只收 `Any CPU`(有空格)、對
   csproj 只收 `AnyCPU`(無空格),所以同一個值以前必然讓其中一種 target 失敗。build / publish 組
   `/p:Platform` 前會**只針對這一對**依 target 類型換成對的寫法(pubxml `<LastUsedPlatform>` 讀到的

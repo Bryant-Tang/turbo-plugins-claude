@@ -391,6 +391,38 @@ Describe 'Publish-Web' {
         }
     }
 
+    # issue #184: publish resolves its target through the same check as build. A --project pointing
+    # into another worktree used to publish with the shared [publish] platform -- the reported
+    # failure was an x64-only project dying in ASPNETCOMPILER, far from the real cause.
+    Context 'issue #184 - a target in another git worktree is refused' {
+        BeforeAll {
+            $script:sbpWt = New-PublishArgFixture 'publish-other-worktree'
+            Push-Location -LiteralPath $script:sbpWt
+            try {
+                Invoke-GitSilent worktree add -q -b tst .claude/worktrees/tst
+            } finally { Pop-Location }
+            $script:sbpWtNested = [System.IO.Path]::Combine($script:sbpWt, '.claude', 'worktrees', 'tst')
+            $script:rpWt = Invoke-Script -WorkDir $script:sbpWt -ExtraArgs @('-Project', '.claude/worktrees/tst/HelloApp.csproj')
+            $script:rpWtCombined = $script:rpWt.Stdout + "`n" + $script:rpWt.Stderr
+            $script:rpWtFixed = Invoke-Script -WorkDir $script:sbpWt -ExtraArgs @('-RepoRoot', $script:sbpWtNested)
+        }
+        AfterAll { Remove-Sandbox $script:sbpWt }
+
+        It 'the fixture really has the linked worktree' {
+            (Test-Path -LiteralPath (Join-Path $script:sbpWtNested 'HelloApp.csproj') -PathType Leaf) | Should -BeTrue
+        }
+        It 'refuses before MSBuild runs, naming the worktree and --repo-root' {
+            ($script:rpWt.Exit -ne 0) | Should -BeTrue
+            $script:rpWt.Stdout | Should -Not -Match 'MSBUILD_ARGS'
+            $script:rpWtCombined | Should -Match '--repo-root'
+            $script:rpWtCombined | Should -Match 'worktrees.tst'
+        }
+        It 'publishes normally with -RepoRoot at that worktree' {
+            $script:rpWtFixed.Exit | Should -Be 0
+            $script:rpWtFixed.Stdout | Should -Match 'MSBUILD_ARGS'
+        }
+    }
+
     # issue #185: Visual Studio writes the SOLUTION spelling `Any CPU` into <LastUsedPlatform>, but
     # publish always targets a csproj, which only accepts `AnyCPU`. Passed through unchanged it
     # failed with "BaseOutputPath/OutputPath property is not set".

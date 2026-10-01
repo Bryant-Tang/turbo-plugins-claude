@@ -411,6 +411,71 @@ Describe 'Build-Web' {
         }
     }
 
+    # issue #184, end to end. The session sits in the main worktree and --project points into a
+    # linked worktree nested under it (`.claude/worktrees/<name>`). The group key resolves against
+    # the main worktree, so it never matched, and the x64 project silently built as AnyCPU. The
+    # script must now refuse and say which -RepoRoot to use instead.
+    Context 'issue #184 - a target in another git worktree is refused, not silently mis-configured' {
+        BeforeAll {
+            $script:sbWt = New-Sandbox 'build-other-worktree'
+            $utf8 = New-Object System.Text.UTF8Encoding($false)
+            $webDir = [System.IO.Path]::Combine($script:sbWt, 'proj-x64', 'Web')
+            $null = New-Item -ItemType Directory -Path $webDir -Force
+            [System.IO.File]::WriteAllText((Join-Path $webDir 'Web.csproj'), $script:CsprojConditional, $utf8)
+            $tpDir = Join-Path $script:sbWt '.turbo-plugin'
+            $null = New-Item -ItemType Directory -Path $tpDir -Force
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.toml'),
+                ("[build]`r`nplatform = `"AnyCPU`"`r`n" +
+                 "[build.`"proj-x64/Web`"]`r`nplatform = `"x64`"`r`n"), $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $tpDir 'config.local.toml'),
+                "[tools]`r`nmsbuild_path = `"msbuild-stub.bat`"`r`n", $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $script:sbWt 'msbuild-stub.bat'),
+                "@echo off`r`necho MSBUILD_ARGS: %*`r`n", $utf8)
+            [System.IO.File]::WriteAllText((Join-Path $script:sbWt '.gitignore'), ".claude/`r`n", $utf8)
+
+            Push-Location -LiteralPath $script:sbWt
+            try {
+                Invoke-GitSilent init -q
+                Invoke-GitSilent config user.email 'test@example.invalid'
+                Invoke-GitSilent config user.name 'Test'
+                Invoke-GitSilent add -A
+                & git -c commit.gpgsign=false commit -q -m init *>$null
+                Invoke-GitSilent worktree add -q -b tst .claude/worktrees/tst
+            } finally { Pop-Location }
+            $script:sbWtNested = [System.IO.Path]::Combine($script:sbWt, '.claude', 'worktrees', 'tst')
+
+            $script:rWtRefused = Invoke-Script -WorkDir $script:sbWt -ExtraArgs @('-Project', '.claude/worktrees/tst/proj-x64/Web/Web.csproj')
+            $script:rWtRefusedCombined = $script:rWtRefused.Stdout + "`n" + $script:rWtRefused.Stderr
+            # Explicit -RepoRoot at the main worktree: still refused, never silently rewritten.
+            $script:rWtExplicit = Invoke-Script -WorkDir $script:sbWt -ExtraArgs @('-RepoRoot', $script:sbWt, '-Project', '.claude/worktrees/tst/proj-x64/Web/Web.csproj')
+            # The remedy the message names: -RepoRoot at the target's worktree.
+            $script:rWtFixed = Invoke-Script -WorkDir $script:sbWt -ExtraArgs @('-RepoRoot', $script:sbWtNested, '-Project', 'proj-x64/Web/Web.csproj')
+        }
+        AfterAll { Remove-Sandbox $script:sbWt }
+
+        It 'the fixture really has the linked worktree (so the refusal below is about it)' {
+            (Test-Path -LiteralPath ([System.IO.Path]::Combine($script:sbWtNested, 'proj-x64', 'Web', 'Web.csproj')) -PathType Leaf) |
+                Should -BeTrue
+        }
+        It 'refuses, before MSBuild runs' {
+            ($script:rWtRefused.Exit -ne 0) | Should -BeTrue
+            $script:rWtRefused.Stdout | Should -Not -Match 'MSBUILD_ARGS'
+        }
+        It 'names the worktree to point -RepoRoot at' {
+            $script:rWtRefusedCombined | Should -Match '--repo-root'
+            $script:rWtRefusedCombined | Should -Match 'worktrees.tst'
+        }
+        It 'an explicit -RepoRoot gets the same refusal' {
+            ($script:rWtExplicit.Exit -ne 0) | Should -BeTrue
+            $script:rWtExplicit.Stdout | Should -Not -Match 'MSBUILD_ARGS'
+        }
+        It 'with -RepoRoot at that worktree the group matches and x64 reaches MSBuild' {
+            $script:rWtFixed.Exit | Should -Be 0
+            $script:rWtFixed.Stdout | Should -Match 'MSBUILD_ARGS:.*/p:Platform=x64'
+            $script:rWtFixed.Stdout | Should -Match '設定分組.*proj-x64/Web'
+        }
+    }
+
     # -RepoRoot names the project outright. The scenario this exists for: a session opened at a
     # root that holds several sibling projects, where the cwd is not any of them.
     Context 'U8: -RepoRoot targets a project other than the current directory' {

@@ -254,8 +254,107 @@ function Resolve-ProjectTarget {
     if ($isSolution -and -not $AllowSolution) {
         throw "A .sln target is only valid for build. The $Section operation needs a .csproj, got: $projectFile"
     }
+    # build / publish read their settings through per-project groups keyed by paths relative to
+    # $RepoRoot, so a target that belongs to a different working tree silently gets the wrong
+    # settings (issue #184). run / stop deliberately reach across worktrees (cross-worktree
+    # self-heal, identity shared via git-common-dir) and do not read grouped settings, so the
+    # check stays off for them.
+    if ($Section -eq 'build' -or $Section -eq 'publish') {
+        Assert-TargetInRepoWorktree -RepoRoot $RepoRoot -TargetPath $projectFile
+    }
     $type = if ($isSolution) { 'sln' } else { 'csproj' }
     return [pscustomobject]@{ Path = $projectFile; Type = $type }
+}
+
+# True when $Path is $Root itself or anything beneath it, compared the way Windows compares paths
+# (separator- and case-insensitive). Both sides must come from the same source -- both from the
+# caller's spelling, or both from git -- because neither side is canonicalised here (no symlink or
+# 8.3 short-name resolution).
+function Test-PathIsUnder {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Root
+    )
+
+    $p = ConvertTo-ComparablePath $Path
+    $r = ConvertTo-ComparablePath $Root
+    if ($p -eq '' -or $r -eq '') { return $false }
+    return ($p -eq $r) -or $p.StartsWith($r + '\')
+}
+
+# The git working tree a directory belongs to: TopLevel (that worktree's root) and CommonDir (the
+# repository's shared .git, the same for every linked worktree of one repository). $null when the
+# directory is not inside any git working tree -- which is a normal state for these scripts, since
+# build / publish work outside git entirely.
+#
+# Read-Git, not an inline call: outside a repository git writes to stderr, which under EAP=Stop
+# would throw instead of answering "not in git".
+function Get-GitWorktreeInfo {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $probe = Read-Git -Cwd $Path -GitArgs @('rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir')
+    if ($probe.Code -ne 0) { return $null }
+    $lines = @($probe.Text -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($lines.Count -lt 2) { return $null }
+    return [PSCustomObject]@{
+        TopLevel  = (Get-NormalizedAbsolutePath -Path $lines[0].Trim())
+        CommonDir = (Get-NormalizedAbsolutePath -Path $lines[1].Trim())
+    }
+}
+
+# Refuse a build / publish target that belongs to a DIFFERENT git working tree than $RepoRoot
+# (issue #184).
+#
+# Everything these scripts read about a target comes from $RepoRoot: which config.toml, and what
+# every `[build."<path>"]` / `[publish."<path>"]` / `[frontend."<path>"]` key resolves to. Pointing
+# --project into another worktree therefore never matched its group -- the key resolves under
+# $RepoRoot, the target lives elsewhere -- and the run silently fell back to the shared values while
+# reading the wrong branch's config.toml. For an x64-only project that surfaced as an ASPCONFIG
+# BadImageFormat error far downstream, pointing at the environment rather than the configuration.
+#
+# Refusing beats guessing. Auto-switching to the target's worktree would make an explicit
+# --repo-root silently lose to the target path -- the same kind of silent override this check
+# exists to remove -- so an explicit --repo-root gets the same refusal.
+#
+# What counts as "another working tree":
+#   * target OUTSIDE $RepoRoot, inside a git worktree whose root differs from $RepoRoot's (or
+#     $RepoRoot is not in git at all) -- a sibling worktree, the main worktree seen from a linked
+#     one, or an unrelated checkout.
+#   * target INSIDE $RepoRoot but in a nested linked worktree of the SAME repository -- the
+#     `<repo>/.claude/worktrees/<name>` layout, which is exactly how the issue was hit: path-prefix
+#     says "inside", yet the group keys resolve against the outer checkout.
+# Not refused:
+#   * a nested repository of its own (submodule, vendored repo) inside $RepoRoot: a different
+#     repository, so $RepoRoot's config is the one describing it and its keys resolve correctly.
+#   * a target in no git worktree, or in the same worktree as $RepoRoot (e.g. $RepoRoot is a sub-
+#     folder project). Nothing to point at instead; Resolve-ConfigGroup flags the out-of-root case
+#     so the result template can warn when groups exist but cannot match.
+function Assert-TargetInRepoWorktree {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$TargetPath
+    )
+
+    $targetDir = [System.IO.Path]::GetDirectoryName($TargetPath)
+    if ([string]::IsNullOrWhiteSpace($targetDir)) { return }
+    $target = Get-GitWorktreeInfo -Path $targetDir
+    if ($null -eq $target) { return }
+
+    $root = Get-GitWorktreeInfo -Path $RepoRoot
+    $targetTop = ConvertTo-ComparablePath $target.TopLevel
+    if ($null -ne $root -and $targetTop -eq (ConvertTo-ComparablePath $root.TopLevel)) { return }
+
+    if (Test-PathIsUnder -Path $TargetPath -Root $RepoRoot) {
+        if ($null -eq $root) { return }
+        if ((ConvertTo-ComparablePath $target.CommonDir) -ne (ConvertTo-ComparablePath $root.CommonDir)) { return }
+    }
+
+    $otherRoot = $target.TopLevel
+    throw ("目標專案屬於另一個工作目錄 $otherRoot,不在這次的專案根 $RepoRoot 所屬的工作目錄裡。" +
+           ".turbo-plugin/config.toml 與 [build] / [publish] / [frontend] 的分組都從專案根讀取、以專案根解析," +
+           "對另一個工作目錄的目標只會靜默套錯設定,所以不執行。" +
+           "請用 --repo-root `"$otherRoot`" (PowerShell: -RepoRoot) 指它,或 cd 到那裡再執行。" +
+           " 目標: $TargetPath")
 }
 
 # Resolve a pubxml <PublishUrl> into the two display lines tp-publish prints (KTD8):
@@ -552,16 +651,22 @@ function Resolve-ConfigGroup {
     # a one-element array unrolls to the element, whose .Count would be a string length.
     $sections = @(Get-ConfigGroupSections -RepoRoot $RepoRoot -Section $Section)
     if ($sections.Count -eq 0) {
-        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'none' }
+        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'none'; OutsideRoot = '' }
     }
     if ([string]::IsNullOrWhiteSpace($TargetProject)) {
-        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'unmatched' }
+        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'unmatched'; OutsideRoot = '' }
     }
+    # OutsideRoot = $RepoRoot when the target is not beneath it (issue #184). Group keys resolve
+    # against $RepoRoot, so for such a target "no group matched" is almost certainly a mis-aimed
+    # --repo-root rather than a project that simply has no group -- Format-ConfigGroupLine turns
+    # that line into a warning. Targets in ANOTHER git worktree never get here: Resolve-ProjectTarget
+    # refuses them outright.
+    $outsideRoot = if (Test-PathIsUnder -Path $TargetProject -Root $RepoRoot) { '' } else { $RepoRoot }
     $matched = @($sections | Where-Object {
         Test-ConfigGroupMatchesTarget -RepoRoot $RepoRoot -GroupKey (Get-ConfigGroupKey -Section $_ -Parent $Section) -TargetProject $TargetProject
     })
     if ($matched.Count -eq 0) {
-        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'unmatched' }
+        return [PSCustomObject]@{ Section = $Section; Parent = $Section; Key = ''; Status = 'unmatched'; OutsideRoot = $outsideRoot }
     }
     if ($matched.Count -gt 1) {
         # Typically one group written by directory and one by .csproj. Picking the "more specific"
@@ -574,6 +679,7 @@ function Resolve-ConfigGroup {
         Parent  = $Section
         Key     = (Get-ConfigGroupKey -Section $matched[0] -Parent $Section)
         Status  = 'ready'
+        OutsideRoot = $outsideRoot
     }
 }
 
@@ -728,6 +834,16 @@ function Format-ConfigGroupLine {
     if ($null -eq $Group -or $Group.Status -eq 'none') { return $null }
     if ($Group.Status -eq 'ready') {
         return ($Label + ': [' + $Group.Parent + '."' + $Group.Key + '"] (未寫在分組裡的項目沿用共用的 [' + $Group.Parent + '])')
+    }
+    # Read defensively: descriptors built before issue #184 (and in tests) carry no OutsideRoot,
+    # and StrictMode throws on a missing property.
+    $outsideProp = $Group.PSObject.Properties['OutsideRoot']
+    $outside = if ($null -ne $outsideProp) { [string]$outsideProp.Value } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($outside)) {
+        # Groups exist and the target is not under the project root: the keys resolve against that
+        # root, so they could never have matched. Most likely --repo-root names the wrong folder.
+        return ($Label + ': 警告:無對應分組,全部使用共用的 [' + $Group.Parent + ']——目標不在專案根 ' + $outside +
+                ' 底下,而分組鍵是以專案根解析的,所以一組都對不到。請確認 --repo-root 是否指對。')
     }
     return ($Label + ': 無對應分組,全部使用共用的 [' + $Group.Parent + ']')
 }

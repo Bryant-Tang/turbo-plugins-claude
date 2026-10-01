@@ -1599,6 +1599,144 @@ Describe 'Resolve-ProjectTarget' {
     }
 }
 
+# =============================================================================
+# A target in another git worktree (issue #184)
+# =============================================================================
+#
+# Group keys and config.toml both come from -RepoRoot. A --project pointing into a DIFFERENT
+# worktree therefore never matched its group and silently fell back to the shared values, while
+# reading the other branch's config.toml. build / publish now refuse such a target; run / stop keep
+# reaching across worktrees on purpose.
+Describe 'Target in another git worktree (issue #184)' {
+
+    BeforeAll {
+        # Read-Git, not inline git: `git worktree add` reports progress on stderr, which under the
+        # EAP=Stop that Common.ps1 establishes would throw on Windows PowerShell 5.1.
+        function Invoke-FixtureGit {
+            param([string]$Cwd, [string[]]$GitArgs)
+            $r = Read-Git -Cwd $Cwd -GitArgs $GitArgs
+            if ($r.Code -ne 0) { throw "fixture git failed: git $($GitArgs -join ' ')" }
+        }
+        function Write-FixtureFile {
+            param([string]$Path, [string]$Content)
+            $null = New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($Path)) -Force
+            Write-Utf8NoBom -Path $Path -Content $Content
+        }
+        # git marks object files read-only on Windows, which makes a plain recursive delete fail.
+        function Remove-WorktreeFixture {
+            param([string[]]$Dirs)
+            foreach ($d in $Dirs) {
+                if ([string]::IsNullOrWhiteSpace($d) -or -not [System.IO.Directory]::Exists($d)) { continue }
+                try {
+                    foreach ($f in [System.IO.Directory]::EnumerateFiles($d, '*', [System.IO.SearchOption]::AllDirectories)) {
+                        try { [System.IO.File]::SetAttributes($f, [System.IO.FileAttributes]::Normal) } catch { }
+                    }
+                    [System.IO.Directory]::Delete($d, $true)
+                } catch { }
+            }
+        }
+
+        # The shape from the issue: a main worktree carrying a [build."proj-x64/Web"] group, a linked
+        # worktree nested at .claude/worktrees/tst (inside the main worktree's directory, so a pure
+        # path-prefix test says "inside"), and a sibling worktree outside it.
+        $script:wtMain = New-IsolatedRepoRoot 'wt184'
+        $script:wtSibling = $script:wtMain + '-sib'
+        Write-FixtureFile ([System.IO.Path]::Combine($script:wtMain, '.turbo-plugin', 'config.toml')) `
+            ("[build]`nplatform = `"AnyCPU`"`n[build.`"proj-x64/Web`"]`nplatform = `"x64`"`n" +
+             "[publish]`n[publish.`"proj-x64/Web`"]`nplatform = `"x64`"`n")
+        Write-FixtureFile ([System.IO.Path]::Combine($script:wtMain, 'proj-x64', 'Web', 'Web.csproj')) '<Project/>'
+        Write-FixtureFile ([System.IO.Path]::Combine($script:wtMain, '.gitignore')) ".claude/`nvendor/`n"
+        Invoke-FixtureGit $script:wtMain @('init', '-q')
+        Invoke-FixtureGit $script:wtMain @('add', '-A')
+        Invoke-FixtureGit $script:wtMain @('-c', 'user.email=test@example.invalid', '-c', 'user.name=Test', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init')
+        $script:wtNested = [System.IO.Path]::Combine($script:wtMain, '.claude', 'worktrees', 'tst')
+        Invoke-FixtureGit $script:wtMain @('worktree', 'add', '-q', '-b', 'tst', $script:wtNested)
+        Invoke-FixtureGit $script:wtMain @('worktree', 'add', '-q', '-b', 'sib', $script:wtSibling)
+
+        # An independent repository nested inside the main worktree (vendored code / submodule
+        # shape): a different repository, so the main worktree's config is the one describing it.
+        $script:wtVendor = [System.IO.Path]::Combine($script:wtMain, 'vendor', 'lib')
+        Write-FixtureFile ([System.IO.Path]::Combine($script:wtVendor, 'Lib.csproj')) '<Project/>'
+        Invoke-FixtureGit $script:wtVendor @('init', '-q')
+
+        # A project in no git worktree at all, outside the main worktree.
+        $script:wtNoGit = New-IsolatedRepoRoot 'wt184-nogit'
+        $script:wtNoGitProj = [System.IO.Path]::Combine($script:wtNoGit, 'X', 'X.csproj')
+        Write-FixtureFile $script:wtNoGitProj '<Project/>'
+
+        $script:relProj = 'proj-x64/Web/Web.csproj'
+        $script:nestedProj = [System.IO.Path]::Combine($script:wtNested, 'proj-x64', 'Web', 'Web.csproj')
+        $script:mainProj = [System.IO.Path]::Combine($script:wtMain, 'proj-x64', 'Web', 'Web.csproj')
+        $script:siblingProj = [System.IO.Path]::Combine($script:wtSibling, 'proj-x64', 'Web', 'Web.csproj')
+    }
+    AfterAll { Remove-WorktreeFixture @($script:wtMain, $script:wtSibling, $script:wtNoGit) }
+
+    # The reported case: the cwd is the main worktree, --project points into a linked worktree that
+    # lives INSIDE it. A path-prefix check alone would wave this through.
+    It 'refuses a target in a linked worktree nested inside the project root' {
+        { Resolve-ProjectTarget -RepoRoot $script:wtMain -Section 'build' -CliProjectValue $script:nestedProj } |
+            Should -Throw -ExpectedMessage '*worktrees*tst*--repo-root*'
+    }
+    It 'refuses the other direction: project root is the linked worktree, target in the main one' {
+        { Resolve-ProjectTarget -RepoRoot $script:wtNested -Section 'build' -CliProjectValue $script:mainProj } |
+            Should -Throw -ExpectedMessage '*--repo-root*'
+    }
+    # An explicit --repo-root is not silently overridden by the target path either.
+    It 'refuses a sibling worktree outside the project root, even with an explicit -RepoRoot' {
+        { Resolve-ProjectTarget -RepoRoot $script:wtMain -Section 'build' -CliProjectValue $script:siblingProj } |
+            Should -Throw -ExpectedMessage '*-sib*--repo-root*'
+    }
+    It 'refuses for publish too' {
+        { Resolve-ProjectTarget -RepoRoot $script:wtMain -Section 'publish' -CliProjectValue $script:nestedProj } |
+            Should -Throw -ExpectedMessage '*--repo-root*'
+    }
+    It 'names the worktree to use, and the way to use it, in the message' {
+        $msg = ''
+        try { $null = Resolve-ProjectTarget -RepoRoot $script:wtMain -Section 'build' -CliProjectValue $script:nestedProj } catch { $msg = $_.Exception.Message }
+        $msg | Should -Match '另一個工作目錄'
+        $msg | Should -Match 'cd'
+        $msg | Should -Match ([regex]::Escape([System.IO.Path]::Combine('worktrees', 'tst')))
+    }
+    # run / stop deliberately reach across worktrees (cross-worktree self-heal) and do not read
+    # grouped settings, so the check must not leak into them.
+    It 'does not refuse run (cross-worktree run / stop is intended)' {
+        (Resolve-ProjectTarget -RepoRoot $script:wtMain -Section 'run' -CliProjectValue $script:nestedProj).Type |
+            Should -Be 'csproj'
+    }
+    It 'pointing -RepoRoot at the target worktree resolves and matches its group' {
+        $t = Resolve-ProjectTarget -RepoRoot $script:wtNested -Section 'build' -CliProjectValue $script:relProj
+        $g = Resolve-ConfigGroup -RepoRoot $script:wtNested -Section 'build' -TargetProject $t.Path
+        $g.Status | Should -Be 'ready'
+        $g.Key | Should -Be 'proj-x64/Web'
+        $g.OutsideRoot | Should -BeNullOrEmpty
+    }
+    It 'does not refuse an independent repository nested inside the project root' {
+        (Resolve-ProjectTarget -RepoRoot $script:wtMain -Section 'build' -CliProjectValue 'vendor/lib/Lib.csproj').Type |
+            Should -Be 'csproj'
+    }
+    It 'does not refuse a target that is in no git worktree at all' {
+        (Resolve-ProjectTarget -RepoRoot $script:wtMain -Section 'build' -CliProjectValue $script:wtNoGitProj).Type |
+            Should -Be 'csproj'
+    }
+    # ...but when groups exist and the target sits outside the project root, the keys could never
+    # have matched, so "no group" is reported as a warning rather than as plain information.
+    It 'flags an out-of-root target on the group descriptor, and the template line warns' {
+        $g = Resolve-ConfigGroup -RepoRoot $script:wtMain -Section 'build' -TargetProject $script:wtNoGitProj
+        $g.Status | Should -Be 'unmatched'
+        $g.OutsideRoot | Should -Be $script:wtMain
+        $line = Format-ConfigGroupLine -Group $g -Label '設定分組'
+        $line | Should -Match '警告'
+        $line | Should -Match '--repo-root'
+        $line | Should -Match ([regex]::Escape($script:wtMain))
+    }
+    It 'an in-root target with no group keeps the plain information line' {
+        $g = Resolve-ConfigGroup -RepoRoot $script:wtMain -Section 'build' -TargetProject ([System.IO.Path]::Combine($script:wtMain, 'vendor', 'lib', 'Lib.csproj'))
+        $g.Status | Should -Be 'unmatched'
+        $g.OutsideRoot | Should -BeNullOrEmpty
+        (Format-ConfigGroupLine -Group $g -Label '設定分組') | Should -Not -Match '警告'
+    }
+}
+
 Describe 'Result-template family (KTD5)' {
 
     Context 'Format-BuildResultLines' {

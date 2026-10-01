@@ -180,6 +180,41 @@ EOF
     echo "$out_x64" | grep -q '已依'; assertFalse 'case4c: x64 not converted' $?
 }
 
+# Case 4d (issue #184): cwd is the main worktree, --project points into a linked worktree nested under
+# it. The [build."proj-x64/Web"] key resolves against the main worktree, so it never matched and the
+# build silently fell back to the shared platform. Now: refuse, name the worktree and --repo-root.
+test_target_in_other_worktree_refused() {
+    [ "$HAS_PS" -eq 1 ] || startSkipping
+    local sb nested out e out_fixed e_fixed
+    sb="$(new_sb 'build-sh-otherwt')"
+    mkdir -p "$sb/proj-x64/Web" "$sb/.turbo-plugin"
+    cat > "$sb/proj-x64/Web/Web.csproj" <<'EOF'
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+  </PropertyGroup>
+</Project>
+EOF
+    printf '[build]\nplatform = "AnyCPU"\n[build."proj-x64/Web"]\nplatform = "x64"\n' > "$sb/.turbo-plugin/config.toml"
+    printf '[tools]\nmsbuild_path = "msbuild-stub.bat"\n' > "$sb/.turbo-plugin/config.local.toml"
+    printf '@echo off\r\necho MSBUILD_ARGS: %%*\r\n' > "$sb/msbuild-stub.bat"
+    printf '.claude/\n' > "$sb/.gitignore"
+    (cd "$sb" && git init -q && git config user.email 'test@example.invalid' && git config user.name 'Test' && git add -A && git -c commit.gpgsign=false commit -q -m init && git worktree add -q -b tst .claude/worktrees/tst) >/dev/null 2>&1
+    nested="$sb/.claude/worktrees/tst"
+
+    out="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" --project .claude/worktrees/tst/proj-x64/Web/Web.csproj 2>&1)"; e=$?
+    out_fixed="$(cd "$sb" && bash "$SCRIPT_UNDER_TEST" --repo-root "$nested" --project proj-x64/Web/Web.csproj 2>&1)"; e_fixed=$?
+    [ -f "$nested/proj-x64/Web/Web.csproj" ]; assertTrue 'case4d: fixture has the linked worktree' $?
+    rm_sb "$sb"
+
+    assertNotEquals 'case4d: target in another worktree is refused' 0 "$e"
+    echo "$out" | grep -q 'MSBUILD_ARGS'; assertFalse 'case4d: MSBuild never ran' $?
+    echo "$out" | grep -q -- '--repo-root'; assertTrue 'case4d: message names --repo-root' $?
+    echo "$out" | grep -Eq 'worktrees.tst'; assertTrue 'case4d: message names the target worktree' $?
+    assertEquals "case4d: --repo-root at that worktree succeeds (out=${out_fixed:0:200})" 0 "$e_fixed"
+    echo "$out_fixed" | grep -q 'MSBUILD_ARGS:.*/p:Platform=x64'; assertTrue 'case4d: group matched, x64 reaches MSBuild' $?
+}
+
 # Case 5: real MSBuild deferred to Phase 2 SKILL-level test (always skipped here).
 test_real_msbuild_deferred() {
     startSkipping
