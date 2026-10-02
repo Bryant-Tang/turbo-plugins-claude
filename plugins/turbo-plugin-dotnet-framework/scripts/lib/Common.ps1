@@ -110,6 +110,11 @@ function Format-IisExpressSiteName {
 # No `-all`: that also lists incomplete / broken installs.
 # Returns an empty array when vswhere is missing or fails -- the fixed path list is the fallback.
 function Get-VsWhereMSBuildCandidates {
+    # 32-bit Windows has no ProgramFiles(x86); Combine would throw on $null and take the whole
+    # probe down with it, fixed list included.
+    if ([string]::IsNullOrEmpty(${env:ProgramFiles(x86)})) {
+        return @()
+    }
     $vswhere = [System.IO.Path]::Combine(${env:ProgramFiles(x86)}, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
     if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
         return @()
@@ -135,6 +140,8 @@ function Get-VsWhereMSBuildCandidates {
 # <install>\MSBuild\Microsoft\VisualStudio\v<NN>.0\WebApplications\Microsoft.WebApplication.targets.
 # An MSBuild without them (SSMS's bundled copy) builds a web csproj only as far as MSB4019, so it
 # must not win over one that has them.
+# Any v<NN>.0 folder counts, without matching it to this MSBuild's version: an install only ships
+# the folder for its own VS version, so the looser check gives the same answer with less to break.
 function Test-MSBuildHasWebTargets {
     param([Parameter(Mandatory)][string]$MSBuildExe)
     $msbuildRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MSBuildExe))
