@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.4.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.4.1...turbo-plugin-dotnet-framework--v0.4.2) (2026-10-02)
+
+
+### Fixed
+
+* **dotnet-framework:** 只裝 Visual Studio 2026 或 Build Tools 2026 的機器也能自動找到 MSBuild ([fa2bec6](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/fa2bec60b6a39841d3429f85d1b97bed52be5df0)), closes [#196](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/196)
+
 ## [0.4.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.4.0...turbo-plugin-dotnet-framework--v0.4.1) (2026-10-01)
 
 
