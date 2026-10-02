@@ -85,10 +85,18 @@ const CONFIG_REL = '.turbo-plugin/dbhub.local.toml';
 // CLAUDE_PLUGIN_DATA is the per-plugin directory Claude Code keeps across plugin updates; outside
 // Claude Code (running this by hand) a temp directory stands in. Either way a missing install is
 // only ever a re-download, never a broken state.
+//
+// The temp fallback is PER USER and must be OWNED by us. On a shared Unix host /tmp is writable by
+// everyone, so a fixed name there could be created first by someone else, pre-filled with a marker
+// and an entry point of their choosing -- which this launcher would then run as us. The user name
+// in the path keeps users apart; the owner check (see checkDataRoot) is what actually closes it.
 const DATA_ENV = 'CLAUDE_PLUGIN_DATA';
-const DATA_ROOT = process.env[DATA_ENV] || path.join(os.tmpdir(), 'turbo-plugin-three-environment-db');
+const DATA_FROM_ENV = Boolean(process.env[DATA_ENV]);
+const DATA_ROOT = process.env[DATA_ENV] ||
+    path.join(os.tmpdir(), `turbo-plugin-three-environment-db-${currentUserName()}`);
+const DBHUB_BASE = path.join(DATA_ROOT, 'dbhub');
 const DBHUB_VERSION = DBHUB_SPEC.slice(DBHUB_SPEC.lastIndexOf('@') + 1);
-const INSTALL_DIR = path.join(DATA_ROOT, 'dbhub', DBHUB_VERSION);
+const INSTALL_DIR = path.join(DBHUB_BASE, DBHUB_VERSION);
 const MARKER = '.tp-installed';
 const LOCK_DIR = `${INSTALL_DIR}.lock`;
 const LOCK_PID_FILE = path.join(LOCK_DIR, 'pid');
@@ -107,6 +115,31 @@ function isFile(p) {
 
 function isDirectory(p) {
     try { return fs.statSync(p).isDirectory(); } catch (e) { return false; }
+}
+
+function currentUserName() {
+    let name = '';
+    try { name = os.userInfo().username; } catch (e) { name = ''; }
+    // Only characters that are safe in a directory name on every platform.
+    name = String(name || process.env.USERNAME || process.env.USER || 'user').replace(/[^A-Za-z0-9._-]/g, '_');
+    return name || 'user';
+}
+
+// The temp fallback only: create it private, and refuse one that someone else created. Windows has
+// no uid and a per-user temp directory to begin with, so there is nothing to check there. The data
+// directory Claude Code hands us is its own business and is not second-guessed.
+function checkDataRoot() {
+    if (DATA_FROM_ENV || typeof process.getuid !== 'function') return '';
+    try {
+        fs.mkdirSync(DATA_ROOT, { recursive: true, mode: 0o700 });
+        const st = fs.lstatSync(DATA_ROOT);
+        if (!st.isDirectory()) return `${DATA_ROOT} is not a directory`;
+        if (st.uid !== process.getuid()) return `${DATA_ROOT} belongs to another user`;
+        if (st.mode & 0o022) return `${DATA_ROOT} is writable by other users`;
+    } catch (e) {
+        return `cannot use ${DATA_ROOT}: ${e.message}`;
+    }
+    return '';
 }
 
 function configIn(dir) {
@@ -235,10 +268,17 @@ if (printOnly) {
     process.exit(0);
 }
 
+const dataProblem = checkDataRoot();
+if (dataProblem) {
+    say(`tp-dbhub: refusing to install or run dbhub from ${DATA_ROOT}: ${dataProblem}.`);
+    say(`Remove it (or set ${DATA_ENV} to a directory of your own) and reconnect.`);
+    process.exit(0);
+}
+
 if (isInstalled()) {
     runDbhub();
 } else {
-    installThenRun();
+    installThenRun(true);
 }
 
 function runDbhub() {
@@ -254,12 +294,22 @@ function runDbhub() {
 // took ~58s on a real machine -- longer than Claude Code waits for an MCP server to answer. So the
 // download runs in a DETACHED child: if Claude Code gives up on us and kills this process, the
 // install carries on and the next connect finds it finished. This process only waits for it.
-function installThenRun() {
-    if (!takeLock()) {
+//
+// canTakeOver: whether a waiter may start its own install if the one it is waiting for dies. True
+// on the first attempt only, so a launcher takes over at most once and cannot loop.
+function installThenRun(canTakeOver) {
+    const lock = takeLock();
+    if (lock.error) {
+        // Not "someone else holds it": we cannot create anything there at all (permissions, a
+        // read-only disk). Waiting would only end in a misleading "did not finish".
+        say(`tp-dbhub: cannot install ${DBHUB_SPEC}: ${lock.error}`);
+        process.exit(0);
+    }
+    if (!lock.taken) {
         // Another launcher (a second session, or a reconnect) is already installing. Do not start a
         // second download into the same place -- wait for that one.
         say(`tp-dbhub: ${DBHUB_SPEC} is being installed by another session; waiting for it.`);
-        waitForInstall();
+        waitForInstall(canTakeOver);
         return;
     }
 
@@ -300,12 +350,17 @@ function installThenRun() {
     });
     try { fs.writeFileSync(LOCK_PID_FILE, String(child.pid)); } catch (e) { /* lock stays age-based */ }
     child.unref();
-    waitForInstall();
+    waitForInstall(false);
 }
 
 // Poll rather than wait on the child: the installer may belong to another launcher, and the end
 // state that matters is "installed" or "nobody is installing any more", not one process's exit.
-function waitForInstall() {
+//
+// If the installer we were waiting on DIED (its lock is still there, its pid is gone -- killed
+// along with the session that started it), a waiter that has not installed yet takes over instead
+// of giving up. An installer that FAILED releases its lock, so that case is reported, not retried:
+// a second identical npm run would only fail the same way, a minute later.
+function waitForInstall(canTakeOver) {
     const started = Date.now();
     const timer = setInterval(() => {
         if (isInstalled()) {
@@ -313,8 +368,15 @@ function waitForInstall() {
             runDbhub();
             return;
         }
-        if (fs.existsSync(LOCK_DIR) && !lockIsStale() && Date.now() - started < WAIT_LIMIT_MS) return;
+        const lockHeld = fs.existsSync(LOCK_DIR);
+        const stale = lockHeld && lockIsStale();
+        if (lockHeld && !stale && Date.now() - started < WAIT_LIMIT_MS) return;
         clearInterval(timer);
+        if (stale && canTakeOver) {
+            say('tp-dbhub: the session that was installing it went away; installing here instead.');
+            installThenRun(false);
+            return;
+        }
         reportFailedInstall();
         process.exit(0);
     }, POLL_MS);
@@ -359,6 +421,7 @@ function runInstaller() {
         fs.writeFileSync(path.join(staging, MARKER), DBHUB_SPEC + '\n');
         promote(staging);
         console.log(`tp-dbhub: installed ${DBHUB_SPEC}`);
+        removeOtherVersions();
         code = 0;
     } catch (e) {
         console.log(`tp-dbhub: install failed: ${e.message}`);
@@ -390,6 +453,23 @@ function promote(staging) {
     }
 }
 
+// Each version bump installs a new directory of a few hundred packages next to the old one. Once the
+// new one is in place nothing will start the old one again (the launcher only ever runs the version
+// it pins), so it goes. Best effort: on Windows a session still running the old version keeps some
+// of its files locked, and whatever is left is retried after the next bump.
+function removeOtherVersions() {
+    let entries = [];
+    try { entries = fs.readdirSync(DBHUB_BASE); } catch (e) { return; }
+    const mine = path.basename(INSTALL_DIR);
+    for (const name of entries) {
+        if (name === mine || name.startsWith(mine + '.')) continue;
+        // Another version's lock or staging directory belongs to an installer that may still be
+        // running (an older plugin version in another session); leave those to it.
+        if (/\.(lock|staging-\d+)$/.test(name)) continue;
+        removeTree(path.join(DBHUB_BASE, name));
+    }
+}
+
 function removeDeadStaging() {
     let entries = [];
     try { entries = fs.readdirSync(path.dirname(INSTALL_DIR)); } catch (e) { return; }
@@ -405,22 +485,23 @@ function removeDeadStaging() {
 // LOCK -- so two launchers starting together download once, not twice. Correctness does not
 // depend on it (each installer has its own staging directory and the rename decides), so a stale
 // lock is simply taken over.
+//
+// Returns { taken: true } when the lock is ours, { taken: false } when another installer holds it,
+// and { error } when the lock cannot be created at all -- that last one is not "somebody else is
+// installing", and must not be reported as if it were.
 function takeLock() {
     for (let attempt = 0; attempt < 2; attempt++) {
         try {
             fs.mkdirSync(path.dirname(LOCK_DIR), { recursive: true });
             fs.mkdirSync(LOCK_DIR);
-            return true;
+            return { taken: true };
         } catch (e) {
-            if (e.code !== 'EEXIST') {
-                say(`tp-dbhub: cannot create ${LOCK_DIR}: ${e.message}`);
-                return false;
-            }
-            if (!lockIsStale()) return false;
+            if (e.code !== 'EEXIST') return { taken: false, error: `cannot create ${LOCK_DIR}: ${e.message}` };
+            if (!lockIsStale()) return { taken: false };
             removeTree(LOCK_DIR);
         }
     }
-    return false;
+    return { taken: false };
 }
 
 function releaseLock() {

@@ -143,4 +143,44 @@ Describe 'start-dbhub install' {
         $r.Stdout | Should -Match '(?m)^FAKE-DBHUB '
         Get-NpmCalls | Should -Be 1
     }
+
+    It 'two launchers at once download once and both run dbhub' -Skip:(-not $script:HasNode) {
+        $env:FAKE_NPM_MODE = 'slow'
+        $env:FAKE_NPM_DELAY_MS = '1500'
+        $argList = @(('"' + $script:ScriptUnderTest + '"'), ('"' + $script:Ws + '"'))
+        $procs = foreach ($n in 1, 2) {
+            Start-Process -FilePath 'node' -ArgumentList $argList `
+                          -RedirectStandardOutput ([System.IO.Path]::Combine($script:Ws, "out$n.txt")) `
+                          -RedirectStandardError ([System.IO.Path]::Combine($script:Ws, "err$n.txt")) `
+                          -NoNewWindow -PassThru
+        }
+        foreach ($p in $procs) { $p.WaitForExit() }
+        Get-NpmCalls | Should -Be 1
+        foreach ($n in 1, 2) {
+            [System.IO.File]::ReadAllText([System.IO.Path]::Combine($script:Ws, "out$n.txt")) | Should -Match '(?m)^FAKE-DBHUB '
+        }
+    }
+
+    It 'a waiter takes over when the installer it waits on dies' -Skip:(-not $script:HasNode) {
+        # The session that started the install was closed; the waiter must not just give up.
+        $holder = Start-Process -FilePath 'node' -ArgumentList @('-e', '"setTimeout(function(){},2000)"') -NoNewWindow -PassThru
+        $null = New-Item -ItemType Directory -Path $script:Lock -Force
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($script:Lock, 'pid'), "$($holder.Id)`n")
+        $r = Start-Launcher -Ws $script:Ws
+        $holder.WaitForExit()
+        $r.Stderr | Should -Match 'waiting'
+        $r.Stdout | Should -Match '(?m)^FAKE-DBHUB '
+        Get-NpmCalls | Should -Be 1
+    }
+
+    It 'other versions are removed once the pinned one is installed' -Skip:(-not $script:HasNode) {
+        $base = [System.IO.Path]::Combine($env:CLAUDE_PLUGIN_DATA, 'dbhub')
+        $old = [System.IO.Path]::Combine($base, '0.0.1')
+        $null = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($old, 'node_modules')) -Force
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($base, '0.0.1.install.log'), "x`n")
+        $null = Start-Launcher -Ws $script:Ws
+        Test-Path -LiteralPath $script:Marker -PathType Leaf | Should -BeTrue
+        Test-Path -LiteralPath $old | Should -BeFalse
+        Test-Path -LiteralPath ([System.IO.Path]::Combine($base, '0.0.1.install.log')) | Should -BeFalse
+    }
 }

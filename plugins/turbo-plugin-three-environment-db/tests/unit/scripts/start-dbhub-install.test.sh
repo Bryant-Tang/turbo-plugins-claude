@@ -126,5 +126,83 @@ test_lock_of_a_dead_installer_is_taken_over() {
     assertEquals 'installed once' 1 "$(npm_calls)"
 }
 
+# Two sessions opening together must download once, and both must end up running dbhub.
+test_two_launchers_at_once_install_once() {
+    export FAKE_NPM_MODE=slow FAKE_NPM_DELAY_MS=1500
+    node "$SCRIPT_UNDER_TEST" "$WS" </dev/null >"$WS/out1" 2>"$WS/err1" &
+    local p1=$!
+    node "$SCRIPT_UNDER_TEST" "$WS" </dev/null >"$WS/out2" 2>"$WS/err2" &
+    local p2=$!
+    wait "$p1" "$p2"
+    assertEquals 'npm ran once for both' 1 "$(npm_calls)"
+    grep -q '^FAKE-DBHUB ' "$WS/out1"; assertTrue 'first launcher runs dbhub' $?
+    grep -q '^FAKE-DBHUB ' "$WS/out2"; assertTrue 'second launcher runs dbhub' $?
+}
+
+# The installer a launcher is WAITING on dies (the session that started it was closed). The waiter
+# must install by itself, not report "did not finish" and leave the user to reconnect.
+test_waiter_takes_over_when_the_installer_dies() {
+    sleep 2 &
+    local holder=$!
+    mkdir -p "$INSTALL_DIR.lock"
+    printf '%s\n' "$holder" >"$INSTALL_DIR.lock/pid"
+    launch
+    wait "$holder" 2>/dev/null
+    grep -q 'waiting' "$WS/err"; assertTrue 'it waited for the live installer first' $?
+    grep -q '^FAKE-DBHUB ' "$WS/out"; assertTrue 'then installed and ran dbhub itself' $?
+    assertEquals 'installed once' 1 "$(npm_calls)"
+}
+
+# A version bump leaves the previous version's few hundred packages behind; nothing runs them again.
+test_other_versions_are_removed_after_install() {
+    local old="$WS/data/dbhub/0.0.1"
+    mkdir -p "$old/node_modules"
+    printf 'x\n' >"$WS/data/dbhub/0.0.1.install.log"
+    launch
+    [ -f "$INSTALL_DIR/.tp-installed" ]; assertTrue 'current version installed' $?
+    [ -e "$old" ]; assertFalse 'old version removed' $?
+    [ -e "$WS/data/dbhub/0.0.1.install.log" ]; assertFalse 'old install log removed' $?
+}
+
+# Without CLAUDE_PLUGIN_DATA the install falls back to the temp directory. On a shared host that
+# directory could have been created by someone else and pre-filled; running from it would run their
+# code as us. A fallback directory others can write to is refused.
+test_temp_fallback_writable_by_others_is_refused() {
+    if [ "$(uname -s 2>/dev/null | cut -c1-5)" != 'Linux' ] && [ "$(uname -s)" != 'Darwin' ]; then
+        startSkipping
+    fi
+    unset CLAUDE_PLUGIN_DATA
+    export TMPDIR="$WS/tmp"
+    mkdir -p "$TMPDIR"
+    local user root
+    user="$(node -e 'process.stdout.write(require("os").userInfo().username.replace(/[^A-Za-z0-9._-]/g,"_"))')"
+    root="$TMPDIR/turbo-plugin-three-environment-db-$user"
+    mkdir -p "$root"
+    chmod 777 "$root"
+    launch; local rc=$?
+    unset TMPDIR
+    assertEquals 'exit 0' 0 "$rc"
+    grep -q 'refusing' "$WS/err"; assertTrue 'refuses the shared directory' $?
+    assertEquals 'npm never ran' 0 "$(npm_calls)"
+    assertEquals 'nothing on stdout' 0 "$(wc -c <"$WS/out" | tr -d ' ')"
+}
+
+# The same fallback, created fresh, is private to us and works.
+test_temp_fallback_is_created_private() {
+    if [ "$(uname -s 2>/dev/null | cut -c1-5)" != 'Linux' ] && [ "$(uname -s)" != 'Darwin' ]; then
+        startSkipping
+    fi
+    unset CLAUDE_PLUGIN_DATA
+    export TMPDIR="$WS/tmp"
+    mkdir -p "$TMPDIR"
+    launch
+    unset TMPDIR
+    grep -q '^FAKE-DBHUB ' "$WS/out"; assertTrue 'installed and ran from the fallback' $?
+    local root
+    root="$(ls -d "$WS/tmp"/turbo-plugin-three-environment-db-* 2>/dev/null | head -1)"
+    [ -n "$root" ]; assertTrue 'fallback directory is per user' $?
+    [ -n "$(find "$root" -maxdepth 0 -perm -o+w 2>/dev/null)" ]; assertFalse 'not writable by others' $?
+}
+
 # shellcheck disable=SC1090
 . "$SHUNIT2"
