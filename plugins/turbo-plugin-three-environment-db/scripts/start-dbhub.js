@@ -92,8 +92,8 @@ const CONFIG_REL = '.turbo-plugin/dbhub.local.toml';
 // in the path keeps users apart; the owner check (see checkDataRoot) is what actually closes it.
 const DATA_ENV = 'CLAUDE_PLUGIN_DATA';
 const DATA_FROM_ENV = Boolean(process.env[DATA_ENV]);
-const DATA_ROOT = process.env[DATA_ENV] ||
-    path.join(os.tmpdir(), `turbo-plugin-three-environment-db-${currentUserName()}`);
+const DATA_ROOT = path.resolve(process.env[DATA_ENV] ||
+    path.join(os.tmpdir(), `turbo-plugin-three-environment-db-${currentUserName()}`));
 const DBHUB_BASE = path.join(DATA_ROOT, 'dbhub');
 const DBHUB_VERSION = DBHUB_SPEC.slice(DBHUB_SPEC.lastIndexOf('@') + 1);
 const INSTALL_DIR = path.join(DBHUB_BASE, DBHUB_VERSION);
@@ -462,9 +462,9 @@ function removeOtherVersions() {
     try { entries = fs.readdirSync(DBHUB_BASE); } catch (e) { return; }
     const mine = path.basename(INSTALL_DIR);
     for (const name of entries) {
-        if (name === mine || name.startsWith(mine + '.')) continue;
-        // Another version's lock or staging directory belongs to an installer that may still be
-        // running (an older plugin version in another session); leave those to it.
+        if (name === mine || name === `${mine}.install.log`) continue;
+        // Any version's lock or staging directory -- ours included -- belongs to an installer that
+        // may still be running (an older plugin version in another session); leave those to it.
         if (/\.(lock|staging-\d+)$/.test(name)) continue;
         removeTree(path.join(DBHUB_BASE, name));
     }

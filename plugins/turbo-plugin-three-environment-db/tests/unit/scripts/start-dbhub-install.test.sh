@@ -142,10 +142,14 @@ test_two_launchers_at_once_install_once() {
 # The installer a launcher is WAITING on dies (the session that started it was closed). The waiter
 # must install by itself, not report "did not finish" and leave the user to reconnect.
 test_waiter_takes_over_when_the_installer_dies() {
-    sleep 2 &
+    # The holder is a node process reporting its OWN pid: under Git Bash, $! of a background job is
+    # an MSYS pid that node (a native Windows program) does not know, so it would read as dead.
+    node -e 'process.stdout.write(String(process.pid)); setTimeout(function () {}, 2000)' >"$WS/holder-pid" &
     local holder=$!
+    local i
+    for i in $(seq 1 40); do [ -s "$WS/holder-pid" ] && break; sleep 0.05; done
     mkdir -p "$INSTALL_DIR.lock"
-    printf '%s\n' "$holder" >"$INSTALL_DIR.lock/pid"
+    cp "$WS/holder-pid" "$INSTALL_DIR.lock/pid"
     launch
     wait "$holder" 2>/dev/null
     grep -q 'waiting' "$WS/err"; assertTrue 'it waited for the live installer first' $?
