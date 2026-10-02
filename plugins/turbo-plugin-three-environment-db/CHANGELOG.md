@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.7.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.7.1...turbo-plugin-three-environment-db--v0.7.2) (2026-10-02)
+
+
+### Fixed
+
+* **db:** dbhub 第一次安裝被打斷後不會再永遠連不上 ([4d31a87](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/4d31a87e60d0cfe6dbbb46a9b4ea5391b771dae8)), closes [#200](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/200)
+
 ## [0.7.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.7.0...turbo-plugin-three-environment-db--v0.7.1) (2026-10-02)
 
 
