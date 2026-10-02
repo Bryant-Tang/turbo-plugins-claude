@@ -59,8 +59,32 @@
 
 ## 前置需求
 
-**只需要 Node.js。** `tp-dbhub` 以 `node scripts/start-dbhub.js` 啟動，它解析出設定檔位置後用
-`npx @bytebase/dbhub@<釘死的版本>` 跑起來——**不需要 Docker，也不掛載任何路徑**。
+**只需要 Node.js（含 npm）。** `tp-dbhub` 以 `node scripts/start-dbhub.js` 啟動，它解析出設定檔位置後
+跑釘死版本的 `@bytebase/dbhub`——**不需要 Docker，也不掛載任何路徑**。
+
+**dbhub 裝在 plugin 自己的資料夾，不走 npx。** 每個版本第一次啟動時，啟動器用 npm 把它裝進
+`${CLAUDE_PLUGIN_DATA}/dbhub/<版本>/`，之後直接 `node` 執行，不再經過 npm。
+
+> **為什麼不用 npx**（issue #200）：新版本第一次啟動要下載安裝，實測將近一分鐘，比 Claude Code 等 MCP
+> server 回應的時間還長，安裝因此被中斷。npx 被打斷時會在 npm 快取留下只有 `node_modules/`、沒有
+> `package.json` 的目錄，之後每次啟動都讀那個 `package.json` 失敗，**永遠**是 `CONNECTION_CLOSED`，
+> 直到有人手動刪掉它；而那個目錄名稱是 npm 內部算的，啟動器沒辦法替你修。
+>
+> 現在的做法：
+> - 安裝在**背景**進行，啟動器被 Claude Code 結束也不會中斷，所以第一次連線就算逾時，裝完之後在
+>   `/mcp` 重連一次就好。
+> - 先裝到暫存資料夾，**確定裝完**才整個改名成正式位置，所以不會有「裝一半卻被當成裝好」的狀態。
+>   裝失敗就什麼都不留，重連會重新裝。
+> - 兩個 session 同時啟動只會下載一次，另一個等它裝完；等到一半負責安裝的那個 session 被關掉，
+>   等待的這個會接手自己裝。
+> - 新版本裝好後，同一個資料夾裡**其他版本**的 dbhub 會被刪掉（每版約兩百多個套件，不清會越積越多）。
+> - 沒有 `CLAUDE_PLUGIN_DATA` 時（例如手動跑啟動器），改裝在系統暫存資料夾底下的
+>   `turbo-plugin-three-environment-db-<使用者名稱>/`。在 Linux / macOS 上這個資料夾必須是自己的、
+>   而且別的使用者不能寫入，否則啟動器拒絕使用（避免共用主機上別人先放好一份假的 dbhub 讓你執行）。
+> - 安裝記錄在 `${CLAUDE_PLUGIN_DATA}/dbhub/<版本>.install.log`；安裝失敗時，啟動器會把最後幾行印到
+>   stderr（手動跑 `node <plugin>/scripts/start-dbhub.js <工作區> < /dev/null` 就看得到）。
+>
+> 升到這版之前被 npx 弄壞的那個 `_npx` 快取目錄已經用不到，可以不管它。
 
 > **為什麼是 node，而且為什麼只有這一支腳本是 `.js`**
 >
@@ -90,7 +114,8 @@
 `.github/workflows/dbhub-version-check.yml` 每月比對 npm registry，落後就開 issue 通知。
 
 **升級步驟**：改 `DBHUB_SPEC` → 跑本 plugin 的測試 → **手動對真實資料庫起一次確認**
-（測試斷言的是「會下什麼指令」，不驗 dbhub 自己的行為）。
+（測試斷言的是「會下什麼指令」，不驗 dbhub 自己的行為）。升版後每台機器第一次連線都要重新下載，
+可能逾時一次，裝完重連即可（見上面「為什麼不用 npx」）。
 
 ## 設定
 
@@ -144,6 +169,10 @@ commit。
 
 - `tests/Invoke-ScriptTests.ps1`（Windows PowerShell 5.1）/ `tests/invoke-script-tests.sh`（bash）。
 - SessionStart hook 行為測試：`tests/unit/scripts/hooks/`（non-git / dbhub 警示 / no-marker 靜默 / 未用 db 的 gate no-op 各情境）。
+- 啟動器安裝 dbhub 的測試：`tests/unit/scripts/{Start-DbhubInstall.test.ps1,start-dbhub-install.test.sh}`
+  （用 `assets/fake-npm-cli.js` 代替 npm，不下載：首次安裝後啟動 / 第二次不碰 npm / 裝一半的會重裝 /
+  失敗時說明原因且不留東西 / 啟動器被砍掉安裝仍會完成 / 死掉的鎖會被接手 / 兩個同時啟動只裝一次 /
+  等待中安裝者死掉會接手 / 舊版本會被清掉 / 暫存資料夾退路別人可寫就拒絕）。
 - 環境改名腳本測試：`tests/unit/scripts/{Rename-DbEnvironment.test.ps1,rename-db-environment.test.sh}`
   （dry run 不動任何東西 / 目錄與檔頭都改到 / 拒絕合併既有目標 / **詞邊界**——把 `test` 改名成
   `test-db` 不會把既有的 `test-db` 變成 `test-db-db`）。
