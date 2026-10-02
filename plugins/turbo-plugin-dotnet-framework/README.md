@@ -32,8 +32,12 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
 
 ## 設定
 
-- 需 Windows + IIS Express + MSBuild。MSBuild 來自 **Visual Studio 2017/2019/2022 任一版本,或只裝
+- 需 Windows + IIS Express + MSBuild。MSBuild 來自 **Visual Studio 2017/2019/2022/2026 任一版本,或只裝
   「Build Tools for Visual Studio」**(沒有 IDE 也可以,CI 機器就是這樣)。
+  - 自動探測先問 Visual Studio 自己的查詢工具 `vswhere`,所以新版 VS 換了安裝資料夾也找得到(VS 2026 的
+    資料夾叫 `18`、不叫 `2026`)。同一台機器有多個 MSBuild 時,優先選帶有 Web 專案建置檔
+    (`Microsoft.WebApplication.targets`)的那一個——像 SSMS 自帶的 MSBuild 沒有它,建 web 專案會在
+    `MSB4019` 失敗。沒有 `vswhere` 的機器改查固定的安裝路徑清單。
 - **不需要先跑任何設定指令。** 各項設定都是用到才建、且都能自我修復:
   - `.turbo-plugin/applicationhost.config` — 第一次 `/tp-run` 時,**以 IIS Express 自帶的
     `AppServer\applicationhost.config` 為底**、加上依 csproj 的 `<IISUrl>` / `<IISExpressSSLPort>` /
@@ -47,7 +51,7 @@ target**(糾錯閘:讓你確認操作的是不是對的專案);選擇若與記�
   - `.turbo-plugin/config.toml` 的 dotnet 區塊 — 由記憶存回在寫入時自己建立(含標記區塊與 section)。
     `[iis] enabled` 未設定即視為啟用;要停用 IIS 相關 skill 才需要手動寫 `enabled = false`。
   - MSBuild / IIS Express 路徑寫在 `.turbo-plugin/config.local.toml` 的 `[tools]`(gitignored、機器專屬),
-    **只在自動探測失敗時才需要**;skill 會自己探測標準安裝路徑,找不到才 throw 並引導你手動填。
+    **只在自動探測失敗時才需要**;skill 會自己探測(見上),找不到才 throw 並引導你手動填。
 - **不強制 git repo**:專案識別(IIS Express 站台名的後綴)優先用 `git --git-common-dir` 算——那是 repo
   裡所有 worktree 共用的根,所以同一個專案在不同 worktree 下拿到同一個身分。**不在 git work tree 內時
   改用專案資料夾自己的絕對路徑**,一樣穩定,只是失去跨 worktree 共用(沒有 worktree 的資料夾本來也用不到)。

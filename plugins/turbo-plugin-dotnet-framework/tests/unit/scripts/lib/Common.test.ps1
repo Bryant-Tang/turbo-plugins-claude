@@ -365,6 +365,204 @@ msbuild_path = "$tomlPath"
         }
     }
 
+    # VS 2026 installs under `Microsoft Visual Studio\18\`, not `\2026\` (issue #196). The fixed
+    # list is the fallback for machines without vswhere, so it has to know that folder too.
+    Context 'probes a Visual Studio 2026 install (folder named 18, not 2026)' {
+        BeforeAll {
+            $script:origPF = $env:ProgramFiles
+            $script:origPF86 = ${env:ProgramFiles(x86)}
+        }
+        AfterAll {
+            $env:ProgramFiles = $script:origPF
+            ${env:ProgramFiles(x86)} = $script:origPF86
+        }
+
+        It 'finds MSBuild under 18\BuildTools in Program Files (x86) when nothing else is installed' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $pf = Join-Path $repo 'PF'; $pf86 = Join-Path $repo 'PF86'
+                $null = New-Item -ItemType Directory -Path $pf -Force
+                $dir = [System.IO.Path]::Combine($pf86, 'Microsoft Visual Studio', '18', 'BuildTools', 'MSBuild', 'Current', 'Bin')
+                $null = New-Item -ItemType Directory -Path $dir -Force
+                $expected = [System.IO.Path]::Combine($dir, 'MSBuild.exe')
+                [System.IO.File]::WriteAllText($expected, '')
+                $env:ProgramFiles = $pf
+                ${env:ProgramFiles(x86)} = $pf86
+                Find-MSBuild -RepoRoot $repo | Should -Be $expected
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'the not-found error does not hand out a year-specific example path' {
+            # Copying `.../2022/BuildTools/...` from the message onto a VS 2026 machine points at a
+            # folder that does not exist -- the message must not suggest one particular year.
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $pf = Join-Path $repo 'PF'; $pf86 = Join-Path $repo 'PF86'
+                $null = New-Item -ItemType Directory -Path $pf -Force
+                $null = New-Item -ItemType Directory -Path $pf86 -Force
+                $env:ProgramFiles = $pf
+                ${env:ProgramFiles(x86)} = $pf86
+                $errMsg = ''
+                try { $null = Find-MSBuild -RepoRoot $repo } catch { $errMsg = $_.Exception.Message }
+                $errMsg | Should -Not -Match 'Visual Studio/2022/'
+                $errMsg | Should -Match '18'
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+    }
+
+    # vswhere is Visual Studio's own locator and the first probe after config (issue #196). The
+    # real vswhere.exe cannot be faked on disk, so its wrapper Get-VsWhereMSBuildCandidates is
+    # mocked; everything after it (Bin-only filter, web-targets preference, fallback order) runs
+    # for real against sandbox installs.
+    Context 'vswhere results (Get-VsWhereMSBuildCandidates mocked)' {
+        BeforeAll {
+            $script:origPF = $env:ProgramFiles
+            $script:origPF86 = ${env:ProgramFiles(x86)}
+            # What the mocked vswhere returns. Script scope rather than a closure over It locals:
+            # the mock body and the It block share the test file's script scope, nothing else.
+            $script:vsHits = @()
+
+            # A fake install: <Root>\MSBuild\Current\Bin\[<SubDir>\]MSBuild.exe, optionally with the
+            # Web Application targets at <Root>\MSBuild\Microsoft\VisualStudio\v18.0\WebApplications\.
+            function New-FakeInstall {
+                param([string]$Root, [switch]$WithWebTargets, [string]$SubDir = '')
+                $bin = [System.IO.Path]::Combine($Root, 'MSBuild', 'Current', 'Bin')
+                if ($SubDir) { $bin = [System.IO.Path]::Combine($bin, $SubDir) }
+                $null = New-Item -ItemType Directory -Path $bin -Force
+                $exe = [System.IO.Path]::Combine($bin, 'MSBuild.exe')
+                [System.IO.File]::WriteAllText($exe, '')
+                if ($WithWebTargets) {
+                    $web = [System.IO.Path]::Combine($Root, 'MSBuild', 'Microsoft', 'VisualStudio', 'v18.0', 'WebApplications')
+                    $null = New-Item -ItemType Directory -Path $web -Force
+                    [System.IO.File]::WriteAllText([System.IO.Path]::Combine($web, 'Microsoft.WebApplication.targets'), '')
+                }
+                return $exe
+            }
+
+            # Empty Program Files roots, so the fixed list finds nothing unless a test puts it there.
+            function Enter-EmptyProgramFiles {
+                param([string]$Repo)
+                $pf = Join-Path $Repo 'PF'; $pf86 = Join-Path $Repo 'PF86'
+                $null = New-Item -ItemType Directory -Path $pf -Force
+                $null = New-Item -ItemType Directory -Path $pf86 -Force
+                $env:ProgramFiles = $pf
+                ${env:ProgramFiles(x86)} = $pf86
+                return @{ PF = $pf; PF86 = $pf86 }
+            }
+        }
+        AfterAll {
+            $env:ProgramFiles = $script:origPF
+            ${env:ProgramFiles(x86)} = $script:origPF86
+        }
+
+        It 'returns the vswhere hit (Build Tools 2026 in a folder no fixed path names)' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $null = Enter-EmptyProgramFiles -Repo $repo
+                $exe = New-FakeInstall -Root (Join-Path $repo 'VS18BT') -WithWebTargets
+                $script:vsHits = @($exe)
+                Mock Get-VsWhereMSBuildCandidates { return $script:vsHits }
+                Find-MSBuild -RepoRoot $repo | Should -Be $exe
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'skips an MSBuild without web targets (SSMS) in favour of one that has them' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $null = Enter-EmptyProgramFiles -Repo $repo
+                $ssms = New-FakeInstall -Root (Join-Path $repo 'SSMS')
+                $vs = New-FakeInstall -Root (Join-Path $repo 'VS18BT') -WithWebTargets
+                $script:vsHits = @($ssms, $vs)
+                Mock Get-VsWhereMSBuildCandidates { return $script:vsHits }
+                Find-MSBuild -RepoRoot $repo | Should -Be $vs
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'ignores Bin\amd64\MSBuild.exe and keeps the 32-bit one' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $null = Enter-EmptyProgramFiles -Repo $repo
+                $root = Join-Path $repo 'VS18BT'
+                $x86 = New-FakeInstall -Root $root -WithWebTargets
+                $amd64 = New-FakeInstall -Root $root -SubDir 'amd64'
+                $script:vsHits = @($amd64, $x86)
+                Mock Get-VsWhereMSBuildCandidates { return $script:vsHits }
+                Find-MSBuild -RepoRoot $repo | Should -Be $x86
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'a fixed-path install beats a vswhere hit that has no web targets' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $roots = Enter-EmptyProgramFiles -Repo $repo
+                $ssms = New-FakeInstall -Root (Join-Path $repo 'SSMS')
+                $fixed = New-FakeInstall -Root ([System.IO.Path]::Combine($roots.PF, 'Microsoft Visual Studio', '2022', 'Community'))
+                $script:vsHits = @($ssms)
+                Mock Get-VsWhereMSBuildCandidates { return $script:vsHits }
+                Find-MSBuild -RepoRoot $repo | Should -Be $fixed
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'falls back to a vswhere hit without web targets rather than throwing' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $null = Enter-EmptyProgramFiles -Repo $repo
+                $ssms = New-FakeInstall -Root (Join-Path $repo 'SSMS')
+                $script:vsHits = @($ssms)
+                Mock Get-VsWhereMSBuildCandidates { return $script:vsHits }
+                Find-MSBuild -RepoRoot $repo | Should -Be $ssms
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+
+        It 'config.local.toml still wins over vswhere' {
+            $repo = New-IsolatedRepoRoot 'tools'
+            try {
+                $null = Enter-EmptyProgramFiles -Repo $repo
+                $vs = New-FakeInstall -Root (Join-Path $repo 'VS18BT') -WithWebTargets
+                $pinned = New-FakeInstall -Root (Join-Path $repo 'Pinned')
+                Write-Toml -Path (Join-Path $repo '.turbo-plugin\config.local.toml') -Content @"
+[tools]
+msbuild_path = "$($pinned -replace '\\', '/')"
+"@
+                $script:vsHits = @($vs)
+                Mock Get-VsWhereMSBuildCandidates { return $script:vsHits }
+                [System.IO.Path]::GetFullPath((Find-MSBuild -RepoRoot $repo)) | Should -Be ([System.IO.Path]::GetFullPath($pinned))
+            } finally {
+                $env:ProgramFiles = $script:origPF
+                ${env:ProgramFiles(x86)} = $script:origPF86
+                Remove-IsolatedRepoRoot -Dir $repo
+            }
+        }
+    }
+
     Context 'env var is ignored - fake env path, no [tools]' {
         It 'never reads the env var (throws without env hint, or probes a real file)' {
             $repo = New-IsolatedRepoRoot 'tools'
