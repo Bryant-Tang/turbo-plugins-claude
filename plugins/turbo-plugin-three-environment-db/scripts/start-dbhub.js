@@ -59,12 +59,43 @@
 // Explanations go to stderr; stdout stays empty so nothing is mistaken for a protocol message.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const DBHUB_SPEC = '@bytebase/dbhub@1.4.0';
 // Forward-slash form, used only in messages so they read the same on every platform.
 const CONFIG_REL = '.turbo-plugin/dbhub.local.toml';
+
+// ---------------------------------------------------------------------------------------------
+// WHERE DBHUB IS INSTALLED (issue #200)
+//
+// This used to be `npx -y <spec>`. npx installs into a cache directory npm names by hashing the
+// spec, and if that install is interrupted -- the first start of a new version takes about a
+// minute, longer than Claude Code waits for an MCP server, so it IS interrupted -- npm leaves a
+// directory with node_modules/ but no package.json. Every later `npm exec` reads that package.json
+// first and dies with ENOENT; it never reinstalls. The server stayed CONNECTION_CLOSED until
+// someone found and deleted the directory by hand. We cannot repair that from here: the hash is
+// npm's internal business, so the launcher cannot know which directory is the broken one.
+//
+// So the launcher owns the install instead: one directory per pinned version under the plugin's
+// data directory, which only ever exists complete (see runInstaller), and dbhub is then started
+// with plain `node <entry>` -- no npx, no npm on the hot path.
+//
+// CLAUDE_PLUGIN_DATA is the per-plugin directory Claude Code keeps across plugin updates; outside
+// Claude Code (running this by hand) a temp directory stands in. Either way a missing install is
+// only ever a re-download, never a broken state.
+const DATA_ENV = 'CLAUDE_PLUGIN_DATA';
+const DATA_ROOT = process.env[DATA_ENV] || path.join(os.tmpdir(), 'turbo-plugin-three-environment-db');
+const DBHUB_VERSION = DBHUB_SPEC.slice(DBHUB_SPEC.lastIndexOf('@') + 1);
+const INSTALL_DIR = path.join(DATA_ROOT, 'dbhub', DBHUB_VERSION);
+const MARKER = '.tp-installed';
+const LOCK_DIR = `${INSTALL_DIR}.lock`;
+const LOCK_PID_FILE = path.join(LOCK_DIR, 'pid');
+const LOG_FILE = `${INSTALL_DIR}.install.log`;
+const INSTALL_FLAG = '--install-dbhub';
+const POLL_MS = 500;
+const WAIT_LIMIT_MS = 30 * 60 * 1000;
 
 function say(message) {
     process.stderr.write(message + '\n');
@@ -82,24 +113,60 @@ function configIn(dir) {
     return path.join(dir, '.turbo-plugin', 'dbhub.local.toml');
 }
 
-// npx is a .cmd shim on Windows, which cannot be spawned without a shell -- and spawning through a
+function isInstalled() {
+    return isFile(path.join(INSTALL_DIR, MARKER)) && isFile(dbhubEntry(INSTALL_DIR));
+}
+
+// Read from the package's own manifest rather than hard-coding dist/index.js, so a version bump
+// that moves the entry point does not need a launcher change.
+function dbhubEntry(root) {
+    const pkgDir = path.join(root, 'node_modules', '@bytebase', 'dbhub');
+    let bin = 'dist/index.js';
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+        if (typeof pkg.bin === 'string') bin = pkg.bin;
+        else if (pkg.bin && typeof pkg.bin.dbhub === 'string') bin = pkg.bin.dbhub;
+    } catch (e) { /* fall through to the default; isFile() on the result decides */ }
+    return path.join(pkgDir, bin);
+}
+
+function isAlive(pid) {
+    if (!pid) return false;
+    try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+function removeTree(p) {
+    try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3 }); } catch (e) { /* best effort */ }
+}
+
+function sleepMs(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// npm is a .cmd shim on Windows, which cannot be spawned without a shell -- and spawning through a
 // shell would split arguments on spaces, which real paths have (`C:\Users\Some Name\...`). So run
-// npm's own npx entry point with the very node executing this file: no shell, no quoting rules.
-function findNpxCli() {
+// npm's own entry point with the very node executing this file: no shell, no quoting rules.
+// TP_DBHUB_NPM_CLI exists for the tests, which substitute a fake npm so no download happens.
+function findNpmCli() {
+    if (process.env.TP_DBHUB_NPM_CLI) return process.env.TP_DBHUB_NPM_CLI;
     const nodeDir = path.dirname(process.execPath);
     const candidates = [
         // Windows official installer, and any layout with npm beside the node binary.
-        path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+        path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
         // Unix prefix layout: <prefix>/bin/node with <prefix>/lib/node_modules (nvm, brew, distro).
-        path.join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+        path.join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
     ];
     for (const c of candidates) {
         if (isFile(c)) return c;
     }
     return '';
 }
+const npmCli = findNpmCli();
 
 const argv = process.argv.slice(2);
+if (argv[0] === INSTALL_FLAG) {
+    runInstaller();
+}
 const printOnly = argv.includes('--print-command');
 const sessionRoot = argv.filter((a) => a !== '--print-command')[0] || '';
 
@@ -158,27 +225,215 @@ if (isFile(rootConfig)) {
     }
 }
 
-// The LOGICAL command, which is what the tests assert. The actual spawn below reaches npx through
-// node so it works on Windows; that detour is an implementation concern, not a contract, and
-// printing it here would make the tests depend on where npm happens to be installed.
-const runArgs = ['-y', DBHUB_SPEC, '--transport', 'stdio', '--config', config];
+// The LOGICAL command, which is what the tests assert: which package, at which version, against
+// which config. Where the package was installed to is an implementation concern, not a contract,
+// and printing it here would make the tests depend on the machine.
+const dbhubArgs = ['--transport', 'stdio', '--config', config];
 
 if (printOnly) {
-    process.stdout.write(['npx'].concat(runArgs).join('\n') + '\n');
+    process.stdout.write([DBHUB_SPEC].concat(dbhubArgs).join('\n') + '\n');
     process.exit(0);
 }
 
-const npxCli = findNpxCli();
-if (!npxCli) {
-    say('tp-dbhub: found node but not npm, so the dbhub package cannot be fetched.');
-    say(`  node: ${process.execPath}`);
-    say('Install npm (it ships with Node) and reopen the session.');
-    process.exit(0);
+if (isInstalled()) {
+    runDbhub();
+} else {
+    installThenRun();
 }
 
-const result = spawnSync(process.execPath, [npxCli].concat(runArgs), { stdio: 'inherit' });
-if (result.error) {
-    say(`tp-dbhub: could not start ${DBHUB_SPEC}: ${result.error.message}`);
-    process.exit(0);
+function runDbhub() {
+    const result = spawnSync(process.execPath, [dbhubEntry(INSTALL_DIR)].concat(dbhubArgs), { stdio: 'inherit' });
+    if (result.error) {
+        say(`tp-dbhub: could not start ${DBHUB_SPEC}: ${result.error.message}`);
+        process.exit(0);
+    }
+    process.exit(result.status === null ? 0 : result.status);
 }
-process.exit(result.status === null ? 0 : result.status);
+
+// The first start after a version bump (or on a new machine) has to download the package, which
+// took ~58s on a real machine -- longer than Claude Code waits for an MCP server to answer. So the
+// download runs in a DETACHED child: if Claude Code gives up on us and kills this process, the
+// install carries on and the next connect finds it finished. This process only waits for it.
+function installThenRun() {
+    if (!takeLock()) {
+        // Another launcher (a second session, or a reconnect) is already installing. Do not start a
+        // second download into the same place -- wait for that one.
+        say(`tp-dbhub: ${DBHUB_SPEC} is being installed by another session; waiting for it.`);
+        waitForInstall();
+        return;
+    }
+
+    if (!npmCli) {
+        releaseLock();
+        say('tp-dbhub: found node but not npm, so the dbhub package cannot be fetched.');
+        say(`  node: ${process.execPath}`);
+        say('Install npm (it ships with Node) and reopen the session.');
+        process.exit(0);
+    }
+
+    say(`tp-dbhub: installing ${DBHUB_SPEC} (first start of this version; this can take a minute).`);
+    say(`  into: ${INSTALL_DIR}`);
+    say(`  log:  ${LOG_FILE}`);
+
+    let child;
+    try {
+        fs.mkdirSync(DATA_ROOT, { recursive: true });
+        const log = fs.openSync(LOG_FILE, 'w');
+        child = spawn(process.execPath, [__filename, INSTALL_FLAG], {
+            detached: true,
+            windowsHide: true,
+            // stdout of THIS process is the MCP protocol channel. Nothing npm prints may reach it,
+            // so the installer writes to a log file only, never to an inherited stream.
+            stdio: ['ignore', log, log],
+            env: Object.assign({}, process.env, { [DATA_ENV]: DATA_ROOT }),
+        });
+        fs.closeSync(log);
+    } catch (e) {
+        releaseLock();
+        say(`tp-dbhub: could not start the installer: ${e.message}`);
+        process.exit(0);
+    }
+    child.on('error', (e) => {
+        releaseLock();
+        say(`tp-dbhub: could not start the installer: ${e.message}`);
+        process.exit(0);
+    });
+    try { fs.writeFileSync(LOCK_PID_FILE, String(child.pid)); } catch (e) { /* lock stays age-based */ }
+    child.unref();
+    waitForInstall();
+}
+
+// Poll rather than wait on the child: the installer may belong to another launcher, and the end
+// state that matters is "installed" or "nobody is installing any more", not one process's exit.
+function waitForInstall() {
+    const started = Date.now();
+    const timer = setInterval(() => {
+        if (isInstalled()) {
+            clearInterval(timer);
+            runDbhub();
+            return;
+        }
+        if (fs.existsSync(LOCK_DIR) && !lockIsStale() && Date.now() - started < WAIT_LIMIT_MS) return;
+        clearInterval(timer);
+        reportFailedInstall();
+        process.exit(0);
+    }, POLL_MS);
+}
+
+function reportFailedInstall() {
+    say(`tp-dbhub: installing ${DBHUB_SPEC} did not finish.`);
+    let tail = '';
+    try { tail = fs.readFileSync(LOG_FILE, 'utf8').trim().split(/\r?\n/).slice(-15).join('\n'); } catch (e) { tail = ''; }
+    if (tail) {
+        say(`  last lines of ${LOG_FILE}:`);
+        for (const line of tail.split('\n')) say(`    ${line}`);
+    }
+    say('Nothing half-installed was kept, so reconnecting (/mcp) simply tries again.');
+}
+
+// ---------------------------------------------------------------------------------------------
+// INSTALLER (the detached child started above)
+//
+// Installs into a staging directory of its own, and only once npm has finished AND the entry
+// point is really there does it write the marker and rename the whole directory into place. A
+// rename is atomic, so INSTALL_DIR either does not exist or is complete -- there is no state in
+// which a killed install leaves something the next start mistakes for an installation. That is
+// exactly the state `npx` left behind in issue #200: a cache directory with node_modules/ but no
+// package.json, which npm then refused to read on every later start, forever.
+function runInstaller() {
+    const staging = `${INSTALL_DIR}.staging-${process.pid}`;
+    let code = 1;
+    try {
+        removeDeadStaging();
+        removeTree(staging);
+        fs.mkdirSync(staging, { recursive: true });
+        fs.writeFileSync(path.join(staging, 'package.json'),
+            JSON.stringify({ name: 'tp-dbhub-runtime', private: true }, null, 2) + '\n');
+        if (!npmCli) throw new Error('npm was not found next to node');
+        const npm = spawnSync(process.execPath,
+            [npmCli, 'install', '--prefix', staging, '--no-audit', '--no-fund', '--omit=dev', DBHUB_SPEC],
+            { stdio: 'inherit', windowsHide: true });
+        if (npm.error) throw npm.error;
+        if (npm.status !== 0) throw new Error(`npm install exited ${npm.status}`);
+        if (!isFile(dbhubEntry(staging))) throw new Error(`npm finished but ${dbhubEntry(staging)} is missing`);
+        fs.writeFileSync(path.join(staging, MARKER), DBHUB_SPEC + '\n');
+        promote(staging);
+        console.log(`tp-dbhub: installed ${DBHUB_SPEC}`);
+        code = 0;
+    } catch (e) {
+        console.log(`tp-dbhub: install failed: ${e.message}`);
+        removeTree(staging);
+    } finally {
+        releaseLock();
+    }
+    process.exit(code);
+}
+
+function promote(staging) {
+    // A directory at INSTALL_DIR without the marker cannot come from this code, but if one is there
+    // it is not an installation and must not block the rename.
+    if (fs.existsSync(INSTALL_DIR) && !isInstalled()) removeTree(INSTALL_DIR);
+    for (let attempt = 0; ; attempt++) {
+        try {
+            fs.renameSync(staging, INSTALL_DIR);
+            return;
+        } catch (e) {
+            if (isInstalled()) {
+                // Someone else finished first; theirs is as good as ours.
+                removeTree(staging);
+                return;
+            }
+            // Windows: a virus scanner briefly holding a freshly written file makes the rename fail.
+            if (attempt >= 10) throw e;
+            sleepMs(500);
+        }
+    }
+}
+
+function removeDeadStaging() {
+    let entries = [];
+    try { entries = fs.readdirSync(path.dirname(INSTALL_DIR)); } catch (e) { return; }
+    const prefix = path.basename(INSTALL_DIR) + '.staging-';
+    for (const name of entries) {
+        if (!name.startsWith(prefix)) continue;
+        const pid = Number(name.slice(prefix.length));
+        if (pid !== process.pid && !isAlive(pid)) removeTree(path.join(path.dirname(INSTALL_DIR), name));
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// LOCK -- so two launchers starting together download once, not twice. Correctness does not
+// depend on it (each installer has its own staging directory and the rename decides), so a stale
+// lock is simply taken over.
+function takeLock() {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            fs.mkdirSync(path.dirname(LOCK_DIR), { recursive: true });
+            fs.mkdirSync(LOCK_DIR);
+            return true;
+        } catch (e) {
+            if (e.code !== 'EEXIST') {
+                say(`tp-dbhub: cannot create ${LOCK_DIR}: ${e.message}`);
+                return false;
+            }
+            if (!lockIsStale()) return false;
+            removeTree(LOCK_DIR);
+        }
+    }
+    return false;
+}
+
+function releaseLock() {
+    removeTree(LOCK_DIR);
+}
+
+function lockIsStale() {
+    let age = 0;
+    try { age = Date.now() - fs.statSync(LOCK_DIR).mtimeMs; } catch (e) { return false; }
+    if (age > WAIT_LIMIT_MS) return true;
+    let pid = 0;
+    try { pid = Number(fs.readFileSync(LOCK_PID_FILE, 'utf8').trim()); } catch (e) { pid = 0; }
+    // No pid yet: the launcher that took the lock is between mkdir and writing it.
+    if (!pid) return age > 60 * 1000;
+    return !isAlive(pid);
+}
