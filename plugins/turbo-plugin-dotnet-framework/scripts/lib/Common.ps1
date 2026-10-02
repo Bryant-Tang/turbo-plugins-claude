@@ -100,10 +100,65 @@ function Format-IisExpressSiteName {
     return "$stem-$IdentityHash"
 }
 
+# Ask Visual Studio's own locator (vswhere.exe) for MSBuild.exe paths, newest install first.
+# vswhere ships with every Visual Studio installer since VS 2017 15.2 at this fixed location, so it
+# keeps working when a new release changes its folder layout -- VS 2026 installs under `18\`, not
+# `2026\`, which no hand-written path list could have guessed (issue #196).
+# `-products *` is required: without it vswhere only lists the IDE editions and Build Tools (the
+# install this plugin exists to support) is invisible. The cost is that non-VS products that bundle
+# an MSBuild (SSMS was seen doing this) are listed too; Find-MSBuild filters those by capability.
+# No `-all`: that also lists incomplete / broken installs.
+# Returns an empty array when vswhere is missing or fails -- the fixed path list is the fallback.
+function Get-VsWhereMSBuildCandidates {
+    $vswhere = [System.IO.Path]::Combine(${env:ProgramFiles(x86)}, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+    if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+        return @()
+    }
+    $lines = @()
+    $prevEap = $ErrorActionPreference
+    try {
+        # Local Continue: vswhere writing to stderr must not become a terminating error under Stop;
+        # a failed lookup just means "fall back to the fixed list".
+        $ErrorActionPreference = 'Continue'
+        $lines = @(& $vswhere -products '*' -requires 'Microsoft.Component.MSBuild' -sort -find 'MSBuild\**\Bin\MSBuild.exe' 2>$null)
+        if ($LASTEXITCODE -ne 0) { $lines = @() }
+    } catch {
+        $lines = @()
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    return @($lines | ForEach-Object { "$_".Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+# True when the MSBuild install that owns $MSBuildExe carries the Web Application targets.
+# Layout: <install>\MSBuild\<toolsVersion>\Bin\MSBuild.exe, targets under
+# <install>\MSBuild\Microsoft\VisualStudio\v<NN>.0\WebApplications\Microsoft.WebApplication.targets.
+# An MSBuild without them (SSMS's bundled copy) builds a web csproj only as far as MSB4019, so it
+# must not win over one that has them.
+function Test-MSBuildHasWebTargets {
+    param([Parameter(Mandatory)][string]$MSBuildExe)
+    $msbuildRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MSBuildExe))
+    $vsDir = [System.IO.Path]::Combine($msbuildRoot, 'Microsoft', 'VisualStudio')
+    if (-not (Test-Path -LiteralPath $vsDir -PathType Container)) {
+        return $false
+    }
+    foreach ($verDir in @(Get-ChildItem -LiteralPath $vsDir -Directory -ErrorAction SilentlyContinue)) {
+        $targets = [System.IO.Path]::Combine($verDir.FullName, 'WebApplications', 'Microsoft.WebApplication.targets')
+        if (Test-Path -LiteralPath $targets -PathType Leaf) {
+            return $true
+        }
+    }
+    return $false
+}
+
 # Locate MSBuild.exe. Lookup order (strict cut, no env fallback):
 #   1. .turbo-plugin/config.local.toml [tools] msbuild_path  (machine-specific, gitignored)
-#   2. Standard install paths (VS 2017/2019/2022 Enterprise/Professional/Community/BuildTools)
-#   3. Throw, pointing at config.local.toml.
+#   2. vswhere -- the newest install whose MSBuild carries the Web Application targets
+#   3. Standard install paths (VS 2017/2019/2022/2026 Enterprise/Professional/Community/BuildTools)
+#   4. vswhere -- whatever it found, even without web targets (still right for non-web projects)
+#   5. Throw, pointing at config.local.toml.
+# Only `Bin\MSBuild.exe` is taken from vswhere, never `Bin\amd64\` / `Bin\arm64\`: the fixed list has
+# always picked the 32-bit one, and switching bitness silently is not this fix's business.
 # Build Tools is in the list because it is the whole point of not depending on Visual Studio: a CI
 # agent or a trimmed developer machine installs "Build Tools for Visual Studio" + IIS Express and
 # never installs the IDE. Without those paths this plugin still silently required a full VS.
@@ -131,10 +186,28 @@ MSBuild 路徑設定指向不存在的檔案: $resolved
         }
     }
 
-    # Step 2: probe standard install paths.
+    # Step 2: vswhere, web-capable installs only.
+    $fromVsWhere = @(Get-VsWhereMSBuildCandidates | Where-Object {
+        (Split-Path -Leaf (Split-Path -Parent $_)) -eq 'Bin' -and (Test-Path -LiteralPath $_ -PathType Leaf)
+    })
+    $webCapable = @($fromVsWhere | Where-Object { Test-MSBuildHasWebTargets -MSBuildExe $_ } | Select-Object -First 1)
+    if ($webCapable.Count -gt 0) {
+        return $webCapable[0]
+    }
+
+    # Step 3: probe standard install paths.
     # Build Tools 2022 still installs under Program Files (x86) by default even though VS 2022
     # itself is 64-bit, so both roots are probed for every year rather than assuming one.
+    # VS 2026 uses its internal major version `18` as the folder name instead of the year.
     $candidates = @(
+        "${env:ProgramFiles}\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\18\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
@@ -154,12 +227,22 @@ MSBuild 路徑設定指向不存在的檔案: $resolved
         return $found[0]
     }
 
-    # Step 3: throw, pointing at the one place a path can be pinned.
+    # Step 4: vswhere found an MSBuild but none with web targets. Still the right tool for a
+    # non-web project; a web one will stop at MSB4019, which names the missing targets file.
+    if ($fromVsWhere.Count -gt 0) {
+        return $fromVsWhere[0]
+    }
+
+    # Step 5: throw, pointing at the one place a path can be pinned.
+    # The example path names no particular Visual Studio year on purpose: the folder is `2022` for
+    # VS 2022 but `18` for VS 2026, and a copied year-specific example points at a folder that
+    # does not exist on the reader's machine.
     throw @"
-找不到 MSBuild。請安裝「Build Tools for Visual Studio」(不需要完整的 Visual Studio),
-或手動在 .turbo-plugin/config.local.toml 加上:
+找不到 MSBuild。請安裝「Build Tools for Visual Studio」(不需要完整的 Visual Studio)。
+如果已經裝了還是看到這段,請在 .turbo-plugin/config.local.toml 手動指定 MSBuild.exe 的位置:
   [tools]
-  msbuild_path = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/MSBuild.exe"
+  msbuild_path = "C:/Program Files (x86)/Microsoft Visual Studio/<版本資料夾>/BuildTools/MSBuild/Current/Bin/MSBuild.exe"
+<版本資料夾> 是安裝資料夾的名稱,例如 2022 版是 2022、2026 版是 18。
 "@
 }
 
