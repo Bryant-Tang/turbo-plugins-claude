@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-knowledge-placement 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.2.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-knowledge-placement--v0.2.0...turbo-plugin-knowledge-placement--v0.2.1) (2026-10-14)
+
+
+### Documentation
+
+* **knowledge-placement:** 拿掉已移除的 turbo-plugin-multi-repo-workspace 引用 ([ec3dc4e](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/ec3dc4e199ec340725780367e54d085453191553))
+
 ## [0.2.0](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-knowledge-placement--v0.1.1...turbo-plugin-knowledge-placement--v0.2.0) (2026-08-27)
 
 
