@@ -390,7 +390,7 @@ test_unexpected_argument_is_a_usage_error() {
 # copy has to name a path that leaves its own tests/ directory -- `..`, a repo/plugin-root
 # variable, or a literal `plugins/...`. Sandbox uses never do: they build their path from a
 # mktemp'd variable the test itself created, which is why the many `$WS/CLAUDE.md` and
-# `$out/CLAUDE.md` lines in the multi-repo-workspace suite do not fire here.
+# `$out/CLAUDE.md` lines in the plugin suites do not fire here.
 #
 # The trade is deliberate. Matching on read constructs instead (`cat`, `Get-Content`, `[ -f ... ]`)
 # would flag every one of those sandbox lines, and a check that cries wolf gets deleted. This one

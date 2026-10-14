@@ -173,22 +173,12 @@ description 是**給機器做路由的中繼資料**，body 才是給 agent 讀�
   > `.ps1`(`hooks.json` 一律走 `bash`)則是死程式碼。所以這類 hook 用單一 bash 實作,且工作要限縮在
   > Git Bash 原生就能做的純文字處理。現況只有 `turbo-plugin-git-svn/scripts/hooks/remind-commit-msg.sh`。
 
-  > **第三個例外:`WorktreeCreate` / `WorktreeRemove` 只寫一支 `.sh`。** 理由不是頻率(它一個 session
-  > 只跑一次,跟 `SessionStart` 同級),而是**這支腳本的錯誤方向是靜默的**:它決定新 worktree 從哪個
-  > ref 長出來,而「從錯的基準點長出來」會產生一個**完全合法**的 worktree,Claude Code 不會有任何
-  > 意見。把那段邏輯寫兩份就是替這個靜默錯誤多開一個入口。工作內容全是 git + 純文字,Git Bash 在三個
-  > 平台行為一致,所以單一實作**更直接**達成配對規則真正的目的(兩個平台不會漂移)——與 `.mcp.json`
-  > 那個例外同一個理由。現況只有 `turbo-plugin-multi-repo-workspace/scripts/hooks/{create,remove}-worktree.sh`。
-
-  > **`WorktreeCreate` 一旦宣告,就接管「所有」repo 的隔離工作副本建立,不只你的目標情境。**
-  > 2026-08-14 實測確認:session 開在一個**普通 git repo** 裡時,hook 照樣被呼叫。文件兩處說法不一致
-  > (EnterWorktree 寫「Outside a git repository: delegates to hooks」,Hooks reference 寫
-  > 「Replaces default git behavior」),**以後者為準**。所以這種 hook 一定要自己處理「一般 repo」
-  > 那條路徑,而且要復刻內建行為(worktree 落在 `<repo>/.claude/worktrees/<name>`、開新分支、基準點
-  > 預設是 `origin/<主分支>` 而**不是**當前 HEAD)。實測到的 stdin 是
-  > `{"session_id","transcript_path","cwd","hook_event_name","name"}`,stdout 只能印出建好的絕對路徑。
-  > Claude Code **會驗證**那個路徑(git 若把它解析到外層 checkout 就拒絕並清楚報錯),但**不會**驗證
-  > 分支基準點。
+  > **不要宣告 `WorktreeCreate` / `WorktreeRemove` hook。** 這兩個事件一旦宣告,就接管**所有** repo
+  > 的隔離工作副本建立,不只你的目標情境(2026-08-14 實測:session 開在普通 git repo 裡照樣被呼叫),
+  > 而 hook 只拿得到 `{session_id, transcript_path, cwd, hook_event_name, name}`——無法指定這次動哪幾個
+  > 專案、無法指定新分支的基準點,而「從錯的基準點長出來」的 worktree 完全合法,Claude Code 不會有意見。
+  > 這正是 `turbo-plugin-multi-repo-workspace` 被移除的原因(issue #120)。多專案的需求一律建議改成
+  > mono repo(見下方「多個專案一律建議 mono repo」),讓 worktree 回到內建行為。
 
   > **寫 hook 時的三個實務重點**(踩過才知道,不要重踩):
   > ① plugin 的 `hooks.json` 事件要包在頂層 `hooks` 鍵底下(`{"description": ..., "hooks": {"PreToolUse": [...]}}`);
@@ -297,6 +287,10 @@ check,而兩種讀法都是錯的。
 - **Commit message 類型**：建議用 conventional commit type 前綴——`feat` / `fix` 限程式碼、`refactor` 給行為不變的整理（含測試重構）、`docs` 給純文件、`db` 給 SQL 腳本、`chore` 給非實作雜務。
 - **不要 commit `.local.*`**：已經在 `.gitignore`，但要記得不要把任何 `*.local.*` 設定檔加進範本以外的位置。
 - **不得提交僅限本機才有的東西**：機器路徑（`C:\Users\...`、`C:\Turbo\...` 等絕對路徑）、內部 hostname / URL（內網 SVN / host）、僅本機或單次情境才有意義的識別碼（需求 / 計畫 / 任務代號、單一 session 的項目編號）一律不得寫進任何版控檔（含文件、範本、測試 fixture）。文件需要舉例時改用固定 placeholder token（如 `<MACHINE-PATH>` / `<INTERNAL-SVN-URL>`）；測試一律走 repo 相對的 gitignored sandbox。此為常駐規約，目前以人工 / code review 把關（advisory），自動化 CI lint 列為後續工作。
+- **多個專案一律建議 mono repo**:使用者需要讓 agent 同時處理多個專案時,建議把它們合併成一個 mono repo,
+  再照常使用各 plugin;**不要**再做支撐「一個資料夾底下並排放多個獨立 repo」的 plugin 或功能。
+  `turbo-plugin-multi-repo-workspace` 就是那個形狀,已經移除(issue #120;理由見上方 hook 那段)。
+  對使用者的說明寫在根 `README.md` 的「多個專案：請用 mono repo」。
 
 ## Marketplace Manifest
 
