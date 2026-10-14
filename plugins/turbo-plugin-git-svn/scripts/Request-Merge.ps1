@@ -412,7 +412,9 @@ try {
     # ── The merge ─────────────────────────────────────────────────────────────────────
 
     # $originalBranch is known non-empty here: a detached main worktree was refused above.
-    # Returns $true once the main worktree is back where the run found it.
+    # Returns $true once the main worktree is back where the run found it. The terminal catch
+    # calls it too, which is safe only because $script:OnBase is first set BELOW this definition:
+    # keep the two in that order.
     function Restore-OriginalBranch {
         if ($originalBranch -eq $Base) { return $true }
         $co = Read-Git -Cwd $mainWorktree -GitArgs @('checkout', $originalBranch)
@@ -442,6 +444,10 @@ try {
         # other failure the abort is a harmless no-op.
         $null = Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--abort')
         $null = Restore-OriginalBranch
+        # git's own account of the conflict (which files), shown as the bare call used to show it.
+        # Neutralized like Write-ErrorToken: a file name must not be able to forge a token line.
+        $mgText = ($mg.Text -replace "`r", '').TrimEnd()
+        if (-not [string]::IsNullOrWhiteSpace($mgText)) { Write-Output ($mgText -replace 'TP_TOKEN:', 'TP_TOKEN_') }
         Write-Output ''
         Write-Output "Merge conflicted; '$Base' was left exactly as it was (merge aborted)."
         Write-Output "${PREFIX}CONFLICT branch=$Branch base=$Base"
