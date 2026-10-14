@@ -48,12 +48,12 @@ function Test-FilesIdentical {
 # quietly running a different shUnit2 build from its neighbours is exactly the kind of drift that
 # shows up as a test behaving differently in one plugin for no visible reason.
 $sharedSpecs = @(
-    @{ Rel = 'scripts/lib/Core.ps1';                            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace') },
-    @{ Rel = 'scripts/lib/core.sh';                             Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace') },
+    @{ Rel = 'scripts/lib/Core.ps1';                            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-three-environment-db') },
+    @{ Rel = 'scripts/lib/core.sh';                             Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
     @{ Rel = 'scripts/lib/ps1-delegate.sh';                     Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework') },
     @{ Rel = 'skills/tp-setup/assets/setup-base.md';            Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
     @{ Rel = 'skills/tp-setup/assets/claudemd-base-snippet.md'; Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-three-environment-db') },
-    @{ Rel = 'tests/lib/shunit2';                               Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-code-comment', 'turbo-plugin-three-environment-db', 'turbo-plugin-multi-repo-workspace', 'turbo-plugin-feedback', 'turbo-plugin-knowledge-placement') }
+    @{ Rel = 'tests/lib/shunit2';                               Plugins = @('turbo-plugin-git-svn', 'turbo-plugin-dotnet-framework', 'turbo-plugin-code-comment', 'turbo-plugin-three-environment-db', 'turbo-plugin-feedback', 'turbo-plugin-knowledge-placement') }
 )
 
 # Copies that do NOT live under plugins/<name>/, which the spec format above cannot express.

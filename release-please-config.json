@@ -42,12 +42,6 @@
         { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
       ]
     },
-    "plugins/turbo-plugin-multi-repo-workspace": {
-      "component": "turbo-plugin-multi-repo-workspace",
-      "extra-files": [
-        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
-      ]
-    },
     "plugins/turbo-plugin-feedback": {
       "component": "turbo-plugin-feedback",
       "extra-files": [

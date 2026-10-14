@@ -56,23 +56,21 @@ dbhub 本身——一份連線設定加一個 MCP server——**跟版控沒有�
 #### `.gitignore` 與 `CLAUDE.md` 的 `base` 區塊在 case (a) 一樣寫,理由是同一個
 
 兩個檔案名字裡都帶著「版控」的味道,但它們在這裡都**不需要 git 才能寫**,而且都是為了**同一個時刻**
-才存在的:哪天有人在工作區根 `git init`。那本身是個錯誤(`turbo-plugin-multi-repo-workspace` 明講
-「事後沒有東西能還原」),但**它會發生**。
+才存在的:哪天有人在這個資料夾 `git init`(例如把底下的專案合併成 mono repo)。那一刻不一定會來,
+但來的時候不會先重跑 setup。
 
 - **`.gitignore`**:非 repo 目錄裡的 `dbhub.local.toml` 今天不會被誤提交,單純因為那裡不是 repo。
   `git init` 的那一刻,一份含連線 credentials 的檔案就直接落在版控範圍內——而那份 `.gitignore`
   是**唯一**能擋住它的東西,且必須**已經就位**才有用。
 - **`CLAUDE.md` 的 `base` 區塊**:它那句「不得提交僅限本機才有的東西」管的**不是這個資料夾**,
-  是**你在這裡工作時的行為**。多專案工作區的根底下就是一堆 repo,你在那裡整天都在對子專案 commit
+  是**你在這裡工作時的行為**。非 repo 的資料夾底下照樣可能放著 repo,你在那裡一樣會對它們 commit
   ——規則完全適用,只是適用對象不是腳下這個目錄。
 
 > 兩者用同一套邏輯,是刻意的。先前的版本只寫 `.gitignore`、跳過 `CLAUDE.md`,理由是「那句話在沒有
 > 版控的地方沒有對象」——那是**把規則讀得太字面**,而且跟 `.gitignore` 的理由自相矛盾
 > (同樣是「今天沒用、哪天有用」,卻做了相反的決定)。
 
-**這件事由本 plugin 自己做,不外包。** 交給 `turbo-plugin-multi-repo-workspace` 看似合理(它有工作區
-根的標記與 setup),但有兩個洞:非 repo 目錄**不一定**是多專案工作區,而那個 plugin **不一定有裝**——
-本 plugin 並不相依於它。建立 credentials 檔的人負責保護它。
+**這件事由本 plugin 自己做,不外包。** 建立 credentials 檔的人負責保護它。
 
 ## Procedure
 
@@ -113,7 +111,7 @@ db 在 case (a) 的白話用這句:
    `CLAUDE.md` 不存在就建立,與 case (b)/(c) 相同。
    **`CLAUDE.md` 的 `base` 是 tp-setup 家族共用的單一區塊**(不是各 concern 各一個 —— 那是
    `.gitignore` 才有的形狀):已經有一個(例如 git-svn 的 setup 先跑過)就**取代它的內容**,
-   絕不要再加第二個。至於 `multi-repo-workspace` / `knowledge-placement` 那些是**不同的標記名**,
+   絕不要再加第二個。至於 `knowledge-placement` 那類是**不同的標記名**,
    各自獨立、互不相干,一律不要動。
 3. **`.turbo-plugin/` 的 dbhub 範本** — 照 case (b)/(c) 那三選一的規則處理(含「只有舊檔名時什麼都
    不動」),但**不要**跑 `git check-ignore` 那項驗證(沒有 git 可問)。同時要講清楚它在這裡的角色

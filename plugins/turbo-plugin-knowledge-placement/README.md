@@ -76,9 +76,8 @@ three-way merge、把衝突寫成 `.from-worktree` 就是 conflict file。與其
 
 三條有一條不成立,那份內容就不該待在版控外——它要嘛進版控,要嘛進記憶。
 
-這條不變式是「隔離工作副本只帶進去、不搬回來」的直接後果,也是
-[`turbo-plugin-multi-repo-workspace`](../turbo-plugin-multi-repo-workspace/README.md) 實作
-`.worktreeinclude` 時的判準:只放「工作副本裡必須存在才跑得起來」的東西。
+這條不變式是「隔離工作副本只帶進去、不搬回來」的直接後果,也是決定什麼該放進
+`.worktreeinclude` 的判準:只放「工作副本裡必須存在才跑得起來」的東西。
 
 ## 交接匯出
 

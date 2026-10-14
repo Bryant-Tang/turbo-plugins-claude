@@ -140,13 +140,12 @@ branch 名。
 (建 git/SVN 環境屬 `turbo-plugin-git-svn`)。
 
 `.gitignore` 與 `CLAUDE.md` 的 `base` 區塊**在非 repo 目錄也會寫**,理由是同一個:兩者都是為了「哪天有人
-在工作區根 `git init`」而存在——那本身是錯的,但**會發生**。`.gitignore` 在那一刻是**唯一**能擋住含
-credentials 的 `dbhub.local.toml` 進版控的東西,而且必須已經就位;`CLAUDE.md` 那句「不得提交僅限本機之物」
-管的則**不是這個資料夾**,是你在這裡工作時的行為——多專案工作區的根底下就是一堆 repo,你整天都在對它們
-commit。
+在這裡 `git init`」(例如合併成 mono repo)而存在——那一刻不一定會來,但來的時候不會先重跑 setup。
+`.gitignore` 在那一刻是**唯一**能擋住含 credentials 的 `dbhub.local.toml` 進版控的東西,而且必須已經
+就位;`CLAUDE.md` 那句「不得提交僅限本機之物」管的則**不是這個資料夾**,是你在這裡工作時的行為——
+非 repo 的資料夾底下照樣可能放著 repo,你在那裡一樣會對它們 commit。
 
-這件事由本 plugin 自己做而不外包給 `turbo-plugin-multi-repo-workspace`:非 repo 目錄不一定是多專案工作區,
-而那個 plugin 也不一定有裝。
+這件事由本 plugin 自己做:建立 credentials 檔的人負責保護它。
 
 ## 安裝
 

@@ -49,12 +49,12 @@ err() { echo "FAIL: $*" >&2; fail=1; }
 # quietly running a different shUnit2 build from its neighbours is exactly the kind of drift that
 # shows up as a test behaving differently in one plugin for no visible reason.
 shared_specs=(
-  "scripts/lib/Core.ps1|turbo-plugin-git-svn turbo-plugin-dotnet-framework turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
-  "scripts/lib/core.sh|turbo-plugin-git-svn turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace"
+  "scripts/lib/Core.ps1|turbo-plugin-git-svn turbo-plugin-dotnet-framework turbo-plugin-three-environment-db"
+  "scripts/lib/core.sh|turbo-plugin-git-svn turbo-plugin-three-environment-db"
   "scripts/lib/ps1-delegate.sh|turbo-plugin-git-svn turbo-plugin-dotnet-framework"
   "skills/tp-setup/assets/setup-base.md|turbo-plugin-git-svn turbo-plugin-three-environment-db"
   "skills/tp-setup/assets/claudemd-base-snippet.md|turbo-plugin-git-svn turbo-plugin-three-environment-db"
-  "tests/lib/shunit2|turbo-plugin-git-svn turbo-plugin-dotnet-framework turbo-plugin-code-comment turbo-plugin-three-environment-db turbo-plugin-multi-repo-workspace turbo-plugin-feedback turbo-plugin-knowledge-placement"
+  "tests/lib/shunit2|turbo-plugin-git-svn turbo-plugin-dotnet-framework turbo-plugin-code-comment turbo-plugin-three-environment-db turbo-plugin-feedback turbo-plugin-knowledge-placement"
 )
 
 # Copies that do NOT live under plugins/<name>/, which the spec format above cannot express.
