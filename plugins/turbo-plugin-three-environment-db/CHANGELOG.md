@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.7.3](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.7.2...turbo-plugin-three-environment-db--v0.7.3) (2026-10-14)
+
+
+### Documentation
+
+* **three-environment-db:** 拿掉已移除的 turbo-plugin-multi-repo-workspace 引用,改寫成 mono repo 的情境 ([cabffb1](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/cabffb14260188f81e5a3c21f203a2597d941af8))
+
 ## [0.7.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.7.1...turbo-plugin-three-environment-db--v0.7.2) (2026-10-02)
 
 
