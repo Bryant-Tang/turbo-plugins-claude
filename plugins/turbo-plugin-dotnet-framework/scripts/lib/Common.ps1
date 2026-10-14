@@ -660,7 +660,7 @@ function ConvertTo-MsbuildPlatform {
 # ─── per-project config groups ─────────────────────────────────────────────────
 # `[<section>."<project path>"]` scopes a section's settings to one sub-project. Introduced for
 # [frontend] (issue #125) and extended to [build] / [publish] (issue #133) unchanged: one repo
-# holding several sub-projects is the mainline layout now that multi-repo-workspace is retired,
+# holding several sub-projects is the mainline layout (several projects go into one mono repo),
 # and one flat [build] cannot hold two sub-projects whose .sln offer different platforms.
 #
 # The three helpers below are section-agnostic on purpose. Three sections sharing one spelling of
