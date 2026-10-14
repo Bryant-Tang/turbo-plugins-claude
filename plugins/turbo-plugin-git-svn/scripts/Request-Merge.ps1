@@ -89,14 +89,17 @@ function Write-ErrorToken {
 # "git CLI not available on PATH." with git plainly on PATH. Two same-named helpers in one
 # dot-source chain is not duplication that merely risks drift; it is a live collision.
 
-# NOTE on stderr handling (PS 5.1): git writes progress to stderr even on success, and on a
-# conflicted merge it writes "Automatic merge failed" there too. Under EAP=Stop, a native
-# command whose stderr PowerShell CAPTURES is wrapped as a terminating NativeCommandError -- so
-# capturing the merge's output would throw straight past the `merge --abort` below and leave a
-# conflicted tree, which is the one thing this script promises never to do. State-changing git
-# calls are therefore made BARE (stderr flows to the inherited handle) and gated purely on
-# $LASTEXITCODE. Only calls whose output we must read are captured, and only `merge --abort`
-# (a recovery path whose noise is unwanted) is silenced.
+# NOTE on stderr handling (PS 5.1): git writes to stderr even on success -- `checkout` reports
+# "Switched to branch '<name>'" there, and a conflicted merge writes "Automatic merge failed".
+# Under EAP=Stop, a native command whose stderr PowerShell CAPTURES is wrapped as a terminating
+# NativeCommandError. A BARE call is not safe from that either: whether its stderr is captured
+# is decided by the CALLER, and an agent collecting output with `& Request-Merge.ps1 ... 2>&1`
+# captures it (issue #203). The checkout of $Base then threw on its own success message, the
+# merge never ran, and the main worktree was left on $Base.
+#
+# So the state-changing calls (checkout, merge, merge --abort) go through Read-Git too, exactly
+# like the reads: it tolerates stderr and leaves $LASTEXITCODE as the only verdict, whoever
+# redirected what. Their output is discarded, which is also what the .sh sibling does.
 
 try {
     Probe-GitVersion
@@ -409,29 +412,42 @@ try {
     # ── The merge ─────────────────────────────────────────────────────────────────────
 
     # $originalBranch is known non-empty here: a detached main worktree was refused above.
+    # Returns $true once the main worktree is back where the run found it. The terminal catch
+    # calls it too, which is safe only because $script:OnBase is first set BELOW this definition:
+    # keep the two in that order.
     function Restore-OriginalBranch {
-        if ($originalBranch -ne $Base) {
-            & git -C $mainWorktree checkout $originalBranch
-        }
+        if ($originalBranch -eq $Base) { return $true }
+        $co = Read-Git -Cwd $mainWorktree -GitArgs @('checkout', $originalBranch)
+        if ($co.Code -ne 0) { return $false }
+        $script:OnBase = $false
+        return $true
     }
 
+    # Set the moment the main worktree may be standing on $Base instead of $originalBranch, so the
+    # terminal catch knows it owes a Restore-OriginalBranch. Without it, any unexpected throw from
+    # here on left the main worktree on $Base -- clean, no MERGE_HEAD, `git status` looking fine --
+    # and whoever works there next commits onto the wrong branch (issue #203).
+    $script:OnBase = $false
     if ($originalBranch -ne $Base) {
-        & git -C $mainWorktree checkout $Base
-        if ($LASTEXITCODE -ne 0) {
-            Write-ErrorToken "could not check out '$Base' in $mainWorktree (exit $LASTEXITCODE)"
+        $script:OnBase = $true
+        $co = Read-Git -Cwd $mainWorktree -GitArgs @('checkout', $Base)
+        if ($co.Code -ne 0) {
+            $null = Restore-OriginalBranch
+            Write-ErrorToken "could not check out '$Base' in $mainWorktree (exit $($co.Code))"
             exit 1
         }
     }
 
-    & git -C $mainWorktree merge --no-ff $Branch -m "Merge branch '$Branch' into $Base"
-    if ($LASTEXITCODE -ne 0) {
-        # Read-Git even though nothing reads the output: `2>$null | Out-Null` is a CAPTURE, so
-        # under EAP=Stop any stderr from the abort throws -- and this is the recovery path, so
-        # that throw would jump past Restore-OriginalBranch and leave the conflicted tree the
-        # header promises never to leave behind. Read-Git tolerates the stderr; the abort is
-        # unconditional either way, exactly as before.
+    $mg = Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--no-ff', $Branch, '-m', "Merge branch '$Branch' into $Base")
+    if ($mg.Code -ne 0) {
+        # Unconditional, exactly as before: on a conflict there is a merge to abort, and on any
+        # other failure the abort is a harmless no-op.
         $null = Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--abort')
-        Restore-OriginalBranch
+        $null = Restore-OriginalBranch
+        # git's own account of the conflict (which files), shown as the bare call used to show it.
+        # Neutralized like Write-ErrorToken: a file name must not be able to forge a token line.
+        $mgText = ($mg.Text -replace "`r", '').TrimEnd()
+        if (-not [string]::IsNullOrWhiteSpace($mgText)) { Write-Output ($mgText -replace 'TP_TOKEN:', 'TP_TOKEN_') }
         Write-Output ''
         Write-Output "Merge conflicted; '$Base' was left exactly as it was (merge aborted)."
         Write-Output "${PREFIX}CONFLICT branch=$Branch base=$Base"
@@ -446,7 +462,7 @@ try {
         $mergeSha = (Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '--short', "refs/heads/$Base")).Text.Trim()
     } catch { $mergeSha = '' }
     if ([string]::IsNullOrWhiteSpace($mergeSha)) { $mergeSha = '(unknown)' }
-    Restore-OriginalBranch
+    $null = Restore-OriginalBranch
     Write-Output ''
     Write-Output "Merged '$Branch' into '$Base' as $mergeSha."
     # After Restore-OriginalBranch, so the run is standing where it will finish before any ref is
@@ -464,7 +480,26 @@ catch {
     # breaking its own "exactly one terminal token" contract. The worst case it closes is a
     # throw AFTER the merge has been written: the SKILL would otherwise never learn that $Base
     # had already moved.
-    if ($script:Validated) { Write-ErrorToken $_.Exception.Message }
-    [Console]::Error.WriteLine($_.Exception.Message)
+    $reason = $_.Exception.Message
+    # Never leave the main worktree parked on $Base (issue #203). If the throw landed mid-merge,
+    # abort first: checkout refuses to leave while MERGE_HEAD exists. If even that cannot put it
+    # back, say so in the token: the SKILL routes ERROR as "not merged", and the user must also
+    # learn that the main worktree is now on another branch.
+    $onBase = $false
+    try { $onBase = [bool]$script:OnBase } catch { $onBase = $false }
+    if ($onBase) {
+        $restored = $false
+        try {
+            if ((Read-Git -Cwd $mainWorktree -GitArgs @('rev-parse', '-q', '--verify', 'MERGE_HEAD')).Code -eq 0) {
+                $null = Read-Git -Cwd $mainWorktree -GitArgs @('merge', '--abort')
+            }
+            $restored = Restore-OriginalBranch
+        } catch { $restored = $false }
+        if (-not $restored) {
+            $reason += " (main worktree $mainWorktree was left on '$Base'; check out '$originalBranch' there by hand)"
+        }
+    }
+    if ($script:Validated) { Write-ErrorToken $reason }
+    [Console]::Error.WriteLine($reason)
     exit 1
 }

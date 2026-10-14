@@ -842,4 +842,71 @@ Describe 'Request-Merge' {
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
+
+    # Issue #203. Every other case here goes through the -File harness, whose stderr is a file
+    # handle the child inherits -- so git's stderr never passes through PowerShell, and nothing
+    # can throw on it. An agent's PowerShell tool instead runs the script IN-PROCESS and collects
+    # its output with `2>&1`. That redirect reaches the git calls inside the script, PS 5.1 wraps
+    # each stderr line as a NativeCommandError, and under EAP=Stop the first one throws -- for
+    # `checkout`, that is its own success message, "Switched to branch '<base>'". The merge then
+    # never ran and the main worktree was left on <base>, with nothing in the ERROR token saying so.
+    Context 'Case 7: the caller merges stderr into the output (2>&1)' {
+        BeforeAll {
+            # Run the script in a child powershell exactly the way an agent does: `& <script> 2>&1`.
+            function Invoke-PsScriptMergedStderr {
+                param([string]$Root, [string]$OutFile, [string]$ScriptArgs)
+                # The redirect is assembled rather than written out: it is the one place the repo
+                # WANTS `2>&1` on a native call, and tools/lint-ps-compat.ps1 has no per-line waiver.
+                $merge = '2>' + '&1'
+                $cmd = "Set-Location -LiteralPath '$Root'; " +
+                       "& '$($script:ScriptUnderTest)' $ScriptArgs $merge | Out-File -LiteralPath '$OutFile' -Encoding utf8; " +
+                       "exit `$LASTEXITCODE"
+                & powershell -NoProfile -ExecutionPolicy Bypass -Command $cmd | Out-Null
+                $rc = $LASTEXITCODE
+                $out = if (Test-Path -LiteralPath $OutFile) { [System.IO.File]::ReadAllText($OutFile) } else { '' }
+                return [PSCustomObject]@{ ExitCode = $rc; Output = $out }
+            }
+        }
+
+        # The issue's exact shape: main worktree on main, merging into some other base.
+        It 'merges into a base the main worktree is not on, and comes back' {
+            $sb = New-Sandbox -Tag 'rqm-203a'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Run-Git -Cwd $root -GitArgs @('branch', 'other', 'main')
+                $res = Invoke-PsScriptMergedStderr -Root $root -OutFile ([System.IO.Path]::Combine($sb, 'out.txt')) -ScriptArgs '-Branch feat -Base other -Merge'
+
+                (Get-Token $res.Output) | Should -Match '^TP_TOKEN:MERGED branch=feat base=other commit=.'
+                Get-TokenCount $res.Output | Should -Be 1
+                $res.ExitCode | Should -Be 0
+                (Run-Git -Cwd $root -GitArgs @('merge-base', '--is-ancestor', 'feat', 'other')) | Should -Be 0
+                (Run-Git-Capture -Cwd $root -GitArgs @('symbolic-ref', '--short', 'HEAD')) | Should -Be 'main'
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+
+        # The conflict path has two checkouts (there and back) plus `merge --abort`, all of which
+        # write to stderr. Reached only with -AllowBehind, which needs -ExpectBase.
+        It 'CONFLICT still aborts and comes back' {
+            $sb = New-Sandbox -Tag 'rqm-203b'
+            try {
+                $root = [System.IO.Path]::Combine($sb, 'proj')
+                New-RequestMergeFixture -Root $root
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', '-b', 'clash', 'main')
+                Add-CommitFile -Root $root -Name 'shared.txt' -Content 'from-clash' -Msg 'clash side'
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', 'main')
+                Add-CommitFile -Root $root -Name 'shared.txt' -Content 'from-main' -Msg 'main side'
+                $null = Run-Git -Cwd $root -GitArgs @('checkout', '-b', 'parked')
+                $before = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')
+                $short  = Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', '--short', 'main')
+
+                $res = Invoke-PsScriptMergedStderr -Root $root -OutFile ([System.IO.Path]::Combine($sb, 'out.txt')) -ScriptArgs "-Branch clash -AllowBehind -ExpectBase $short -Merge"
+
+                (Get-Token $res.Output) | Should -Match '^TP_TOKEN:CONFLICT branch=clash base=main'
+                (Run-Git-Capture -Cwd $root -GitArgs @('rev-parse', 'main')) | Should -Be $before
+                (Run-Git-Capture -Cwd $root -GitArgs @('symbolic-ref', '--short', 'HEAD')) | Should -Be 'parked'
+                (Run-Git -Cwd $root -GitArgs @('rev-parse', '-q', '--verify', 'MERGE_HEAD')) | Should -Not -Be 0
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
 }
