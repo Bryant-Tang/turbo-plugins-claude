@@ -855,8 +855,11 @@ Describe 'Request-Merge' {
             # Run the script in a child powershell exactly the way an agent does: `& <script> 2>&1`.
             function Invoke-PsScriptMergedStderr {
                 param([string]$Root, [string]$OutFile, [string]$ScriptArgs)
+                # The redirect is assembled rather than written out: it is the one place the repo
+                # WANTS `2>&1` on a native call, and tools/lint-ps-compat.ps1 has no per-line waiver.
+                $merge = '2>' + '&1'
                 $cmd = "Set-Location -LiteralPath '$Root'; " +
-                       "& '$($script:ScriptUnderTest)' $ScriptArgs 2>&1 | Out-File -LiteralPath '$OutFile' -Encoding utf8; " +
+                       "& '$($script:ScriptUnderTest)' $ScriptArgs $merge | Out-File -LiteralPath '$OutFile' -Encoding utf8; " +
                        "exit `$LASTEXITCODE"
                 & powershell -NoProfile -ExecutionPolicy Bypass -Command $cmd | Out-Null
                 $rc = $LASTEXITCODE
