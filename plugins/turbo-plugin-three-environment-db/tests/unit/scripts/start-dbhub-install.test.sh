@@ -35,7 +35,8 @@ setUp() {
     export FAKE_NPM_CALLS="$WS/npm-calls"
     unset FAKE_NPM_MODE FAKE_NPM_DELAY_MS
     VERSION="$(grep -oE "@bytebase/dbhub@${VERSION_RE}" "$SCRIPT_UNDER_TEST" | head -1 | sed 's|.*@||')"
-    INSTALL_DIR="$WS/data/dbhub/$VERSION"
+    MSSQL_VERSION="$(grep -oE "mssql@${VERSION_RE}" "$SCRIPT_UNDER_TEST" | head -1 | sed 's|.*@||')"
+    INSTALL_DIR="$WS/data/dbhub/$VERSION-mssql-$MSSQL_VERSION"
 }
 
 tearDown() {
@@ -166,6 +167,42 @@ test_other_versions_are_removed_after_install() {
     [ -f "$INSTALL_DIR/.tp-installed" ]; assertTrue 'current version installed' $?
     [ -e "$old" ]; assertFalse 'old version removed' $?
     [ -e "$WS/data/dbhub/0.0.1.install.log" ]; assertFalse 'old install log removed' $?
+}
+
+# Issue #207: dbhub's optional drivers (pg, mysql2, oracledb, the AWS SDK ...) are all loaded at
+# startup, and on a cold Windows boot reading them pushed the first connect past Claude Code's limit.
+# Only the SQL Server driver is installed.
+test_install_omits_optional_drivers_but_adds_mssql() {
+    launch
+    grep -q -- '--omit=optional' "$FAKE_NPM_CALLS"; assertTrue 'optional dependencies are omitted' $?
+    grep -qE ' mssql@[0-9]+\.[0-9]+\.[0-9]+( |$)' "$FAKE_NPM_CALLS"; assertTrue 'a pinned mssql is installed' $?
+    grep -q "@bytebase/dbhub@$VERSION" "$FAKE_NPM_CALLS"; assertTrue 'the pinned dbhub is installed' $?
+}
+
+# A machine that installed the full set before #207 has a complete install of the same dbhub version
+# under the old name. It must not be run as-is: the slim one is installed and the full one goes.
+test_full_install_from_before_207_is_replaced() {
+    local old="$WS/data/dbhub/$VERSION"
+    mkdir -p "$old/node_modules/@bytebase/dbhub/dist"
+    printf 'process.stdout.write("OLD-FULL\\n")\n' >"$old/node_modules/@bytebase/dbhub/dist/index.js"
+    printf '@bytebase/dbhub@%s\n' "$VERSION" >"$old/.tp-installed"
+    launch
+    assertEquals 'installed again' 1 "$(npm_calls)"
+    grep -q 'OLD-FULL' "$WS/out"; assertFalse 'the old full install was not run' $?
+    [ -f "$INSTALL_DIR/.tp-installed" ]; assertTrue 'slim install in place' $?
+    [ -e "$old" ]; assertFalse 'old full install removed' $?
+}
+
+# Bumping only the mssql pin must install again, not keep running the old driver.
+test_install_with_older_mssql_pin_is_replaced() {
+    local old="$WS/data/dbhub/$VERSION-mssql-0.0.1"
+    mkdir -p "$old/node_modules/@bytebase/dbhub/dist"
+    printf 'process.stdout.write("OLD-DRIVER\\n")\n' >"$old/node_modules/@bytebase/dbhub/dist/index.js"
+    printf '@bytebase/dbhub@%s\nmssql@0.0.1\n' "$VERSION" >"$old/.tp-installed"
+    launch
+    assertEquals 'installed again' 1 "$(npm_calls)"
+    grep -q 'OLD-DRIVER' "$WS/out"; assertFalse 'the old-driver install was not run' $?
+    [ -e "$old" ]; assertFalse 'old-driver install removed' $?
 }
 
 # Without CLAUDE_PLUGIN_DATA the install falls back to the temp directory. On a shared host that

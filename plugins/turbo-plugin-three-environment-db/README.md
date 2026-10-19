@@ -63,7 +63,12 @@
 跑釘死版本的 `@bytebase/dbhub`——**不需要 Docker，也不掛載任何路徑**。
 
 **dbhub 裝在 plugin 自己的資料夾，不走 npx。** 每個版本第一次啟動時，啟動器用 npm 把它裝進
-`${CLAUDE_PLUGIN_DATA}/dbhub/<版本>/`，之後直接 `node` 執行，不再經過 npm。
+`${CLAUDE_PLUGIN_DATA}/dbhub/<版本>-mssql-<mssql 版本>/`，之後直接 `node` 執行，不再經過 npm。
+
+**只裝 SQL Server 的驅動**（issue #207）。dbhub 把它支援的每一種資料庫驅動都列成可選相依，照預設會
+全部裝進來，而且啟動時每一個都要載入；本 plugin 只連 SQL Server，所以安裝時排除可選相依、只補回釘死
+版本的 `mssql`。啟動時要讀的檔案約少四分之一（`mssql` 本身就帶著體積最大的 `@azure/identity`，
+所以不是全部）。之前裝過完整版的機器，或 `mssql` 的釘選版本變了，都會在下次啟動時重裝一次，舊的那份會被刪掉。
 
 > **為什麼不用 npx**（issue #200）：新版本第一次啟動要下載安裝，實測將近一分鐘，比 Claude Code 等 MCP
 > server 回應的時間還長，安裝因此被中斷。npx 被打斷時會在 npm 快取留下只有 `node_modules/`、沒有
@@ -81,7 +86,7 @@
 > - 沒有 `CLAUDE_PLUGIN_DATA` 時（例如手動跑啟動器），改裝在系統暫存資料夾底下的
 >   `turbo-plugin-three-environment-db-<使用者名稱>/`。在 Linux / macOS 上這個資料夾必須是自己的、
 >   而且別的使用者不能寫入，否則啟動器拒絕使用（避免共用主機上別人先放好一份假的 dbhub 讓你執行）。
-> - 安裝記錄在 `${CLAUDE_PLUGIN_DATA}/dbhub/<版本>.install.log`；安裝失敗時，啟動器會把最後幾行印到
+> - 安裝記錄在 `${CLAUDE_PLUGIN_DATA}/dbhub/<版本>-mssql-<mssql 版本>.install.log`；安裝失敗時，啟動器會把最後幾行印到
 >   stderr（手動跑 `node <plugin>/scripts/start-dbhub.js <工作區> < /dev/null` 就看得到）。
 >
 > 升到這版之前被 npx 弄壞的那個 `_npx` 快取目錄已經用不到，可以不管它。
@@ -113,7 +118,7 @@
 「某天早上無預警壞掉、而且查不出原因」，而只有前者能靠提醒補救。
 `.github/workflows/dbhub-version-check.yml` 每月比對 npm registry，落後就開 issue 通知。
 
-**升級步驟**：改 `DBHUB_SPEC` → 跑本 plugin 的測試 → **手動對真實資料庫起一次確認**
+**升級步驟**：改 `DBHUB_SPEC`（`DRIVER_SPECS` 裡的 `mssql` 也一併對照新版 dbhub 宣告的版本範圍）→ 跑本 plugin 的測試 → **手動對真實資料庫起一次確認**
 （測試斷言的是「會下什麼指令」，不驗 dbhub 自己的行為）。升版後每台機器第一次連線都要重新下載，
 可能逾時一次，裝完重連即可（見上面「為什麼不用 npx」）。這只是**升版**那一次的額外逾時；
 裝好之後每天開機後第一次啟動也可能逾時，那是另一個原因，見下方「疑難排解」。

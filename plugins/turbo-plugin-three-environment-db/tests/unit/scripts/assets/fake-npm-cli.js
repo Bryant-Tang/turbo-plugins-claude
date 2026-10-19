@@ -10,6 +10,8 @@
 //   fail  print an npm-looking error and exit 1, installing nothing
 //   slow  wait FAKE_NPM_DELAY_MS (default 3000) first, then install -- for the interrupted case
 //
+// Each call is recorded as one line of its arguments in FAKE_NPM_CALLS, when set.
+//
 // It also prints to STDOUT on purpose, the way real npm does ("added N packages"): the launcher's
 // stdout is the MCP protocol channel, and the tests assert none of this reaches it.
 const fs = require('fs');
@@ -23,7 +25,7 @@ function sleepMs(ms) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-if (process.env.FAKE_NPM_CALLS) fs.appendFileSync(process.env.FAKE_NPM_CALLS, 'install\n');
+if (process.env.FAKE_NPM_CALLS) fs.appendFileSync(process.env.FAKE_NPM_CALLS, args.join(' ') + '\n');
 
 if (mode === 'fail') {
     console.log('npm error code E404');

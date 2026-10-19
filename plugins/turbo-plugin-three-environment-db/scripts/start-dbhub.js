@@ -64,6 +64,9 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const DBHUB_SPEC = '@bytebase/dbhub@1.4.0';
+// The only database driver installed next to dbhub; pinned like dbhub and bumped together with it
+// (keep it inside the range dbhub's own package.json declares). See WHICH DRIVERS below.
+const DRIVER_SPECS = ['mssql@11.0.2'];
 // Forward-slash form, used only in messages so they read the same on every platform.
 const CONFIG_REL = '.turbo-plugin/dbhub.local.toml';
 
@@ -86,6 +89,23 @@ const CONFIG_REL = '.turbo-plugin/dbhub.local.toml';
 // Claude Code (running this by hand) a temp directory stands in. Either way a missing install is
 // only ever a re-download, never a broken state.
 //
+// WHICH DRIVERS (issue #207)
+//
+// dbhub lists every database driver it supports as an optionalDependency, and `--omit=dev` keeps
+// them all: ~14,500 files. At startup dbhub imports every connector before it answers Claude Code,
+// so on a cold Windows boot each of those files is read and virus-scanned first, and the first
+// connect of the day timed out. This plugin only ever talks to SQL Server, so the install omits
+// the optional ones and adds back just DRIVER_SPECS. dbhub skips a connector whose driver is
+// missing ("Skipping <name> connector") rather than failing.
+//
+// Expect a partial gain, not a fix: mssql -> tedious depends on @azure/identity outright, so the
+// largest tree stays. Measured with dbhub 1.4.0: 14,471 -> 10,728 files on disk, and 1,173 -> 883
+// files read at startup.
+//
+// The driver specs, versions included, are part of INSTALL_DIR, so neither an existing full install
+// of the same dbhub version nor one with an older driver pin is mistaken for this one: it is
+// installed fresh and the old directory is removed with the other versions.
+//
 // The temp fallback is PER USER and must be OWNED by us. On a shared Unix host /tmp is writable by
 // everyone, so a fixed name there could be created first by someone else, pre-filled with a marker
 // and an entry point of their choosing -- which this launcher would then run as us. The user name
@@ -96,7 +116,8 @@ const DATA_ROOT = path.resolve(process.env[DATA_ENV] ||
     path.join(os.tmpdir(), `turbo-plugin-three-environment-db-${currentUserName()}`));
 const DBHUB_BASE = path.join(DATA_ROOT, 'dbhub');
 const DBHUB_VERSION = DBHUB_SPEC.slice(DBHUB_SPEC.lastIndexOf('@') + 1);
-const INSTALL_DIR = path.join(DBHUB_BASE, DBHUB_VERSION);
+const INSTALL_DIR = path.join(DBHUB_BASE,
+    [DBHUB_VERSION].concat(DRIVER_SPECS.map((spec) => spec.replace('@', '-'))).join('-'));
 const MARKER = '.tp-installed';
 const LOCK_DIR = `${INSTALL_DIR}.lock`;
 const LOCK_PID_FILE = path.join(LOCK_DIR, 'pid');
@@ -413,12 +434,13 @@ function runInstaller() {
             JSON.stringify({ name: 'tp-dbhub-runtime', private: true }, null, 2) + '\n');
         if (!npmCli) throw new Error('npm was not found next to node');
         const npm = spawnSync(process.execPath,
-            [npmCli, 'install', '--prefix', staging, '--no-audit', '--no-fund', '--omit=dev', DBHUB_SPEC],
+            [npmCli, 'install', '--prefix', staging, '--no-audit', '--no-fund', '--omit=dev', '--omit=optional',
+                DBHUB_SPEC].concat(DRIVER_SPECS),
             { stdio: 'inherit', windowsHide: true });
         if (npm.error) throw npm.error;
         if (npm.status !== 0) throw new Error(`npm install exited ${npm.status}`);
         if (!isFile(dbhubEntry(staging))) throw new Error(`npm finished but ${dbhubEntry(staging)} is missing`);
-        fs.writeFileSync(path.join(staging, MARKER), DBHUB_SPEC + '\n');
+        fs.writeFileSync(path.join(staging, MARKER), [DBHUB_SPEC].concat(DRIVER_SPECS).join('\n') + '\n');
         promote(staging);
         console.log(`tp-dbhub: installed ${DBHUB_SPEC}`);
         removeOtherVersions();
