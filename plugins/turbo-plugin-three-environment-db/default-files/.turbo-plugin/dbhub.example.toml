@@ -4,6 +4,16 @@
 #   dsn       = 連線字串，格式：sqlserver://<帳號>:<密碼>@<主機或IP>:<埠>/<資料庫名稱>
 #               預設埠為 1433；若使用預設埠可省略（但建議明確填入）
 #   readonly  = true 表示此工具只允許唯讀操作，不可執行 INSERT/UPDATE/DELETE
+#   connection_timeout = 連線逾時（秒）。未設定時沿用驅動預設的 15 秒。
+#   lazy      = true 表示啟動時不連線，第一次被查詢時才連。
+#
+# 多個 source 時建議每個都設 lazy = true：
+#   dbhub 會在回應 Claude Code 之前「依序」連完每一個非 lazy 的 source，
+#   所以啟動時間 = 載入時間 + 每個 source 的登入時間；任一個庫暫時連不上就可能單獨吃掉
+#   connection_timeout 秒。總和一超過 Claude Code 的 MCP 連線上限（預設 30 秒），
+#   /mcp 就只會顯示逾時，看不出卡在哪個 source。
+#   代價：設定寫錯要到第一次查詢那個庫才會發現，而不是啟動時就失敗。
+#   所以只有一個 source 時維持預設（不設 lazy）即可。
 #
 # 此檔案是 example template（進 git）。請複製重新命名為 dbhub.local.toml
 # 再填入實際連線資訊，dbhub.local.toml 已 gitignored 不會被 commit。
@@ -13,6 +23,8 @@
 #   [[sources]]
 #   id = "AppDb"
 #   dsn = "sqlserver://sa:MyPassword@192.168.1.100:1433/AppDb"
+#   connection_timeout = 10
+#   # lazy = true      # 多個 source 時開啟
 #
 #   [[tools]]
 #   name = "execute_sql"
@@ -26,6 +38,8 @@
 [[sources]]
 id = "<DB_NAME>"
 dsn = "sqlserver://<ACCOUNT>:<PASSWORD>@<DOMAIN>:<PORT>/<DB_NAME>"
+connection_timeout = 10
+# lazy = true      # 多個 source 時建議開啟，理由見上方說明
 
 [[tools]]
 name = "execute_sql"
