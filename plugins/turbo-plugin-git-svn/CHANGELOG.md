@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.9.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.9.1...turbo-plugin-git-svn--v0.9.2) (2026-10-14)
+
+
+### Fixed
+
+* **git-svn:** 呼叫端把 stderr 併進輸出時 Request-Merge.ps1 照樣合併，主 worktree 不再被留在 base 分支 ([d9ca833](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/d9ca833f976d9e4370bcd547995619e1cacafcf9)), closes [#203](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/203)
+
 ## [0.9.1](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.9.0...turbo-plugin-git-svn--v0.9.1) (2026-10-01)
 
 
