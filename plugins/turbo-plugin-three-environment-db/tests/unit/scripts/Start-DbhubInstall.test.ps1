@@ -13,6 +13,8 @@ BeforeAll {
     $script:FakeNpm = [System.IO.Path]::Combine($PSScriptRoot, 'assets', 'fake-npm-cli.js')
     $m = [regex]::Match([System.IO.File]::ReadAllText($script:ScriptUnderTest), '@bytebase/dbhub@(\d+\.\d+\.\d+)')
     $script:Version = $m.Groups[1].Value
+    $d = [regex]::Match([System.IO.File]::ReadAllText($script:ScriptUnderTest), 'mssql@(\d+\.\d+\.\d+)')
+    $script:MssqlVersion = $d.Groups[1].Value
 
     function Start-Launcher {
         param([string]$Ws, [switch]$NoWait)
@@ -60,7 +62,7 @@ Describe 'start-dbhub install' {
         $env:FAKE_NPM_CALLS = [System.IO.Path]::Combine($script:Ws, 'npm-calls')
         $env:FAKE_NPM_MODE = $null
         $env:FAKE_NPM_DELAY_MS = $null
-        $script:InstallDir = [System.IO.Path]::Combine($env:CLAUDE_PLUGIN_DATA, 'dbhub', $script:Version)
+        $script:InstallDir = [System.IO.Path]::Combine($env:CLAUDE_PLUGIN_DATA, 'dbhub', "$($script:Version)-mssql-$($script:MssqlVersion)")
         $script:Marker = [System.IO.Path]::Combine($script:InstallDir, '.tp-installed')
         $script:Lock = $script:InstallDir + '.lock'
     }
@@ -171,6 +173,39 @@ Describe 'start-dbhub install' {
         $r.Stderr | Should -Match 'waiting'
         $r.Stdout | Should -Match '(?m)^FAKE-DBHUB '
         Get-NpmCalls | Should -Be 1
+    }
+
+    It 'installs only the SQL Server driver, not the optional ones (#207)' -Skip:(-not $script:HasNode) {
+        $null = Start-Launcher -Ws $script:Ws
+        $calls = [System.IO.File]::ReadAllText($env:FAKE_NPM_CALLS)
+        $calls | Should -Match '--omit=optional'
+        $calls | Should -Match ' mssql@\d+\.\d+\.\d+(\s|$)'
+        $calls | Should -Match ([regex]::Escape("@bytebase/dbhub@$($script:Version)"))
+    }
+
+    It 'a full install from before #207 is replaced, not run' -Skip:(-not $script:HasNode) {
+        $old = [System.IO.Path]::Combine($env:CLAUDE_PLUGIN_DATA, 'dbhub', $script:Version)
+        $dist = [System.IO.Path]::Combine($old, 'node_modules', '@bytebase', 'dbhub', 'dist')
+        $null = New-Item -ItemType Directory -Path $dist -Force
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($dist, 'index.js'), "process.stdout.write('OLD-FULL\n');`n")
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($old, '.tp-installed'), "@bytebase/dbhub@$($script:Version)`n")
+        $r = Start-Launcher -Ws $script:Ws
+        Get-NpmCalls | Should -Be 1
+        $r.Stdout | Should -Not -Match 'OLD-FULL'
+        Test-Path -LiteralPath $script:Marker -PathType Leaf | Should -BeTrue
+        Test-Path -LiteralPath $old | Should -BeFalse
+    }
+
+    It 'an install with an older mssql pin is replaced, not run' -Skip:(-not $script:HasNode) {
+        $old = [System.IO.Path]::Combine($env:CLAUDE_PLUGIN_DATA, 'dbhub', "$($script:Version)-mssql-0.0.1")
+        $dist = [System.IO.Path]::Combine($old, 'node_modules', '@bytebase', 'dbhub', 'dist')
+        $null = New-Item -ItemType Directory -Path $dist -Force
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($dist, 'index.js'), "process.stdout.write('OLD-DRIVER\n');`n")
+        [System.IO.File]::WriteAllText([System.IO.Path]::Combine($old, '.tp-installed'), "@bytebase/dbhub@$($script:Version)`nmssql@0.0.1`n")
+        $r = Start-Launcher -Ws $script:Ws
+        Get-NpmCalls | Should -Be 1
+        $r.Stdout | Should -Not -Match 'OLD-DRIVER'
+        Test-Path -LiteralPath $old | Should -BeFalse
     }
 
     It 'other versions are removed once the pinned one is installed' -Skip:(-not $script:HasNode) {

@@ -76,7 +76,7 @@ jobs:
 
           **要升的話**：
 
-          1. 改 \`plugins/turbo-plugin-three-environment-db/scripts/start-dbhub.js\` 的 \`DBHUB_SPEC\`
+          1. 改 \`plugins/turbo-plugin-three-environment-db/scripts/start-dbhub.js\` 的 \`DBHUB_SPEC\`，並確認 \`DRIVER_SPECS\` 的 \`mssql\` 仍在新版 dbhub 宣告的版本範圍內
           2. 跑該 plugin 的 \`tests/Invoke-ScriptTests.ps1\` 與 \`tests/invoke-script-tests.sh\`
           3. **手動對真實資料庫起一次確認** — 測試斷言的是「會下什麼指令」，不驗 dbhub 自己的行為
 

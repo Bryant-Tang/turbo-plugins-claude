@@ -63,7 +63,12 @@
 跑釘死版本的 `@bytebase/dbhub`——**不需要 Docker，也不掛載任何路徑**。
 
 **dbhub 裝在 plugin 自己的資料夾，不走 npx。** 每個版本第一次啟動時，啟動器用 npm 把它裝進
-`${CLAUDE_PLUGIN_DATA}/dbhub/<版本>/`，之後直接 `node` 執行，不再經過 npm。
+`${CLAUDE_PLUGIN_DATA}/dbhub/<版本>-mssql-<mssql 版本>/`，之後直接 `node` 執行，不再經過 npm。
+
+**只裝 SQL Server 的驅動**（issue #207）。dbhub 把它支援的每一種資料庫驅動都列成可選相依，照預設會
+全部裝進來，而且啟動時每一個都要載入；本 plugin 只連 SQL Server，所以安裝時排除可選相依、只補回釘死
+版本的 `mssql`。啟動時要讀的檔案約少四分之一（`mssql` 本身就帶著體積最大的 `@azure/identity`，
+所以不是全部）。之前裝過完整版的機器，或 `mssql` 的釘選版本變了，都會在下次啟動時重裝一次，舊的那份會被刪掉。
 
 > **為什麼不用 npx**（issue #200）：新版本第一次啟動要下載安裝，實測將近一分鐘，比 Claude Code 等 MCP
 > server 回應的時間還長，安裝因此被中斷。npx 被打斷時會在 npm 快取留下只有 `node_modules/`、沒有
@@ -81,7 +86,7 @@
 > - 沒有 `CLAUDE_PLUGIN_DATA` 時（例如手動跑啟動器），改裝在系統暫存資料夾底下的
 >   `turbo-plugin-three-environment-db-<使用者名稱>/`。在 Linux / macOS 上這個資料夾必須是自己的、
 >   而且別的使用者不能寫入，否則啟動器拒絕使用（避免共用主機上別人先放好一份假的 dbhub 讓你執行）。
-> - 安裝記錄在 `${CLAUDE_PLUGIN_DATA}/dbhub/<版本>.install.log`；安裝失敗時，啟動器會把最後幾行印到
+> - 安裝記錄在 `${CLAUDE_PLUGIN_DATA}/dbhub/<版本>-mssql-<mssql 版本>.install.log`；安裝失敗時，啟動器會把最後幾行印到
 >   stderr（手動跑 `node <plugin>/scripts/start-dbhub.js <工作區> < /dev/null` 就看得到）。
 >
 > 升到這版之前被 npx 弄壞的那個 `_npx` 快取目錄已經用不到，可以不管它。
@@ -113,9 +118,10 @@
 「某天早上無預警壞掉、而且查不出原因」，而只有前者能靠提醒補救。
 `.github/workflows/dbhub-version-check.yml` 每月比對 npm registry，落後就開 issue 通知。
 
-**升級步驟**：改 `DBHUB_SPEC` → 跑本 plugin 的測試 → **手動對真實資料庫起一次確認**
+**升級步驟**：改 `DBHUB_SPEC`（`DRIVER_SPECS` 裡的 `mssql` 也一併對照新版 dbhub 宣告的版本範圍）→ 跑本 plugin 的測試 → **手動對真實資料庫起一次確認**
 （測試斷言的是「會下什麼指令」，不驗 dbhub 自己的行為）。升版後每台機器第一次連線都要重新下載，
-可能逾時一次，裝完重連即可（見上面「為什麼不用 npx」）。
+可能逾時一次，裝完重連即可（見上面「為什麼不用 npx」）。這只是**升版**那一次的額外逾時；
+裝好之後每天開機後第一次啟動也可能逾時，那是另一個原因，見下方「疑難排解」。
 
 ## 設定
 
@@ -146,6 +152,35 @@ branch 名。
 非 repo 的資料夾底下照樣可能放著 repo,你在那裡一樣會對它們 commit。
 
 這件事由本 plugin 自己做:建立 credentials 檔的人負責保護它。
+
+## 疑難排解
+
+### 開機後第一次（或防毒更新後）`/mcp` 顯示 `tp-dbhub` 逾時，重連就好
+
+**原因是冷啟動，不是連線或安裝出錯。** dbhub 啟動時要先載入它的模組才會回應 Claude Code；開機後
+第一次（以及防毒引擎或病毒碼更新後），這些檔案要從磁碟讀、而且會被即時防護逐一掃描，在 Windows 上
+實測可以超過一分鐘。之後同一天再啟動只要幾秒。Claude Code 的 MCP 連線上限預設 **30 秒**，所以超過
+就判逾時。
+
+這個失敗是**沉默的**：Claude Code 對被逾時結束的 server 不記 stderr，記錄裡只有
+`connection timed out after 30000ms`；而且不重連的話，它會快取這次失敗、過一段時間才自動重試。
+
+處置（由輕到重）：
+
+1. **拉高 Claude Code 的 MCP 連線上限。** 在**使用者層**的 `~/.claude/settings.json` 加：
+
+   ```json
+   { "env": { "MCP_TIMEOUT": "120000" } }
+   ```
+
+   這是你自己的設定，plugin 不會替你改。改完重開 Claude Code，記錄裡出現
+   `Starting connection with timeout of 120000ms` 就是生效了（`settings.json` 的 `env` 就夠，不必設
+   OS 環境變數）。**120000 只是起點**：冷啟動時間跟硬碟、防毒設定強相關，請看記錄裡那次連線**實際花了
+   多久**，再留一些餘裕決定數字。
+2. **多個 source 時設 `lazy = true`。** 不然 dbhub 要在回應前依序連完每一個庫，冷啟動時間再加上
+   每個庫的登入時間。說明與代價見 `dbhub.example.toml` 的註解。
+3. **能加防毒排除的話**，排除 dbhub 的安裝目錄 `${CLAUDE_PLUGIN_DATA}/dbhub/`。公司管理的機器通常
+   不能自己加，那就靠前兩項。
 
 ## 安裝
 
