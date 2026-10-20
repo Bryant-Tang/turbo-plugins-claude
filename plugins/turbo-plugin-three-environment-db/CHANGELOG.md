@@ -2,6 +2,15 @@
 
 本檔記錄 turbo-plugin-three-environment-db 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.7.4](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.7.3...turbo-plugin-three-environment-db--v0.7.4) (2026-10-20)
+
+
+### Fixed
+
+* **three-environment-db:** dbhub 只安裝 SQL Server 驅動，減少冷啟動要載入的檔案 ([7a7b60a](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/7a7b60a7cb045e76a2b11b932ff5b0376a8213a7)), closes [#207](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/207)
+* **three-environment-db:** dbhub 範本加上 connection_timeout 與 lazy 的說明 ([095af14](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/095af14acfb5d094bdcb18e350562a1202a54ed8)), closes [#208](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/208)
+* **three-environment-db:** README 補上開機後冷啟動逾時與 MCP_TIMEOUT 的處置 ([b65247d](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/b65247d9a6e948d0ddba72280221a5902a7c88ee)), closes [#209](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/209)
+
 ## [0.7.3](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-three-environment-db--v0.7.2...turbo-plugin-three-environment-db--v0.7.3) (2026-10-14)
 
 
