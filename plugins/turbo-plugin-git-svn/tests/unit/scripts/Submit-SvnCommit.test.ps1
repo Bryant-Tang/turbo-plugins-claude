@@ -110,11 +110,14 @@ BeforeAll {
     # Turn the fixture's tree into a migrated one -- exactly what /tp-init-svn-eol-style leaves
     # behind, and the precondition for any of this being reachable.
     function Set-TreeDeclaresEol {
-        param([string]$Bridge, [switch]$IncludeMd)
+        param([string]$Bridge, [switch]$IncludeMd, [switch]$IncludeXls)
         # -IncludeMd: auto-props also cover `*.md`, which is what /tp-init-svn-eol-style derives for
         # a tree holding .md files and the precondition for issue #186.
+        # -IncludeXls: `*.XLS`, the rule one text `.xls` among real binaries used to produce (issue
+        # #212). Upper-case on purpose: svn matches the pattern ignoring case, so must the plugin.
         $autoProps = '*.txt = svn:eol-style=native'
         if ($IncludeMd) { $autoProps = "*.md = svn:eol-style=native`n" + $autoProps }
+        if ($IncludeXls) { $autoProps = "*.XLS = svn:eol-style=native`n" + $autoProps }
         Push-Location $Bridge
         try {
             & svn --non-interactive propset svn:auto-props $autoProps -q '.' 2>$null | Out-Null
@@ -864,6 +867,66 @@ Describe 'Submit-SvnCommit' {
         It 'and a new directory holding such a file goes through too' -Skip:(-not $script:SvnReady) {
             $script:NbRc3 | Should -Be 0 -Because $script:NbOut3
             $script:NbEol3 | Should -Be 'native'
+        }
+    }
+
+    # ── issue #212: a file git calls binary, under an eol-style rule derived from a text sibling ──
+    #
+    # A real binary `.xls` is not an eol candidate, so the #186 path never looked at it, and a plain
+    # `svn add` under `*.xls = svn:eol-style=native` died with E200009. Mirrors
+    # submit-svn-commit.test.sh.
+    Context 'issue #212: a new git-binary file under an eol-style rule' {
+        BeforeAll {
+            $script:GbSb = $null; $script:GbRc = 1; $script:GbOut = ''; $script:GbPrep = ''
+            $script:GbMime = 'unset'; $script:GbEol = 'unset'; $script:GbSib = 'unset'; $script:GbIsBinary = $false
+            $gbSvnOk = $false
+            try { $null = (& svn --version --quiet 2>$null); $gbSvnOk = ($LASTEXITCODE -eq 0) } catch { $gbSvnOk = $false }
+            if ($gbSvnOk) {
+                $script:GbSb = New-Sandbox -Tag 'ptsc-gb1'
+                $fx = New-FeatureBridge -Sandbox $script:GbSb
+                if ($fx) {
+                    Set-TreeDeclaresEol -IncludeXls -Bridge ([System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x'))
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                    $reports = [System.IO.Path]::Combine($fx.Root, 'reports')
+                    $null = New-Item -ItemType Directory -Path $reports -Force
+                    # A NUL is what makes git call it binary (`-text`); svn calls it binary too.
+                    [System.IO.File]::WriteAllBytes([System.IO.Path]::Combine($reports, 'sheet.xls'),
+                        [byte[]](0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x62, 0x69, 0x6E))
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($reports, 'readme.txt')) -Value 'plain'
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '--', 'reports')
+                    $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: add a binary sheet')
+                    # Precondition: git really does call it binary, or the case is about something else.
+                    $script:GbIsBinary = ((Run-Git-Capture -Cwd $fx.Root -GitArgs @('ls-files', '--eol', '--', 'reports/sheet.xls')) -match 'w/-text')
+                    $r = Invoke-FeatPushResult -Root $fx.Root -Title 'feat: add a binary sheet'
+                    $script:GbRc = $r.ExitCode
+                    $script:GbOut = $r.Combined
+                    $script:GbPrep = $r.Prepared
+                    $script:GbMime = Get-SvnValue propget svn:mime-type "$($fx.BranchUrl)/reports/sheet.xls"
+                    $script:GbEol = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/reports/sheet.xls"
+                    $script:GbSib = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/reports/readme.txt"
+                }
+            }
+        }
+        AfterAll {
+            if ($script:GbSb) { Remove-Sandbox -Dir $script:GbSb }
+        }
+
+        It 'the fixture file is binary to git' -Skip:(-not $script:SvnReady) {
+            $script:GbIsBinary | Should -BeTrue
+        }
+        It 'prepare does not offer to clear its (correct) binary mark' -Skip:(-not $script:SvnReady) {
+            $script:GbPrep | Should -Not -Match "new`treports/sheet\.xls"
+        }
+        It 'the push goes through without -ClearBinaryMime' -Skip:(-not $script:SvnReady) {
+            $script:GbRc | Should -Be 0 -Because $script:GbOut
+            $script:GbOut | Should -Not -Match 'E200009'
+        }
+        It 'svn keeps it binary and never gives it svn:eol-style' -Skip:(-not $script:SvnReady) {
+            $script:GbMime | Should -Be 'application/octet-stream'
+            $script:GbEol | Should -Be ''
+        }
+        It 'its text sibling still gets its rule' -Skip:(-not $script:SvnReady) {
+            $script:GbSib | Should -Be 'native'
         }
     }
 

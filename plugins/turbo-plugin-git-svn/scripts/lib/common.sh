@@ -575,22 +575,94 @@ list_svn_eol_blockers() {
 # of them. Git-ignored files inside are skipped: they are not git text candidates, so
 # list_svn_eol_blockers would not report them anyway.
 #
+# The same goes for a file git itself calls binary (`-text`) whose NAME an eol-style rule matches
+# (issue #212). The rules are derived per extension, so one text file sharing an extension with real
+# binaries -- an HTML report saved as `.xls`, a plain-text `.pdf` -- puts `*.xls` in auto-props, and
+# from then on every genuinely binary `.xls` added dies the same way. Those are not eol candidates,
+# so list_svn_eol_blockers never sees them; they are found here instead. Nothing is lost by it: svn
+# still stamps them binary, and a binary file was never going to get svn:eol-style. They need no
+# question in front of the user either, which is why prepare's BINARY section does not list them --
+# that section asks whether to take a binary mark OFF, and for these the mark is correct.
+#
 # $1: bridge worktree path. Remaining args: repo-relative '?' paths (no peg escape).
 # Echoes one repo-relative file path per line. Empty on a tree that declares no svn:eol-style.
 list_new_svn_binary_files() {
   local bridge="$1"; shift
   [ "$#" -gt 0 ] || return 0
-  local p _st kind rel
+  svn_tree_declares_eol_style "$bridge" || return 0
+  local p _st kind rel entries=''
   for p in "$@"; do
     [ -n "$p" ] || continue
     if [ -d "$bridge/$p" ]; then
       while IFS='|' read -r _st kind rel; do
-        if [ "$kind" = 'tracked' ] && [ -n "$rel" ]; then printf '?\t%s\n' "$rel"; fi
+        if [ "$kind" = 'tracked' ] && [ -n "$rel" ]; then entries+="?"$'\t'"$rel"$'\n'; fi
       done < <(expand_unversioned_dir "$bridge" "$p")
     else
-      printf '?\t%s\n' "$p"
+      entries+="?"$'\t'"$p"$'\n'
     fi
-  done | list_svn_eol_blockers "$bridge" | awk -F'\t' '$1 == "new" { sub(/^[^\t]*\t/, ""); print }'
+  done
+  [ -n "$entries" ] || return 0
+  printf '%s' "$entries" | list_svn_eol_blockers "$bridge" | awk -F'\t' '$1 == "new" { sub(/^[^\t]*\t/, ""); print }'
+  printf '%s' "$entries" | list_new_git_binary_under_eol_auto_props "$bridge"
+}
+
+# The svn:auto-props patterns that give a file svn:eol-style, one per line, inherited ones included.
+#
+# `--show-inherited-props` prefixes the first line of each property value with `<path> - `, so that
+# prefix is cut off the pattern side. A pattern is whatever precedes the first `=` of its line.
+# $1: bridge worktree path.
+list_svn_eol_auto_props_patterns() {
+  local bridge="$1"
+  ( cd "$bridge" && svn propget svn:auto-props --show-inherited-props '.' 2>/dev/null || true ) \
+    | tr -d '\r' \
+    | awk '
+      /svn:eol-style/ {
+        i = index($0, "=")
+        if (i == 0) next
+        pat = substr($0, 1, i - 1)
+        j = 0
+        while ((k = index(substr(pat, j + 1), " - ")) > 0) { j += k + 2 }
+        if (j > 0) pat = substr(pat, j + 1)
+        gsub(/^[ \t]+|[ \t]+$/, "", pat)
+        if (pat != "") print pat
+      }'
+}
+
+# Reads `?<TAB><path>` lines on stdin and echoes the paths git calls binary whose file name an
+# eol-style auto-props pattern matches. svn compares those patterns against the base name and
+# ignores case (measured: `*.XLS` applies to `a.xls`), so this does too.
+# $1: bridge worktree path.
+list_new_git_binary_under_eol_auto_props() {
+  local bridge="$1" pat _st path name hit
+  local -a pats=()
+  while IFS= read -r pat; do [ -n "$pat" ] && pats+=("$pat"); done < <(list_svn_eol_auto_props_patterns "$bridge")
+  [ "${#pats[@]}" -gt 0 ] || { cat >/dev/null; return 0; }
+
+  # Same fixed-prefix keys as list_svn_eol_blockers, for the same reason.
+  local -A is_binary=()
+  local b
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    is_binary["p:${b//\\//}"]=1
+  done < <(classify_svn_eol_paths "$bridge" | awk -F'\t' '$1 == "binary" { sub(/^[^\t]*\t/, ""); print }')
+
+  local nocase_was=1
+  shopt -q nocasematch || nocase_was=0
+  shopt -s nocasematch
+  while IFS=$'\t' read -r _st path; do
+    [ -n "$path" ] || continue
+    [ -n "${is_binary[p:${path//\\//}]:-}" ] || continue
+    name="${path//\\//}"; name="${name##*/}"
+    hit=0
+    for pat in "${pats[@]}"; do
+      # Unquoted on purpose: the pattern is a glob.
+      # shellcheck disable=SC2053
+      if [[ "$name" == $pat ]]; then hit=1; break; fi
+    done
+    [ "$hit" -eq 1 ] && printf '%s\n' "$path"
+  done
+  [ "$nocase_was" -eq 1 ] || shopt -u nocasematch
+  return 0
 }
 
 # Take svn:mime-type off the given paths so svn:eol-style can be set on them.
