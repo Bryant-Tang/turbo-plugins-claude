@@ -48,6 +48,16 @@ try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 # (measured; issues #127 and #128). Such call sites go through Read-Git and either ignore the
 # result (`$null = Read-Git ...`) or gate on `.Code` to report "rollback failed" themselves.
 # Do NOT "fix" those back to the inline form on the strength of the paragraph above.
+#
+# git's stdout is decoded as UTF-8 HERE, whatever [Console]::OutputEncoding the caller has in force
+# (issue #213). git prints paths (with core.quotePath=false) and commit text as UTF-8 regardless of
+# the console codepage, but PowerShell decodes a native command's captured stdout with
+# [Console]::OutputEncoding. Core sets that to UTF-8 at load, yet a script may legitimately switch
+# it for its own native calls -- Submit-SvnCommit.ps1 runs its whole svn region under the system
+# ANSI codepage, because that is what `svn status` prints in. A git read made inside such a region
+# came back as mojibake for every CJK path, and nothing errored: the path simply matched nothing,
+# so a set-membership check (Get-SvnEolCandidate) quietly answered "not a candidate".
+# The caller's encoding is put back in `finally`, so the region it opened is left exactly as it was.
 function Read-Git {
     param(
         [string]$Cwd = '',
@@ -60,9 +70,13 @@ function Read-Git {
 
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    $prevEnc = [Console]::OutputEncoding
     $text = ''
     $code = 127
     try {
+        # Only assigned when it differs: the assignment re-creates [Console]::Out, which the
+        # common case (already UTF-8) has no reason to pay for.
+        if ($prevEnc.CodePage -ne 65001) { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 }
         $global:LASTEXITCODE = 127
         $text = (& git @argv 2>$null | Out-String)
         $code = $global:LASTEXITCODE
@@ -70,6 +84,7 @@ function Read-Git {
         $text = ''
         $code = 127
     } finally {
+        if ($prevEnc.CodePage -ne 65001) { [Console]::OutputEncoding = $prevEnc }
         $ErrorActionPreference = $prev
     }
     if ($null -eq $code) { $code = 127 }
