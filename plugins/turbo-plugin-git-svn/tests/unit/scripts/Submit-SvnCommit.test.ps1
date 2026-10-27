@@ -117,7 +117,7 @@ BeforeAll {
         # #212). Upper-case on purpose: svn matches the pattern ignoring case, so must the plugin.
         $autoProps = '*.txt = svn:eol-style=native'
         if ($IncludeMd) { $autoProps = "*.md = svn:eol-style=native`n" + $autoProps }
-        if ($IncludeXls) { $autoProps = "*.XLS = svn:eol-style=native`n" + $autoProps }
+        if ($IncludeXls) { $autoProps = "*.XLS = svn:eol-style=native`n*.png = svn:needs-lock=*`n" + $autoProps }
         Push-Location $Bridge
         try {
             & svn --non-interactive propset svn:auto-props $autoProps -q '.' 2>$null | Out-Null
@@ -878,7 +878,7 @@ Describe 'Submit-SvnCommit' {
     Context 'issue #212: a new git-binary file under an eol-style rule' {
         BeforeAll {
             $script:GbSb = $null; $script:GbRc = 1; $script:GbOut = ''; $script:GbPrep = ''
-            $script:GbMime = 'unset'; $script:GbEol = 'unset'; $script:GbSib = 'unset'; $script:GbIsBinary = $false
+            $script:GbMime = 'unset'; $script:GbEol = 'unset'; $script:GbSib = 'unset'; $script:GbLock = 'unset'; $script:GbIsBinary = $false
             $gbSvnOk = $false
             try { $null = (& svn --version --quiet 2>$null); $gbSvnOk = ($LASTEXITCODE -eq 0) } catch { $gbSvnOk = $false }
             if ($gbSvnOk) {
@@ -893,6 +893,9 @@ Describe 'Submit-SvnCommit' {
                     [System.IO.File]::WriteAllBytes([System.IO.Path]::Combine($reports, 'sheet.xls'),
                         [byte[]](0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x62, 0x69, 0x6E))
                     Set-Content -LiteralPath ([System.IO.Path]::Combine($reports, 'readme.txt')) -Value 'plain'
+                    # A binary under NO eol-style rule: it must keep the plain add and its other auto-props.
+                    [System.IO.File]::WriteAllBytes([System.IO.Path]::Combine($reports, 'chart.png'),
+                        [byte[]](0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x62, 0x69, 0x6E))
                     $null = Run-Git -Cwd $fx.Root -GitArgs @('add', '--', 'reports')
                     $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: add a binary sheet')
                     # Precondition: git really does call it binary, or the case is about something else.
@@ -904,6 +907,7 @@ Describe 'Submit-SvnCommit' {
                     $script:GbMime = Get-SvnValue propget svn:mime-type "$($fx.BranchUrl)/reports/sheet.xls"
                     $script:GbEol = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/reports/sheet.xls"
                     $script:GbSib = Get-SvnValue propget svn:eol-style "$($fx.BranchUrl)/reports/readme.txt"
+                    $script:GbLock = Get-SvnValue propget svn:needs-lock "$($fx.BranchUrl)/reports/chart.png"
                 }
             }
         }
@@ -927,6 +931,9 @@ Describe 'Submit-SvnCommit' {
         }
         It 'its text sibling still gets its rule' -Skip:(-not $script:SvnReady) {
             $script:GbSib | Should -Be 'native'
+        }
+        It 'a binary no eol rule covers still gets its other auto-props' -Skip:(-not $script:SvnReady) {
+            $script:GbLock | Should -Be '*'
         }
     }
 

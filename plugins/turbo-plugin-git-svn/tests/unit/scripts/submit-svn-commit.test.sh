@@ -725,7 +725,7 @@ test_new_binary_file_inside_a_new_directory_pushes_with_the_flag() {
 # shape the derivation produced. A real binary `.xls` added afterwards is not an eol candidate, so
 # the #186 path never looked at it, and a plain `svn add` died with E200009.
 declare_eol_style_with_xls_on_branch() {
-    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" propset svn:auto-props "$(printf '*.XLS = svn:eol-style=native\n*.txt = svn:eol-style=native')" -q '.' ) >/dev/null 2>&1 || return 1
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" propset svn:auto-props "$(printf '*.XLS = svn:eol-style=native\n*.txt = svn:eol-style=native\n*.png = svn:needs-lock=*')" -q '.' ) >/dev/null 2>&1 || return 1
     ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" commit -m 'declare svn:eol-style for .xls and .txt' ) >/dev/null 2>&1 || return 1
 }
 
@@ -735,6 +735,8 @@ commit_git_binary_xls_on_feat() {
     # A NUL is what makes git call it binary (`-text`); svn calls it binary for the same reason.
     printf 'PK\003\004\000\000binary' > "$ROOT/reports/sheet.xls" || return 1
     printf 'plain\n' > "$ROOT/reports/readme.txt" || return 1
+    # A binary under NO eol-style rule: it must keep taking the plain add and its other auto-props.
+    printf '\211PNG\000\000binary' > "$ROOT/reports/chart.png" || return 1
     git -C "$ROOT" add -- reports >/dev/null 2>&1 || return 1
     git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: add a binary sheet' >/dev/null 2>&1 || return 1
     # Precondition: git really does call it binary, or the case is about something else.
@@ -745,7 +747,7 @@ test_new_git_binary_file_under_an_eol_rule_pushes_without_asking() {
     if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
     if ! build_feature_bridge; then startSkipping; return 0; fi
     if ! declare_eol_style_with_xls_on_branch; then startSkipping; return 0; fi
-    local out rc mime eol sib prepare_out
+    local out rc mime eol sib lock prepare_out
     if ! commit_git_binary_xls_on_feat; then startSkipping; return 0; fi
 
     prepare_out="$( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x 2>&1 )"
@@ -765,6 +767,8 @@ test_new_git_binary_file_under_an_eol_rule_pushes_without_asking() {
     # The --no-auto-props add must stay limited to that file: its text sibling keeps its rule.
     sib="$(svn propget svn:eol-style "$BRANCH_URL/reports/readme.txt" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
     assertEquals 'the text sibling is marked as usual' 'native' "$sib"
+    lock="$(svn propget svn:needs-lock "$BRANCH_URL/reports/chart.png" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'a binary no eol rule covers still gets its other auto-props' '*' "$lock"
 }
 
 # ── issue #187: a push that fails on the svn side must be retryable ──
