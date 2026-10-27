@@ -81,7 +81,9 @@ BeforeAll {
             '            [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(28591)',
             '            $text = (& git -C $RepoRoot -c core.quotePath=false ls-files | Out-String)',
             '            $names = @(($text -split "`r?`n") | Where-Object { $_ })',
-            '            Write-Output (''RESULT:'' + ($names -contains $CjkName))',
+            # The second field proves git itself ran: an ASCII name must survive any encoding, so
+            # False:True can only mean "the CJK name was mangled", never "git returned nothing".
+            '            Write-Output (''RESULT:'' + ($names -contains $CjkName) + '':'' + ($names -contains ''init.txt''))',
             '        }',
             '        default { throw "unknown call ''$Call''" }',
             '    }',
@@ -329,7 +331,7 @@ Describe 'Core.ps1 git readers' {
 
                 $res = Invoke-CoreCall -Sandbox $sb -Call 'Inline-Git-UnderLatin1' -RepoRoot $root
 
-                $res.Line | Should -Be 'RESULT:False'
+                $res.Line | Should -Be 'RESULT:False:True'
             } finally {
                 Remove-Sandbox -Dir $sb
             }
