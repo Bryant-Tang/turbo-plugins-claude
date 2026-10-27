@@ -35,8 +35,11 @@ try {
     # ANSI codepage for the whole svn-interacting region: `svn status` output decodes correctly
     # AND paths passed back to `svn add/delete/commit` are argv-encoded as ANSI, matching the
     # on-disk filenames. (NOTE: do NOT use `svn status --xml` here — its UTF-8 output would need
-    # OutputEncoding=UTF8 to decode, which then mis-encodes the ANSI argv. Submit has no Chinese
-    # git stdout to capture, so a single ANSI scope is safe. Restored in finally.)
+    # OutputEncoding=UTF8 to decode, which then mis-encodes the ANSI argv. Restored in finally.)
+    # git DOES get read inside this region -- the svn:eol-style helpers list git's tracked paths --
+    # and git prints UTF-8, not ANSI. That is safe only because Read-Git decodes git's stdout as
+    # UTF-8 on its own; an inline `& git ... | Out-String` here would hand back mojibake for every
+    # CJK path and silently match nothing (issue #213). Go through Read-Git.
     $tpPrevConsoleEnc = [Console]::OutputEncoding
     [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage)
 
