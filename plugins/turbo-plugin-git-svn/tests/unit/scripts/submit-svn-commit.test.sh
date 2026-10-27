@@ -718,6 +718,59 @@ test_new_binary_file_inside_a_new_directory_pushes_with_the_flag() {
     assertEquals 'the sibling never got a mime type' '0' "$sib"
 }
 
+# ── issue #212: a file git calls binary, under an eol-style rule derived from a text sibling ──
+#
+# auto-props are derived per extension, so a single text `.xls` (an HTML report saved under that
+# name) puts `*.xls = svn:eol-style=native` on the tree. The rule is declared here directly, the
+# shape the derivation produced. A real binary `.xls` added afterwards is not an eol candidate, so
+# the #186 path never looked at it, and a plain `svn add` died with E200009.
+declare_eol_style_with_xls_on_branch() {
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" propset svn:auto-props "$(printf '*.XLS = svn:eol-style=native\n*.txt = svn:eol-style=native\n*.png = svn:needs-lock=*')" -q '.' ) >/dev/null 2>&1 || return 1
+    ( cd "$FEAT_BRIDGE" && svn --config-dir "$CFG" commit -m 'declare svn:eol-style for .xls and .txt' ) >/dev/null 2>&1 || return 1
+}
+
+commit_git_binary_xls_on_feat() {
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1 || return 1
+    mkdir -p "$ROOT/reports" || return 1
+    # A NUL is what makes git call it binary (`-text`); svn calls it binary for the same reason.
+    printf 'PK\003\004\000\000binary' > "$ROOT/reports/sheet.xls" || return 1
+    printf 'plain\n' > "$ROOT/reports/readme.txt" || return 1
+    # A binary under NO eol-style rule: it must keep taking the plain add and its other auto-props.
+    printf '\211PNG\000\000binary' > "$ROOT/reports/chart.png" || return 1
+    git -C "$ROOT" add -- reports >/dev/null 2>&1 || return 1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: add a binary sheet' >/dev/null 2>&1 || return 1
+    # Precondition: git really does call it binary, or the case is about something else.
+    git -C "$ROOT" ls-files --eol -- reports/sheet.xls | grep -q 'w/-text' || return 1
+}
+
+test_new_git_binary_file_under_an_eol_rule_pushes_without_asking() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    if ! declare_eol_style_with_xls_on_branch; then startSkipping; return 0; fi
+    local out rc mime eol sib lock prepare_out
+    if ! commit_git_binary_xls_on_feat; then startSkipping; return 0; fi
+
+    prepare_out="$( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x 2>&1 )"
+    # Nothing to ask: the binary mark on this file is correct, and BINARY is the section that asks
+    # whether to take such a mark off.
+    case "$prepare_out" in *"new	reports/sheet.xls"*) fail "prepare offered to clear a real binary: $prepare_out" ;; esac
+
+    # No --clear-binary-mime: the user is never asked about this file, so it must go through as is.
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'feat: add a binary sheet' 2>&1 )"; rc=$?
+    assertEquals "the push must go through (out: $out)" 0 "$rc"
+    case "$out" in *'E200009'*) fail "svn add still died on the binary: $out" ;; esac
+
+    mime="$(svn propget svn:mime-type "$BRANCH_URL/reports/sheet.xls" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'svn still marks the real binary as binary' 'application/octet-stream' "$mime"
+    eol="$(svn propget svn:eol-style "$BRANCH_URL/reports/sheet.xls" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'and never gives it svn:eol-style' '' "$eol"
+    # The --no-auto-props add must stay limited to that file: its text sibling keeps its rule.
+    sib="$(svn propget svn:eol-style "$BRANCH_URL/reports/readme.txt" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'the text sibling is marked as usual' 'native' "$sib"
+    lock="$(svn propget svn:needs-lock "$BRANCH_URL/reports/chart.png" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals 'a binary no eol rule covers still gets its other auto-props' '*' "$lock"
+}
+
 # ── issue #187: a push that fails on the svn side must be retryable ──
 #
 # The git side of the merge used to be committed before any svn step, so a failure afterwards left

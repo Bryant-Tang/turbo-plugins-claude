@@ -469,13 +469,31 @@ function Get-SvnEolCandidate {
 # bootstrap derives it from the project about to be imported. They must not drift -- the value this
 # produces is exactly what `Test-SvnTreeDeclaresEolStyle` later looks for.
 #
+# An extension that ALSO belongs to a file git calls binary (-BinaryPath) is left out (issue #212).
+# One text file is enough to put a pattern in, and the pattern then applies to every file with that
+# extension -- so an HTML report saved as `.xls` among real spreadsheets made `*.xls` carry
+# svn:eol-style, and every binary `.xls` added afterwards died in `svn add` with E200009, long after
+# the rule was written and with nothing pointing back at it. The text files of such an extension
+# still get the property: the migration sets it file by file, and the push path marks what it
+# commits. What is given up is only auto-props' cover for those few files against OTHER SVN clients.
+#
 # Returns '' when nothing qualifies.
 function Get-SvnAutoPropsValue {
-    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Path)
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Path,
+        [AllowEmptyCollection()][string[]]$BinaryPath = @()
+    )
+    $mixed = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($b in $BinaryPath) {
+        if ([string]::IsNullOrEmpty($b)) { continue }
+        $be = [System.IO.Path]::GetExtension($b)
+        if ($be) { $null = $mixed.Add($be.ToLowerInvariant()) }
+    }
     $ext = @($Path |
         ForEach-Object { [System.IO.Path]::GetExtension($_) } |
         Where-Object { $_ } |
         ForEach-Object { $_.ToLowerInvariant() } |
+        Where-Object { -not $mixed.Contains($_) } |
         Sort-Object -Unique)
     if ($ext.Count -eq 0) { return '' }
     return (($ext | ForEach-Object { "*$_ = svn:eol-style=native" }) -join "`n")
@@ -614,6 +632,13 @@ function Get-SvnEolBlocker {
 # with auto-props declaring svn:eol-style for their extension, a plain add dies with E200009 before
 # the binary guard can look at the file.
 #
+# The same goes for a file git itself calls binary whose NAME an eol-style rule matches (issue #212):
+# rules are derived per extension, so one text `.xls` among real binaries puts `*.xls` in auto-props,
+# and every binary `.xls` added after that dies the same way. Those are not eol candidates, so
+# Get-SvnEolBlocker never sees them -- Get-SvnNewGitBinaryUnderEolAutoProps finds them. They need no
+# question in front of the user (the binary mark is correct for them), which is why prepare's BINARY
+# section does not list them.
+#
 # -Path takes `svn status` '?' paths, so an unversioned DIRECTORY is expanded to the files inside
 # it; git-ignored files there are skipped (they are not git text candidates anyway).
 # Returns repo-relative file paths. Empty on a tree that declares no svn:eol-style.
@@ -637,8 +662,83 @@ function Get-SvnNewBinaryFile {
         }
     }
     if ($entries.Count -eq 0) { return @() }
-    return @(Get-SvnEolBlocker -Bridge $Bridge -Entry $entries.ToArray() |
-        Where-Object { $_.Why -eq 'new' } | ForEach-Object { $_.Path })
+    if (-not (Test-SvnTreeDeclaresEolStyle -Bridge $Bridge)) { return @() }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($b in @(Get-SvnEolBlocker -Bridge $Bridge -Entry $entries.ToArray())) {
+        if ($b.Why -eq 'new') { $out.Add($b.Path) }
+    }
+    foreach ($b in @(Get-SvnNewGitBinaryUnderEolAutoProps -Bridge $Bridge -Entry $entries.ToArray())) {
+        $out.Add($b)
+    }
+    return $out.ToArray()
+}
+
+# The svn:auto-props patterns that give a file svn:eol-style, inherited ones included.
+#
+# `--show-inherited-props` prefixes the first line of each property value with `<path> - `, so that
+# prefix is cut off the pattern side. A pattern is whatever precedes the first `=` of its line.
+function Get-SvnEolAutoPropsPattern {
+    param([Parameter(Mandatory = $true)][string]$Bridge)
+    Push-Location -LiteralPath $Bridge
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        try { $text = (& svn propget svn:auto-props --show-inherited-props '.' 2>$null | Out-String) } catch { $text = '' }
+    } finally {
+        $ErrorActionPreference = $prev
+        Pop-Location
+    }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ("$text" -split "`r?`n")) {
+        if ($line -notmatch 'svn:eol-style') { continue }
+        $eq = $line.IndexOf('=')
+        if ($eq -lt 0) { continue }
+        $pat = $line.Substring(0, $eq)
+        $dash = $pat.LastIndexOf(' - ')
+        if ($dash -ge 0) { $pat = $pat.Substring($dash + 3) }
+        $pat = $pat.Trim()
+        if ($pat) { $out.Add($pat) }
+    }
+    return $out.ToArray()
+}
+
+# Of the `?<TAB><path>` entries, the paths git calls binary whose file name an eol-style auto-props
+# pattern matches. svn compares those patterns against the base name and ignores case (measured:
+# `*.XLS` applies to `a.xls`), which is exactly what -like does.
+function Get-SvnNewGitBinaryUnderEolAutoProps {
+    param(
+        [Parameter(Mandatory = $true)][string]$Bridge,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Entry
+    )
+    $out = New-Object System.Collections.Generic.List[string]
+    $patterns = @(Get-SvnEolAutoPropsPattern -Bridge $Bridge)
+    if ($patterns.Count -eq 0) { return $out.ToArray() }
+
+    # Names first, git second: the classification lists the whole tree, so it is only paid for
+    # when some new file's name actually falls under an eol-style rule.
+    $hits = New-Object System.Collections.Generic.List[string]
+    foreach ($e in $Entry) {
+        if ([string]::IsNullOrEmpty($e)) { continue }
+        $tab = $e.IndexOf("`t")
+        if ($tab -lt 1) { continue }
+        $path = $e.Substring($tab + 1)
+        if ([string]::IsNullOrEmpty($path)) { continue }
+        $norm = $path -replace '\\', '/'
+        $name = $norm.Substring($norm.LastIndexOf('/') + 1)
+        foreach ($pat in $patterns) {
+            if ($name -like $pat) { $hits.Add($path); break }
+        }
+    }
+    if ($hits.Count -eq 0) { return $out.ToArray() }
+
+    $binary = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($row in @(Get-SvnEolClassification -Worktree $Bridge)) {
+        if ($row.Bucket -eq 'binary') { $null = $binary.Add(($row.Path -replace '\\', '/')) }
+    }
+    foreach ($path in $hits) {
+        if ($binary.Contains(($path -replace '\\', '/'))) { $out.Add($path) }
+    }
+    return $out.ToArray()
 }
 
 # Take svn:mime-type off the given paths so svn:eol-style can be set on them.

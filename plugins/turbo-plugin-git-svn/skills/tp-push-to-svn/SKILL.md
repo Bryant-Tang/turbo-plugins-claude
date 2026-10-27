@@ -201,7 +201,7 @@ prepare 輸出含 `BODY` 與 `FILES` 兩段。agent 在此**只做內部準備�
 跑 `${CLAUDE_PLUGIN_ROOT}/scripts/Submit-SvnCommit.ps1` (或 `${CLAUDE_PLUGIN_ROOT}/scripts/submit-svn-commit.sh`)帶 `--branch <name> --title "<那一行 title>"`(**只傳 title,不傳 body / message**);**只有使用者在 Step 4 選了第 5 個選項時才多帶 `--clear-binary-mime` / `-ClearBinaryMime`**——沒有使用者明講就不要帶,那個旗標會改掉 SVN 對那幾個檔案的認定。Script 會:
 - 再次 re-validate SVN HEAD + SHA pin + svn-status drift(防止 race condition)
 - 讀 `MERGE_HEAD.tp_svn_body`(鎖定 body;缺檔則 fail-closed 要求重 prepare),把 title collapse 成單行,自組 `title` + 換行 + `body`(**兩者之間不空行**,與 Step 4 預覽逐字一致)寫入 UTF-8 no-BOM temp 檔
-- 處理 `?` `!` `M` 的 svn add / delete(會被 SVN 判成 binary 的新增檔先不套 auto-props 單獨加入,交給 binary 守門處理)
+- 處理 `?` `!` `M` 的 svn add / delete(會被 SVN 判成 binary 的新增檔先不套 auto-props 單獨加入,交給 binary 守門處理;git 本身就判成二進位、但檔名剛好命中 `svn:eol-style` 規則的新增檔也一樣先單獨加入,它們的 binary 標記是對的,不會出現在 `BINARY` 段、也不需要問使用者)
 - `svn commit --file <tmp> --encoding UTF-8` push(避免中文 Big5 mangle)
 - **SVN 成功之後**才 `git commit --no-edit` 完成 stage merge——任何 SVN 步驟失敗時 merge 都還 pending,重跑能接續
 - `svn update` 同步 working copy revision

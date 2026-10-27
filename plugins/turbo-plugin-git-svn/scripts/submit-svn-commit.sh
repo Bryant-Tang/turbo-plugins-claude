@@ -234,7 +234,9 @@ set +e
     # reaches the binary guard below. The main add then needs --force, because --parents has
     # already versioned any new directory those files live in; --force makes it recurse into that
     # directory and add the rest instead of refusing it as already versioned. Only in that case --
-    # an ordinary push runs the exact same add as before.
+    # an ordinary push runs the exact same add as before. The same treatment covers a file git
+    # itself calls binary whose name an eol-style rule matches (issue #212) -- see
+    # list_new_svn_binary_files.
     ADD_FORCE=()
     NO_AUTOPROPS_FILES=()
     while IFS= read -r nb_path; do
