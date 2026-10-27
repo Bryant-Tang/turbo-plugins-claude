@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$SvnUrl = '',
     [string]$Branch = 'main',

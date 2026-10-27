@@ -714,11 +714,9 @@ function Get-SvnNewGitBinaryUnderEolAutoProps {
     $patterns = @(Get-SvnEolAutoPropsPattern -Bridge $Bridge)
     if ($patterns.Count -eq 0) { return $out.ToArray() }
 
-    $binary = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
-    foreach ($row in @(Get-SvnEolClassification -Worktree $Bridge)) {
-        if ($row.Bucket -eq 'binary') { $null = $binary.Add(($row.Path -replace '\\', '/')) }
-    }
-
+    # Names first, git second: the classification lists the whole tree, so it is only paid for
+    # when some new file's name actually falls under an eol-style rule.
+    $hits = New-Object System.Collections.Generic.List[string]
     foreach ($e in $Entry) {
         if ([string]::IsNullOrEmpty($e)) { continue }
         $tab = $e.IndexOf("`t")
@@ -726,11 +724,19 @@ function Get-SvnNewGitBinaryUnderEolAutoProps {
         $path = $e.Substring($tab + 1)
         if ([string]::IsNullOrEmpty($path)) { continue }
         $norm = $path -replace '\\', '/'
-        if (-not $binary.Contains($norm)) { continue }
         $name = $norm.Substring($norm.LastIndexOf('/') + 1)
         foreach ($pat in $patterns) {
-            if ($name -like $pat) { $out.Add($path); break }
+            if ($name -like $pat) { $hits.Add($path); break }
         }
+    }
+    if ($hits.Count -eq 0) { return $out.ToArray() }
+
+    $binary = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($row in @(Get-SvnEolClassification -Worktree $Bridge)) {
+        if ($row.Bucket -eq 'binary') { $null = $binary.Add(($row.Path -replace '\\', '/')) }
+    }
+    foreach ($path in $hits) {
+        if ($binary.Contains(($path -replace '\\', '/'))) { $out.Add($path) }
     }
     return $out.ToArray()
 }

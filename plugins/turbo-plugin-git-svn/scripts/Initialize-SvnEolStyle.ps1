@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$Branch = 'main',
     # Optional explicit repository root; omit to act on the current directory (see Resolve-GitRoot).

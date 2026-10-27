@@ -652,13 +652,27 @@ list_svn_eol_auto_props_patterns() {
 
 # Reads `?<TAB><path>` lines on stdin and echoes the paths git calls binary whose file name an
 # eol-style auto-props pattern matches. svn compares those patterns against the base name and
-# ignores case (measured: `*.XLS` applies to `a.xls`), so this does too.
+# ignores case (measured: `*.XLS` applies to `a.xls`), so this lower-cases both sides -- rather than
+# toggling nocasematch, which is shell-wide state a caller would inherit if this were cut short.
 # $1: bridge worktree path.
 list_new_git_binary_under_eol_auto_props() {
-  local bridge="$1" pat _st path name hit
-  local -a pats=()
-  while IFS= read -r pat; do [ -n "$pat" ] && pats+=("$pat"); done < <(list_svn_eol_auto_props_patterns "$bridge")
+  local bridge="$1" pat _st path name
+  local -a pats=() hits=()
+  while IFS= read -r pat; do [ -n "$pat" ] && pats+=("${pat,,}"); done < <(list_svn_eol_auto_props_patterns "$bridge")
   [ "${#pats[@]}" -gt 0 ] || { cat >/dev/null; return 0; }
+
+  # Names first, git second: the classification lists the whole tree, so it is only paid for when
+  # some new file's name actually falls under an eol-style rule.
+  while IFS=$'\t' read -r _st path; do
+    [ -n "$path" ] || continue
+    name="${path//\\//}"; name="${name##*/}"; name="${name,,}"
+    for pat in "${pats[@]}"; do
+      # Unquoted on purpose: the pattern is a glob.
+      # shellcheck disable=SC2053
+      if [[ "$name" == $pat ]]; then hits+=("$path"); break; fi
+    done
+  done
+  [ "${#hits[@]}" -gt 0 ] || return 0
 
   # Same fixed-prefix keys as list_svn_eol_blockers, for the same reason.
   local -A is_binary=()
@@ -668,22 +682,9 @@ list_new_git_binary_under_eol_auto_props() {
     is_binary["p:${b//\\//}"]=1
   done < <(classify_svn_eol_paths "$bridge" | awk -F'\t' '$1 == "binary" { sub(/^[^\t]*\t/, ""); print }')
 
-  local nocase_was=1
-  shopt -q nocasematch || nocase_was=0
-  shopt -s nocasematch
-  while IFS=$'\t' read -r _st path; do
-    [ -n "$path" ] || continue
-    [ -n "${is_binary[p:${path//\\//}]:-}" ] || continue
-    name="${path//\\//}"; name="${name##*/}"
-    hit=0
-    for pat in "${pats[@]}"; do
-      # Unquoted on purpose: the pattern is a glob.
-      # shellcheck disable=SC2053
-      if [[ "$name" == $pat ]]; then hit=1; break; fi
-    done
-    [ "$hit" -eq 1 ] && printf '%s\n' "$path"
+  for path in "${hits[@]}"; do
+    if [ -n "${is_binary[p:${path//\\//}]:-}" ]; then printf '%s\n' "$path"; fi
   done
-  [ "$nocase_was" -eq 1 ] || shopt -u nocasematch
   return 0
 }
 
