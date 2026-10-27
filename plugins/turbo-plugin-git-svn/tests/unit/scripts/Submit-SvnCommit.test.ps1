@@ -358,6 +358,33 @@ Describe 'Submit-SvnCommit' {
         }
     }
 
+    # ── issue #216: the bridge lives under a non-ASCII directory ──
+    #
+    # Submit reads the bridge's git directory inside its ANSI OutputEncoding region. Read inline, git's
+    # UTF-8 path came back as mojibake, the SHA pin written by prepare was "missing", and the push
+    # could never go through -- for anyone whose user folder or project folder is not pure ASCII.
+    Context 'issue #216: a bridge under a non-ASCII directory' {
+        It 'pushes, rather than reporting its own SHA pin as missing' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag 'nonascii'
+            try {
+                # e-acute: inside every Western ANSI codepage, so svn's argv stays valid on the
+                # runner, yet two bytes in UTF-8 -- decoded as ANSI it becomes two other characters.
+                $dir = [System.IO.Path]::Combine($sb, ('caf' + [char]0xE9))
+                $null = New-Item -ItemType Directory -Path $dir -Force
+                $fx = New-FeatureBridge -Sandbox $dir
+                # Not a skip: failing to build here would itself be a non-ASCII-path bug.
+                $fx | Should -Not -BeNullOrEmpty -Because 'the bridge must be buildable under a non-ASCII path'
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('checkout', 'feat-x')
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($fx.Root, 'app.txt')) -Value 'app-feat' -NoNewline
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('add', 'app.txt')
+                $null = Run-Git -Cwd $fx.Root -GitArgs @('commit', '-m', 'feat: push from a non-ASCII path')
+                $r = Invoke-FeatPushResult -Root $fx.Root -Title 'push from a non-ASCII path'
+                $r.Combined | Should -Not -Match 'SHA pin file missing'
+                $r.ExitCode | Should -Be 0 -Because $r.Combined
+            } finally { Remove-Sandbox -Dir $sb }
+        }
+    }
+
     Context 'issue #79: the pushed-file listing is the script''s own copy, not svn''s' {
         # svn renders its per-path progress lines ("Adding <path>") in the console codepage, so a
         # filename it cannot represent there arrives as '?' -- and that listing is the one place the

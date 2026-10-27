@@ -82,7 +82,15 @@ try {
 
     # Verify no new commits were added to the branch since prepare (SHA pinning check).
     # NOTE: in a linked worktree, .git is a pointer FILE; resolve via `git rev-parse --absolute-git-dir`.
-    $shaGitDir = (& git -C $remote.Path rev-parse --absolute-git-dir | Out-String).Trim()
+    # Read-Git, not an inline capture: this is inside the ANSI region, and the answer is a PATH --
+    # decoded as ANSI, any non-ASCII directory on the way to the bridge turns into mojibake, the pin
+    # below is "missing", and the push can never go through (issue #216). The explicit throw keeps
+    # the fail-loud behaviour the inline call had under EAP=Stop.
+    $gitDirRes = Read-Git -Cwd $remote.Path -GitArgs @('rev-parse', '--absolute-git-dir')
+    if ($gitDirRes.Code -ne 0 -or [string]::IsNullOrWhiteSpace($gitDirRes.Text)) {
+        throw "Could not resolve the git directory of the bridge at: $($remote.Path)"
+    }
+    $shaGitDir = $gitDirRes.Text.Trim()
     $shaFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_branch_sha'
     if (-not (Test-Path -LiteralPath $shaFile -PathType Leaf)) {
         # F-U(synth #18): fail-closed when MERGE_HEAD exists but the SHA pin file is missing.
@@ -542,7 +550,8 @@ UNWIND (the commit was rejected and would be rejected again):
     # Failure path skips this and retains the pins for retry (pins are checked at top).
     # NOTE: in a linked worktree, .git is a pointer FILE; resolve via `git rev-parse --absolute-git-dir`.
     try {
-        $shaGitDir = (& git -C $remote.Path rev-parse --absolute-git-dir | Out-String).Trim()
+        # Read-Git for the same reason as at the top (issue #216): still inside the ANSI region.
+        $shaGitDir = (Read-Git -Cwd $remote.Path -GitArgs @('rev-parse', '--absolute-git-dir')).Text.Trim()
         $shaFile = Join-Path $shaGitDir 'MERGE_HEAD.tp_branch_sha'
         if (Test-Path -LiteralPath $shaFile) {
             Remove-Item -LiteralPath $shaFile -Force -ErrorAction SilentlyContinue
