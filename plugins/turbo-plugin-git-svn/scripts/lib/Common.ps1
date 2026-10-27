@@ -469,13 +469,31 @@ function Get-SvnEolCandidate {
 # bootstrap derives it from the project about to be imported. They must not drift -- the value this
 # produces is exactly what `Test-SvnTreeDeclaresEolStyle` later looks for.
 #
+# An extension that ALSO belongs to a file git calls binary (-BinaryPath) is left out (issue #212).
+# One text file is enough to put a pattern in, and the pattern then applies to every file with that
+# extension -- so an HTML report saved as `.xls` among real spreadsheets made `*.xls` carry
+# svn:eol-style, and every binary `.xls` added afterwards died in `svn add` with E200009, long after
+# the rule was written and with nothing pointing back at it. The text files of such an extension
+# still get the property: the migration sets it file by file, and the push path marks what it
+# commits. What is given up is only auto-props' cover for those few files against OTHER SVN clients.
+#
 # Returns '' when nothing qualifies.
 function Get-SvnAutoPropsValue {
-    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Path)
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Path,
+        [AllowEmptyCollection()][string[]]$BinaryPath = @()
+    )
+    $mixed = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($b in $BinaryPath) {
+        if ([string]::IsNullOrEmpty($b)) { continue }
+        $be = [System.IO.Path]::GetExtension($b)
+        if ($be) { $null = $mixed.Add($be.ToLowerInvariant()) }
+    }
     $ext = @($Path |
         ForEach-Object { [System.IO.Path]::GetExtension($_) } |
         Where-Object { $_ } |
         ForEach-Object { $_.ToLowerInvariant() } |
+        Where-Object { -not $mixed.Contains($_) } |
         Sort-Object -Unique)
     if ($ext.Count -eq 0) { return '' }
     return (($ext | ForEach-Object { "*$_ = svn:eol-style=native" }) -join "`n")

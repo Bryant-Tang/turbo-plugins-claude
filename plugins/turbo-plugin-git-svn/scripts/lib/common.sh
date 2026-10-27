@@ -427,11 +427,33 @@ list_svn_eol_candidates() {
 # bootstrap derives it from the project about to be imported. They must not drift -- the value this
 # produces is exactly what `svn_tree_declares_eol_style` later looks for.
 #
+# An extension that ALSO belongs to a file git calls binary is left out (issue #212): one text file
+# is enough to put a pattern in, and the pattern then applies to every file with that extension --
+# so an HTML report saved as `.xls` among real spreadsheets made `*.xls` carry svn:eol-style, and
+# every binary `.xls` added afterwards died in `svn add` with E200009, long after the rule was
+# written. The text files of such an extension still get the property: the migration sets it file by
+# file, and the push path marks what it commits. Full rationale on Get-SvnAutoPropsValue.
+#
 # Reads repo-relative paths on stdin, echoes the property value (empty if nothing qualifies).
+# $1 (optional): a file listing the paths git calls binary, one per line.
 derive_svn_auto_props() {
+  local binary_list="${1:-}"
   awk -F'/' '{ print $NF }' \
     | awk -F'.' 'NF > 1 { print "*." tolower($NF) }' \
     | LC_ALL=C sort -u \
+    | awk -v bl="$binary_list" '
+      BEGIN {
+        if (bl != "") {
+          while ((getline line < bl) > 0) {
+            sub(/\r$/, "", line)
+            n = split(line, seg, "/"); name = seg[n]
+            m = split(name, dot, ".")
+            if (m > 1) skip["*." tolower(dot[m])] = 1
+          }
+          close(bl)
+        }
+      }
+      !($0 in skip)' \
     | sed 's/$/ = svn:eol-style=native/'
 }
 

@@ -308,7 +308,8 @@ and each working copy gets its own platform's endings."
 # plugin -- get the property too. It is SVN's counterpart to committing a .gitattributes: shared,
 # versioned, and applied at `svn add` time. Derived from the extensions actually present, because
 # SVN matches auto-props by filename pattern and has no content heuristic to fall back on.
-AUTOPROPS="$(derive_svn_auto_props < "$CANDIDATES")"
+# The binaries go in too, so an extension shared with them is left out (issue #212).
+AUTOPROPS="$(derive_svn_auto_props <(awk -F'\t' '$1 == "binary" { sub(/^[^\t]*\t/, ""); print }' "$CLASSIFIED") < "$CANDIDATES")"
 if [[ -n "$AUTOPROPS" ]]; then TOTAL_COMMITS=$((TOTAL_BATCHES + 1)); fi
 #
 # It goes out FIRST, in its own revision, before a single file batch. That ordering is load-bearing

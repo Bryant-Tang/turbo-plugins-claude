@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$SvnUrl = '',
     [string]$Branch = 'main',
@@ -480,7 +480,12 @@ try {
         # and behaves exactly as before; the push path still marks what it commits.
         $autoProps = ''
         if ($mode -eq 'legacy-empty') {
-            $autoProps = Get-SvnAutoPropsValue -Path @(Get-SvnEolCandidate -Worktree $mainWorktree)
+            # Classified once; the binaries go in too, so an extension shared with them is left
+            # out (issue #212).
+            $classified = @(Get-SvnEolClassification -Worktree $mainWorktree)
+            $autoProps = Get-SvnAutoPropsValue `
+                -Path @($classified | Where-Object { $_.Bucket -eq 'candidate' } | ForEach-Object { $_.Path }) `
+                -BinaryPath @($classified | Where-Object { $_.Bucket -eq 'binary' } | ForEach-Object { $_.Path })
         }
         Push-Location $remoteWorktreePath
         try {
