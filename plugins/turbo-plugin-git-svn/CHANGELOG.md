@@ -2,6 +2,26 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.9.3](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.9.2...turbo-plugin-git-svn--v0.9.3) (2026-11-05)
+
+
+### Fixed
+
+* **git-svn:** 推導 svn:auto-props 時排除同時有 git 二進位檔的副檔名，不再產生會讓之後新增的二進位檔失敗的規則 ([244435e](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/244435ecf81ef2fac81f5bde2d4da109b9a8bf38)), closes [#212](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/212)
+* **git-svn:** 推送時 git 判為二進位、但檔名命中 eol-style auto-props 規則的新增檔改以 --no-auto-props 加入，不再 E200009 ([a43b454](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/a43b454e92857c5fd27464a4e7ea89e0a74d6338)), closes [#212](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/212)
+* **git-svn:** 推送時以 UTF-8 讀 bridge 的 git 目錄，專案路徑含非 ASCII 字元時不再誤報 SHA pin 遺失 ([48df86c](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/48df86c671484ccb09608002f4dfdb0f5532f198)), closes [#216](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/216)
+* Read-Git 讀 git 輸出一律以 UTF-8 解碼，呼叫端切換主控台編碼時 CJK 路徑不再變亂碼 ([6174347](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6174347f680cfb44013bb84445c51d338b00f389)), closes [#213](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/213)
+
+
+### Changed
+
+* **git-svn:** 先比對檔名再分類整棵樹，沒有新增檔命中 eol-style 規則時不再多跑一次 git ls-files ([ec770bd](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/ec770bd0ae32a2e64c634d6ba6f0e733a4a515f4)), closes [#212](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/212)
+
+
+### Documentation
+
+* **git-svn:** tp-push-to-svn 說明 git 判為二進位的新增檔也會先不套 auto-props 加入 ([bc1f1b2](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/bc1f1b218721775c7bd1c6571cb53df0716ecd35)), closes [#212](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/212)
+
 ## [0.9.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.9.1...turbo-plugin-git-svn--v0.9.2) (2026-10-14)
 
 
