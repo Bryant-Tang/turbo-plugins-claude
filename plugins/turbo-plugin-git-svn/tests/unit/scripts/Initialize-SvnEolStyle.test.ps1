@@ -101,7 +101,7 @@ BeforeAll {
     # the directory is a git worktree, then `svn checkout --force` to overlay SVN's content and
     # metadata, then a git commit that takes SVN's bytes as the git content.
     function New-BridgeFixture {
-        param([string]$Tag = 'eolinit', [string]$AutoCrlf = 'true')
+        param([string]$Tag = 'eolinit', [string]$AutoCrlf = 'true', [switch]$MixedExtension)
         $sandbox = New-Sandbox $Tag
         $root = [System.IO.Path]::Combine($sandbox, 'repo')
         $svnrepo = [System.IO.Path]::Combine($sandbox, 'svnrepo')
@@ -125,6 +125,10 @@ BeforeAll {
         # Stored as CRLF with no property -- the shape issue #164 left behind. The migration is
         # supposed to normalise this in the repository, which is the whole point of running it.
         [System.IO.File]::WriteAllText([System.IO.Path]::Combine($trunk, 'wascrlf.txt'), "red`r`ngreen`r`n", $enc)
+        # -MixedExtension: a TEXT file sharing blob.bin's extension, the shape issue #212 is about.
+        if ($MixedExtension) {
+            [System.IO.File]::WriteAllText([System.IO.Path]::Combine($trunk, 'report.bin'), "hello`n", $enc)
+        }
 
         Invoke-SvnQuiet add -q $trunk
         Invoke-SvnQuiet commit -q -m 'seed' $seed
@@ -287,6 +291,31 @@ Describe 'Initialize-SvnEolStyle' {
             (Get-GitOutput $fx.Bridge status --porcelain -- plain.txt) | Should -BeNullOrEmpty
             # And the pin really is gone -- otherwise "clean" might just mean nothing was rewritten.
             (Get-GitOutput $fx.Bridge config --worktree --get core.eol) | Should -BeNullOrEmpty
+        } finally {
+            Remove-Sandbox -Dir $fx.Sandbox
+        }
+    }
+
+    # Issue #212: one text `.bin` beside a binary `.bin` must not put `*.bin` into auto-props -- the
+    # rule would then apply to every binary `.bin` added later and fail its `svn add` with E200009.
+    # The text file itself is still marked, file by file, like every other candidate.
+    It 'leaves an extension shared with a binary out of auto-props, and still marks the text file' {
+        if (-not $script:SvnAvailable) {
+            Set-ItResult -Skipped -Because 'svn is not on PATH'
+            return
+        }
+        $fx = New-BridgeFixture 'eolmixext' -MixedExtension
+        try {
+            $r = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -ScriptArgs @('-RepoRoot', $fx.Root)
+            $r.ExitCode | Should -Be 0
+
+            $ap = Get-NativeText { & svnlook propget $fx.SvnRepo 'svn:auto-props' 'trunk' }
+            # Floor first: an empty value would satisfy "no *.bin" while proving nothing.
+            $ap | Should -Match ([regex]::Escape('*.txt = svn:eol-style=native'))
+            $ap | Should -Not -Match ([regex]::Escape('*.bin'))
+
+            (Get-SvnEolProp ([System.IO.Path]::Combine($fx.Bridge, 'report.bin'))) | Should -Be 'native'
+            (Get-SvnEolProp ([System.IO.Path]::Combine($fx.Bridge, 'blob.bin'))) | Should -BeNullOrEmpty
         } finally {
             Remove-Sandbox -Dir $fx.Sandbox
         }

@@ -31,7 +31,7 @@ oneTimeSetUp() {
 # the directory is a git worktree, then `svn checkout --force` to overlay SVN's content and
 # metadata, then a git checkout to bring the tracked files onto disk.
 make_bridge_fixture() {
-    local sandbox="$1" autocrlf="${2:-true}"
+    local sandbox="$1" autocrlf="${2:-true}" mixedext="${3:-}"
     local root="$sandbox/repo"
     local svnrepo="$sandbox/svnrepo"
     local bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
@@ -50,6 +50,8 @@ make_bridge_fixture() {
     # Stored as CRLF with no property -- the shape issue #164 left behind. The migration is
     # supposed to normalise this in the repository, which is the whole point of running it.
     printf 'red\r\ngreen\r\n'   > "$seed/trunk/wascrlf.txt"
+    # $3 = mixedext: a TEXT file sharing blob.bin's extension, the shape issue #212 is about.
+    if [ "$mixedext" = 'mixedext' ]; then printf 'hello\n' > "$seed/trunk/report.bin"; fi
     svn --non-interactive add -q "$seed/trunk" >/dev/null 2>&1 || return 1
     svn --non-interactive commit -q -m seed "$seed" >/dev/null 2>&1 || return 1
 
@@ -184,6 +186,40 @@ test_apply_marks_text_only_and_commits() {
     rm -rf "$tmp" 2>/dev/null || true
     [ "$rc" -eq 98 ] && { startSkipping; return 0; }
     assertEquals 'apply marks text files, skips binary and mixed, and commits' 0 "$rc"
+}
+
+# Issue #212: one text `.bin` beside a binary `.bin` must not put `*.bin` into auto-props -- the
+# rule would then apply to every binary `.bin` added later and fail its `svn add` with E200009. The
+# text file itself is still marked, file by file, like every other candidate.
+test_apply_leaves_an_extension_shared_with_a_binary_out_of_auto_props() {
+    [ "$HAS_SVN" -eq 1 ] || { startSkipping; return 0; }
+    local tmp rc
+    tmp="$(mktemp -d -t turbo-eolinit-mixext-XXXXXX)"
+    (
+        root="$(make_bridge_fixture "$tmp" true mixedext)" || exit 98
+        bridge="$root/.turbo-plugin/worktrees/remote-svn-main"
+        svnrepo="$tmp/svnrepo"
+
+        bash "$SUT" --repo-root "$root" >/dev/null 2>&1 || exit 97
+
+        ap="$(svnlook propget "$svnrepo" svn:auto-props trunk 2>/dev/null || true)"
+        # Floor first: an empty value would satisfy "no *.bin" while proving nothing.
+        case "$ap" in *'*.txt = svn:eol-style=native'*) : ;;
+            *) echo "the tree was not declared for .txt: [$ap]" >&2; exit 1 ;; esac
+        case "$ap" in *'*.bin'*) echo "*.bin was declared despite a binary .bin: [$ap]" >&2; exit 1 ;; esac
+
+        if [ "$(svn_eol_prop "$bridge/report.bin")" != 'native' ]; then
+            echo 'the text report.bin did not get the property itself' >&2; exit 1
+        fi
+        if [ -n "$(svn_eol_prop "$bridge/blob.bin")" ]; then
+            echo 'blob.bin must stay unset' >&2; exit 1
+        fi
+        exit 0
+    )
+    rc=$?
+    rm -rf "$tmp" 2>/dev/null || true
+    [ "$rc" -eq 98 ] && { startSkipping; return 0; }
+    assertEquals 'an extension shared with a binary is left out of auto-props' 0 "$rc"
 }
 
 test_dirty_bridge_is_refused() {
