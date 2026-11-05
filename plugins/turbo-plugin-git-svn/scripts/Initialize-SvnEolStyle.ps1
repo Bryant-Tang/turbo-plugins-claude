@@ -237,7 +237,9 @@ try {
         # .gitattributes: shared, versioned, and applied at `svn add` time. Derived from the
         # extensions actually present, because SVN matches auto-props by filename pattern and has
         # no content heuristic to fall back on.
-        $autoProps = Get-SvnAutoPropsValue -Path $candidates
+        # The binaries go in too, so an extension shared with them is left out (issue #212).
+        $binaryPaths = @($classified | Where-Object { $_.Bucket -eq 'binary' } | ForEach-Object { $_.Path })
+        $autoProps = Get-SvnAutoPropsValue -Path $candidates -BinaryPath $binaryPaths
         Push-Location -LiteralPath $bridge
         try {
             if ($autoProps) {

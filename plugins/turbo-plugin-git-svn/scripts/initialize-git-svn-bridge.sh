@@ -428,7 +428,11 @@ if [[ "$MODE" == 'legacy-empty' ]]; then
   # migration nobody knows to run -- the exact silent degradation this change exists to remove.
   # A project with no text files is NOT a failure: git exits 0 with empty output and the derivation
   # yields an empty value, which the caller already treats as "nothing to declare".
-  AUTOPROPS="$(list_svn_eol_candidates "$MAIN_WORKTREE" | tr '\\' '/' | derive_svn_auto_props)"
+  # The binaries go in too, so an extension shared with them is left out (issue #212). The binary
+  # list comes from a process substitution, whose failure set -e cannot see -- but it is the same git
+  # call as the candidate pipeline's, and a failure there IS seen.
+  AUTOPROPS="$(list_svn_eol_candidates "$MAIN_WORKTREE" | tr '\\' '/' \
+    | derive_svn_auto_props <(classify_svn_eol_paths "$MAIN_WORKTREE" | awk -F'\t' '$1 == "binary" { sub(/^[^\t]*\t/, ""); print }'))"
 fi
 (
   cd "$REMOTE_PATH"
