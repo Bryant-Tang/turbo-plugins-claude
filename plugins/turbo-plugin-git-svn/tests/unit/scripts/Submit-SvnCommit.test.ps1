@@ -384,6 +384,14 @@ Describe 'Submit-SvnCommit' {
                 $r = Invoke-FeatPushResult -Root $fx.Root -Title 'push from a non-ASCII path'
                 $r.Combined | Should -Not -Match 'SHA pin file missing'
                 $r.ExitCode | Should -Be 0 -Because $r.Combined
+                # The second read sits in the post-success cleanup, inside a try that swallows its
+                # failure -- mojibake there would only leave the pins behind, silently. Found on disk
+                # rather than through git, so this check does not depend on the test host's console
+                # encoding either.
+                $wtMeta = [System.IO.Path]::Combine($fx.Root, '.git', 'worktrees')
+                Test-Path -LiteralPath $wtMeta | Should -BeTrue -Because 'the bridge is a linked worktree; without its metadata dir the count below would pass vacuously'
+                $left = @(Get-ChildItem -LiteralPath $wtMeta -Recurse -Filter 'MERGE_HEAD.tp_*' -Force -ErrorAction SilentlyContinue)
+                $left.Count | Should -Be 0 -Because "the SHA/status/body pins must be cleaned up after a successful push; left: $($left.Name -join ', ')"
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
