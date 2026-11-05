@@ -2,6 +2,13 @@
 
 本檔記錄 turbo-plugin-dotnet-framework 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.4.3](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.4.2...turbo-plugin-dotnet-framework--v0.4.3) (2026-11-05)
+
+
+### Fixed
+
+* Read-Git 讀 git 輸出一律以 UTF-8 解碼，呼叫端切換主控台編碼時 CJK 路徑不再變亂碼 ([6174347](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/6174347f680cfb44013bb84445c51d338b00f389)), closes [#213](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/213)
+
 ## [0.4.2](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-dotnet-framework--v0.4.1...turbo-plugin-dotnet-framework--v0.4.2) (2026-10-02)
 
 
