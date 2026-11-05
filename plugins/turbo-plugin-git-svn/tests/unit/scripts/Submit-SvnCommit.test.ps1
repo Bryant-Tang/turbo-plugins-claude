@@ -391,7 +391,7 @@ Describe 'Submit-SvnCommit' {
                 $wtMeta = [System.IO.Path]::Combine($fx.Root, '.git', 'worktrees')
                 Test-Path -LiteralPath $wtMeta | Should -BeTrue -Because 'the bridge is a linked worktree; without its metadata dir the count below would pass vacuously'
                 $left = @(Get-ChildItem -LiteralPath $wtMeta -Recurse -Filter 'MERGE_HEAD.tp_*' -Force -ErrorAction SilentlyContinue)
-                $left.Count | Should -Be 0 -Because "the SHA/status/body pins must be cleaned up after a successful push; left: $($left.Name -join ', ')"
+                $left.Count | Should -Be 0 -Because "the SHA/status/body pins must be cleaned up after a successful push; left: $(@($left | ForEach-Object { $_.Name }) -join ', ')"
             } finally { Remove-Sandbox -Dir $sb }
         }
     }
