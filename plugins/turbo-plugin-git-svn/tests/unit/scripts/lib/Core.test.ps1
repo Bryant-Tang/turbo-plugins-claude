@@ -56,12 +56,35 @@ BeforeAll {
             'Set-StrictMode -Version Latest',
             '$ErrorActionPreference = ''Stop''',
             '. $CorePath',
+            # Built from code points so this file, and the harness it writes, stay pure ASCII.
+            '$CjkName = ([string][char]0x4E2D) + [char]0x6587 + ''.md''',
             'try {',
             '    switch ($Call) {',
             '        ''Probe-GitVersion''    { Probe-GitVersion; Write-Output ''RESULT:ok'' }',
             '        ''Get-MainWorktree''    { Write-Output (''RESULT:'' + (Get-MainWorktree -RepoRoot $RepoRoot)) }',
             '        ''Test-IsMainWorktree'' { Write-Output (''RESULT:'' + (Test-IsMainWorktree -RepoRoot $RepoRoot)) }',
             '        ''Test-IsSubmodule''    { Write-Output (''RESULT:'' + (Test-IsSubmodule -RepoRoot $RepoRoot)) }',
+            # Issue #213: list the tracked files while the caller has a NON-UTF-8 console encoding
+            # in force, the way Submit-SvnCommit.ps1 runs its svn region under the ANSI codepage.
+            # Latin-1 rather than the host's ANSI codepage: it is non-UTF-8 on every runner, so
+            # the case cannot pass vacuously on a host whose ACP happens to be 65001. Reports
+            # whether the CJK name came back intact and which encoding was left in force after.
+            '        ''Read-Git-UnderLatin1'' {',
+            '            [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(28591)',
+            '            $r = Read-Git -Cwd $RepoRoot -GitArgs @(''-c'', ''core.quotePath=false'', ''ls-files'')',
+            '            $names = @(($r.Text -split "`r?`n") | Where-Object { $_ })',
+            '            Write-Output (''RESULT:'' + ($names -contains $CjkName) + '':'' + [Console]::OutputEncoding.CodePage)',
+            '        }',
+            # The control for the case above: the same listing done inline, as Read-Git used to
+            # do it. It must come back mangled, or the case above proves nothing about the fix.
+            '        ''Inline-Git-UnderLatin1'' {',
+            '            [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(28591)',
+            '            $text = (& git -C $RepoRoot -c core.quotePath=false ls-files | Out-String)',
+            '            $names = @(($text -split "`r?`n") | Where-Object { $_ })',
+            # The second field proves git itself ran: an ASCII name must survive any encoding, so
+            # False:True can only mean "the CJK name was mangled", never "git returned nothing".
+            '            Write-Output (''RESULT:'' + ($names -contains $CjkName) + '':'' + ($names -contains ''init.txt''))',
+            '        }',
             '        default { throw "unknown call ''$Call''" }',
             '    }',
             '} catch {',
@@ -263,6 +286,52 @@ Describe 'Core.ps1 git readers' {
                 $res2 = Invoke-CoreCall -Sandbox $sb -Call 'Get-MainWorktree' -RepoRoot $linked -WithWarningGit
                 $answer = $res2.Line.Substring('RESULT:'.Length).Trim()
                 $answer.TrimEnd('\', '/') | Should -Be ((Get-Item -LiteralPath $root).FullName.TrimEnd('\', '/'))
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+    }
+
+    Context 'a caller with a non-UTF-8 console encoding in force (issue #213)' {
+
+        BeforeAll {
+            # The same name the harness builds: U+4E2D U+6587 '.md'.
+            $script:CjkName = ([string][char]0x4E2D) + [char]0x6587 + '.md'
+            function New-CjkRepo {
+                param([string]$Sandbox)
+                $root = [System.IO.Path]::Combine($Sandbox, 'proj')
+                New-GitMainRepo -Root $root
+                [System.IO.File]::WriteAllText([System.IO.Path]::Combine($root, $script:CjkName), 'x')
+                $null = Run-Git -Cwd $root -GitArgs @('add', '-A')
+                $null = Run-Git -Cwd $root -GitArgs @('commit', '-q', '-m', 'cjk')
+                return $root
+            }
+        }
+
+        It 'Read-Git still returns the CJK path intact, and leaves the caller''s encoding in force' {
+            $sb = New-Sandbox -Tag 'core-9'
+            try {
+                $root = New-CjkRepo -Sandbox $sb
+
+                $res = Invoke-CoreCall -Sandbox $sb -Call 'Read-Git-UnderLatin1' -RepoRoot $root
+
+                # True: the name matched. 28591: Read-Git restored Latin-1 rather than leaving
+                # UTF-8 behind -- the caller's svn region depends on its encoding surviving.
+                $res.Line | Should -Be 'RESULT:True:28591'
+                $res.ExitCode | Should -Be 0
+            } finally {
+                Remove-Sandbox -Dir $sb
+            }
+        }
+
+        It 'control: an inline git read under the same encoding does mangle the path' {
+            $sb = New-Sandbox -Tag 'core-10'
+            try {
+                $root = New-CjkRepo -Sandbox $sb
+
+                $res = Invoke-CoreCall -Sandbox $sb -Call 'Inline-Git-UnderLatin1' -RepoRoot $root
+
+                $res.Line | Should -Be 'RESULT:False:True'
             } finally {
                 Remove-Sandbox -Dir $sb
             }
