@@ -164,6 +164,40 @@ finalise_git_merge() {
 # half-done retry/unwind guidance would be WRONG. Anything else non-zero is the half-done state.
 readonly EXIT_GIT_FAILED_AFTER_SVN=3   # SVN has the change; only the git commit is missing
 readonly EXIT_GIT_FAILED_NOTHING_SENT=4  # nothing needed sending to SVN; only the git commit is missing
+# issue #219: exit codes for "someone else committed to this SVN path while this push was running".
+readonly EXIT_PATH_CHANGED_BEFORE_COMMIT=5  # caught just before `svn commit`; nothing reached SVN
+readonly EXIT_REVISIONS_MISSING_IN_GIT=6    # caught after `svn commit`; SVN has ours AND theirs
+
+# issue #219: the staleness check at the top runs once, and the add / delete / property steps
+# between it and `svn commit` can take minutes on a large push. A teammate committing to the same
+# path in that window is NOT refused by svn when none of their files are in our changeset -- the
+# commit is out-of-date only per file -- so this asks the question again, from the URL, right
+# before the commit. It narrows the window to the commit itself; it cannot close it, which is why
+# list_foreign_revisions runs after the commit as well.
+# Echoes the path's last-changed-revision; non-zero if svn cannot be asked.
+current_path_rev() {
+  local rev
+  rev="$(svn info --show-item last-changed-revision "$SVN_URL" | tr -d '[:space:]')" || return 1
+  [[ "$rev" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$rev"
+}
+
+# issue #219: list the revisions that changed THIS path strictly between the working copy's
+# revision (what the push was built on) and the revision the push created. The staleness checks
+# guarantee none of them were in the working copy, so every one is someone else's -- and since
+# `svn commit` accepted ours anyway, the revision we created contains their changes too. One line
+# per revision: "r<N> <author>: <first line of message>". Empty when there is no gap. Non-zero if
+# svn cannot be asked. Args: <local_rev> <new_rev>
+list_foreign_revisions() {
+  local lo=$(( $1 + 1 )) hi=$(( $2 - 1 )) log_xml rev author _date msg
+  (( lo <= hi )) || return 0
+  # Pegged at the revision we created: the path exists there by construction.
+  log_xml="$(svn log --xml -r "$lo:$hi" "${SVN_URL}@$2")" || return 1
+  while IFS=$'\037' read -r -d '' rev author _date msg; do
+    [[ -n "$rev" ]] || continue
+    printf 'r%s %s: %s\n' "$rev" "${author:-(no author)}" "${msg%%$'\n'*}"
+  done < <(printf '%s' "$log_xml" | svn_enumerate_revisions)
+}
 
 MSG_FILE="$(mktemp)"
 # --targets files for the add / delete / commit steps (issue #35). Created OUT here, not inside the
@@ -273,7 +307,15 @@ set +e
   if [[ ${#COMMIT_TARGETS[@]} -eq 0 ]]; then
     echo "No changes to commit to SVN (all pending changes are git-ignored)"
     finalise_git_merge || exit "$EXIT_GIT_FAILED_NOTHING_SENT"
-    svn update > /dev/null || echo 'Warning: svn update on no-commit path failed. Remote worktree may be stale.' >&2
+    # issue #219: nothing of ours was sent, so a revision someone else committed to this path since
+    # the top check would arrive through this update as uncommitted edits, and /tp-pull-from-svn
+    # could never replay it afterwards (the working copy would already be past it). Leave the
+    # working copy where it is instead, so the pull still sees that revision as new.
+    if NOW_REV="$(current_path_rev)" && (( LOCAL_REV < NOW_REV )); then
+      echo "Note: this SVN path changed to r$NOW_REV while the push was running; skipped the closing svn update. Run /tp-pull-from-svn --branch $BRANCH to bring that revision into git." >&2
+    else
+      svn update > /dev/null || echo 'Warning: svn update on no-commit path failed. Remote worktree may be stale.' >&2
+    fi
     exit 0
   fi
 
@@ -356,6 +398,16 @@ set +e
     DEPTH_ARGS=(--depth empty)
   fi
 
+  # issue #219, first half: ask again, as late as possible. See current_path_rev.
+  if ! PATH_REV_NOW="$(current_path_rev)"; then
+    echo 'Error: could not read this SVN path'"'"'s last-changed revision before committing; aborting (pins retained for retry).' >&2
+    exit 1
+  fi
+  if (( LOCAL_REV < PATH_REV_NOW )); then
+    echo "Error: this SVN path changed while the push was being prepared (local r$LOCAL_REV, this path last changed at r$PATH_REV_NOW). Nothing was sent to SVN." >&2
+    exit "$EXIT_PATH_CHANGED_BEFORE_COMMIT"
+  fi
+
   echo "Committing to SVN..."
   write_svn_targets_file "$TARGETS_COMMIT" "${COMMIT_TARGETS[@]}" || exit 1
   COMMIT_OUT="$(svn commit ${DEPTH_ARGS[@]+"${DEPTH_ARGS[@]}"} --file "$MSG_FILE" --encoding UTF-8 --targets "$TARGETS_COMMIT" ${DOT_TARGET[@]+"${DOT_TARGET[@]}"})" || exit 1
@@ -380,13 +432,27 @@ set +e
   printf '%s\n' "$COMMIT_OUT" | grep -vE '^(Adding|Deleting|Sending|Replacing)( +\(bin\))?[[:space:]]' || true
   NEW_REV="$(printf '%s\n' "$COMMIT_OUT" | sed -n 's/Committed revision \([0-9]*\)\./\1/p' | tail -1)"
   [ -z "$NEW_REV" ] && NEW_REV='?'
+  # issue #219, second half: did anyone else's revision land on this path between the last check
+  # and our commit? If so, the revision we just created holds their changes as well as ours, the
+  # closing `svn update` below will drop their changes into the bridge as uncommitted edits, and
+  # /tp-pull-from-svn can never replay them (the working copy is past them). That used to happen
+  # in silence; now it is the one thing this push reports instead of success.
+  FOREIGN_REVS=''
+  FOREIGN_UNVERIFIED=0
+  if [[ "$NEW_REV" =~ ^[0-9]+$ ]]; then
+    FOREIGN_REVS="$(list_foreign_revisions "$LOCAL_REV" "$NEW_REV")" || FOREIGN_UNVERIFIED=1
+  fi
   # R14 marker for a TRUNK push: this push CREATED revision $NEW_REV, and the commit whose tree is
   # that revision is the branch tip we just pushed. Recording it here is what makes a locally
   # PUSHED revision resolvable at all -- pulls mark the revisions they replay, pushes mark the ones
   # they create, and the floor lookup / alignment advance no longer care which direction it came
   # from. Only the trunk branch is marked: refs/tp/svn/* maps TRUNK revisions, and a feature push
   # creates a revision on the branch path, not on trunk.
-  if [[ "$BRANCH" == "main" && "$NEW_REV" =~ ^[0-9]+$ ]]; then
+  #
+  # Not when other revisions landed in between (issue #219): the branch tip then lacks their
+  # changes, so it is NOT the tree of $NEW_REV, and marking it would tell every later pull and
+  # alignment that git already holds what it does not.
+  if [[ "$BRANCH" == "main" && "$NEW_REV" =~ ^[0-9]+$ && -z "$FOREIGN_REVS" ]]; then
     svn_rev_mark_set "$MAIN_WORKTREE" "$NEW_REV" "$(git -C "$MAIN_WORKTREE" rev-parse "$BRANCH")"
   fi
   # SVN has it now. If the git side then fails, the push itself still went through: resync the
@@ -396,7 +462,43 @@ set +e
   finalise_git_merge || GIT_FINALISED=0
   svn update > /dev/null || echo 'Warning: svn update after commit failed. Remote worktree may be stale.' >&2
   echo "Pushed to SVN r$NEW_REV"
+  if [[ "$FOREIGN_UNVERIFIED" == 1 ]]; then
+    {
+      echo "Warning: could not ask SVN whether anyone else committed to this path while the push ran."
+      echo "  Check by hand: svn log -r $((LOCAL_REV + 1)):$NEW_REV \"$SVN_URL\""
+      echo "  Any revision listed there other than r$NEW_REV is missing from git."
+    } >&2
+  fi
+  if [[ -n "$FOREIGN_REVS" ]]; then
+    REMOTE_BRANCH="$(printf '%s' "$REMOTE_SPEC" | cut -d'|' -f2)"
+    {
+      echo ''
+      echo 'TP_TOKEN:SVN_REVISIONS_MISSING_IN_GIT'
+      echo "The push IS in SVN as r$NEW_REV. But while it was being sent, other revision(s) were"
+      echo 'committed to this same SVN path, and svn accepted ours anyway because no file overlapped:'
+      printf '%s\n' "$FOREIGN_REVS" | sed 's/^/  /'
+      echo "So SVN r$NEW_REV contains their changes too, and git does not: '$REMOTE_BRANCH' and"
+      echo "'$BRANCH' are both missing them. The closing svn update has put those changes into the"
+      echo 'bridge as uncommitted edits, and /tp-pull-from-svn cannot replay them (the bridge is past them).'
+      if [[ "$BRANCH" == "main" ]]; then
+        echo "r$NEW_REV was NOT recorded as matching '$BRANCH'."
+      fi
+      echo ''
+      echo 'To bring git back in line with SVN [check `git -C "'"$REMOTE_PATH"'" status` first: it should list'
+      echo 'only the changes of the revision(s) above]:'
+      echo "  1. git -C \"$REMOTE_PATH\" add -A"
+      echo "  2. git -C \"$REMOTE_PATH\" commit -m \"<the message of the revision(s) above>\""
+      if [[ "$BRANCH" == "main" ]]; then
+        echo "  3. git -C \"$MAIN_WORKTREE\" update-ref refs/tp/svn/$NEW_REV \"\$(git -C \"$REMOTE_PATH\" rev-parse HEAD)\""
+        echo "  4. with '$BRANCH' checked out in \"$MAIN_WORKTREE\": git -C \"$MAIN_WORKTREE\" merge --no-ff \"$REMOTE_BRANCH\""
+      else
+        echo "  3. with '$BRANCH' checked out in \"$MAIN_WORKTREE\": git -C \"$MAIN_WORKTREE\" merge --no-ff \"$REMOTE_BRANCH\""
+      fi
+      echo 'Anything built or tagged from this push before that is missing those revisions too.'
+    } >&2
+  fi
   [[ "$GIT_FINALISED" == 1 ]] || exit "$EXIT_GIT_FAILED_AFTER_SVN"
+  [[ -z "$FOREIGN_REVS" ]] || exit "$EXIT_REVISIONS_MISSING_IN_GIT"
 )
 svn_commit_status=$?
 set -e
@@ -423,6 +525,28 @@ elif [[ $svn_commit_status -eq $EXIT_GIT_FAILED_AFTER_SVN || $svn_commit_status 
     echo 'Fix the git error above, then finish it with:'
     echo "  git -C \"$REMOTE_PATH\" commit --no-edit"
     echo 'Do NOT re-run /tp-push-to-svn or abort the merge first.'
+  } >&2
+  exit 1
+elif [[ $svn_commit_status -eq $EXIT_REVISIONS_MISSING_IN_GIT ]]; then
+  # SVN and the git merge are both done; what is left is the repair the subshell already printed.
+  # Nothing here is retryable, so the pins go exactly as on success.
+  rm -f "$SHA_FILE" "$SVN_STATUS_FILE" "$BODY_FILE" 2>/dev/null || true
+  exit 1
+elif [[ $svn_commit_status -eq $EXIT_PATH_CHANGED_BEFORE_COMMIT ]]; then
+  # Unlike the generic half-done state below, the cause is known and a retry cannot succeed: the
+  # path has moved on, so the prepared merge is built on a stale base. The only way forward is to
+  # unwind, pull, and push again.
+  {
+    echo ''
+    echo 'TP_TOKEN:SVN_PATH_CHANGED_DURING_PUSH'
+    echo 'Someone committed to this SVN path while the push was being prepared. Nothing reached SVN.'
+    echo 'Retrying cannot work: the prepared merge is built on the old revision. To push again:'
+    echo "  1. svn revert -R \"$REMOTE_PATH\""
+    echo "  2. git -C \"$REMOTE_PATH\" reset --hard HEAD"
+    echo "  3. rm -f \"$SHA_FILE\" \"$SVN_STATUS_FILE\" \"$BODY_FILE\""
+    echo "  4. /tp-pull-from-svn --branch $BRANCH"
+    echo "  5. /tp-push-to-svn --branch $BRANCH"
+    echo '  ORDER MATTERS: revert BEFORE the reset (see the half-done guidance for why).'
   } >&2
   exit 1
 else

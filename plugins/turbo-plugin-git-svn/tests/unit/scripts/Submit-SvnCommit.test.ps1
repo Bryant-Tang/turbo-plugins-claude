@@ -1257,4 +1257,127 @@ Describe 'Submit-SvnCommit' {
             $c.RevAfter | Should -Be $c.RevBefore
         }
     }
+
+    # ── issue #219: someone else commits to the same SVN path WHILE the push runs ──
+    #
+    # svn refuses a commit as out-of-date only per file, so a teammate's revision that touches none
+    # of our files is accepted underneath us. Mirrors the bash cases: a .cmd shim first on PATH
+    # lands the teammate's commit (with the real svn) the first time the script runs the given
+    # subcommand, then delegates every call. `status` fires inside the window the top check cannot
+    # see; `commit` fires after the second check too, the gap only the post-commit check catches.
+    Context 'issue #219: a teammate commit during the push' {
+        BeforeAll {
+            # Returns the flag file the shim touches when it fires; prepends the shim to PATH.
+            # The caller restores $env:PATH.
+            function Install-TeammateShim {
+                param([string]$Sandbox, [string]$Sub, [string]$Url)
+                $realSvn = (Get-Command svn -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+                $wc = [System.IO.Path]::Combine($Sandbox, 'teammatewc')
+                $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                try {
+                    & svn checkout $Url $wc 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) { return $null }
+                    Set-Content -LiteralPath ([System.IO.Path]::Combine($wc, 'teammate.txt')) -Value 'teammate' -NoNewline
+                    & svn add ([System.IO.Path]::Combine($wc, 'teammate.txt')) 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) { return $null }
+                } finally { $ErrorActionPreference = $old }
+                $flag = [System.IO.Path]::Combine($Sandbox, 'teammate.done')
+                $shimDir = [System.IO.Path]::Combine($Sandbox, 'svnshim')
+                $null = New-Item -ItemType Directory -Path $shimDir -Force
+                # %1 is --non-interactive (Common.ps1's svn shim puts it first), %2 the subcommand.
+                $shimLines = @(
+                    '@echo off',
+                    ('if exist "' + $flag + '" goto pass'),
+                    ('if /I not "%2"=="' + $Sub + '" goto pass'),
+                    ('type nul > "' + $flag + '"'),
+                    ('"' + $realSvn + '" --non-interactive commit "' + $wc + '" -m "teammate commits mid-push" >nul 2>&1'),
+                    ':pass',
+                    ('"' + $realSvn + '" %*')
+                )
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($shimDir, 'svn.cmd')) -Value $shimLines -Encoding ASCII
+                $env:PATH = $shimDir + [System.IO.Path]::PathSeparator + $env:PATH
+                return $flag
+            }
+
+            # One-file change on -Branch, prepared with the real svn. $true on success.
+            function Initialize-Change {
+                param([string]$Root, [string]$Branch, [string]$Content)
+                $null = Run-Git -Cwd $Root -GitArgs @('checkout', $Branch)
+                Set-Content -LiteralPath ([System.IO.Path]::Combine($Root, 'app.txt')) -Value $Content -NoNewline
+                $null = Run-Git -Cwd $Root -GitArgs @('add', 'app.txt')
+                $null = Run-Git -Cwd $Root -GitArgs @('commit', '-m', 'feat: my change')
+                $b = Invoke-PsScript -ScriptPath $script:BuildScript -Cwd $Root -ScriptArgs @('-Branch', $Branch)
+                return ($b.ExitCode -eq 0)
+            }
+        }
+
+        It 'a commit before ours is refused, and the answer is unwind + pull' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag '219a'
+            $savedPath = $env:PATH
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+                if (-not (Initialize-Change -Root $fx.Root -Branch 'feat-x' -Content 'app-mine')) { Set-ItResult -Skipped -Because 'prepare failed'; return }
+                $before = [int](Get-BranchRev -BranchUrl $fx.BranchUrl)
+                $flag = Install-TeammateShim -Sandbox $sb -Sub 'status' -Url $fx.BranchUrl
+                if ($null -eq $flag) { Set-ItResult -Skipped -Because 'teammate fixture failed'; return }
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'my change')
+                $env:PATH = $savedPath
+
+                [System.IO.File]::Exists($flag) | Should -BeTrue -Because 'the teammate commit must have fired'
+                $s.ExitCode | Should -Not -Be 0 -Because $s.Combined
+                $s.Combined | Should -Match 'TP_TOKEN:SVN_PATH_CHANGED_DURING_PUSH'
+                $s.Combined | Should -Not -Match 'SVN_COMMIT_FAILED_HALF_DONE'
+                $s.Combined | Should -Match 'tp-pull-from-svn'
+                [int](Get-BranchRev -BranchUrl $fx.BranchUrl) | Should -Be ($before + 1) -Because 'only the teammate revision reached SVN'
+                $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                (Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) | Should -Be 0 -Because 'the merge stays pending for the unwind'
+            } finally { $env:PATH = $savedPath; Remove-Sandbox -Dir $sb }
+        }
+
+        It 'a commit svn accepts alongside ours is reported, by revision' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag '219b'
+            $savedPath = $env:PATH
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+                if (-not (Initialize-Change -Root $fx.Root -Branch 'feat-x' -Content 'app-mine')) { Set-ItResult -Skipped -Because 'prepare failed'; return }
+                $before = [int](Get-BranchRev -BranchUrl $fx.BranchUrl)
+                $flag = Install-TeammateShim -Sandbox $sb -Sub 'commit' -Url $fx.BranchUrl
+                if ($null -eq $flag) { Set-ItResult -Skipped -Because 'teammate fixture failed'; return }
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'feat-x', '-Title', 'my change')
+                $env:PATH = $savedPath
+
+                [System.IO.File]::Exists($flag) | Should -BeTrue -Because 'the teammate commit must have fired'
+                [int](Get-BranchRev -BranchUrl $fx.BranchUrl) | Should -Be ($before + 2) -Because 'svn took both commits'
+                $s.ExitCode | Should -Not -Be 0 -Because $s.Combined
+                $s.Combined | Should -Match 'TP_TOKEN:SVN_REVISIONS_MISSING_IN_GIT'
+                $s.Combined | Should -Match ([regex]::Escape("r$($before + 1) ") + '.*teammate commits mid-push')
+                $s.Combined | Should -Match ([regex]::Escape("Pushed to SVN r$($before + 2)"))
+                $s.Combined | Should -Not -Match 'SVN_COMMIT_FAILED_HALF_DONE|GIT_COMMIT_FAILED_AFTER_SVN'
+                $bridge = [System.IO.Path]::Combine($fx.Root, '.turbo-plugin', 'worktrees', 'remote-svn-feat-x')
+                (Run-Git -Cwd $bridge -GitArgs @('rev-parse', '--verify', '-q', 'MERGE_HEAD')) | Should -Not -Be 0 -Because 'our merge is committed'
+            } finally { $env:PATH = $savedPath; Remove-Sandbox -Dir $sb }
+        }
+
+        It 'a trunk push with a teammate revision inside is not marked' -Skip:(-not $script:SvnReady) {
+            $sb = New-Sandbox -Tag '219c'
+            $savedPath = $env:PATH
+            try {
+                $fx = New-FeatureBridge -Sandbox $sb
+                if ($null -eq $fx) { Set-ItResult -Skipped -Because 'could not build the feature bridge in this env'; return }
+                if (-not (Initialize-Change -Root $fx.Root -Branch 'main' -Content 'app-main')) { Set-ItResult -Skipped -Because 'prepare failed'; return }
+                $trunkUrl = "$($fx.Uri)/trunk"
+                $flag = Install-TeammateShim -Sandbox $sb -Sub 'commit' -Url $trunkUrl
+                if ($null -eq $flag) { Set-ItResult -Skipped -Because 'teammate fixture failed'; return }
+                $s = Invoke-PsScript -ScriptPath $script:ScriptUnderTest -Cwd $fx.Root -ScriptArgs @('-Branch', 'main', '-Title', 'main change')
+                $env:PATH = $savedPath
+
+                $s.Combined | Should -Match 'TP_TOKEN:SVN_REVISIONS_MISSING_IN_GIT'
+                $newRev = Get-SvnValue info --show-item last-changed-revision $trunkUrl
+                (Run-Git -Cwd $fx.Root -GitArgs @('rev-parse', '--verify', '--quiet', "refs/tp/svn/$newRev")) | Should -Not -Be 0 -Because 'the created revision must not be marked'
+                $s.Combined | Should -Match ([regex]::Escape("update-ref refs/tp/svn/$newRev"))
+            } finally { $env:PATH = $savedPath; Remove-Sandbox -Dir $sb }
+        }
+    }
 }

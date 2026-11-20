@@ -29,6 +29,8 @@ oneTimeSetUp() {
 }
 
 setUp() {
+    # install_teammate_commit_on puts a wrapper first on PATH; tearDown puts PATH back.
+    ORIG_PATH="$PATH"
     TMPDIR_CASE="$(mktemp -d -t turbo-ptsc-XXXXXX)"
     (
         cd "$TMPDIR_CASE"
@@ -45,6 +47,7 @@ setUp() {
 }
 
 tearDown() {
+    PATH="$ORIG_PATH"
     [ -n "${TMPDIR_CASE:-}" ] && rm -rf "$TMPDIR_CASE" 2>/dev/null || true
     if [ -n "${SB:-}" ] && [ -d "$SB" ]; then
         chmod -R +w "$SB" 2>/dev/null || true
@@ -992,6 +995,173 @@ test_prepare_with_empty_svn_status_writes_every_pin() {
     assertEquals "the push finishes: $out" 0 "$rc"
     assertEquals 'nothing reached SVN' "$rev_before" "$(branch_rev)"
     assertFalse 'the merge is committed' "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+}
+
+# ── issue #219: someone else commits to the same SVN path WHILE the push runs ─────────────────
+# svn refuses a commit as out-of-date only per file, so a teammate's revision that touches none of
+# our files is accepted underneath us. The window is real -- the add / delete / property steps of a
+# large push take minutes -- but a test cannot wait for it, so a wrapper named `svn` goes first on
+# PATH and lands the teammate's commit (with the real svn) the first time the script runs the given
+# subcommand. Everything else is passed straight through.
+#
+# $1: the svn subcommand to fire on. `status` is the first svn call after the top staleness check
+#     (the drift check), so it puts the commit inside the window that check cannot see. `commit`
+#     puts it after the second check too, which is the gap only the post-commit check can catch.
+# $2: the URL the teammate commits to. Sets TEAMMATE_WC; prepends the wrapper to PATH.
+install_teammate_commit_on() {
+    local sub="$1" url="$2" real bin="$SB/fakebin"
+    real="$(command -v svn)" || return 1
+    TEAMMATE_WC="$SB/teammatewc"
+    svn checkout "$url" "$TEAMMATE_WC" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    printf 'teammate\n' > "$TEAMMATE_WC/teammate.txt"
+    svn add "$TEAMMATE_WC/teammate.txt" --config-dir "$CFG" >/dev/null 2>&1 || return 1
+    mkdir -p "$bin"
+    cat > "$bin/svn" <<EOF
+#!/usr/bin/env bash
+# The scripts call svn through a shim that puts --non-interactive first: skip leading options.
+sub=''
+for a in "\$@"; do case "\$a" in -*) ;; *) sub="\$a"; break ;; esac; done
+if [ "\$sub" = '$sub' ] && [ ! -e '$SB/teammate.done' ]; then
+    : > '$SB/teammate.done'
+    '$real' commit '$TEAMMATE_WC' -m 'teammate commits mid-push' --config-dir '$CFG' >/dev/null 2>&1 || exit 97
+fi
+exec '$real' "\$@"
+EOF
+    chmod +x "$bin/svn"
+    PATH="$bin:$PATH"
+}
+
+# Stage a one-file change on feat-x and run prepare (with the real svn).
+prepare_feat_change() {
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-mine\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add app.txt >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: my change' >/dev/null 2>&1
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1
+}
+
+# First half: a commit after the top check but before ours is caught by the second check, and the
+# answer is "unwind and pull", not the generic half-done "retry or unwind".
+test_teammate_commit_before_ours_is_refused_and_says_pull() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc before
+    prepare_feat_change || { startSkipping; return 0; }
+    before="$(branch_rev)"
+    install_teammate_commit_on status "$BRANCH_URL" || { startSkipping; return 0; }
+
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'my change' 2>&1 )"; rc=$?
+    assertTrue 'fixture: the teammate commit fired' "[ -e '$SB/teammate.done' ]"
+    assertNotEquals "the push is refused (out: $out)" 0 "$rc"
+    case "$out" in *'TP_TOKEN:SVN_PATH_CHANGED_DURING_PUSH'*) : ;; *) fail "no path-changed token: $out" ;; esac
+    case "$out" in *'SVN_COMMIT_FAILED_HALF_DONE'*) fail "generic half-done guidance given: $out" ;; esac
+    case "$out" in *'tp-pull-from-svn'*) : ;; *) fail "does not point at pull: $out" ;; esac
+    assertEquals 'only the teammate revision reached SVN' "$((before + 1))" "$(branch_rev)"
+    assertEquals 'SVN still has the old app.txt' 'app-v1' \
+        "$(svn cat "$BRANCH_URL/app.txt" --config-dir "$CFG" 2>/dev/null | tr -d '\r\n')"
+    assertTrue 'the merge stays pending for the unwind' "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+}
+
+# Second half: a commit that lands after every check is accepted by svn together with ours. The
+# push must say so -- loudly, naming the revision -- instead of "Pushed to SVN r<N>" alone.
+test_teammate_commit_svn_accepts_alongside_ours_is_reported() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc before bridge_gitdir
+    prepare_feat_change || { startSkipping; return 0; }
+    before="$(branch_rev)"
+    install_teammate_commit_on commit "$BRANCH_URL" || { startSkipping; return 0; }
+
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'my change' 2>&1 )"; rc=$?
+    assertTrue 'fixture: the teammate commit fired' "[ -e '$SB/teammate.done' ]"
+    assertEquals 'svn took both commits' "$((before + 2))" "$(branch_rev)"
+    assertNotEquals "the push does not report plain success (out: $out)" 0 "$rc"
+    case "$out" in *'TP_TOKEN:SVN_REVISIONS_MISSING_IN_GIT'*) : ;; *) fail "no missing-revisions token: $out" ;; esac
+    case "$out" in *"r$((before + 1)) "*'teammate commits mid-push'*) : ;; *) fail "the teammate revision is not named: $out" ;; esac
+    case "$out" in *"Pushed to SVN r$((before + 2))"*) : ;; *) fail "our revision is not reported: $out" ;; esac
+    case "$out" in *'SVN_COMMIT_FAILED_HALF_DONE'*|*'GIT_COMMIT_FAILED_AFTER_SVN'*) fail "wrong guidance: $out" ;; esac
+    assertFalse 'our merge is committed' "git -C '$FEAT_BRIDGE' rev-parse --verify -q MERGE_HEAD"
+    bridge_gitdir="$(git -C "$FEAT_BRIDGE" rev-parse --absolute-git-dir)"
+    assertFalse 'the pins are cleaned up' "ls '$bridge_gitdir'/MERGE_HEAD.tp_* >/dev/null 2>&1"
+
+    # The printed repair must actually work: commit the edits svn update left, merge them in.
+    git -C "$FEAT_BRIDGE" add -A >/dev/null 2>&1
+    git -C "$FEAT_BRIDGE" -c commit.gpgsign=false commit -m 'teammate commits mid-push' >/dev/null 2>&1 \
+        || { fail "repair step 2 failed; bridge status: $(git -C "$FEAT_BRIDGE" status --porcelain | tr '\n' ';')"; return 0; }
+    git -C "$ROOT" -c commit.gpgsign=false merge --no-ff -m 'merge repair' remote-svn/feat-x >/dev/null 2>&1 \
+        || { fail 'repair merge failed'; return 0; }
+    assertEquals 'after the repair git has the teammate file' 'teammate' "$(tr -d '\r\n' < "$ROOT/teammate.txt" 2>/dev/null)"
+    assertEquals 'and still has ours' 'app-mine' "$(tr -d '\r\n' < "$ROOT/app.txt")"
+}
+
+# A trunk push marks the revision it created as the branch tip. With a teammate's revision inside
+# it, the tip is not that tree, so the mark must be withheld.
+test_trunk_push_with_a_teammate_revision_inside_is_not_marked() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc trunk_url new_rev
+    trunk_url="${BRANCH_URL%/branches/feat-x}/trunk"
+    git -C "$ROOT" checkout main >/dev/null 2>&1
+    printf 'app-main\n' > "$ROOT/app.txt"
+    git -C "$ROOT" add app.txt >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false commit -m 'feat: main change' >/dev/null 2>&1
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch main ) >/dev/null 2>&1 || { startSkipping; return 0; }
+    install_teammate_commit_on commit "$trunk_url" || { startSkipping; return 0; }
+
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch main --title 'main change' 2>&1 )"; rc=$?
+    case "$out" in *'TP_TOKEN:SVN_REVISIONS_MISSING_IN_GIT'*) : ;; *) fail "no missing-revisions token: $out"; return 0 ;; esac
+    new_rev="$(svn info --show-item last-changed-revision "$trunk_url" --config-dir "$CFG" 2>/dev/null | tr -d '[:space:]')"
+    assertEquals "the created revision is not marked (out: $out)" '' \
+        "$(git -C "$ROOT" rev-parse --verify --quiet "refs/tp/svn/$new_rev" 2>/dev/null)"
+    case "$out" in *"update-ref refs/tp/svn/$new_rev"*) : ;; *) fail "the repair does not say how to mark it: $out" ;; esac
+}
+
+# The nothing-to-send path ends with its own `svn update`, which would pull a teammate's revision
+# in as uncommitted edits just the same. There it is simply skipped, so /tp-pull-from-svn still
+# sees that revision as new and replays it.
+test_nothing_to_send_leaves_a_teammate_revision_for_pull() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc wc_rev path_rev pull_out
+    git -C "$ROOT" checkout feat-x >/dev/null 2>&1
+    printf 'app-v2\n' > "$ROOT/app.txt"
+    printf '*.log\n' >> "$ROOT/.gitignore"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'feat: edit app' >/dev/null 2>&1
+    if ! push_feat 'edit app'; then startSkipping; return 0; fi
+    # Same fixture as the nothing-to-send case above: a prepared merge whose only svn-visible
+    # change is git-ignored.
+    printf 'noise\n' > "$FEAT_BRIDGE/build.log"
+    printf 'app-tmp\n' > "$ROOT/app.txt"
+    git -C "$ROOT" -c commit.gpgsign=false commit -qam 'chore: try something' >/dev/null 2>&1
+    git -C "$ROOT" -c commit.gpgsign=false revert --no-edit HEAD >/dev/null 2>&1
+    ( cd "$ROOT" && bash "$BUILD_SCRIPT" --branch feat-x ) >/dev/null 2>&1 || { startSkipping; return 0; }
+    install_teammate_commit_on status "$BRANCH_URL" || { startSkipping; return 0; }
+
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'try and revert' 2>&1 )"; rc=$?
+    PATH="$ORIG_PATH"
+    case "$out" in *'No changes to commit to SVN'*) : ;; *) fail "fixture: expected the nothing-to-send path: $out"; return 0 ;; esac
+    assertEquals "the push itself finishes (out: $out)" 0 "$rc"
+    case "$out" in *'tp-pull-from-svn'*) : ;; *) fail "does not point at pull: $out" ;; esac
+    wc_rev="$(svn info --show-item revision "$FEAT_BRIDGE" 2>/dev/null | tr -d '[:space:]')"
+    path_rev="$(branch_rev)"
+    assertTrue "the bridge stays below the teammate revision (wc r$wc_rev, path r$path_rev)" "[ '$wc_rev' -lt '$path_rev' ]"
+
+    pull_out="$( cd "$ROOT" && bash "$PLUGIN_ROOT/scripts/sync-from-svn.sh" --branch feat-x 2>&1 )" \
+        || { fail "pull failed: $pull_out"; return 0; }
+    assertEquals "pull brings the teammate file into git (pull: $pull_out)" 'teammate' \
+        "$(tr -d '\r\n' < "$ROOT/teammate.txt" 2>/dev/null)"
+}
+
+# Control: with nobody else committing, the wrapper changes nothing and the push is plain success.
+test_push_without_a_teammate_still_succeeds_through_the_wrapper() {
+    if [ "$HAS_SVN" -ne 1 ]; then startSkipping; return 0; fi
+    if ! build_feature_bridge; then startSkipping; return 0; fi
+    local out rc
+    prepare_feat_change || { startSkipping; return 0; }
+    install_teammate_commit_on never-called "$BRANCH_URL" || { startSkipping; return 0; }
+    out="$( cd "$ROOT" && bash "$SCRIPT" --branch feat-x --title 'my change' 2>&1 )"; rc=$?
+    assertEquals "plain push succeeds (out: $out)" 0 "$rc"
+    case "$out" in *'TP_TOKEN:'*) fail "a token on a clean push: $out" ;; esac
 }
 
 # shellcheck disable=SC1090

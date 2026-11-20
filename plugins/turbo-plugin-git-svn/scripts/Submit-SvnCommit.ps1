@@ -190,6 +190,13 @@ try {
     # state needs different guidance from the half-done one below.
     $gitFinaliseFailed = $false
     $svnCommitted = $false
+    # issue #219 (full rationale in submit-svn-commit.sh): someone else committed to this SVN path
+    # while the push ran. $pathChangedBeforeCommit = caught just before `svn commit`, nothing sent.
+    # $foreignRevs = caught after it: revisions svn accepted alongside ours, missing from git.
+    $pathChangedBeforeCommit = $false
+    $foreignRevs = @()
+    $foreignUnverified = $false
+    $foreignReport = ''
 
     $newRev = '?'
     $noCommit = $false
@@ -373,6 +380,17 @@ wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
                 $dotTarget = @('.')
                 $depthArgs = @('--depth', 'empty')
             }
+            # issue #219, first half: the staleness check at the top runs once, and the steps
+            # between it and the commit can take minutes on a large push. svn refuses a commit as
+            # out-of-date only per file, so ask again as late as possible. This narrows the window;
+            # the check after the commit is what closes the silent case.
+            $pathRevNow = [int]((& svn info --show-item last-changed-revision $svnUrl | Out-String).Trim())
+            if ($LASTEXITCODE -ne 0) { throw 'Could not read this SVN path''s last-changed revision before committing; aborting (pins retained for retry).' }
+            if ($localRev -lt $pathRevNow) {
+                $pathChangedBeforeCommit = $true
+                throw "This SVN path changed while the push was being prepared (local r$localRev, this path last changed at r$pathRevNow). Nothing was sent to SVN."
+            }
+
             Write-Output "Committing to SVN..."
             Write-SvnTargetsFile -Path $targetsCommit -Targets $commitTargets
             $commitLines = & svn commit @depthArgs --file $msgFile --encoding UTF-8 --targets $targetsCommit @dotTarget
@@ -436,12 +454,77 @@ wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
             if ($newRevLine -and $newRevLine -match 'Committed revision (\d+)\.') {
                 $newRev = $Matches[1]
             }
+            # issue #219, second half: did anyone else's revision land on this path between the
+            # working copy's revision and ours? The staleness checks guarantee none of them was in
+            # the working copy, so each one is someone else's -- and the revision we created holds
+            # their changes too, which the closing `svn update` drops into the bridge as
+            # uncommitted edits that /tp-pull-from-svn can never replay. Same as the bash twin.
+            if ($newRev -match '^[0-9]+$' -and ([int]$newRev - 1) -gt $localRev) {
+                $gapLo = $localRev + 1
+                $gapHi = [int]$newRev - 1
+                $gapEnc = [Console]::OutputEncoding
+                $gapEAP = $ErrorActionPreference
+                try {
+                    # svn log --xml is UTF-8 whatever the codepage; decode it as such (authors and
+                    # messages may be CJK). The URL argument is URI-encoded ASCII.
+                    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+                    $ErrorActionPreference = 'Continue'
+                    $gapXml = (& svn log --xml -r "${gapLo}:${gapHi}" "$svnUrl@$newRev" 2>$null | Out-String)
+                    if ($LASTEXITCODE -ne 0) {
+                        $foreignUnverified = $true
+                    } else {
+                        foreach ($fr in @(Get-SvnRevisions -LogXml $gapXml)) {
+                            $frAuthor = if ([string]::IsNullOrEmpty($fr.Author)) { '(no author)' } else { $fr.Author }
+                            $frSubject = ($fr.Message -split "`n")[0]
+                            $foreignRevs += ('r{0} {1}: {2}' -f $fr.Rev, $frAuthor, $frSubject)
+                        }
+                    }
+                } catch {
+                    $foreignUnverified = $true
+                } finally {
+                    [Console]::OutputEncoding = $gapEnc
+                    $ErrorActionPreference = $gapEAP
+                }
+            }
+            if ($foreignRevs.Count -gt 0) {
+                $nl = [Environment]::NewLine
+                $repLines = @(
+                    '',
+                    'TP_TOKEN:SVN_REVISIONS_MISSING_IN_GIT',
+                    "The push IS in SVN as r$newRev. But while it was being sent, other revision(s) were",
+                    'committed to this same SVN path, and svn accepted ours anyway because no file overlapped:'
+                )
+                $repLines += @($foreignRevs | ForEach-Object { "  $_" })
+                $repLines += @(
+                    "So SVN r$newRev contains their changes too, and git does not: '$($remote.Branch)' and",
+                    "'$Branch' are both missing them. The closing svn update has put those changes into the",
+                    'bridge as uncommitted edits, and /tp-pull-from-svn cannot replay them (the bridge is past them).'
+                )
+                if ($Branch -eq 'main') { $repLines += "r$newRev was NOT recorded as matching '$Branch'." }
+                $repLines += @(
+                    '',
+                    "To bring git back in line with SVN [check ``git -C `"$($remote.Path)`" status`` first: it should list",
+                    'only the changes of the revision(s) above]:',
+                    "  1. git -C `"$($remote.Path)`" add -A",
+                    "  2. git -C `"$($remote.Path)`" commit -m `"<the message of the revision(s) above>`""
+                )
+                if ($Branch -eq 'main') {
+                    $repLines += "  3. git -C `"$mainWorktree`" update-ref refs/tp/svn/$newRev `"`$(git -C `"$($remote.Path)`" rev-parse HEAD)`""
+                    $repLines += "  4. with '$Branch' checked out in `"$mainWorktree`": git -C `"$mainWorktree`" merge --no-ff `"$($remote.Branch)`""
+                } else {
+                    $repLines += "  3. with '$Branch' checked out in `"$mainWorktree`": git -C `"$mainWorktree`" merge --no-ff `"$($remote.Branch)`""
+                }
+                $repLines += 'Anything built or tagged from this push before that is missing those revisions too.'
+                $foreignReport = $repLines -join $nl
+            }
             # R14 marker for a TRUNK push: this push CREATED revision $newRev, and the commit whose
             # tree is that revision is the branch tip just pushed. Recording it is what makes a
             # locally PUSHED revision resolvable -- pulls mark what they replay, pushes mark what
             # they create. Only the trunk branch is marked (refs/tp/svn/* maps TRUNK revisions; a
             # feature push creates a revision on the branch path, not on trunk).
-            if ($Branch -eq 'main' -and $newRev -match '^[0-9]+$') {
+            # Not when other revisions landed in between (issue #219): the branch tip then lacks
+            # their changes, so it is NOT the tree of $newRev.
+            if ($Branch -eq 'main' -and $newRev -match '^[0-9]+$' -and $foreignRevs.Count -eq 0) {
                 # Read-Git (issue #128): this runs AFTER the SVN commit succeeded, so a throw here
                 # would abort a push that already reached SVN, and an empty read would silently skip
                 # the revision marker -- leaving a pushed revision that later pulls cannot resolve.
@@ -458,8 +541,24 @@ wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
         # Matches submit-svn-commit.sh, which runs `svn update` with `|| warn` outside `set -e`.
         $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        & svn update 2>$null | Out-Null
-        $svnUpdateExit = $LASTEXITCODE
+        # issue #219: on the nothing-to-send path none of ours went in, so a revision someone else
+        # committed to this path since the top check would arrive through this update as
+        # uncommitted edits that /tp-pull-from-svn could never replay. Leave the working copy where
+        # it is instead, so the pull still sees that revision as new.
+        $skipUpdate = $false
+        if ($noCommit) {
+            try {
+                $nowRev = [int]((& svn info --show-item last-changed-revision $svnUrl 2>$null | Out-String).Trim())
+                if ($LASTEXITCODE -eq 0 -and $localRev -lt $nowRev) { $skipUpdate = $true }
+            } catch { $skipUpdate = $false }
+        }
+        $svnUpdateExit = 0
+        if ($skipUpdate) {
+            [Console]::Error.WriteLine("Note: this SVN path changed to r$nowRev while the push was running; skipped the closing svn update. Run /tp-pull-from-svn --branch $Branch to bring that revision into git.")
+        } else {
+            & svn update 2>$null | Out-Null
+            $svnUpdateExit = $LASTEXITCODE
+        }
         $ErrorActionPreference = $prevEAP
         if ($svnUpdateExit -ne 0) {
             [Console]::Error.WriteLine('Warning: svn update after commit failed. Remote worktree may be stale; run /tp-pull-from-svn to resync.')
@@ -472,6 +571,7 @@ wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
         if ($LASTEXITCODE -ne 0) {
             $gitFinaliseFailed = $true
             if ($svnCommitted) { Write-Output "Pushed to SVN r$newRev" }
+            if ($foreignReport) { [Console]::Error.WriteLine($foreignReport) }
             throw 'git commit failed when finalising the prepared merge.'
         }
     } catch {
@@ -498,6 +598,21 @@ $where
 Fix the git error above, then finish it with:
   git -C "$($remote.Path)" commit --no-edit
 Do NOT re-run /tp-push-to-svn or abort the merge first.
+"@)
+        } elseif ($pathChangedBeforeCommit) {
+            # Unlike the generic half-done state below, the cause is known and a retry cannot
+            # succeed: the prepared merge is built on a stale base. Unwind, pull, push again.
+            [Console]::Error.WriteLine(@"
+
+TP_TOKEN:SVN_PATH_CHANGED_DURING_PUSH
+Someone committed to this SVN path while the push was being prepared. Nothing reached SVN.
+Retrying cannot work: the prepared merge is built on the old revision. To push again:
+  1. svn revert -R "$($remote.Path)"
+  2. git -C "$($remote.Path)" reset --hard HEAD
+  3. remove the three MERGE_HEAD.tp_* files in "$pinDir"
+  4. /tp-pull-from-svn --branch $Branch
+  5. /tp-push-to-svn --branch $Branch
+  ORDER MATTERS: revert BEFORE the reset (see the half-done guidance for why).
 "@)
         } elseif (-not $svnCommitted) {
             # A failed svn step leaves the push half-way, and nothing else would report it (issue
@@ -572,6 +687,19 @@ UNWIND (the commit was rejected and would be rejected again):
 
     if ($noCommit) { exit 0 }
     Write-Output "Pushed to SVN r$newRev"
+    if ($foreignUnverified) {
+        [Console]::Error.WriteLine(@"
+Warning: could not ask SVN whether anyone else committed to this path while the push ran.
+  Check by hand: svn log -r $($localRev + 1):$newRev "$svnUrl"
+  Any revision listed there other than r$newRev is missing from git.
+"@)
+    }
+    # issue #219: SVN and the git merge are both done, so the pins went above as on success; what
+    # is left is the repair this report describes, and the push must not read as plain success.
+    if ($foreignReport) {
+        [Console]::Error.WriteLine($foreignReport)
+        exit 1
+    }
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
