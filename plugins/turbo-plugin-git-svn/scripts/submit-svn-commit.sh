@@ -484,7 +484,8 @@ set +e
         echo "r$NEW_REV was NOT recorded as matching '$BRANCH'."
       fi
       echo ''
-      echo 'To bring git back in line with SVN:'
+      echo 'To bring git back in line with SVN [check `git -C "'"$REMOTE_PATH"'" status` first: it should list'
+      echo 'only the changes of the revision(s) above]:'
       echo "  1. git -C \"$REMOTE_PATH\" add -A"
       echo "  2. git -C \"$REMOTE_PATH\" commit -m \"<the message of the revision(s) above>\""
       if [[ "$BRANCH" == "main" ]]; then

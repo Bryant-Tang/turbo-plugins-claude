@@ -503,7 +503,8 @@ wrong side. Rerun with -ClearBinaryMime to drop svn:mime-type from them.
                 if ($Branch -eq 'main') { $repLines += "r$newRev was NOT recorded as matching '$Branch'." }
                 $repLines += @(
                     '',
-                    'To bring git back in line with SVN:',
+                    "To bring git back in line with SVN [check ``git -C `"$($remote.Path)`" status`` first: it should list",
+                    'only the changes of the revision(s) above]:',
                     "  1. git -C `"$($remote.Path)`" add -A",
                     "  2. git -C `"$($remote.Path)`" commit -m `"<the message of the revision(s) above>`""
                 )
