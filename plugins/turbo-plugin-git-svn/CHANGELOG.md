@@ -2,6 +2,19 @@
 
 本檔記錄 turbo-plugin-git-svn 的版本變更,格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)。
 
+## [0.9.4](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.9.3...turbo-plugin-git-svn--v0.9.4) (2026-11-20)
+
+
+### Fixed
+
+* **git-svn:** 推送期間別人 commit 到同一條 SVN 路徑時不再靜默漏掉那顆修訂 ([f9978e5](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f9978e53fed23a493065733341559269c84fec63)), closes [#219](https://github.com/Bryant-Tang/turbo-plugins-claude/issues/219)
+* **git-svn:** 補齊漏掉修訂的步驟先提示看 git status，並說明與 git commit 失敗同時出現時的順序 ([f07bd5c](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/f07bd5ce122da8c55535dca1c5a4798b6e481efe))
+
+
+### Documentation
+
+* **git-svn:** tp-push-to-svn 說明推送期間有人推同一條路徑時的兩個新 token 怎麼處理 ([02894d7](https://github.com/Bryant-Tang/turbo-plugins-claude/commit/02894d74506154f0940e00664f247b354d865abd))
+
 ## [0.9.3](https://github.com/Bryant-Tang/turbo-plugins-claude/compare/turbo-plugin-git-svn--v0.9.2...turbo-plugin-git-svn--v0.9.3) (2026-11-05)
 
 
